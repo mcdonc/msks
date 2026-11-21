@@ -1520,3 +1520,73 @@ def test_a_widened_pane_reflows_the_columns(qt) -> None:
         assert total >= table.viewport().width() - 8  # the pane filled
         assert table.horizontalScrollBar().maximum() == 0
     window.close()
+
+
+def test_the_picker_rides_the_status_row(qt) -> None:
+    """The connection picker's home (#1009): a tool button in
+    the listing's status row, beside the flash line — never a
+    pane of its own — its menu built from the presenter's
+    preset rows, the standing one checked, the button's label
+    naming it."""
+    from msks.client.gui.connection import (
+        ALIAS,
+        DEV,
+        ENVIRONMENT,
+        ConnectionPreset,
+    )
+
+    screen, window, bridge = make_screen(qt)
+    assert screen.connection.parent() is screen
+    assert screen.connection.text() == "connection"
+    screen.host_presets(
+        [
+            ConnectionPreset("farm", ALIAS, "https://10.0.0.9:9660"),
+            ConnectionPreset(
+                "dev daemon",
+                DEV,
+                "https://127.0.0.1:9661",
+                active=True,
+            ),
+            ConnectionPreset("environment", ENVIRONMENT, "the shell"),
+        ]
+    )
+    assert screen.connection.text() == "dev daemon"
+    menu = screen.connection.menu()
+    assert [
+        (action.text(), action.isChecked()) for action in menu.actions()
+    ] == [
+        ("farm — https://10.0.0.9:9660", False),
+        ("dev daemon — https://127.0.0.1:9661", True),
+        ("environment — the shell", False),
+    ]
+    # A re-host over a fresh pick marks the new standing row and
+    # re-labels the button.
+    screen.host_presets(
+        [
+            ConnectionPreset(
+                "farm", ALIAS, "https://10.0.0.9:9660", active=True
+            ),
+            ConnectionPreset("dev daemon", DEV, "https://127.0.0.1:9661"),
+        ]
+    )
+    assert screen.connection.text() == "farm"
+    assert [a.isChecked() for a in screen.connection.menu().actions()] == [
+        True,
+        False,
+    ]
+
+
+def test_a_picker_menu_pick_crosses_as_the_signal(qt) -> None:
+    """The pick's forward (#1009): a menu action's trigger emits
+    the preset it was built from — the screen holds no
+    connection state of its own, the window path owns the
+    re-dial."""
+    from msks.client.gui.connection import ALIAS, ConnectionPreset
+
+    screen, window, bridge = make_screen(qt)
+    preset = ConnectionPreset("farm", ALIAS, "https://10.0.0.9:9660")
+    screen.host_presets([preset])
+    landed: list[ConnectionPreset] = []
+    screen.connection_picked.connect(landed.append)
+    screen.connection.menu().actions()[0].trigger()
+    assert landed == [preset]

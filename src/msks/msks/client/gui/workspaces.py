@@ -22,6 +22,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..data import RestFailure
 from .bridge import Bridge
+from .connectionbar import ConnectionButton
 from .edit import EditDialog
 from .listcells import (
     ACTION_COLUMN,
@@ -88,7 +89,11 @@ FLASH_MS = 4000
 class WorkspaceList(QtWidgets.QWidget):
     """The main window's central screen (#939): the table of row
     models, a manual refresh button, and the status line a
-    failed refresh flashes. Every daemon exchange walks the
+    failed refresh flashes. The status row carries the
+    connection picker at its right end (#1009, phase 5): the
+    standing daemon's name beside a menu of the client's
+    presets, a pick crossing as ``connection_picked`` for the
+    window path to re-dial. Every daemon exchange walks the
     bridge — the screen never awaits the network — and the
     answers arrive on the GUI thread through this widget's
     slots, a receiver living in the thread the bridge's queued
@@ -102,6 +107,7 @@ class WorkspaceList(QtWidgets.QWidget):
 
     opened = QtCore.Signal(str)
     shell_requested = QtCore.Signal(str)
+    connection_picked = QtCore.Signal(object)
 
     def __init__(self, bridge: Bridge) -> None:
         super().__init__()
@@ -214,13 +220,29 @@ class WorkspaceList(QtWidgets.QWidget):
         # The status line alone rides the top (#972): the row
         # cells carry the actions now, and the rows reclaim the
         # vertical space the toolbar held.
+        # The connection picker rides the status row's right
+        # end (#1009, phase 5): the standing connection's name
+        # beside a menu of the client's presets — the config
+        # file's aliases, the environment, the dev daemon's
+        # state dir — and a pick crosses as
+        # ``connection_picked(preset)`` for the window path to
+        # re-dial. The button is the row's own child, its menu
+        # dropping below it.
+        self.connection = ConnectionButton(self)
+        self.connection.picked.connect(self.connection_picked)
         top = QtWidgets.QHBoxLayout()
         top.addWidget(self.status, stretch=1)
+        top.addWidget(self.connection)
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(top)
         layout.addWidget(self.table)
         layout.addWidget(self.detail)
         self.setLayout(layout)
+
+    def host_presets(self, presets: list) -> None:
+        """The picker's menu from the presenter's rows (#1009),
+        delegated to the button the status row carries."""
+        self.connection.host(presets)
 
     @QtCore.Slot()
     def refresh(self) -> None:

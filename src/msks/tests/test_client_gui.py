@@ -324,50 +324,42 @@ def test_the_gui_window_opens_offscreen(
         opened["geometry"] = [
             (w.x(), w.y(), w.width(), w.height()) for w in windows
         ]
-        opened["strip"] = [
-            type(w.centralWidget()).__name__ == "ConnectionStrip"
-            for w in windows
-        ]
-        # The strip's shape read while the window stands (#962,
-        # #1009: the tabs live under the connection strip's
-        # swappable content): the tabs, their labels, the
-        # current one, and the Workspaces tab's create opener.
+        # The strip's shape read while the window stands (#962):
+        # the tabs, their labels, the current one, and the
+        # Workspaces tab's create opener.
         opened["tabs"] = [
             (
-                type(host(w)).__name__,
-                [host(w).tabText(i) for i in range(host(w).count())],
-                host(w).currentIndex(),
+                type(w.centralWidget()).__name__,
+                [
+                    w.centralWidget().tabText(i)
+                    for i in range(w.centralWidget().count())
+                ],
+                w.centralWidget().currentIndex(),
             )
-            if host(w) is not None
-            and isinstance(host(w), QtWidgets.QTabWidget)
+            if isinstance(w.centralWidget(), QtWidgets.QTabWidget)
             else None
             for w in windows
         ]
         opened["plus"] = [
             (
-                host(w)
+                w.centralWidget()
                 .tabBar()
                 .tabButton(0, QtWidgets.QTabBar.ButtonPosition.RightSide)
             )
-            if host(w) is not None
-            and isinstance(host(w), QtWidgets.QTabWidget)
+            if isinstance(w.centralWidget(), QtWidgets.QTabWidget)
             else None
             for w in windows
         ]
+        # The picker's row read while the window stands (#1009):
+        # the listing's connection button, the label it carries.
+        opened["picker"] = [
+            (
+                type(w.centralWidget().widget(0).listing.connection).__name__,
+                w.centralWidget().widget(0).listing.connection.text(),
+            )
+            for w in windows
+        ]
         return 0
-
-    def host(w) -> QtWidgets.QWidget | None:
-        """The tab strip under the window's central widget
-        (#1009): the connection strip fronts it, its body's
-        first item the swappable content."""
-        widget = w.centralWidget()
-        if isinstance(widget, QtWidgets.QTabWidget):
-            return widget
-        body = getattr(widget, "body", None)
-        if body is None:
-            return None
-        item = body.itemAt(0)
-        return item.widget() if item is not None else None
 
     monkeypatch.setattr(QtWidgets.QApplication, "exec", record_and_exit)
     assert app.run() == 0
@@ -398,10 +390,12 @@ def test_the_gui_window_opens_offscreen(
         [WORKSPACES_LABEL, IMAGES_LABEL, SECRETS_LABEL],
         0,
     )
-    # The connection strip fronts the tabs (#1009): the
-    # window's central widget is the strip itself, the tab
-    # tree its swappable content.
-    assert opened["strip"] == [True]
+    # The picker rides the listing's status row (#1009): a
+    # connection button in the listing's chrome, its label
+    # naming whichever preset the run's environment stands on.
+    kind, label = opened["picker"][0]
+    assert kind == "ConnectionButton"
+    assert label
     # The whole-client zoom's keys (#976): three application
     # shortcuts on the window — both plus spellings on the grow
     # one — so the focus never gates them.
@@ -527,7 +521,6 @@ def test_open_window_reuses_an_existing_app(
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("the gui extra is not installed on this host")
     from msks.client.gui import connection as connection_mod
-    from msks.client.gui import connectionbar as connectionbar_mod
     from msks.client.gui import tabs as tabs_mod
     from msks.client.gui import workspace as workspace_mod
     from msks.client.gui import zoom as zoom_mod
@@ -637,6 +630,7 @@ def test_open_window_reuses_an_existing_app(
             screens.append(self)
             self.terminal_cmd = terminal_cmd
             self.hub = FakeShellHub()  # the zoom's handoff (#976)
+            self.listing = FakeListing()  # the picker's row (#1009)
 
         def open_create(self) -> None:
             pass  # the wiring pin reads the bound method, not the call
@@ -693,27 +687,21 @@ def test_open_window_reuses_an_existing_app(
         def connect(self, slot: object) -> None:
             self.slots.append(slot)
 
-    strips: list[FakeStrip] = []
+    listings: list[FakeListing] = []
 
-    class FakeStrip:
-        """The connection strip's stub (#1009): the window's own
-        chrome — the content trees land on it, the presets host
-        on it — recording both for the wiring pins."""
+    class FakeListing:
+        """The shell's listing stub (#1009): the picker rides its
+        status row — the presets host on it, the picks cross on
+        its signal — recording both for the wiring pins."""
 
-        picked = PickedSignal()
+        connection_picked = PickedSignal()
 
         def __init__(self) -> None:
-            self.trees: list[object] = []
             self.hosted: list[object] = []
-            strips.append(self)
+            listings.append(self)
 
-        def setContent(self, widget: object) -> None:
-            self.trees.append(widget)
-
-        def host(self, presets: object) -> None:
+        def host_presets(self, presets: object) -> None:
             self.hosted.append(presets)
-
-    monkeypatch.setattr(connectionbar_mod, "ConnectionStrip", FakeStrip)
 
     class FakeConnections:
         """The picker's presenter stub (#1009): one plain row,
@@ -804,22 +792,22 @@ def test_open_window_reuses_an_existing_app(
         # fresh hub, the menu re-hosted. Driven here, inside the
         # patch's own bracket.
         preset = ConnectionPreset("farm", "alias", "https://10.0.0.9:9660")
-        strips[0].picked.slots[0](preset)
+        screens[0].listing.connection_picked.slots[0](preset)
         assert connections_holder[0].picked == [preset]
         assert len(started) == 2  # the fresh tree's own bridge
         assert len(stops) == 2  # its aboutToQuit hook beside it
         assert shutdowns == [screens[0].hub]
         assert retargets == [screens[1].hub]
-        assert len(strips[0].trees) == 2  # the fresh tab tree landed
-        assert len(strips[0].hosted) == 2  # the menu re-hosted
+        assert central[1].page is screens[1]  # the fresh tree landed
+        assert len(listings[1].hosted) == 1  # its picker hosted
         # A refused pick (#1009) — the file changed under the
         # menu — re-dials nothing: no third bridge, no teardown,
         # the menu alone re-hosted on the standing truth.
         connections_holder[0].answer = False
-        strips[0].picked.slots[0](preset)
+        screens[1].listing.connection_picked.slots[0](preset)
         assert len(started) == 2
-        assert len(strips[0].trees) == 2
-        assert len(strips[0].hosted) == 3
+        assert len(central) == 2
+        assert len(listings[1].hosted) == 2
         shown.append("driven")
     finally:
         Bridge.start, Bridge.stop = real_start, real_stop  # type: ignore[method-assign]
@@ -838,13 +826,9 @@ def test_open_window_reuses_an_existing_app(
     # The window opens on the top-level tab strip (#962): the
     # screen is the strip's first page — the Workspaces tab —
     # built over the same bridge the window started.
-    assert len(central) == 1
-    strip = central[0]
-    assert isinstance(strip, FakeStrip)
-    # The tab tree lands as the strip's content (#1009), the
-    # presets hosted on the strip beside it.
-    assert isinstance(strip.trees[0], FakeTabs)
-    assert strip.trees[0].page is screens[0]
+    assert isinstance(central[0], FakeTabs)
+    assert central[0].page is screens[0]
+    assert len(listings[0].hosted) == 1  # the picker hosted (#1009)
     assert built == started
     # The Images tab lands beside the shell (#964): built over
     # the same bridge, under the strip's second tab, on the
@@ -854,7 +838,7 @@ def test_open_window_reuses_an_existing_app(
 
     assert images[:1] == [(started[0], channel_url(None))]
     assert secrets_built[:1] == [started[0]]  # the same bridge (#966)
-    assert [label for _page, label in strip.trees[0].pages] == [
+    assert [label for _page, label in central[0].pages] == [
         "Images",
         "Secrets",
     ]
@@ -884,7 +868,6 @@ def test_open_window_keeps_a_user_style_choice(
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("the gui extra is not installed on this host")
     from msks.client.gui import connection as connection_mod
-    from msks.client.gui import connectionbar as connectionbar_mod
     from msks.client.gui import tabs as tabs_mod
     from msks.client.gui import workspace as workspace_mod
     from msks.client.gui import zoom as zoom_mod
@@ -947,11 +930,21 @@ def test_open_window_keeps_a_user_style_choice(
         def show(self) -> None:
             pass
 
+    class FakeListing:
+        """The listing stub (#1009): the picker's row, its two
+        members the window path touches."""
+
+        connection_picked = FakeSignal()
+
+        def host_presets(self, presets: object) -> None:
+            pass
+
     class FakeScreen:
         def __init__(
             self, bridge: object, terminal_cmd: object = None
         ) -> None:
             self.hub = object()  # the zoom's handoff (#976)
+            self.listing = FakeListing()  # the picker's row (#1009)
 
         def open_create(self) -> None:
             pass
@@ -981,24 +974,6 @@ def test_open_window_keeps_a_user_style_choice(
     monkeypatch.setattr(secrets_tab_mod, "SecretsTab", FakeSecretsTab)
 
     monkeypatch.setattr(tabs_mod, "MainTabs", FakeTabs)
-
-    class FakeStrip:
-        """The connection strip's stub (#1009): built, never
-        read — the style test reads the environment and the app
-        font only, the strip needing no real Qt behind it."""
-
-        picked = FakeSignal()
-
-        def __init__(self) -> None:
-            pass
-
-        def setContent(self, widget: object) -> None:
-            pass
-
-        def host(self, presets: object) -> None:
-            pass
-
-    monkeypatch.setattr(connectionbar_mod, "ConnectionStrip", FakeStrip)
 
     class FakeConnections:
         """The picker's presenter stub (#1009): no rows, the

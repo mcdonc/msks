@@ -325,12 +325,6 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     # Qt-free, plain data over the client's own config layer.
     from .connection import Connections
 
-    # allow-deferred-import — the connection strip (#1009): the
-    # standing connection's row and the swappable content it
-    # fronts — PySide6 at module scope, loaded only on the
-    # window path.
-    from .connectionbar import ConnectionStrip
-
     # allow-deferred-import — the Images tab's cells (#964):
     # the channel URL, plain data beside the Qt-bearing tab.
     from .images.cells import channel_url
@@ -361,14 +355,14 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     # the module.
     from .workspace import WorkspaceShell
 
-    # The strip and its swap seam (#1009, phase 5): the strip is
-    # the window's own chrome — it survives the reconnect its
-    # pick causes — while the content below it (the shell, the
-    # tabs, the bridge behind them) rebuilds whole over the
-    # picked values. The first build lands the same path a pick
+    # The connection picker and its re-dial (#1009, phase 5):
+    # the picker rides the listing's status row below the flash
+    # line (the presenter feeds it), never a pane of its own,
+    # and a pick rebuilds the window's whole content tree over
+    # the picked values — the shell, the tabs, the bridge
+    # behind them. The first build lands the same path a pick
     # re-runs, so the standing tree and every re-dial share one
     # construction.
-    strip = ConnectionStrip()
     connections = Connections(conf)
     tree: dict = {}
 
@@ -384,7 +378,12 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
         # the bridge, so the opener's click lands there — the
         # create dialog is the shell's own surface.
         tabs.create_requested.connect(shell.open_create)
-        strip.setContent(tabs)
+        window.setCentralWidget(tabs)
+        # The picker's menu hosts from the presenter's rows
+        # (#1009): the fresh listing's own button, fed here so
+        # the standing connection names itself on every build.
+        shell.listing.host_presets(connections.presets())
+        shell.listing.connection_picked.connect(reconnect)
         tree["bridge"] = bridge
         tree["shell"] = shell
         return shell
@@ -397,21 +396,17 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
         belonged to — and a fresh tree lands over the picked
         values, the zoom carrying its steps to the new hub. A
         pick the presenter refused (the file changed under the
-        menu) re-dials nothing — the menu re-hosts on the
+        menu) re-dials nothing — the picker re-hosts on the
         standing truth instead."""
         if not connections.pick(preset):
-            strip.host(connections.presets())
+            tree["shell"].listing.host_presets(connections.presets())
             return
         tree["bridge"].stop()
         tree["shell"].hub.shutdown()
         shell = land()
         zoom.retarget(shell.hub)
-        strip.host(connections.presets())
 
-    strip.picked.connect(reconnect)
-    strip.host(connections.presets())
     shell = land()
-    window.setCentralWidget(strip)
     # allow-deferred-import — the whole-client zoom (#976)
     # carries the screen modules' own contract: PySide6 at
     # module scope there, loaded only on the window path.

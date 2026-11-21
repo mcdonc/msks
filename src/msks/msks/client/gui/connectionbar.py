@@ -1,73 +1,60 @@
-"""The window's connection strip (phase 5 of #924, #1009): the
+"""The connection picker's button (phase 5 of #924, #1009): the
+tool button the workspace list's status row carries — the
 standing connection's name beside a menu of the presenter's
-presets, over the swappable content a pick re-dials. The strip
-is the window's own chrome — it survives the reconnect its pick
-causes, while the content below it (the shell, the tabs, the
-bridge behind them) rebuilds whole over the picked values.
-
-The widget stays thin: it renders
+presets, the standing one checked. The button is a row's child,
+never a pane of its own: its menu drops below the status row it
+rides in. The widget stays thin — it renders
 :class:`msks.client.gui.connection.ConnectionPreset` rows and
 forwards picks as ``picked(preset)``; the application and the
-reconnect belong to the presenter and the window path. This
-module imports PySide6 at module scope — the screens' own
-contract: nothing imports it at CLI parse time, and the window
-path (``gui/app.py``'s ``open_window``) owns the import.
+re-dial belong to the presenter and the window path.
+
+This module imports PySide6 at module scope — the screens' own
+contract: nothing imports it at CLI parse time, and the
+workspace list (itself lazily imported on the window path) owns
+the import.
 """
 
 from PySide6 import QtCore, QtWidgets
 
 from .connection import ConnectionPreset
 
-#: The strip's label when no preset marks itself the standing
-#: connection (#1009): an address the file's globals named, or
-#: the local socket default — the menu still offers every
-#: preset, and the label names the dial honestly.
+#: The button's plain label (#1009): no preset marking itself
+#: reads as this — the dial still stands, the menu still offers
+#: every preset.
 NO_STANDING = "connection"
 
-#: The connection glyph the strip's button draws (#1009): the
-#: style's own network emblem, the same stock icon every
-#: platform ships for a link.
-LINK_ICON = QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon
+#: The connection glyph the button draws (#1009): the style's
+#: own network-drive emblem, the stock icon every platform
+#: ships for a link.
+LINK_ICON = QtWidgets.QStyle.StandardPixmap.SP_DriveNetIcon
 
 
-class ConnectionStrip(QtWidgets.QWidget):
-    """The standing connection's row and the content it fronts
-    (#1009): a tool button whose menu lists the presets (the
-    standing one checked), over a layout the window path swaps
-    the whole content tree into at every connect. A menu pick
-    crosses as ``picked(preset)`` — the window path applies it
-    and re-dials; the strip itself holds no connection
+class ConnectionButton(QtWidgets.QToolButton):
+    """The standing connection's button (#1009): the name beside
+    a menu of the presenter's presets, a pick crossing as
+    ``picked(preset)`` — the button itself holds no connection
     state."""
 
     picked = QtCore.Signal(object)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.button = QtWidgets.QToolButton(self)
-        self.button.setText(NO_STANDING)
-        self.button.setIcon(self.style().standardIcon(LINK_ICON))
-        self.button.setToolButtonStyle(
+        self.setText(NO_STANDING)
+        self.setIcon(self.style().standardIcon(LINK_ICON))
+        self.setToolButtonStyle(
             QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         )
-        self.button.setPopupMode(
+        self.setPopupMode(
             QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup
         )
-        self.button.setToolTip("The daemon this window talks to")
-        row = QtWidgets.QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(self.button)
-        row.addStretch(1)
-        #: The content below the strip (#1009): one widget at a
-        #: time, swapped whole at every connect.
-        self.body = QtWidgets.QVBoxLayout()
-        self.layout().addLayout(self.body)
+        self.setToolTip("The daemon this window talks to")
 
     def host(self, presets: list[ConnectionPreset]) -> None:
-        """The menu from the presenter's presets (#1009): one
-        action per preset, its text the name beside the address
-        and a check on the standing one; the button's own label
-        names the standing connection."""
-        menu = QtWidgets.QMenu(self.button)
+        """The menu from the presenter's rows (#1009): one action
+        per preset, its text the name beside the address and a
+        check on the standing one, the button's own label naming
+        the standing connection."""
+        menu = QtWidgets.QMenu(self)
         standing = NO_STANDING
         for preset in presets:
             action = menu.addAction(f"{preset.name} — {preset.address}")
@@ -79,17 +66,5 @@ class ConnectionStrip(QtWidgets.QWidget):
             )
             if preset.active:
                 standing = preset.name
-        self.button.setMenu(menu)
-        self.button.setText(standing)
-
-    def setContent(self, widget: QtWidgets.QWidget) -> None:
-        """Swap the content tree (#1009): the standing widget
-        leaves the layout and deletes itself — its bridge, its
-        shell hub, and its terminals went with the connection it
-        belonged to — and the fresh tree takes the slot."""
-        while self.body.count():
-            item = self.body.takeAt(0)
-            gone = item.widget()
-            if gone is not None:
-                gone.deleteLater()
-        self.body.addWidget(widget)
+        self.setMenu(menu)
+        self.setText(standing)
