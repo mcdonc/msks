@@ -8,6 +8,16 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI consent presenter (#1000).** The workspace page's
+  decider registration now feeds a consent presenter: the
+  held flows build as row models carrying the destination
+  label and the countdown, and the verdict seam sends the
+  same decide exchange `msks egress decide` makes with the
+  duration chosen in the same action. A row clears on the
+  daemon's resolved frame, never on the click itself. The
+  consent panel that renders the rows from the GUI lands
+  with the rest of phase 5.5.
+
 - **The GUI's decider registration (#999).** Opening a
   workspace page in `msks gui` registers the page as that
   workspace's egress decider: an `interactive` workspace's

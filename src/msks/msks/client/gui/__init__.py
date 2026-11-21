@@ -13,7 +13,11 @@ phase 5.5 of #924 — #999: the page's own second events
 connection, plain asyncio over the feed's same seams with the
 TUI's pure consent controller behind it, no Qt in it; the
 bridge imports it at module scope, so it loads on the window
-path the bridge itself does),
+path the bridge itself does), and the consent presenter
+(:mod:`.consent`, phase 5.5 of #924 — #1000: the decider's
+state and verdict seam over the TUI's same pure controller —
+the held rows as plain models and the decide flight the panel
+sends — no Qt in it),
 and the libghostty-vt ctypes binding (:mod:`.ghostty`,
 phase 4.5 — #950: pure ctypes over the C ABI, no Qt in it),
 the PTY session behind a terminal tab (:mod:`.termsession`,
@@ -55,6 +59,7 @@ from . import (  # noqa: F401 — reachability pins for the gate;
     # the bridge and the screen modules reach through app.py's
     # lazy window-path import; the feed rides the same path.
     app,
+    consent,
     data,
     detail,
     feed,
