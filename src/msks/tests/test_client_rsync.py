@@ -56,6 +56,19 @@ needs_rsync = pytest.mark.skipif(
 )
 
 
+def rsync_flavor() -> str:
+    """The stock binary's flavor, read from its own banner: GNU
+    rsync and openrsync (macOS's stock rsync) agree on the
+    word-splitting and the last-``-e`` semantics msks leans on
+    but spell the ``user@host`` destination differently — the
+    stock-argv pins branch on it (#1038)."""
+    done = subprocess.run(
+        [RSYNC_BIN, "--version"], capture_output=True, timeout=30
+    )
+    banner = (done.stdout + done.stderr).lower()
+    return "openrsync" if b"openrsync" in banner else "gnu"
+
+
 # --- the empty-host fill ---
 
 
@@ -536,13 +549,17 @@ def test_the_config_user_is_a_default_the_command_line_overrides(
 @needs_rsync
 def test_stock_rsync_shapes_the_remote_shell_argv(tmp_path: Path) -> None:
     """rsync's own argument shaping, pinned against the real
-    binary with a stand-in remote shell: ``user@host:`` appends
-    ``-l user`` and the host AFTER the ``-e`` words, the empty
-    host passes an EMPTY host word (ssh would parse rsync's first
-    remote-command word as its destination — why msks fills it),
-    the last ``-e`` wins, and the ``-e`` value is word-split
-    honoring double quotes — the one quoting level the design
-    allows."""
+    binary with a stand-in remote shell: the ``-e`` value is
+    word-split honoring double quotes — the one quoting level the
+    design allows — the last ``-e`` wins, and a ``user@host:``
+    destination names the user to the shell AFTER the ``-e``
+    words: GNU rsync spells it ``-l user host``, openrsync
+    (macOS's stock) as one ``user@host`` word — ssh reads both
+    the same. The empty host GNU passes as an EMPTY word (ssh
+    would parse rsync's first remote-command word as its
+    destination), and openrsync refuses outright — why msks
+    fills it either way."""
+    flavor = rsync_flavor()
     argv_log = tmp_path / "rsh-argv.txt"
     standin = tmp_path / "ssh"
     standin.write_text(
@@ -566,15 +583,21 @@ def test_stock_rsync_shapes_the_remote_shell_argv(tmp_path: Path) -> None:
         "-e", f'{standin} -F "{spaced}"', str(source), "root@alpha:/x"
     )
     assert argv[:2] == ["-F", str(spaced)]  # one word, quotes honored
-    assert argv[2:5] == ["-l", "root", "alpha"]
-    assert argv[5] == "rsync" and "--server" in argv
-    assert recorded("-e", f"{standin}", str(source), ":/x")[:2] == [
-        "",
-        "rsync",
-    ]
-    # ^ the empty host passes an EMPTY host word — ssh would then
-    # parse rsync's first remote-command word as its destination,
-    # which is why msks fills the host
+    if flavor == "gnu":
+        assert argv[2:5] == ["-l", "root", "alpha"]
+        assert argv[5] == "rsync" and "--server" in argv
+        assert recorded("-e", f"{standin}", str(source), ":/x")[:2] == [
+            "",
+            "rsync",
+        ]
+    else:
+        # openrsync: the destination arrives as ONE user@host word
+        # (ssh parses it as it parses the split pair), and the empty
+        # host is refused before any remote shell runs — the same
+        # two faces of the fill msks makes, seen from openrsync.
+        assert argv[2] == "root@alpha"
+        assert argv[3] == "rsync" and "--server" in argv
+        assert recorded("-e", f"{standin}", str(source), ":/x") == []
 
     # The remembered-options tail rides the same one level: a
     # token carrying ssh's config quoting (a spaced ForwardAgent
@@ -607,9 +630,11 @@ def test_stock_rsync_shapes_the_remote_shell_argv(tmp_path: Path) -> None:
     # wins: 42, the later shell's own status, when rsync reaps the
     # child first; 12, rsync's protocol-stream error, when it sees
     # the closed pipe first (both observed on 3.5.0, ~2% the
-    # latter locally). Either way the LAST -e ran and the first
-    # one never did — its log stayed empty.
-    assert done.returncode in (42, 12) and not argv_log.read_text()
+    # latter locally; openrsync has only been observed reaping the
+    # child). Either way the LAST -e ran and the first one never
+    # did — its log stayed empty.
+    statuses = (42, 12) if flavor == "gnu" else (42,)
+    assert done.returncode in statuses and not argv_log.read_text()
 
 
 def shlex_quote(value: str) -> str:

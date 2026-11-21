@@ -133,8 +133,8 @@ def test_bind_creates_the_directory_and_a_socket_file(
     assert not path.exists()
 
 
-def test_bind_replaces_a_stale_socket(tmp_path: Path) -> None:
-    path = tmp_path / "msksd.sock"
+def test_bind_replaces_a_stale_socket(shallow_socket_dir: Path) -> None:
+    path = shallow_socket_dir / "msksd.sock"
     stale = localsocket.bind(path)
     stale.close()
     fresh = localsocket.bind(path)
@@ -590,11 +590,11 @@ def test_env_url_takes_the_socket_variable(
 
 
 def test_env_url_finds_the_default_socket(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    shallow_socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from msks.client import env
 
-    path = tmp_path / "msksd.sock"
+    path = shallow_socket_dir / "msksd.sock"
     sock = localsocket.bind(path)
     try:
         monkeypatch.setattr(env, "find_default_socket", lambda: path)
@@ -738,11 +738,13 @@ def test_both_listener_configs_refuse_proxy_headers() -> None:
     assert main.socket_config(app, api=FastAPI()).proxy_headers is False
 
 
-def test_bind_refuses_a_live_daemons_socket(tmp_path: Path) -> None:
+def test_bind_refuses_a_live_daemons_socket(
+    shallow_socket_dir: Path,
+) -> None:
     """A second daemon must not steal a first's listener: the bind
     probes the existing socket and refuses when someone answers
     (#555 review)."""
-    path = tmp_path / "msksd.sock"
+    path = shallow_socket_dir / "msksd.sock"
     live = localsocket.bind(path)
     try:
         with pytest.raises(OSError, match="already listening"):

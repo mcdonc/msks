@@ -396,6 +396,13 @@ gui`. The nix package keeps the daemon's closure lean, so on
 
 ### Fixed
 
+- **`scripts/cut-release.sh` resolves `python3` explicitly
+  (#1038).** The script's two python reads (the tagged version
+  and the release-notes gate) ran a bare `python`, which macOS
+  and minimal Linux hosts do not ship; they now run the
+  resolved `python3`, and a host with none dies naming it
+  before anything is pushed.
+
 - **Ctrl-C closes the GUI window (#1037).** A Ctrl-C in the
   terminal that started `msks gui` now closes the window
   through its own quit path, the one the close button takes.

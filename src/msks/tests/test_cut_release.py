@@ -78,10 +78,16 @@ def make_cut(tmp_path, version="0.9.2", section=True):
 def run_cut(root, tag="v0.9.2", **env):
     """The script over the fixture, its stdout and stderr kept;
     *env* names the script's test knobs (the Actions-lookup
-    budget among them)."""
+    budget among them). The script's python3 is the interpreter
+    the suite itself runs under — its bin dir goes first on PATH,
+    so a host whose ambient python3 is older than tomllib (or
+    absent) cannot break the gates the fixture means to run
+    (#1038)."""
     import os
+    import sys
 
     air = dict(os.environ)
+    air["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{air['PATH']}"
     air.update({key: str(value) for key, value in env.items()})
     return subprocess.run(
         ["bash", str(SCRIPT), tag],
