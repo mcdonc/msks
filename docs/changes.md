@@ -6,6 +6,20 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Changed
+
+- **The attached clients follow the daemon over the events
+  websocket instead of polling (#1019).** The TUI's workspaces
+  list, workspace page, and proxies page re-read on the frames
+  the daemon publishes instead of on timers. The daemon now
+  publishes `workspace.created`, `workspace.removed`,
+  `workspace.mounts`, the request-path `workspace.status`
+  transitions (start, stop, reset), and `image.changed` on
+  catalog moves, beside the watcher's scans. A daemon at rest
+  receives no periodic listing traffic from an attached idle
+  client. The shell counts stay on a local timer: they read
+  per-host session records, not daemon state. See `docs/tui.md`.
+
 ## \[v0.9.2] - 2026-11-15
 
 ### Fixed

@@ -32,8 +32,6 @@ from ..consent_ui import (
     flash_safe,
     focus_attr,
     focused_attr,
-    hold_flash,
-    sighting_flash,
     switch_mode_path,
 )
 from ..data import RestFailure
@@ -43,7 +41,7 @@ from ..forms import EDIT_FREE_STATUSES, EditScreen, edit_stop_question
 from ..help import HelpKeys
 from ..link import CONNECTED, DeciderLink
 from ..mounts import MountsScreen, mounts_line
-from ..proxies import PROXY_REFRESH_S, ProxiesScreen, proxies_line
+from ..proxies import ProxiesScreen, proxies_line
 from ..rows import header_name, workspace_label
 from .actions import (
     ACTION_CONSENT,
@@ -56,9 +54,10 @@ from .actions import (
     action_note,
 )
 from .lines import consent_line
+from .watch import PageWatches
 
 
-class WorkspaceScreen(HelpKeys, Screen):
+class WorkspaceScreen(HelpKeys, PageWatches, Screen):
     """One workspace's page (#309): the header's two lines (#351
     — the name with its status on the first, the id, image, host,
     and created date muted on the second, the pending-egress
@@ -127,9 +126,10 @@ class WorkspaceScreen(HelpKeys, Screen):
         self.flash_line = FlashLine()
         # The workspace's proxy rows (#809): the compact line's
         # data, fetched at page start, on each proxy transition
-        # the link lands, and on a slow standing backstop — not on
-        # the tick (the events own the immediacy; the backstop
-        # covers a link that cannot connect).
+        # the link lands, and on every reconnect (#1019 dropped
+        # the standing backstop: the events own the live path,
+        # and a reconnect serves the transitions a dropped
+        # connection missed).
         self.proxy_rows: list[dict] | None = None
         # The edit waiting on the stop-and-resize answer (#380):
         # the body a running workspace's Apply parked while the
@@ -143,8 +143,12 @@ class WorkspaceScreen(HelpKeys, Screen):
 
     def make_link(self) -> DeciderLink:
         """The page's decider connection (#309): a link the tests
-        replace with a scripted one."""
-        return DeciderLink(self.row["id"])
+        replace with a scripted one. The connect hook (#1019)
+        re-reads the row on every reconnect — frames published
+        while no connection stood never landed."""
+        link = DeciderLink(self.row["id"])
+        link.on_connect = self.link_reconnected
+        return link
 
     def compose(self) -> ComposeResult:
         link = self.link_or_stub()
@@ -196,11 +200,6 @@ class WorkspaceScreen(HelpKeys, Screen):
         self.app.follow.reopen = self.row["id"]
         self.link_or_stub().start()
         self.set_interval(1.0, self.tick)
-        # The compact proxies line's backstop (#809): the events
-        # own the live path, and this fetch covers a link that
-        # cannot connect (the proxies page's own rule, at its own
-        # cadence).
-        self.set_interval(PROXY_REFRESH_S, self.refresh_proxies)
         # The UI rebuilds wait for the compose stream to settle (a
         # worker racing it queries widgets not mounted yet); the
         # link starts now — frames land in the controller either
@@ -261,16 +260,17 @@ class WorkspaceScreen(HelpKeys, Screen):
     def tick(self) -> None:
         """The per-second repaint: the consent line's countdowns,
         the header's pending-egress count, the sighting drain, the
-        hold flash, and a fresh row (the page's dimming and header
-        follow a workspace another surface — the CLI, another
-        operator — may have moved while the page stood). A screen
+        hold flash, the buffers the link landed (a proxy
+        transition or a row-affecting transition refetches what
+        it moved, #1019), and the host's shell count — a
+        client-side fact the daemon never holds (#858). A screen
         going away under the timer leaves the queries empty —
         teardown noise, not a crash."""
         try:
             self.watch_holds()
             self.watch_proxies()
-            if self.is_mounted:
-                self.refresh_row()
+            self.watch_row_events()
+            self.sync_shells()
             self.paint_consent()
             self.paint_mounts()
             self.paint_proxies()
@@ -278,90 +278,6 @@ class WorkspaceScreen(HelpKeys, Screen):
             self.sync_actions()
         except NoMatches:
             pass
-
-    # -- the holds watch (#454) ----------------------------------------
-
-    def watch_holds(self) -> None:
-        """The per-tick watch over the link: drain the sighting
-        buffer (#201 over #358), then name each first-seen hold on
-        the consent line (#454) — the passive attention a hold
-        gets, the header's count beside it."""
-        if self.link is None:
-            return
-        self.drain_sightings()
-        self.flash_new_holds()
-
-    def watch_proxies(self) -> None:
-        """The per-tick watch over the link's proxy transitions
-        (#809): each one refetches the compact line's rows — the
-        same immediacy the events socket gives the proxies page,
-        on the connection the page already holds."""
-        if self.link is None:
-            return
-        if self.link.take_proxy_events():
-            self.refresh_proxies()
-
-    def flash_new_holds(self) -> None:
-        """Flash each hold the queue has not named yet (#454): the
-        page pushes nothing on a hold's arrival, so the consent
-        line names the destination and the key in. The flash waits
-        while another screen owns the terminal (the consent page,
-        the edit form, a picker): the ids stay unseen and the
-        first tick after the stack unwinds names what arrived —
-        the overlay-era burst guard's rule, carried to the flash
-        (a flash painted on a hidden line is consumed unseen).
-        A burst takes one flash naming its count (a FlashLine
-        owns the line for its TTL — one destination a tick would
-        overwrite the rest)."""
-        if self.app.screen is not self:
-            return
-        fresh = self.take_unseen_holds()
-        if len(fresh) == 1:
-            self.flash(hold_flash(fresh[0]))
-        elif fresh:
-            self.flash(f"{len(fresh)} egress holds to decide — press e")
-
-    def take_unseen_holds(self) -> list:
-        """The queue's holds the consent line has not named yet,
-        taken: their ids join the seen set here and never leave it
-        — a reconnect's replay re-lands the same holds without
-        re-flashing them, and the holds that arrived while the
-        link was down name themselves once, on the tick after the
-        replay lands them."""
-        pending = self.link.controller.ordered()
-        fresh = [
-            request
-            for request in pending
-            if request.id not in self.seen_hold_ids
-        ]
-        self.seen_hold_ids.update(request.id for request in pending)
-        return fresh
-
-    def drain_sightings(self) -> None:
-        """Flash the off-allowlist sightings the frames landed since
-        the last drain, each on the surface that owns the terminal
-        (#358 carries #201's rule — the exfil signal interrupts
-        wherever the operator is)."""
-        for event in self.link.take_sightings():
-            self.flash_visible(sighting_flash(event))
-
-    def flash_visible(self, message: str) -> None:
-        """Give one message to the surface that owns the terminal: the
-        consent page's status line while it is up, this page's
-        consent line when it is not."""
-        page = self.consent_page()
-        if page is not None:
-            page.flash(message)
-        else:
-            self.flash(message)
-
-    def consent_page(self) -> ConsentPage | None:
-        """The open consent page wherever it sits in the stack (a
-        picker may stand above it)."""
-        for screen in self.app.screen_stack:
-            if isinstance(screen, ConsentPage):
-                return screen
-        return None
 
     def open_consent_page(self) -> None:
         """Push the egress consent page over this page (#454): the
@@ -406,8 +322,8 @@ class WorkspaceScreen(HelpKeys, Screen):
 
     def paint_mounts(self) -> None:
         """Repaint the mounts line (#620, part #624): the row's
-        mounts with the derived state — the per-second row refresh
-        keeps it current, and the editor's reply lands it
+        mounts with the derived state — the row-affecting frames
+        keep it current, and the editor's reply lands it
         immediately."""
         try:
             self.query_one("#mounts", Static).update(
@@ -418,8 +334,8 @@ class WorkspaceScreen(HelpKeys, Screen):
 
     def paint_proxies(self) -> None:
         """Repaint the compact proxies line (#809): the port pairs
-        with their reachability — page start, the link's
-        transitions, and the slow backstop land it, and the tick's
+        with their reachability — page start and the link's
+        transitions land it, and the tick's
         repaint keeps it beside the mounts line."""
         try:
             self.query_one("#proxy-line", Static).update(
@@ -483,8 +399,8 @@ class WorkspaceScreen(HelpKeys, Screen):
             return
         # The host's open-shell count lands on the row the way the
         # listing lands it (#858): client-side, per-host state the
-        # header's shells segment reads — the per-second refresh
-        # keeps it within a heartbeat of each open and close.
+        # header's shells segment reads — the local tick keeps it
+        # within a heartbeat of each open and close.
         fresh["shells"] = count_sessions().get(self.row["id"], 0)
         self.row = fresh
         self.paint_header()
@@ -496,8 +412,12 @@ class WorkspaceScreen(HelpKeys, Screen):
         a notice on the list's status line: a page for a workspace
         that no longer exists offers only refusals. A screen above
         the page (the consent page, the edit form) holds the
-        close until it goes; the per-second read tries again."""
+        close until it goes; the re-armed row event keeps the
+        page's tick retrying (#1019 — the per-second listing
+        read this deferral once rode is gone)."""
         if self.app.screen is not self:
+            if self.link is not None:
+                self.link.row_events.append(True)
             return
         self.app.follow.reopen = None
         self.app.flash(

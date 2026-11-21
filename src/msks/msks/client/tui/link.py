@@ -51,6 +51,36 @@ def proxy_frame(msg: dict) -> bool:
     return str(msg.get("event") or "").startswith("proxy.")
 
 
+def row_frame(msg: dict, workspace_id: str) -> bool:
+    """Whether one decoded frame moves this workspace's row
+    (#1019): a lifecycle transition — the ``workspace.`` family
+    the routes and the watcher publish (created, removed,
+    status, mounts, resized) — naming the workspace under the
+    naming conventions the stream's families use (``id``, and
+    the scalar ``workspace_id`` the consent family uses; no
+    lifecycle frame carries it today, the matcher keeps it so a
+    future frame that does admits unchanged); a volume move the
+    row's facts follow (``home.imported``, ``home.exported``);
+    or a catalog move (``image.changed``) — the frame names no
+    workspace because it moves every row's image cell. Frames
+    for other workspaces and frames the page's own surface
+    already answered (the egress family, whose rules frame the
+    controller lands directly) decide nothing."""
+    event = str(msg.get("event") or "")
+    if event.startswith("image."):
+        return True
+    return named_row_frame(msg, event, workspace_id)
+
+
+def named_row_frame(msg: dict, event: str, workspace_id: str) -> bool:
+    """The named half of :func:`row_frame`: the lifecycle and
+    volume families, matched against the workspace the frames
+    name."""
+    data = msg.get("data") or {}
+    named = (data.get("id"), data.get("workspace_id"))
+    return event.startswith(("workspace.", "home.")) and workspace_id in named
+
+
 class DeciderLink:
     """One workspace's events connection feeding a
     :class:`ConsentController`; start/stop bracket a screen's
@@ -90,6 +120,11 @@ class DeciderLink:
         #: the count is the fact, the frames carry no state the
         #: page paints (the listing owns it).
         self.proxy_events: list[bool] = []
+        #: The row-affecting transitions the frames landed since
+        #: the host last drained them (#1019): the page's tick
+        #: takes them to refetch the row the frame moved. The same
+        #: buffer shape the proxy events keep.
+        self.row_events: list[bool] = []
         self.reconnect_delays = reconnect_delays
         self._ws_factory = ws_factory or default_ws_factory
         self._task: asyncio.Task | None = None
@@ -99,6 +134,14 @@ class DeciderLink:
         #: the next tick. None for the page hosts, whose tick
         #: reads the controller directly.
         self.on_frame = None
+        #: The connection hook (#1019): a callable the host sets
+        #: to learn the moment a connection serves — first or
+        #: reconnect. Frames published while no connection stood
+        #: never landed, so a reconnecting host re-reads what it
+        #: paints from the daemon. None for the hosts whose
+        #: registration replays the truth (the controller's
+        #: snapshot) on every connect.
+        self.on_connect = None
 
     def take_sightings(self) -> list[SecretEvent]:
         """The sightings that landed since the last drain, taken:
@@ -113,6 +156,14 @@ class DeciderLink:
         listing the transitions moved."""
         count = len(self.proxy_events)
         self.proxy_events.clear()
+        return count
+
+    def take_row_events(self) -> int:
+        """The row-affecting transitions that landed since the
+        last drain, counted and cleared (#1019): the caller
+        refetches the row the frames moved."""
+        count = len(self.row_events)
+        self.row_events.clear()
         return count
 
     def start(self) -> None:
@@ -133,7 +184,11 @@ class DeciderLink:
         """Connect, register, pump; reconnect until cancelled — the
         consent app's ladder: backoff on drops, one slow fixed
         retry on an auth refusal, the ladder resets after any
-        connection that reached its serve loop."""
+        connection that reached its serve loop. The two permanent
+        exits are terminal by design: an unusable token never
+        becomes dialable by retrying, and a refused registration
+        is the daemon's own no — the host keeps its standing state
+        and re-reads on its own keypresses until then."""
         attempt = 0
         while True:
             connected, refused, rejected = await self.pump_one()
@@ -178,6 +233,7 @@ class DeciderLink:
             await ws.send(registration_frame(self.workspace_id))
             self.controller.reset()
             self.replay_pending = True
+            self.notify_connect()
             async for raw in ws:
                 if self.land_frame(raw):
                     return True, False, True
@@ -201,8 +257,11 @@ class DeciderLink:
         owns the terminal, and the link's host decides that. A
         proxy transition (#809) lands in its own buffer — the
         controller has no applier for it, and the host's tick
-        refetches the listing the frame moved."""
-        self.note_proxy_event(decode_frame(raw))
+        refetches the listing the frame moved. A row-affecting
+        transition (#1019) lands in its own buffer the same way."""
+        msg = decode_frame(raw)
+        self.note_proxy_event(msg)
+        self.note_row_event(msg)
         outcome, payload = self.controller.apply_frame(raw)
         self.notify_frame(outcome, payload)
         self.note_sighting(outcome, payload)
@@ -218,6 +277,26 @@ class DeciderLink:
         listing the frame moved."""
         if msg is not None and proxy_frame(msg):
             self.proxy_events.append(True)
+
+    def note_row_event(self, msg) -> None:
+        """One decoded frame into the row buffer (#1019) when it
+        moves this workspace's row — the host's tick refetches
+        the row the frame moved."""
+        if msg is not None and row_frame(msg, self.workspace_id):
+            self.row_events.append(True)
+
+    def notify_connect(self) -> None:
+        """Hand the serving moment to the hook, when one is set
+        (#1019) — a host that paints daemon state re-reads it:
+        the frames published while no connection stood never
+        landed. The hook fires on the first connection too, not
+        only reconnects: the host's own opening read and this
+        re-read bracket the startup race — a frame published
+        between the REST answer and the server-side subscribe
+        misses the socket but shows in the re-read, whose REST
+        answer postdates the subscribe."""
+        if self.on_connect is not None:
+            self.on_connect()
 
     def note_sighting(self, outcome: str, payload) -> None:
         """One frame's secret sighting into the sightings buffer
@@ -268,6 +347,7 @@ class AuditLink(DeciderLink):
         seeded replay and the live tail keep their slots across a
         reconnect."""
         self.state = CONNECTED
+        self.notify_connect()
         try:
             async for raw in ws:
                 self.land_frame(raw)

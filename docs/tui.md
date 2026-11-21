@@ -35,9 +35,14 @@ Some actions ask first, in a dialog that shows `y / n` beside
 the question. `y` (or Enter) takes the action. `n`, `q`, or
 Escape leaves everything as it was.
 
-The list re-reads the daemon every five seconds. A workspace changed
-from another surface (the CLI, another operator) appears without a
-keypress.
+The list follows the daemon over the events websocket. A
+workspace changed from another surface (the CLI, another
+operator) appears without a keypress: the daemon publishes every
+listing-affecting move — a create, a removal, a status change, a
+resize, a mounts edit, an image catalog move — and the list
+re-reads on the frame. A
+daemon at rest sends the list nothing; there is no polling
+timer.
 
 The listing's bottom holds a two-line strip with the focused
 workspace's quick facts, under the rows. The first line carries the
@@ -122,7 +127,7 @@ and `msks rsync` write nothing: they are connections, not shells.
 
 The count is per-host. It names the shells open on the host the TUI
 runs on, whatever host the daemon runs on. The daemon is not
-involved: the TUI reads the records on its refresh cadence and sweeps
+involved: the TUI reads the records once a second and sweeps
 the stale ones away. A session whose record cannot be written (a
 read-only state directory, say) runs fine; the count simply does not
 see it.
@@ -208,7 +213,7 @@ open on this host, the first line carries their count after the
 status (`alpha · ● running · 2 shells open`); the segment leaves
 with the last shell's close. The count comes from the
 [session records](#open-shells-and-the-session-records) and
-follows the page's per-second row refresh.
+follows the page's once-a-second local read of them.
 
 The page's header lines and status lines fill the terminal's
 width. The action panel sits centered in its own 64-column block
@@ -296,9 +301,10 @@ proxy is) and no other's. The rows carry the spec in the CLI's
 own grammar (`-L 2201:localhost:22`), the label, and the live status —
 a row the guest cannot reach names its reason beside the word.
 
-The page re-reads the listing every five seconds and on every proxy
-transition the daemon publishes, so a bind that fails while the page
-stands paints itself without a keypress.
+The page re-reads the listing on every proxy transition the
+daemon publishes, so a bind that fails while the page stands
+paints itself without a keypress. There is no polling timer: a
+daemon at rest sends the page nothing.
 
 `a` opens the add form: the workspace (the page's own, shown as its
 name), the direction (`forward (-L)` or `reverse (-R)`), the spec in
@@ -338,9 +344,10 @@ image rm` makes. `d` designates the highlighted catalog row the default
 image, the same POST `msks image default` makes; the row that already
 holds the designation flashes so. Both groups show the build's hash
 prefix beside the ref, so a published row matches its catalog row by
-eye — the same prefix `msks image ls` prints. The page re-reads the
-workspace each second, so the
-dimming follows a start or stop made anywhere, not only on the page.
+eye — the same prefix `msks image ls` prints. The page follows the
+workspace over the events websocket: a lifecycle frame published for
+it re-reads the row, so the dimming follows a start or stop made
+anywhere, not only on the page.
 
 ### The egress consent page
 

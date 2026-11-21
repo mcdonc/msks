@@ -5,9 +5,17 @@ opens the focused workspace's page, and ``e`` opens the secrets
 page (#431). A two-line detail strip at the listing's bottom
 (#849) carries the focused row's quick facts — identity,
 topology, egress, mounts, storage — painted from the standing
-rows and a storage cache the refresh cadence refills; the strip
-is display-only, so it takes no focus and no width from the
-table.
+rows and a storage cache the events-poked refresh refills; the
+strip is display-only, so it takes no focus and no width from
+the table.
+
+The listing follows the daemon through the events socket
+(#1019): a plain-subscriber connection pokes one refresh at
+every frame that moves the listing, and a daemon at rest reads
+nothing periodic from an attached idle client — the standing
+interval the listing kept is gone. The host's own facts (the
+shell counts, the status line's paint) stay on local timers:
+they read no daemon state.
 
 Spatial navigation: arrows walk the rows in reading order, the
 page keys act on the focused row, and ``q`` or Escape quits the
@@ -26,6 +34,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Footer, Input, ListItem, ListView, Static
 
 from ..sshsessions import count_sessions
+from .consent import decode_frame
 from .consent_ui import (
     ConfirmScreen,
     FailurePanel,
@@ -44,6 +53,7 @@ from .detail import (
 from .forms import CreateScreen
 from .help import HelpKeys
 from .importer import ImagesScreen
+from .link import CONNECTED, AuditLink
 from .rows import (
     DEFAULT_SORT,
     LIST_COLUMNS,
@@ -81,12 +91,55 @@ async def guarded_flash(app, label: str, work):
         return None
 
 
-#: The standing listing refresh (#470 L2): the list reloads on
-#: this interval while it owns the screen, so a workspace another
-#: surface moved — the CLI, another operator — appears without a
-#: keypress. An unchanged listing repaints nothing (the rebuild
-#: skips the swap).
-LIST_REFRESH_S = 5.0
+#: The listing's local watch (#1019): the seconds between the
+#: client-side reads — the link's health and the host's shell
+#: counts. Both read no daemon state (a link attribute, the
+#: session records on disk), so the timer keeps its cadence
+#: whatever the events socket does.
+LOCAL_WATCH_S = 1.0
+
+
+def listing_frame(msg: dict) -> bool:
+    """Whether one decoded frame moves the listing (#1019): a
+    lifecycle transition — the ``workspace.`` family the routes
+    and the watcher publish (created, removed, status, mounts,
+    resized) — a volume move the storage strip follows
+    (``home.imported``, ``home.exported``), a catalog move the
+    IMAGE column follows (``image.changed``), or a mode switch
+    (the ``egress.rules`` frame the switch lands). Every other
+    family — the proxies, the secrets, the holds — paints through
+    its own surface, and the listing re-reads nothing for it."""
+    event = str(msg.get("event") or "")
+    return event.startswith(("workspace.", "home.", "image.")) or (
+        event == "egress.rules"
+    )
+
+
+class ListingLink(AuditLink):
+    """The listing's plain-subscriber connection (#1019): the
+    events socket without registration, the proxies page's own
+    lifecycle — this screen holds no decider authority, and the
+    socket's relay carries every published frame to every
+    subscriber. Each listing-affecting frame pokes the listing's
+    refresh, and every connection that comes to serve pokes one
+    too (frames published while no connection stood never
+    landed); nothing else lands anywhere — the rows come from
+    the REST listing, refetched whole."""
+
+    def __init__(self, on_event, *, ws_factory=None) -> None:
+        super().__init__(ws_factory=ws_factory)
+        self.on_event = on_event
+        self.on_connect = on_event
+
+    def land_frame(self, raw: str) -> bool:
+        """One frame's landing: a listing-affecting transition
+        pokes the refresh; the rest is not this screen's state,
+        and no registration was sent, so no rejection can
+        arrive."""
+        msg = decode_frame(raw)
+        if msg is not None and listing_frame(msg):
+            self.on_event()
+        return False
 
 
 class SearchScreen(ModalScreen):
@@ -186,6 +239,13 @@ class MainScreen(HelpKeys, Screen):
     def __init__(self) -> None:
         super().__init__()
         self.rows: list[dict] = []
+        # The listing's subscriber connection (#1019): None until
+        # the screen mounts it, stopped at unmount.
+        self.link: ListingLink | None = None
+        # The link's last watched state (#1019): the local watch
+        # reads the transition off it — a socket that dropped is
+        # the outage's earliest signal.
+        self.link_state: str | None = None
         # The standing column sort (#854): CREATED newest-first is
         # the order the tree opens with; a header click changes
         # it, and every later refresh re-sorts through it.
@@ -197,11 +257,13 @@ class MainScreen(HelpKeys, Screen):
         self.columns = LIST_COLUMNS
         self.shown_once = False
         # The listing refresh's in-flight mark (#776): a skip, not
-        # a cancel — see refresh_rows.
+        # a cancel — see refresh_rows. The poke a skip arms
+        # (#1019): the landing flight serves it.
         self.rows_loading = False
+        self.rows_pending = False
         # The detail strip's storage cache (#849): the last
         # capacity report's per-workspace root-plus-home cost,
-        # refreshed on the listing's cadence — a selection move
+        # refreshed with the listing — a selection move
         # reads it and pays no roundtrip.
         self.storage_used: dict[str, int] = {}
         # The version-skew marker (#852): the last /health
@@ -209,11 +271,11 @@ class MainScreen(HelpKeys, Screen):
         # beside the URL until the versions agree again.
         self.version_skew: str | None = None
         # The listing's reach state (#904): True while the daemon
-        # answers nothing — the marker stands on the status line
-        # and every refresh tick is a retry, the same cadence the
-        # healthy listing already keeps. The first failing
-        # refresh flashes its reason and the recovery flashes
-        # once; the marker carries the state between them.
+        # answers nothing — the marker stands on the status line,
+        # and the link's reconnect ladder keeps the retries coming
+        # (#1019): each reconnect pokes one refresh. The first
+        # failing refresh flashes its reason and the recovery
+        # flashes once; the marker carries the state between them.
         self.daemon_down = False
 
     def compose(self) -> ComposeResult:
@@ -254,10 +316,12 @@ class MainScreen(HelpKeys, Screen):
     def resort_rows(self) -> None:
         """Re-sort the standing rows through the listing's one
         rebuild flight (#854): a click landing while a refresh is
-        in flight is dropped here — its sort state stands, the
-        header carries it, and the in-flight refresh (or the
-        standing interval's next tick) serves the order."""
+        in flight arms the landing flight instead of dropping —
+        its sort state stands and the header carries it, and the
+        armed read serves the order (#1019 — the interval that
+        once served a dropped click is gone)."""
         if self.rows_loading:
+            self.rows_pending = True
             return
         self.rows_loading = True
         self.run_worker(self.resort_standing_rows())
@@ -267,18 +331,72 @@ class MainScreen(HelpKeys, Screen):
             await self.rebuild_rows(self.rows)
         finally:
             self.rows_loading = False
+        self.serve_pending()
 
     def on_mount(self) -> None:
+        self.link = self.make_link()
+        self.link.start()
         self.set_interval(0.5, self.sync_status)
-        # The standing reload (#470 L2): a listing that sits on the
-        # screen keeps following the daemon — rows another surface
-        # moved appear without a keypress, and an unchanged listing
-        # repaints nothing (the rebuild's skip).
-        self.set_interval(LIST_REFRESH_S, self.refresh_rows)
+        # The client-side watch (#1019): the link's health and the
+        # host's shell counts, both read off the daemon's wires.
+        self.set_interval(LOCAL_WATCH_S, self.local_tick)
         # call_after_refresh: the first rebuild waits for the
         # screen's compose stream to settle — a worker racing it
         # queries widgets that are not mounted yet.
         self.call_after_refresh(self.refresh_rows)
+
+    def on_unmount(self) -> None:
+        """The screen is gone: the subscriber closes with it."""
+        if self.link is not None:
+            self.link.stop()
+
+    def make_link(self) -> ListingLink:
+        """The listing's subscriber connection — the tests' seam
+        for a scripted one."""
+        return ListingLink(self.refresh_rows)
+
+    def local_tick(self) -> None:
+        """The client-side watch (#1019): the link's health, then
+        the shell counts. Neither reads the daemon, so the watch
+        keeps its timer whatever the events socket does."""
+        self.watch_link()
+        self.sync_shells()
+
+    def watch_link(self) -> None:
+        """The link's health transition (#904 over #1019): a
+        socket that dropped pokes one refresh — the probe's own
+        reach outcome owns the down marker, the same hand the
+        refresh answers always took — and a socket that came back
+        pokes its own through the link's connect hook (frames
+        were missed while it was down). The marker needs no
+        further probes while it stands: the link's ladder keeps
+        reconnecting, and each reconnect pokes again."""
+        if self.link is None:
+            return
+        state = self.link.state
+        if state == self.link_state:
+            return
+        was, self.link_state = self.link_state, state
+        if was == CONNECTED and state != CONNECTED:
+            self.refresh_rows()
+
+    def sync_shells(self) -> None:
+        """Land the host's open-shell counts on the standing rows
+        (#858 over #1019): the counts are per-host session records
+        the daemon never holds, so the local watch repaints the
+        rows whose count moved — a shell opened in another
+        terminal reads within a second, with no daemon read
+        behind it."""
+        counts = count_sessions()
+        moved = False
+        for row in self.rows:
+            fresh = counts.get(row["id"], 0)
+            if row.get("shells") != fresh:
+                row["shells"] = fresh
+                moved = True
+        if moved:
+            self.paint_rows()
+            self.paint_detail()
 
     def on_screen_resume(self) -> None:
         """Refresh on every return to the list (a page's actions
@@ -314,19 +432,28 @@ class MainScreen(HelpKeys, Screen):
         """Reload the listing; one flight at a time, a skip and not
         a cancel. An exclusive worker cancels the running refresh,
         and a cancellation landing inside the swap (#776's mac-lane
-        data: an interval tick firing while the first build still
+        data: a poke landing while the first build still
         awaits on a starved runner) strands the tree — the old list
         removed, the fresh one never mounted — while the rows
         recorded say the swap finished, so every later refresh
         skips against a listing that never painted. The in-flight
-        mark skips instead; the standing interval's next tick (five
-        seconds) serves the rows, and an ``r`` that lands mid-flight
-        rides the same next tick.
+        mark skips instead; a skipped poke arms the landing flight
+        (#1019 — the standing interval that once served the skip
+        is gone), so a frame that lands mid-flight still gets its
+        read.
         """
         if self.rows_loading:
+            self.rows_pending = True
             return
         self.rows_loading = True
         self.run_worker(self.load_rows)
+
+    def serve_pending(self) -> None:
+        """The poke a flight skipped (#1019): served the moment no
+        flight stands — one more read, no frame lost to a skip."""
+        if self.rows_pending and not self.rows_loading:
+            self.rows_pending = False
+            self.refresh_rows()
 
     async def load_rows(self) -> None:
         failure: str | None = None
@@ -344,6 +471,7 @@ class MainScreen(HelpKeys, Screen):
         finally:
             self.rows_loading = False
         self.land_reach(failure, reach)
+        self.serve_pending()
 
     def land_reach(self, failure: str | None, reach: bool) -> None:
         """Land one refresh's reach outcome (#904): a daemon that
@@ -352,9 +480,10 @@ class MainScreen(HelpKeys, Screen):
         reason — and a refresh that answers leaves it, the flash
         naming the recovery. A refresh that finds the state
         standing decides nothing: the marker is the report, and
-        the same line every five seconds is noise beside it. The
-        standing interval keeps its cadence while the marker
-        stands, so every tick is a reconnect attempt. A failure
+        the same line every few seconds is noise beside it. The
+        link's reconnect ladder keeps the retries coming (#1019):
+        each reconnect pokes one refresh, and the first that
+        answers lands the recovery. A failure
         that is not an outage — a daemon that answers with a
         refusal, a listing the client cannot build — owns no
         marker: the daemon is answering, the refusal names
@@ -404,16 +533,17 @@ class MainScreen(HelpKeys, Screen):
         detail strip read it — keyed by the workspace's id, the
         alias every session record pins under. The count is
         client-side, per-host state, so it lands here on the
-        listing's refresh cadence rather than in the daemon's
-        row; a changed count changes the row, and the standing
+        listing's refresh rather than in the daemon's
+        row (the local watch keeps it moving between refreshes,
+        #1019); a changed count changes the row, and the standing
         comparison repaints it."""
         counts = count_sessions()
         return [dict(row, shells=counts.get(row["id"], 0)) for row in rows]
 
     async def load_storage(self) -> None:
         """Refresh the strip's storage cache (#849) off the
-        daemon's capacity report — the listing's own refresh
-        cadence, fetched beside the rows so the listing's repaint
+        daemon's capacity report — the listing's own refresh,
+        fetched beside the rows so the listing's repaint
         never waits on the disk walk behind it (the daemon runs
         the walk off its event loop; a parked list costs it a
         background stat pass, not a stall). A report that will
@@ -439,7 +569,7 @@ class MainScreen(HelpKeys, Screen):
     async def load_skew(self) -> None:
         """Land the version-skew marker (#852): the daemon's
         /health version against this client's, on the listing's
-        own refresh cadence — the marker refreshes with the rows
+        own refresh — the marker refreshes with the rows
         and leaves when the versions agree. A dial that will not
         come answers None (:func:`fetch_health` owns the
         every-failure-is-None contract) and keeps the standing

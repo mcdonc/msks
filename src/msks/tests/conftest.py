@@ -1,3 +1,4 @@
+import asyncio
 import os
 import shutil
 from pathlib import Path
@@ -63,6 +64,51 @@ def preseeded_migrations(tmp_path_factory):
 
     Model.migrate = migrate
     yield
+
+
+@pytest.fixture(autouse=True)
+def quiet_listing_link(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The listing's subscriber connection, scripted quiet
+    (#1019): the main screen holds one for the app's whole life,
+    and a test that does not care about its frames must not dial
+    the environment. A test that needs frames calls
+    :func:`test_main_tui.scripted_listing` on top — the later
+    patch wins, and both restore at teardown."""
+    from msks.client.tui.main_screen import ListingLink, MainScreen
+
+    class QuietWS:
+        """A socket that connects and never speaks — the listing's
+        quiet seam needs a connection that holds, not frames."""
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self) -> str:
+            await asyncio.Event().wait()  # parked forever
+            raise StopAsyncIteration
+
+    def factory():
+        return QuietWS()
+
+    # The real factory stays reachable beside the patch: the
+    # wiring test reads it (the patch replaces the class
+    # attribute wholesale, and every mounted screen takes the
+    # patched one).
+    MainScreen.make_real_link = MainScreen.make_link
+    monkeypatch.setattr(
+        MainScreen,
+        "make_link",
+        lambda self: ListingLink(self.refresh_rows, ws_factory=factory),
+    )
 
 
 @pytest.fixture(autouse=True)
