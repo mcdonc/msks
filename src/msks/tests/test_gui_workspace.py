@@ -753,10 +753,11 @@ def test_a_refused_registration_flashes_the_current_screen(qt) -> None:
 def test_the_create_opener_opens_the_dialog_over_the_list(
     qt, monkeypatch
 ) -> None:
-    """The Workspaces tab's plus button (#962): the shell opens
-    the create dialog over the bridge it owns, and a landed
-    create — the dialog's accept — refreshes the listing behind
-    it."""
+    """The listing's Add button (#1011, the plus badge's action
+    until the badge left the tab strip, #962): the click crosses
+    to the shell's create dialog — the wiring pin the badge's
+    own test once held — and a landed create refreshes the
+    listing behind it."""
     shell, window, bridge = make_shell(qt)
     opened: list[object] = []
     accepted: list[object] = []
@@ -782,7 +783,7 @@ def test_the_create_opener_opens_the_dialog_over_the_list(
     from msks.client.gui import workspace as workspace_mod
 
     monkeypatch.setattr(workspace_mod, "CreateDialog", FakeDialog)
-    shell.open_create()
+    shell.listing.add_button.click()
     assert opened == [bridge]
     # A landed create refreshes the listing: the connected slot
     # is the list's own refresh.

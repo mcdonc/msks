@@ -57,8 +57,8 @@ def table_edge(key: int, current: int, last: int) -> bool | None:
     column and Left on the first hand the keyboard out of the
     table — None keeps the walk inside the cells. The chain's
     own order carries the keyboard onward (the audit group
-    below, the bar above), the spatial-navigation rule in the
-    page's reading order."""
+    below, the strip above, the action bar at the bottom), the
+    spatial-navigation rule in the page's reading order."""
     if key == QtCore.Qt.Key.Key_Right and current >= last:
         return True
     if key == QtCore.Qt.Key.Key_Left and current <= 0:
@@ -168,10 +168,12 @@ class SecretsTab(QtWidgets.QWidget):
         self.layout_widgets()
 
     def layout_widgets(self) -> None:
-        """The tab's panes (#997): the refresh bar on top, the
-        placeholder listing and the audit group stacked beneath
-        it — each spanning the window's whole width — and the
-        standing counts on the bottom line."""
+        """The tab's panes (#997, #1011): the placeholder listing
+        and the audit group stacked full width — each spanning
+        the window's whole width — the Refresh and Mint buttons
+        in a row at the bottom of the page (the detail pages'
+        Mounts and Proxies pattern), and the standing counts on
+        the bottom line."""
         bar = QtWidgets.QHBoxLayout()
         bar.addWidget(self.refresh_button)
         bar.addWidget(self.mint_button)
@@ -185,9 +187,9 @@ class SecretsTab(QtWidgets.QWidget):
         audit_rows.addWidget(self.audit_table)
         audit_rows.addWidget(self.audit_empty)
         columns = QtWidgets.QVBoxLayout(self)
-        columns.addLayout(bar)
         columns.addWidget(listing, stretch=1)
         columns.addWidget(audit, stretch=1)
+        columns.addLayout(bar)
         columns.addWidget(self.counts)
 
     def build_table(self, table: ListTable, sortable: bool = True) -> None:
@@ -622,11 +624,14 @@ class SecretsTab(QtWidgets.QWidget):
         self, watched: QtCore.QObject, event: QtCore.QEvent
     ) -> bool:
         """The bar buttons' arrow bridges (#962's rule) beside a
-        pane's own resize (#997): Up hands the keyboard to
-        whatever stands above the tab — the strip — and Down
-        enters the groups below, so the arrows cross the page
-        in reading order without a Tab; a group pane's resize
-        re-flows its columns."""
+        pane's own resize (#997): Up from the page's bottom
+        button row climbs the reading order — Refresh from
+        Mint, the audit group from the row's head — and Down
+        hands the keyboard out of the page, onward down the
+        chain (the strip the wrap reaches), so the arrows cross
+        the page in reading order without a Tab; a group pane's
+        resize re-flows its columns.
+        """
         self.pane_resized(watched, event)
         if watched not in (self.refresh_button, self.mint_button) or (
             event.type() != QtCore.QEvent.Type.KeyPress

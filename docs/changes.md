@@ -312,6 +312,15 @@ tagged `vX.Y.Z`.
   background, so the page the operator stands on reads at a
   glance. The tint follows the session palette, and the
   keyboard keeps a dotted rim on the focused tab.
+- **The GUI's tab pages carry their action buttons at the
+  bottom (#1011).** The Workspaces tab's green plus badge is
+  gone from the tab strip: Add, Edit, and Remove sit in a row
+  at the bottom of the page (the pattern the detail page's
+  Mounts and Proxies pages set), Add opening the create dialog
+  and Edit and Remove acting on the selected row, Remove
+  behind its confirmation. The Secrets tab's Refresh and Mint
+  buttons and the Images tab's Refresh button moved from the
+  top of their pages to the same bottom row.
 
 - **The GUI secrets page fills the window and drops the
   sentinel pane (#997).** The placeholder listing and the audit

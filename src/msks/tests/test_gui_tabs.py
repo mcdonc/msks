@@ -105,31 +105,20 @@ def test_the_strip_opens_on_the_workspaces_tab(qt) -> None:
     assert tabs.currentWidget() is page
 
 
-def test_the_workspaces_tab_carries_the_create_opener(qt) -> None:
-    """The create opener (#962): a plus button embedded in the
-    Workspaces tab, its click asking for the create dialog —
-    the shell that owns the bridge answers it."""
+def test_the_workspaces_tab_carries_no_button(qt) -> None:
+    """The strip stays plain (#1011): the create opener's plus
+    badge is gone from the Workspaces tab — the create action
+    lives on the listing's own button row at the bottom of the
+    page — so the tab itself carries no embedded button."""
     page = qt.QtWidgets.QWidget()
     tabs = MainTabs(page)
     window_over(qt, tabs)
-    plus = tabs.tabBar().tabButton(
-        0, qt.QtWidgets.QTabBar.ButtonPosition.RightSide
-    )
-    assert plus is not None
-    assert plus.text() == ""
-    # The badge (#964): a drawn, multicolor green icon — not
-    # the bare text glyph the opener first wore.
-    assert not plus.icon().isNull()
-    size = plus.icon().availableSizes()[0]
-    assert (size.width(), size.height()) == (32, 32)
-    # The pointing hand over the badge (#964).
-    assert plus.cursor().shape() == qt.QtCore.Qt.CursorShape(
-        qt.QtCore.Qt.CursorShape.PointingHandCursor
-    )
-    asked: list[bool] = []
-    tabs.create_requested.connect(lambda: asked.append(True))
-    plus.click()
-    assert asked == [True]
+    for side in (
+        qt.QtWidgets.QTabBar.ButtonPosition.LeftSide,
+        qt.QtWidgets.QTabBar.ButtonPosition.RightSide,
+    ):
+        assert tabs.tabBar().tabButton(0, side) is None
+    assert not hasattr(tabs, "create_requested")
 
 
 def test_the_bar_carries_the_active_tab_mark(qt) -> None:

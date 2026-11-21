@@ -184,8 +184,8 @@ class ImagesTab(QtWidgets.QWidget):
         self.refresh_button = QtWidgets.QPushButton("Refresh", self)
         self.refresh_button.clicked.connect(self.refresh)
         # The button's arrow bridges (#962's rule, the page's
-        # own): Down enters the groups below, Up hands the
-        # keyboard back to whatever stands above — the strip.
+        # own): Up from the page's bottom bar enters the groups
+        # above, Down hands the keyboard out of the page.
         self.refresh_button.installEventFilter(self)
         self.import_timer = QtCore.QTimer(self)
         self.import_timer.setInterval(IMPORT_TICK_MS)
@@ -205,15 +205,16 @@ class ImagesTab(QtWidgets.QWidget):
             QtWidgets.QSizePolicy.Policy.Preferred,
         )
         # The refresh action leads the bar (#964, the operator's
-        # ask): the button on the left, the flash line taking
-        # the rest.
-        top = QtWidgets.QHBoxLayout()
-        top.addWidget(self.refresh_button)
-        top.addWidget(self.status, stretch=1)
+        # ask, the bar at the page's bottom since #1011 — the
+        # Mounts and Proxies pattern): the button on the left,
+        # the flash line taking the rest.
+        bar = QtWidgets.QHBoxLayout()
+        bar.addWidget(self.refresh_button)
+        bar.addWidget(self.status, stretch=1)
         layout = QtWidgets.QVBoxLayout(self)
-        layout.addLayout(top)
         layout.addWidget(self.group(CATALOG_GROUP, self.catalog_table))
         layout.addWidget(self.group(PUBLISHED_GROUP, self.published_table))
+        layout.addLayout(bar)
         layout.addWidget(self.counts)
         self.setLayout(layout)
 
@@ -772,11 +773,12 @@ class ImagesTab(QtWidgets.QWidget):
 
     def button_key(self, watched: QtCore.QObject, event) -> bool:
         """The refresh button's arrow bridges (#962's rule): Up
-        hands the keyboard to whatever stands above the tab —
-        the strip — and Down enters the groups below, so the
-        arrows cross the page in reading order without a Tab.
-        The button's own chain walk, not the tab's: the move
-        starts from where the operator stands."""
+        from the page's bottom bar enters the published group
+        above it, and Down hands the keyboard out of the page —
+        onward down the chain, the strip the wrap reaches — so
+        the arrows cross the page in reading order without a
+        Tab. The button's own chain walk, not the tab's: the
+        move starts from where the operator stands."""
         if watched is not self.refresh_button or (
             event.type() != QtCore.QEvent.Type.KeyPress
         ):

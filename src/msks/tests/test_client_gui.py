@@ -324,9 +324,9 @@ def test_the_gui_window_opens_offscreen(
         opened["geometry"] = [
             (w.x(), w.y(), w.width(), w.height()) for w in windows
         ]
-        # The strip's shape read while the window stands (#962):
-        # the tabs, their labels, the current one, and the
-        # Workspaces tab's create opener.
+        # The strip's shape read while the window stands (#962,
+        # #1011): the tabs, their labels, the current one, and
+        # the Workspaces tab's side staying buttonless.
         opened["tabs"] = [
             (
                 type(w.centralWidget()).__name__,
@@ -412,11 +412,10 @@ def test_the_gui_window_opens_offscreen(
         ("Ctrl+-",),
         ("Ctrl+0",),
     ]
-    # The create opener rides the tab (#962): a plus button
-    # embedded in the Workspaces tab.
-    plus = opened["plus"][0]
-    assert plus is not None
-    assert not plus.icon().isNull()  # the drawn green badge (#964)
+    # The strip stays plain (#1011): the Workspaces tab's side
+    # carries no button — the create action lives on the
+    # listing's own button row, the page's bottom bar.
+    assert opened["plus"][0] is None
 
     # Each run rescales the shared application's font (#939:
     # one scale per open), so a second run in one process would
@@ -535,7 +534,6 @@ def test_open_window_reuses_an_existing_app(
     central: list[object] = []
     built: list[object] = []
     screens: list[object] = []
-    creates: list[object] = []
     images: list[tuple[object, str]] = []
     zooms: list[tuple[object, object]] = []
     windows: list[object] = []
@@ -570,17 +568,6 @@ def test_open_window_reuses_an_existing_app(
             retargets.append(hub)
 
     monkeypatch.setattr(zoom_mod, "Zoom", FakeZoom)
-
-    class CreateSignal:
-        """The strip's create opener (#962): the window path
-        connects the shell's slot on it — the recording pins the
-        wiring."""
-
-        def __init__(self) -> None:
-            self.slots: list[object] = []
-
-        def connect(self, slot: object) -> None:
-            creates.append(slot)
 
     class FakeRect:
         """The window geometry's shape for the save pin (#939):
@@ -632,9 +619,6 @@ def test_open_window_reuses_an_existing_app(
             self.hub = FakeShellHub()  # the zoom's handoff (#976)
             self.listing = FakeListing()  # the picker's row (#1009)
 
-        def open_create(self) -> None:
-            pass  # the wiring pin reads the bound method, not the call
-
     monkeypatch.setattr(workspace_mod, "WorkspaceShell", FakeScreen)
 
     class FakeImagesTab:
@@ -663,10 +647,9 @@ def test_open_window_reuses_an_existing_app(
         """The strip the shell lands under (#962): the stub the
         window path takes for the real tab widget — the shell is
         its first page, the Workspaces tab, the Images tab's
-        page lands beside it (#964), and its create opener
-        lands on the shell."""
-
-        create_requested = CreateSignal()
+        page lands beside it (#964). The strip carries no
+        signals of its own since the plus badge left it
+        (#1011)."""
 
         def __init__(self, page: object) -> None:
             self.page = page
@@ -852,9 +835,6 @@ def test_open_window_reuses_an_existing_app(
         "Images",
         "Secrets",
     ]
-    # The create opener lands on the shell (#962): the strip's
-    # plus button opens the shell's own create dialog.
-    assert creates[:1] == [screens[0].open_create]
     # The zoom takes the shell's own hub and the window (#976):
     # the terminals it steps are the shell's, the keys sit on
     # the window.
@@ -895,10 +875,9 @@ def test_open_window_keeps_a_user_style_choice(
     class FakeTabs:
         """The strip stub (#962): the shell lands under it, the
         Images tab's page beside it (#964) — the shape the
-        style test never reads past, the opener's connect the
-        no-op signal's own."""
-
-        create_requested = FakeSignal()
+        style test never reads past; the strip carries no
+        signals of its own since the plus badge left it
+        (#1011)."""
 
         def __init__(self, page: object) -> None:
             pass
@@ -955,9 +934,6 @@ def test_open_window_keeps_a_user_style_choice(
         ) -> None:
             self.hub = object()  # the zoom's handoff (#976)
             self.listing = FakeListing()  # the picker's row (#1009)
-
-        def open_create(self) -> None:
-            pass
 
     class FakeZoom:
         """The zoom's stub: built, never read — the style test

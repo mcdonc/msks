@@ -739,6 +739,10 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         self.listing = WorkspaceList(bridge)
         self.listing.opened.connect(self.open_detail)
         self.listing.shell_requested.connect(self.open_shell)
+        # The listing's Add button (#1011): the create ask lands
+        # here — the shell owns the bridge, so the create dialog
+        # is the shell's own surface.
+        self.listing.create_requested.connect(self.open_create)
         self.detail = WorkspaceDetail(bridge, self.hub)
         self.detail.back.connect(self.show_listing)
         self.detail.removed.connect(self.listing_removed)
@@ -808,10 +812,11 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
 
     @QtCore.Slot()
     def open_create(self) -> None:
-        """The Workspaces tab's plus button (#962): the create
-        dialog atop the workspaces — the TUI's create popup's
-        counterpart (#309) — a landed create refreshing the
-        listing behind it; a cancel or a refusal decides
+        """The listing's Add button (#1011, the plus badge's
+        action until the badge left the tab strip, #962): the
+        create dialog atop the workspaces — the TUI's create
+        popup's counterpart (#309) — a landed create refreshing
+        the listing behind it; a cancel or a refusal decides
         nothing."""
         dialog = CreateDialog(self.bridge)
         dialog.accepted.connect(self.listing.refresh)
