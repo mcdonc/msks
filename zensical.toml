@@ -23,6 +23,7 @@ nav = [
   { "The host doctor" = "doctor.md" },
   { "First run" = "first-run.md" },
   { "The TUI" = "tui.md" },
+  { "The GUI" = "gui.md" },
   { "Host Share Mounts" = "mounts.md" },
   { "Guest Networking" = "networking.md" },
   { "Workspace Proxies" = "proxies.md" },

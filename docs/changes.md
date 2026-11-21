@@ -19,6 +19,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI docs chapter (`docs/gui.md`) (#1008).** The
+  operator docs for the desktop client: the install, the
+  connection with its picker, the workspace list and the detail
+  page's four tabs, the Images and Secrets tabs, the zoom keys,
+  and the external-terminal launcher. The chapter embeds an
+  offscreen-captured screenshot for every documented surface,
+  and the docs site's nav lists it beside the TUI chapter.
+
 - **The macOS menu bar (#1007).** The GUI window on macOS
   carries the platform's menu bar with the two standard roles:
   About opens a dialog centered on the window naming the client
