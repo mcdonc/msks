@@ -463,6 +463,10 @@ async def test_resolve_fail_closes_when_cancelled_midflight(
     """A cancellation landing after the pop fail-closes the hold
     (the consumer's await would hang otherwise)."""
     app, _frames, _queue = engine_app
+    # The fixture's short timeout is for the expiry tests; this
+    # one holds live through two awaits before the resolve, so
+    # give it room under load.
+    app.state.settings.net.consent_timeout_s = 30.0
     engine = app.state.consent
     app.state.deciders.register(1, "ws-interactive")
     future = await engine.hold("ws-interactive", "y.example", 443)
