@@ -244,13 +244,21 @@ def test_the_parser_help_lists_gui(
 ) -> None:
     """The help names the command, and parsing stays Qt-free:
     the help render never imports the binding."""
+    # A GitHub runner's GITHUB_ACTIONS (or FORCE_COLOR) hands
+    # rich a forced terminal, and the command names render
+    # ANSI-wrapped — a raw ``" gui "`` then matches nothing
+    # (the gui extra's docstring once supplied the match by
+    # carrying the words "the gui extra" in the help text
+    # itself, #927). The assertion reads the de-colored output,
+    # so the command row is what matches wherever the test
+    # runs.
     with pytest.raises(SystemExit) as raised:
         cli.main(["--help"])
     assert raised.value.code == 0
-    assert " gui " in capsys.readouterr().out
+    assert " gui " in re.sub(r"\x1b\[[0-9;]*m", "", capsys.readouterr().out)
 
 
-def test_the_gui_dependencies_ride_the_base_install() -> None:
+def test_the_gui_dependencies_are_base_dependencies() -> None:
     """PySide6 and the terminal library walk through the base
     dependencies (#1023, reversing #927's extra): the plain
     ``pip install msks`` runs the GUI too, and no optional
@@ -259,12 +267,20 @@ def test_the_gui_dependencies_ride_the_base_install() -> None:
     libghostty-vt."""
     deps = list(PYPROJECT["project"]["dependencies"])
     base = {dep_name(d) for d in deps}
-    assert "pyside6" not in base  # the umbrella stays out
-    assert "pyside6-essentials" in base
-    assert "pyghostty" in base
-    assert "PySide6-Essentials>=6.8,<6.13" in deps
-    assert "pyghostty==0.1.4" in deps
-    assert "optional-dependencies" not in PYPROJECT["project"]
+    assert "pyside6" not in base, "the PySide6 umbrella entered the base deps"
+    assert "pyside6-essentials" in base, (
+        "PySide6-Essentials left the base deps"
+    )
+    assert "pyghostty" in base, "pyghostty left the base deps"
+    assert "PySide6-Essentials>=6.8,<6.13" in deps, (
+        "the PySide6-Essentials floor or ceiling moved"
+    )
+    assert "pyghostty==0.1.4" in deps, "the pyghostty pin moved"
+    assert "optional-dependencies" not in PYPROJECT["project"], (
+        "an optional extra returned — the GUI deps are base "
+        "dependencies (#1023); a new extra for other purposes "
+        "needs this assert revisited"
+    )
 
 
 def test_the_gui_window_opens_offscreen(

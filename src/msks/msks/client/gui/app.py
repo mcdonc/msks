@@ -25,13 +25,14 @@ from .rows import WINDOW_TITLE
 from .shortcut import DESKTOP_ID, ICON_FILE, icon_dir
 
 # What a stripped or partial install hears when it asks for
-# the window (#928): the binding is a base dependency (#1023),
-# so its absence means the install itself is broken — one
-# stderr line, the client's error convention, naming the
-# reinstall that brings the Qt binding back.
+# the window (#928) — and what a nix-built install hears by
+# design: the nix package is the daemon's closure and strips
+# the binding (#1023), so the line names the pip install for
+# both shapes. One stderr line, the client's error convention.
 HINT = (
-    "msks: the desktop GUI needs PySide6, a base dependency: "
-    "reinstall msks (pip install --force-reinstall msks)"
+    "msks: the desktop GUI needs PySide6, a base dependency of "
+    "the wheel: pip install --force-reinstall msks (a nix-built "
+    "install: pip install msks)"
 )
 
 # The binding is installed but will not load (a broken wheel set

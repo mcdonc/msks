@@ -93,16 +93,21 @@ buildPythonPackage {
   # requirement line (a bracketed entry would be a sed bracket
   # expression and match nothing).
   #
-  # The GUI dependencies (#1023) — PySide6-Essentials and the
+  # The GUI dependencies (#1023) — pyside6-essentials and the
   # exactly-pinned pyghostty dev snapshot — are stripped the
   # same way: the nix package is the daemon's closure
   # (mainProgram msksd), and the pinned nixpkgs carries neither
   # name (pyghostty only ships as the wheel the base install
   # pins). The GUI stays a pip surface on a nix host: install
-  # the wheel (`pip install msks`) for `msks gui`.
+  # the wheel (`pip install msks`) for `msks gui`. The entries
+  # are lowercase because the match is case-sensitive: the
+  # remove hook's sed compares against the wheel METADATA, and
+  # hatchling normalizes every dependency name to lower case
+  # there (PEP 503) — a mixed-case entry matches nothing and
+  # the runtime-deps check fails the build.
   pythonRemoveDeps = [
     "uvicorn"
-    "PySide6-Essentials"
+    "pyside6-essentials"
     "pyghostty"
   ];
 

@@ -65,14 +65,18 @@ def nix_removed_dependency_names() -> set[str]:
     """The names msks-pkg.nix's ``pythonRemoveDeps`` strips from
     the wheel metadata at build time: the mirror tests subtract
     them, so a stripped name is a deliberate, visible decision
-    rather than silent drift."""
+    rather than silent drift.
+
+    The entries are kept verbatim, mixed case included: the
+    remove hook's sed matches the wheel METADATA case-
+    sensitively and hatchling normalizes dependency names to
+    lower case there, so a mixed-case entry strips nothing —
+    and shows up here as a name the mirror cannot match."""
     nix = strip_comments(PKG_NIX.read_text())
     start = nix.index("pythonRemoveDeps = [")
     body = nix[start + len("pythonRemoveDeps = [") : nix.index("]", start)]
     return {
-        line.strip().strip('"').lower()
-        for line in body.splitlines()
-        if line.strip()
+        line.strip().strip('"') for line in body.splitlines() if line.strip()
     }
 
 
@@ -112,8 +116,12 @@ def test_no_extra_nix_dependencies_beyond_pyproject() -> None:
 def test_the_removal_list_carries_only_the_known_names() -> None:
     """pythonRemoveDeps is pinned to the names the lean-closure
     stance covers (#1023): uvicorn re-served plain, and the two
-    GUI names the pip surface owns. A new removal is a deliberate
-    decision — this test is where it gets recorded."""
+    GUI names the pip surface owns. The names are lower case
+    because the hook's sed matches the METADATA exactly and
+    hatchling normalizes dependency names there — the pinned
+    set fails the moment a mixed-case entry slips in. A new
+    removal is a deliberate decision — this test is where it
+    gets recorded."""
     assert nix_removed_dependency_names() == {
         "uvicorn",
         "pyside6-essentials",
