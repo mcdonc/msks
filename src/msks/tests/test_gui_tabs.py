@@ -134,7 +134,7 @@ def test_the_workspaces_tab_carries_the_create_opener(qt) -> None:
 
 def test_the_bar_carries_the_active_tab_mark(qt) -> None:
     """The strip's active-tab mark (#1012): the bar wears the
-    shared sheet — the accent underline and tint the workspace
+    shared sheet — the accent tint the workspace
     detail strip carries too, so both tab levels read the same
     way."""
     page = qt.QtWidgets.QWidget()

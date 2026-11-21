@@ -1,6 +1,6 @@
 """The tab strips' active-tab mark (#1012): the accent-tinted
 background the selected tab carries on every strip the window
-owns. The sheet is colored from the bar's own palette, the
+owns. The sheet is colored from the session palette, the
 tint itself is pinned by pixel under the offscreen platform
 (the mark is paint, and a string assert alone would not say
 the tab renders it), the mark recolors when the palette
@@ -25,8 +25,8 @@ from msks.client.gui.tabstyle import (  # noqa: E402
     HOVER_ALPHA,
     TINT_ALPHA,
     active_sheet,
+    blended,
     mark_active,
-    rgba,
 )
 
 
@@ -98,7 +98,7 @@ def near(seen, wanted, tol: int = 32) -> bool:
 
 
 def tinted(qt, accent, base, alpha: int):
-    """The color the sheet's rgba fills render: the accent at
+    """The color the sheet's fills render: the accent at
     the given alpha over the base, the blend Qt's own painter
     makes of the two."""
     mixed = qt.QtGui.QColor(
@@ -147,18 +147,11 @@ def test_the_sheet_paints_the_palette_accent(qt) -> None:
     assert sheet == active_sheet()
     accent, base = palette_colors(qt, bar)
     assert base.name() in sheet  # the tab's own base
-    assert f"rgba({accent.red()}," in sheet  # the tints
-    # The hover leans toward the mark at a weaker weight
-    # (#1012): the accent at HOVER_ALPHA, under the selected
-    # tab's TINT_ALPHA.
-    assert (
-        rgba(
-            qt.QtGui.QColor(
-                accent.red(), accent.green(), accent.blue(), HOVER_ALPHA
-            )
-        )
-        in sheet
-    )
+    # The fills are the accent blended over the base, opaque
+    # (#1012): the selected tab at TINT_ALPHA, the pointer's
+    # hover at the weaker HOVER_ALPHA.
+    assert blended(accent, base, TINT_ALPHA) in sheet
+    assert blended(accent, base, HOVER_ALPHA) in sheet
     assert "QTabBar::tab:selected" in sheet
     assert "QTabBar::tab:hover:!selected" in sheet
     assert "QTabBar::tab:focus" in sheet
@@ -193,6 +186,27 @@ def test_the_tint_follows_the_selection(qt) -> None:
     assert (bar.tabRect(0), bar.tabRect(1)) == rects
 
 
+def test_the_hovered_tab_leans_toward_the_mark(qt) -> None:
+    """The pointer's mark as paint (#1012): the tab under the
+    pointer renders the accent at a weaker weight than the
+    selected tab's tint — the same blend over the tab's own
+    base, pinned by pixel the way the tint is, so a fill that
+    cancels into the backdrop on some palette cannot pass for
+    a hover again. The weaker weight itself is the sheet's own
+    arithmetic (HOVER_ALPHA against the selected tab's
+    TINT_ALPHA), pinned by the sheet's string, not by a color
+    distance the probe's tolerance cannot carry."""
+    from PySide6.QtTest import QTest
+
+    bar = shown_bar(qt, "Shells", "Mounts")
+    qt.app.processEvents()
+    accent, base = palette_colors(qt, bar)
+    center = bar.tabRect(1).center()
+    QTest.mouseMove(bar, center)
+    qt.app.processEvents()
+    assert near(tab_fill(qt, bar, 1), tinted(qt, accent, base, HOVER_ALPHA))
+
+
 def test_the_mark_recolors_when_the_palette_changes(qt) -> None:
     """The mark follows the session's palette (#1012): a
     palette that lands after the sheet — the session switching
@@ -215,8 +229,8 @@ def test_the_mark_recolors_when_the_palette_changes(qt) -> None:
         qt.app.processEvents()
         after = bar.styleSheet()
         assert after != before
-        assert f"rgba({fresh.red()}," in after
         base = original.color(qt.QtGui.QPalette.ColorRole.Button)
+        assert blended(fresh, base, TINT_ALPHA) in after
         assert near(tab_fill(qt, bar, 0), tinted(qt, fresh, base, TINT_ALPHA))
     finally:
         qt.app.setPalette(original)

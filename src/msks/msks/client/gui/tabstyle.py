@@ -18,14 +18,15 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 #: The selected tab's background tint, alpha over the tab's own
 #: base (#1012): the Highlight color at a fraction of its
-#: strength — a shift the eye catches without a shout.
+#: strength — a shift the eye catches without a shout. The
+#: sheet paints the blend opaque, the accent over the tab's
+#: Button base, so the shift the palette sees is the accent's
+#: own whatever the backdrop under the bar.
 TINT_ALPHA = 66
 
 #: The pointer's hover tint, alpha (#1012): the same accent,
 #: weaker than the selected tab's — the tab the pointer crosses
-#: leans toward the mark without wearing it. A lightness step
-#: (the platform style's own hover idea) shifts too little to
-#: read at any weight the palette carries.
+#: leans toward the mark without wearing it.
 HOVER_ALPHA = 32
 
 #: The focused tab's dotted outline, pixels (#1012): the
@@ -46,6 +47,15 @@ PAD_Y = 4
 RADIUS_PX = 4
 
 
+#: The palette events the watcher answers (#1012): the ones a
+#: session's palette change delivers, whichever object it hands
+#: them to.
+PALETTE_EVENTS = (
+    QtCore.QEvent.Type.PaletteChange,
+    QtCore.QEvent.Type.ApplicationPaletteChange,
+)
+
+
 def mark_active(bar: QtWidgets.QTabBar) -> None:
     """Give one tab bar the active-tab mark (#1012): the
     stylesheet :func:`active_sheet` builds for the session
@@ -63,30 +73,36 @@ def mark_active(bar: QtWidgets.QTabBar) -> None:
         PaletteWatcher(bar)
 
 
-def rgba(color: QtGui.QColor) -> str:
-    """One color as a stylesheet ``rgba()`` fill, the alpha
-    the sheet's tints carry over the tab's base."""
-    parts = (color.red(), color.green(), color.blue(), color.alpha())
-    return f"rgba({parts[0]}, {parts[1]}, {parts[2]}, {parts[3]})"
+def blended(accent: QtGui.QColor, base: QtGui.QColor, alpha: int) -> str:
+    """The accent over the base at an alpha, as one opaque
+    color name (#1012): the fill the sheet paints is the
+    blend itself, not a translucent rgba over whatever the
+    bar shows behind the tab — a blend over the tab's own
+    base reads the same shift on a light palette and a dark
+    one, where the bar's backdrop sits under the base and a
+    translucent fill would cancel into it."""
+    return QtGui.QColor(
+        (accent.red() * alpha + base.red() * (255 - alpha)) // 255,
+        (accent.green() * alpha + base.green() * (255 - alpha)) // 255,
+        (accent.blue() * alpha + base.blue() * (255 - alpha)) // 255,
+    ).name()
 
 
 def active_sheet() -> str:
     """The mark as a stylesheet string (#1012), colored from
-    the session palette — the application's own, not the bar's:
-    the sheet owns the bar's paint once applied, and a bar the
-    stylesheet paints freezes its own palette, so the session
-    is the one source that stays live. Every tab paints the
-    palette's Button base, the selected tab paints the
-    Highlight tint, the pointer's hover leans an unselected tab
-    toward the accent at a weaker weight, and the keyboard's
-    focus dots the tab's rim in the palette's own mid tone."""
+    the session palette — the application's own, one live
+    source for every strip: the palette the session's theme
+    change moves, and the one the watcher reads back on the
+    recolor. Every tab paints the palette's Button base, the
+    selected tab paints the Highlight tint over it, the
+    pointer's hover leans an unselected tab toward the accent
+    at a weaker weight, and the keyboard's focus dots the
+    tab's rim in the palette's own mid tone."""
     palette = QtGui.QGuiApplication.palette()
     accent = palette.color(QtGui.QPalette.ColorRole.Highlight)
     base = palette.color(QtGui.QPalette.ColorRole.Button)
-    tint = QtGui.QColor(accent)
-    tint.setAlpha(TINT_ALPHA)
-    hover = QtGui.QColor(accent)
-    hover.setAlpha(HOVER_ALPHA)
+    tint = blended(accent, base, TINT_ALPHA)
+    hover = blended(accent, base, HOVER_ALPHA)
     mid = palette.color(QtGui.QPalette.ColorRole.Mid)
     return f"""
         QTabBar::tab {{
@@ -97,10 +113,10 @@ def active_sheet() -> str:
             padding: {PAD_Y}px {PAD_X}px;
         }}
         QTabBar::tab:hover:!selected {{
-            background: {rgba(hover)};
+            background: {hover};
         }}
         QTabBar::tab:selected {{
-            background: {rgba(tint)};
+            background: {tint};
         }}
         QTabBar::tab:focus {{
             border: {FOCUS_PX}px dotted {mid.name()};
@@ -113,13 +129,14 @@ class PaletteWatcher(QtCore.QObject):
     :func:`active_sheet` bakes are the palette's own at apply
     time, and a session that changes its palette under a live
     window would leave the strips wearing the old accent. The
-    watcher sits on the application, not the bar: the bar the
-    stylesheet paints freezes its own palette, and the palette
-    events never reach it — the session's change lands on the
-    windows and the plain widgets, and the application sees
-    every event of every object. The watcher's lifetime is the
-    bar's (its parent), and a deleted Qt object unregisters its
-    own filters, so teardown leaves nothing behind."""
+    watcher sits on the application, not the bar: the change
+    arrives as palette events on whatever objects the session
+    hands them to — the application, a window, a plain widget —
+    and the application's own filter sees the events of every
+    object, so the strips recolor from whichever change the
+    session delivered. The watcher's lifetime is the bar's
+    (its parent), and a deleted Qt object unregisters its own
+    filters, so teardown leaves nothing behind."""
 
     def __init__(self, bar: QtWidgets.QTabBar) -> None:
         super().__init__(bar)
@@ -127,10 +144,6 @@ class PaletteWatcher(QtCore.QObject):
         QtCore.QCoreApplication.instance().installEventFilter(self)
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
-        kinds = (
-            QtCore.QEvent.Type.PaletteChange,
-            QtCore.QEvent.Type.ApplicationPaletteChange,
-        )
-        if event.type() in kinds:
+        if event.type() in PALETTE_EVENTS:
             mark_active(self.bar)
         return False
