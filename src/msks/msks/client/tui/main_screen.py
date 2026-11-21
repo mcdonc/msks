@@ -109,10 +109,8 @@ def listing_frame(msg: dict) -> bool:
     — the proxies, the secrets, the holds — paints through its
     own surface, and the listing re-reads nothing for it."""
     event = str(msg.get("event") or "")
-    return (
-        event.startswith("workspace.")
-        or event.startswith("home.")
-        or event == "egress.rules"
+    return event.startswith(("workspace.", "home.")) or (
+        event == "egress.rules"
     )
 
 

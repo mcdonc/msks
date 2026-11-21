@@ -1154,9 +1154,18 @@ async def test_the_listing_counts_open_shells() -> None:
         await wait_for(lambda: "»1" in row_text(app, 0))
         assert "»1 stopped" in row_text(app, 0)
         await wait_for(lambda: "shells »1" in detail_text(app))
-        # Both startup pokes (the mount's read and the link's
-        # connect poke) have landed before the close is watched.
-        await wait_for(lambda: data.fetches >= 2)
+        # The startup pokes have settled before the close is
+        # watched: the link serves (its connect poke ran — the
+        # state and the poke land in one step) and no listing
+        # flight stands.
+        screen = app.screen
+        await wait_for(
+            lambda: (
+                screen.link is not None
+                and screen.link.state == link_mod.CONNECTED
+                and not screen.rows_loading
+            )
+        )
         # The session closes: the record unlinks at once, and the
         # local watch repaints the row without its marker — an
         # unchanged daemon row, no refresh, no daemon read.
@@ -4336,8 +4345,10 @@ async def test_the_status_summary_follows_the_pushed_frames(
         data.rows = [row(status="running"), row(id="ws-b", status="running")]
         # The hub's frame through the scripted socket: a status
         # transition pokes the listing's refresh.
-        factory.made[0].push('{"event": "workspace.status", '
-            '"data": {"id": "ws-a", "status": "running"}}')
+        factory.made[0].push(
+            '{"event": "workspace.status", '
+            '"data": {"id": "ws-a", "status": "running"}}'
+        )
         await wait_for(lambda: "all running" in status_text(app))
 
 
@@ -4374,9 +4385,18 @@ async def test_a_frame_that_moves_nothing_pokes_nothing(
     app, _ = make_app(data)
     async with app.run_test():
         await wait_for(lambda: "1 workspace" in status_text(app))
-        # Both startup pokes (the mount's read and the link's
-        # connect poke) have landed before the frame is pushed.
-        await wait_for(lambda: data.fetches >= 2)
+        # The startup pokes have settled before the frame is
+        # pushed: the link serves (its connect poke ran — the
+        # state and the poke land in one step) and no listing
+        # flight stands.
+        screen = app.screen
+        await wait_for(
+            lambda: (
+                screen.link is not None
+                and screen.link.state == link_mod.CONNECTED
+                and not screen.rows_loading
+            )
+        )
         fetches = data.fetches
         factory.made[0].push(
             '{"event": "proxy.listening", '
@@ -4414,14 +4434,16 @@ async def test_a_dropped_socket_pokes_one_refresh(monkeypatch) -> None:
 def test_the_default_listing_link_wires_the_poke() -> None:
     """The unpatched link factory wires the listing's refresh as
     both the frame poke and the reconnect poke (#1019) — the
-    tests' quiet seam replaces this one connection. A bare screen
-    unmounts without its link: the close is the quiet no-op."""
+    tests' quiet seam replaces this one connection. A screen
+    with its link made unmounts it closed."""
     screen = main_screen_mod.MainScreen()
     link = screen.make_link()
     assert isinstance(link, main_screen_mod.ListingLink)
     assert link.on_event == screen.refresh_rows
     assert link.on_connect == screen.refresh_rows
-    screen.on_unmount()  # no link was made: nothing to stop
+    screen.link = link
+    screen.on_unmount()  # the subscriber closes with the screen
+    screen.on_unmount()  # a second close is the quiet no-op
 
 
 async def test_a_unix_daemon_url_shows_its_path_decoded(
@@ -5603,6 +5625,27 @@ def test_the_pages_default_link_wires_the_reconnect_poke() -> None:
     bare.on_unmount()  # no link was started: nothing to stop
 
 
+async def test_a_deferred_close_without_its_link_decides_nothing(
+    monkeypatch,
+) -> None:
+    """The teardown race in the deferred close (#1019): the page
+    already lost its link (unmount stopped it) while a screen
+    stands above — the re-arm lands nothing, the close decides
+    nothing, and nothing raises."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 8)
+        page = app.screen
+        await press_until(pilot, "e", lambda: on_consent(app))
+        page.link = None
+        data.rows.clear()
+        page.close_removed()  # deferred, linkless: the quiet path
+        assert on_consent(app)
+
+
 async def test_the_pages_reconnect_poke_rereads_the_row(
     monkeypatch,
 ) -> None:
@@ -6416,16 +6459,20 @@ async def test_a_click_during_a_rebuild_flight_is_dropped(
 
 
 async def test_the_listing_refreshes_while_it_stands(monkeypatch) -> None:
-    """#470 L2: the list reloads on its standing interval — a
-    workspace another surface created appears without a keypress,
-    newest-first on top."""
-    scripted_link(monkeypatch, [])
+    """#470 L2 over #1019: the list reloads on the frames the
+    daemon publishes — a workspace another surface created
+    appears without a keypress, newest-first on top."""
+    factory = scripted_listing(monkeypatch, [])
     data = FakeData([row()])
     app, _ = make_app(data)
     async with app.run_test():
         await wait_for(lambda: list_children(app) == 1)
         data.rows.append(
             stamp(row(id="ws-b", name="beta"), "2026-02-01T00:00:00")
+        )
+        factory.made[0].push(
+            '{"event": "workspace.created", '
+            '"data": {"id": "ws-b", "name": "beta"}}'
         )
         await wait_for(lambda: list_children(app) == 2, timeout=30.0)
         # The fresh row lands on top once its paint lands (the

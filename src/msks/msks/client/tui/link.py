@@ -62,13 +62,11 @@ def row_frame(msg: dict, workspace_id: str) -> bool:
     and frames the page's own surface already answered (the
     egress family, whose rules frame the controller lands
     directly) decide nothing."""
-    event = str(msg.get("event") or "")
-    if not (event.startswith("workspace.") or event.startswith("home.")):
-        return False
     data = msg.get("data") or {}
+    named = (data.get("id"), data.get("workspace_id"))
     return (
-        data.get("id") == workspace_id
-        or data.get("workspace_id") == workspace_id
+        str(msg.get("event") or "").startswith(("workspace.", "home."))
+        and workspace_id in named
     )
 
 

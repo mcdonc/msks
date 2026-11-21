@@ -73,9 +73,8 @@ def quiet_listing_link(monkeypatch: pytest.MonkeyPatch) -> None:
     the environment. A test that needs frames calls
     :func:`test_main_tui.scripted_listing` on top — the later
     patch wins, and both restore at teardown."""
-    from test_consent_page import FakeFactory
-
     from msks.client.tui.main_screen import ListingLink, MainScreen
+    from test_consent_page import FakeFactory
 
     factory = FakeFactory([])
     monkeypatch.setattr(
