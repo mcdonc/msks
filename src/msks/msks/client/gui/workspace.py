@@ -194,9 +194,9 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.events_tab = EventsTab()
         self.bar = QtWidgets.QTabBar(self)
         # The active tab's mark (#1012): the strip paints its
-        # current tab with the accent underline and tint the
-        # main strip carries too, so the page the operator
-        # stands on reads at a glance on both levels.
+        # current tab with the accent tint the main strip
+        # carries too, so the page the operator stands on reads
+        # at a glance on both levels.
         mark_active(self.bar)
         self.bar.addTab(SHELLS_LABEL)
         self.bar.addTab(MOUNTS_LABEL)
