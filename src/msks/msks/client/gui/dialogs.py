@@ -18,10 +18,12 @@ def whole_number(value: str) -> bool:
 
 def center_on_parent(dialog) -> None:
     """One dialog placed on its parent window's center (#1014):
-    the dialog's frame, sized to its own layout first, moves
-    until its center is the parent's window center. A parentless
-    dialog stays where it is — nothing names a window to sit
-    on. Plain widget calls throughout: the seam rides whatever
+    the dialog, sized to its own layout first, moves until its
+    center is the parent's window center — the pre-show geometry
+    carries no frame margins, so a decorating window manager's
+    frame grows around the placed spot. A parentless dialog
+    stays where it is — nothing names a window to sit on.
+    Plain widget calls throughout: the seam rides whatever
     ``QDialog`` subclass takes it, no binding import at parse
     time."""
     opener = dialog.parentWidget()

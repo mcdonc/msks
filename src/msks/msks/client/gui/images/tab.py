@@ -30,7 +30,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ...data import RestFailure
 from ...images import info_lines
 from ..bridge import Bridge
-from ..dialogs import Centered
+from ..dialogs import Centered, center_on_parent
 from ..forms import confirm
 from ..imagerows import (
     IMPORTED_MARKER,
@@ -560,7 +560,14 @@ class ImagesTab(QtWidgets.QWidget):
         )
         self.progress.setWindowTitle("Import image")
         self.progress.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+        # The one popup that shows without a modal loop (#1014):
+        # the progress dialog opens through ``show`` and re-sizes
+        # itself as it shows, so the centering the dialogs'
+        # ``exec`` path carries lands here by hand, after the
+        # show — the wait sits on the main window's center like
+        # every other popup.
         self.progress.show()
+        center_on_parent(self.progress)
         self.import_timer.start()
         self.bridge.call(IMPORT_KEY, "import_image", model.url)
 

@@ -76,6 +76,9 @@ def test_the_question_box_carries_yes_no_with_no_the_default(qt) -> None:
     # answers empty there. The screens' own tests pin the
     # titles each call passes.
     assert box.text() == "Stop beta?"
+    assert (
+        box.icon() == qt.QtWidgets.QMessageBox.Icon.Question
+    )  # the question static's own icon
     assert box.standardButtons() == (yes | no)
     assert box.standardButton(box.defaultButton()) is no
     assert box.geometry().center() == window.geometry().center()
@@ -121,6 +124,7 @@ def test_the_picker_opens_seeded_and_centered(qt, monkeypatch) -> None:
             "1d",
             "7d",
         ]
+        assert combo.currentText() == "1d"  # the seeded opening choice
         combo.setCurrentText("7d")
         return qt.QtWidgets.QDialog.DialogCode.Accepted
 

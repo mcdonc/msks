@@ -94,6 +94,7 @@ def confirm_box(parent, title: str, text: str) -> QtWidgets.QMessageBox:
     box = QtWidgets.QMessageBox(parent)
     box.setWindowTitle(title)
     box.setText(text)
+    box.setIcon(QtWidgets.QMessageBox.Icon.Question)
     box.setStandardButtons(
         QtWidgets.QMessageBox.StandardButton.Yes
         | QtWidgets.QMessageBox.StandardButton.No
