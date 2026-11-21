@@ -101,6 +101,12 @@ DATA_SCROLLBAR = 9
 DATA_TITLE = 12
 DATA_SELECTION = 31
 
+# GhosttyColorScheme values (color_scheme.h): the light/dark
+# answer the widget reports to the child's CSI ? 996 n query
+# once the window path applied a scheme's colors (#1006).
+COLOR_SCHEME_LIGHT = 0
+COLOR_SCHEME_DARK = 1
+
 # ghostty_terminal_set options.
 OPT_USERDATA = 0
 OPT_WRITE_PTY = 1
@@ -109,6 +115,14 @@ OPT_TITLE_CHANGED = 5
 OPT_SIZE = 6
 OPT_COLOR_SCHEME = 7
 OPT_DEVICE_ATTRIBUTES = 8
+# The color defaults (guide-colors, "Setting your theme"):
+# the default layer a program's OSC 10/11/4 overrides sit
+# above — fg, bg, and cursor take one ``ColorRgb``, the
+# palette the whole 256-entry array.
+OPT_COLOR_FOREGROUND = 11
+OPT_COLOR_BACKGROUND = 12
+OPT_COLOR_CURSOR = 13
+OPT_COLOR_PALETTE = 14
 OPT_SCROLLBACK_MAX_LINES = 28
 OPT_SELECTION = 21
 OPT_BELL = 2
@@ -184,6 +198,14 @@ class ColorRgb(ctypes.Structure):
         ("g", ctypes.c_uint8),
         ("b", ctypes.c_uint8),
     ]
+
+
+class PaletteMask(ctypes.Structure):
+    """GhosttyColorPaletteMask: 256 bits, one per palette
+    index — the set bits name the entries palette generation
+    keeps from the base palette."""
+
+    _fields_ = [("bits", ctypes.c_uint64 * 4)]
 
 
 class StyleColorValue(ctypes.Union):
@@ -501,7 +523,10 @@ DEVICE_ATTRIBUTES_FN = ctypes.CFUNCTYPE(
 )
 TITLE_CHANGED_FN = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p)
 COLOR_SCHEME_FN = ctypes.CFUNCTYPE(
-    ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int
+    ctypes.c_bool,
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+    ctypes.POINTER(ctypes.c_int),
 )
 BELL_FN = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p)
 CLIPBOARD_WRITE_FN = ctypes.CFUNCTYPE(
@@ -591,6 +616,26 @@ class Lib:
         # function never set.
         self.terminal_scroll_viewport = self.prototype(
             "ghostty_terminal_scroll_viewport", None, v, ScrollViewport
+        )
+        # The color helpers (guide-colors): the built-in
+        # 256-color palette, and the cube-and-ramp derivation
+        # that matches a palette to a background and
+        # foreground (#1006). Both void in the C ABI.
+        self.color_palette_default = self.prototype(
+            "ghostty_color_palette_default", None, v
+        )
+        self.color_palette_generate = self.prototype(
+            "ghostty_color_palette_generate",
+            None,
+            v,
+            v,
+            v,
+            v,
+            ctypes.c_bool,
+            v,
+        )
+        self.color_contrast = self.prototype(
+            "ghostty_color_contrast", ctypes.c_double, v, v
         )
         self.render_state_new = self.prototype(
             "ghostty_render_state_new", r, v, ctypes.POINTER(v)

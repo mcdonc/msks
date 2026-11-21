@@ -296,9 +296,13 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     under the Workspaces tab, the first of the strip the images
     and secrets tabs of phase 4.6 join. The bridge's answers
     land on the shell wherever the strip shows it, and the
-    window carries the whole-client font zoom (#976):
-    Ctrl+Plus/Minus and Ctrl+0 step the chrome's font and the
-    shell hub's terminals together, wherever the focus stands.
+    window carries the whole-client font zoom (#976) and the
+    desktop-scheme pairing (#1006): Ctrl+Plus/Minus and
+    Ctrl+0 step the chrome's font and the shell hub's
+    terminals together, wherever the focus stands, and the
+    desktop's color scheme paints the chrome's palette and
+    the terminal grids together — light with light, dark with
+    dark, switched live when the desktop switches.
     """
     # allow-deferred-import — the bridge brings PySide6 with it
     # (module scope there); this module stays Qt-free at parse
@@ -428,6 +432,7 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
         tree["shell"].hub.shutdown()
         shell = land()
         zoom.retarget(shell.hub)
+        scheme.retarget(shell.hub)
 
     shell = land()
     # allow-deferred-import — the whole-client zoom (#976)
@@ -443,6 +448,19 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     # carries the operator's steps to each re-dialed tree's
     # hub.
     zoom = Zoom(shell.hub, window)
+    # allow-deferred-import — the desktop-scheme pairing
+    # (#1006) carries the screens' own contract: PySide6 at
+    # module scope there, loaded only on the window path.
+    from .scheme import Scheme
+
+    # The desktop's scheme (#1006): the chrome's palette and
+    # the terminal grids paint together from the desktop's
+    # color scheme — one set for a light desktop, one for a
+    # dark one — and a switch mid-session lands live. The
+    # pairing stands past the strip's swaps (#1009): its
+    # retarget carries the standing scheme to each re-dialed
+    # tree's hub.
+    scheme = Scheme(shell.hub, app)
     # The opening geometry (#939): the last-closed rect wins —
     # a saved geometry the screens still show — and the fixed
     # 1280 by 720 is the first-open shape until a close
