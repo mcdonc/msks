@@ -17,7 +17,8 @@ workspace page (itself lazily imported) owns the import.
 
 from PySide6 import QtCore, QtWidgets
 
-from .forms import read_only_table, save_cancel_row
+from .dialogs import Centered
+from .forms import confirm, read_only_table, save_cancel_row
 from .proxyrows import (
     DIRECTION_CHOICES,
     direction_letter,
@@ -48,16 +49,17 @@ PROXY_COLUMNS = ("DIRECTION", "SPEC", "LABEL", "STATUS")
 PROXY_CONTENT_COLUMNS = (0, 3)
 
 
-class ProxyDialog(QtWidgets.QDialog):
+class ProxyDialog(Centered, QtWidgets.QDialog):
     """The add/edit form (#988, the TUI's one form): the
     direction (ssh's two letters), the spec in the CLI's own
     grammar, and a label — parsed with the CLI's own parser, so
     a local refusal names itself on the note line in the same
     words the command prints. An accepted form carries the body
-    on ``body``."""
+    on ``body``. The opener's widget lands as the parent
+    (#1014): the form opens centered on the main window."""
 
-    def __init__(self, row: dict | None = None) -> None:
-        super().__init__()
+    def __init__(self, row: dict | None = None, parent=None) -> None:
+        super().__init__(parent)
         seeded = form_seeds(row)
         self.body: dict | None = None
         self.setWindowTitle("Add a proxy" if row is None else "Edit a proxy")
@@ -249,7 +251,7 @@ class ProxiesTab(QtWidgets.QWidget):
     def add(self) -> None:
         """The Add action (#988): the form blank, an accepted
         body posting one proxy row."""
-        dialog = ProxyDialog()
+        dialog = ProxyDialog(parent=self)
         if dialog.exec() and dialog.body is not None:
             self.note.setText("adding …")
             self.change("create_proxy", dialog.body)
@@ -262,7 +264,7 @@ class ProxiesTab(QtWidgets.QWidget):
         if index < 0:
             return
         row = self.rows[index]
-        dialog = ProxyDialog(row)
+        dialog = ProxyDialog(row, self)
         if dialog.exec() and dialog.body is not None:
             self.note.setText("saving …")
             self.change("update_proxy", row["id"], dialog.body)
@@ -282,20 +284,10 @@ class ProxiesTab(QtWidgets.QWidget):
         self.change("remove_proxy", row["id"], note="removed")
 
     def confirm_remove(self, row: dict) -> bool:
-        """Remove's confirmation (#988): the question names the
-        proxy's spec, and No is the default — the list's own
-        rule."""
-        answer = QtWidgets.QMessageBox.question(
-            self,
-            "Remove proxy",
-            f"Remove {spec_text(row)}?",
-            (
-                QtWidgets.QMessageBox.StandardButton.Yes
-                | QtWidgets.QMessageBox.StandardButton.No
-            ),
-            QtWidgets.QMessageBox.StandardButton.No,
-        )
-        return answer == QtWidgets.QMessageBox.StandardButton.Yes
+        """Remove's confirmation (#988, #1014): the question
+        names the proxy's spec — No the default, both centered
+        on the main window — and No keeps the row."""
+        return confirm(self, "Remove proxy", f"Remove {spec_text(row)}?")
 
     @QtCore.Slot(str, object)
     def on_succeeded(self, key: str, result: object) -> None:

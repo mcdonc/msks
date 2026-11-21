@@ -623,17 +623,15 @@ def test_the_renew_picker_reads_the_default(qt, monkeypatch) -> None:
     model = next(m for m in tab.secret_models if m.id == 2)
     picked: dict = {}
 
-    def fake_get_item(parent, title, label, choices, current, editable):
+    def fake_pick(parent, title, label, choices, current):
         picked["choices"] = choices
         picked["current"] = current
-        return "1d", False
+        return None
 
-    monkeypatch.setattr(
-        qt.QtWidgets.QInputDialog, "getItem", staticmethod(fake_get_item)
-    )
+    monkeypatch.setattr(secrets_mod, "pick_item", fake_pick)
     assert tab.pick_ttl(model) is None
-    assert picked["choices"] == secretrows_mod.SECRET_TTLS
-    assert picked["current"] == secretrows_mod.SECRET_TTLS.index("1h")
+    assert picked["choices"] == list(secretrows_mod.SECRET_TTLS)
+    assert picked["current"] == "1h"
     window.close()
 
 
@@ -967,21 +965,15 @@ def test_the_bar_buttons_cross_by_arrows(qt, monkeypatch) -> None:
 
 
 def test_the_revoke_confirmation_answers_the_operator(qt, monkeypatch) -> None:
-    """The revoke's own gate (#966): the real ask over the
-    presenter's question — No keeps the row, Yes retires it —
-    with No the default answer."""
+    """The revoke's own gate (#966): the ask over the
+    presenter's question — No keeps the row, Yes retires it.
+    The ask's No default is the shared question's own rule
+    (#1014), pinned beside the seam that builds it."""
     tab, window, _bridge = make_tab(qt, monkeypatch)
     model = next(m for m in tab.secret_models if m.id == 1)
     monkeypatch.setattr(cells, "revoke_question", lambda model: "the question")
-    answers = iter(
-        [qt.QtWidgets.QMessageBox.StandardButton.No]
-        + [qt.QtWidgets.QMessageBox.StandardButton.Yes]
-    )
-    monkeypatch.setattr(
-        qt.QtWidgets.QMessageBox,
-        "question",
-        lambda *args, **kwargs: next(answers),
-    )
+    answers = iter([False, True])
+    monkeypatch.setattr(secrets_mod, "confirm", lambda *args: next(answers))
     assert tab.confirm_revoke(model) is False
     assert tab.confirm_revoke(model) is True
     window.close()
@@ -1021,12 +1013,10 @@ def test_the_renew_picker_posts_a_made_choice(qt, monkeypatch) -> None:
     tab, window, bridge = make_tab(qt, monkeypatch)
     model = next(m for m in tab.secret_models if m.id == 1)
 
-    def fake_get_item(parent, title, label, choices, current, editable):
-        return "30d", True
+    def fake_pick(parent, title, label, choices, current):
+        return "30d"
 
-    monkeypatch.setattr(
-        qt.QtWidgets.QInputDialog, "getItem", staticmethod(fake_get_item)
-    )
+    monkeypatch.setattr(secrets_mod, "pick_item", fake_pick)
     bridge.calls.clear()
     assert tab.pick_ttl(model) == "30d"
     tab.renew_row(model)
@@ -1335,27 +1325,6 @@ def test_the_mint_picker_edges_hand_the_walk_back(qt) -> None:
     picker.setCurrentRow(0)
     picker.keyPressEvent(qt.QtGui.QKeyEvent(press, key.Key_Down, mods))
     assert picker.currentRow() == 1
-
-
-def test_the_revoke_ask_defaults_to_no(qt, monkeypatch) -> None:
-    """The revoke ask's default (#966, review round one): the
-    question carries No as the default answer — the row stays
-    unless the operator says otherwise."""
-    tab, window, _bridge = make_tab(qt, monkeypatch)
-    defaults: list[object] = []
-    no = qt.QtWidgets.QMessageBox.StandardButton.No
-
-    def recorder(*args, **kwargs):
-        defaults.append(
-            kwargs.get("defaultButton", args[-1] if args else None)
-        )
-        return no
-
-    monkeypatch.setattr(qt.QtWidgets.QMessageBox, "question", recorder)
-    model = next(m for m in tab.secret_models if m.id == 1)
-    tab.confirm_revoke(model)
-    assert defaults == [no]
-    window.close()
 
 
 def test_a_hidden_tab_stops_its_tick(qt, monkeypatch) -> None:

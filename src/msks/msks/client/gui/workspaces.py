@@ -28,6 +28,7 @@ from ..data import RestFailure
 from .bridge import Bridge
 from .connectionbar import ConnectionButton
 from .edit import EditDialog
+from .forms import confirm
 from .listcells import (
     ACTION_COLUMN,
     COLUMNS,
@@ -747,41 +748,25 @@ class WorkspaceList(QtWidgets.QWidget):
                 f"{workspace[1]} left the listing — refresh and retry the edit"
             )
             return
-        dialog = EditDialog(self.bridge, row)
+        dialog = EditDialog(self.bridge, row, self)
         dialog.accepted.connect(self.refresh)
         dialog.exec()
 
     def confirm_stop(self, label: str) -> bool:
-        """Stop's confirmation (#940): the question names the
-        workspace, and No is the default — a stop is the
-        operator's call, not the pointer's."""
-        answer = QtWidgets.QMessageBox.question(
-            self,
-            "Stop workspace",
-            f"Stop {label}?",
-            (
-                QtWidgets.QMessageBox.StandardButton.Yes
-                | QtWidgets.QMessageBox.StandardButton.No
-            ),
-            QtWidgets.QMessageBox.StandardButton.No,
-        )
-        return answer == QtWidgets.QMessageBox.StandardButton.Yes
+        """Stop's confirmation (#940, #1014): the question names
+        the workspace — No the default, both centered on the
+        main window — a stop is the operator's call, not the
+        pointer's."""
+        return confirm(self, "Stop workspace", f"Stop {label}?")
 
     def confirm_delete(self, label: str) -> bool:
-        """Delete's confirmation (#972): the question names the
-        workspace and its cost — the data goes with it — and No
-        is the default, the stop question's own rule."""
-        answer = QtWidgets.QMessageBox.question(
-            self,
-            "Delete workspace",
-            f"Delete {label}? Its data goes with it.",
-            (
-                QtWidgets.QMessageBox.StandardButton.Yes
-                | QtWidgets.QMessageBox.StandardButton.No
-            ),
-            QtWidgets.QMessageBox.StandardButton.No,
+        """Delete's confirmation (#972, #1014): the question
+        names the workspace and its cost — the data goes with
+        it — No the default, both centered on the main window,
+        the stop question's own rule."""
+        return confirm(
+            self, "Delete workspace", f"Delete {label}? Its data goes with it."
         )
-        return answer == QtWidgets.QMessageBox.StandardButton.Yes
 
     @QtCore.Slot(QtCore.QPoint)
     def menu_requested(self, pos: QtCore.QPoint) -> None:

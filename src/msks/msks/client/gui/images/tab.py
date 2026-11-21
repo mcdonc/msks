@@ -30,6 +30,8 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ...data import RestFailure
 from ...images import info_lines
 from ..bridge import Bridge
+from ..dialogs import Centered, center_on_parent
+from ..forms import confirm
 from ..imagerows import (
     IMPORTED_MARKER,
     CatalogRow,
@@ -94,13 +96,15 @@ def action_reply_text(key: str, label: str) -> str:
     return f"designated {label} the default image"
 
 
-class ImageDetailDialog(QtWidgets.QDialog):
+class ImageDetailDialog(Centered, QtWidgets.QDialog):
     """One catalog row's full record (#964): the shared ``image
     info`` renderer's own lines — the boot facts, the baked
     identity, the seed and cmdline, the designation — in a
     read-only block the operator can select and copy. Enter or
     a double-click on a catalog row opens it; the Close button
-    and Escape dismiss it."""
+    and Escape dismiss it. The opener's widget lands as the
+    parent (#1014): the record opens centered on the main
+    window."""
 
     def __init__(self, row: dict, parent=None) -> None:
         super().__init__(parent)
@@ -556,7 +560,14 @@ class ImagesTab(QtWidgets.QWidget):
         )
         self.progress.setWindowTitle("Import image")
         self.progress.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+        # The one popup that shows without a modal loop (#1014):
+        # the progress dialog opens through ``show`` and re-sizes
+        # itself as it shows, so the centering the dialogs'
+        # ``exec`` path carries lands here by hand, after the
+        # show — the wait sits on the main window's center like
+        # every other popup.
         self.progress.show()
+        center_on_parent(self.progress)
         self.import_timer.start()
         self.bridge.call(IMPORT_KEY, "import_image", model.url)
 
@@ -619,20 +630,11 @@ class ImagesTab(QtWidgets.QWidget):
         self.bridge.call(REMOVE_KEY, "remove_image", model.hash)
 
     def confirm_remove(self, ref: str) -> bool:
-        """Remove's confirmation (#964): the question names the
-        image, and No is the default — a removal is the
-        operator's call, not the pointer's."""
-        answer = QtWidgets.QMessageBox.question(
-            self,
-            "Remove image",
-            f"Remove {ref} from the catalog?",
-            (
-                QtWidgets.QMessageBox.StandardButton.Yes
-                | QtWidgets.QMessageBox.StandardButton.No
-            ),
-            QtWidgets.QMessageBox.StandardButton.No,
-        )
-        return answer == QtWidgets.QMessageBox.StandardButton.Yes
+        """Remove's confirmation (#964, #1014): the question
+        names the image — No the default, both centered on the
+        main window — a removal is the operator's call, not the
+        pointer's."""
+        return confirm(self, "Remove image", f"Remove {ref} from the catalog?")
 
     def action_landed(self) -> None:
         """An action flight's end (#964): the gate opens and the

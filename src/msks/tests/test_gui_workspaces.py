@@ -849,13 +849,9 @@ def test_edit_and_remove_act_on_the_selected_row(qt, monkeypatch) -> None:
     row — the editor opens over its own facts, Remove asks
     first and a refusal sends nothing — and both stand disabled
     until a row holds. The flight's gate holds them besides."""
-    monkeypatch.setattr(
-        qt.QtWidgets.QMessageBox,
-        "question",
-        lambda *args: qt.QtWidgets.QMessageBox.StandardButton.No,
-    )
+    monkeypatch.setattr(qt.screen_mod, "confirm", lambda *args: False)
     screen, window, bridge = make_screen(qt)
-    opened, _accepted = fake_editor(monkeypatch, qt)
+    opened, _accepted, _parents = fake_editor(monkeypatch, qt)
     # No hold: the row the open's first answer held clears, and
     # the buttons stand disabled until a row holds again.
     screen.table.clearSelection()
@@ -886,11 +882,7 @@ def test_the_action_row_follows_the_flight(qt, monkeypatch) -> None:
     """The row's gate (#1011): a start/stop/delete flight out
     holds Edit and Remove beside the row toggles, and the
     landing frees them again."""
-    monkeypatch.setattr(
-        qt.QtWidgets.QMessageBox,
-        "question",
-        lambda *args: qt.QtWidgets.QMessageBox.StandardButton.Yes,
-    )
+    monkeypatch.setattr(qt.screen_mod, "confirm", lambda *args: True)
     screen, window, bridge = make_screen(qt)
     row = screen.row_ids()["ws-2"]
     screen.table.selectRow(row)
@@ -1018,18 +1010,16 @@ def test_a_failed_action_over_a_listing_flight(qt) -> None:
 
 def test_stop_asks_before_it_runs(qt, monkeypatch) -> None:
     """The Stop action's gate (#940): the question names the
-    workspace with No as the default, and a refusal sends
-    nothing to the daemon — a confirmation runs the stop, and
-    the list refreshes when it lands."""
+    workspace, and a refusal sends nothing to the daemon — a
+    confirmation runs the stop, and the list refreshes when it
+    lands."""
     asked: list[tuple] = []
 
-    def refuse_or_allow(parent, title, text, buttons=None, default=None):
-        asked.append((title, text, buttons, default))
-        no = qt.QtWidgets.QMessageBox.StandardButton.No
-        yes = qt.QtWidgets.QMessageBox.StandardButton.Yes
-        return no if len(asked) == 1 else yes
+    def refuse_or_allow(parent, title, text):
+        asked.append((title, text))
+        return len(asked) > 1
 
-    monkeypatch.setattr(qt.QtWidgets.QMessageBox, "question", refuse_or_allow)
+    monkeypatch.setattr(qt.screen_mod, "confirm", refuse_or_allow)
     screen, window, bridge = make_screen(qt)
     bridge.calls.clear()
     # The running row's toggle reads stop: the confirmation
@@ -1040,9 +1030,6 @@ def test_stop_asks_before_it_runs(qt, monkeypatch) -> None:
     screen.row_actions["ws-2"].click()
     assert bridge.calls == [("workspaces-stop", "stop", ("ws-2",))]
     assert "beta" in asked[1][1]  # the question named the workspace
-    assert (
-        asked[0][3] == qt.QtWidgets.QMessageBox.StandardButton.No
-    )  # No is the default
     screen.on_succeeded("workspaces-stop", {})
     assert bridge.calls[-1] == ("workspaces-list", "workspaces", ())
     window.close()
@@ -1228,11 +1215,7 @@ def test_the_context_menu_carries_the_rows_actions(qt, monkeypatch) -> None:
     paths the row's buttons take. A right-click on no row opens
     nothing."""
     screen, window, bridge = make_screen(qt)
-    monkeypatch.setattr(
-        qt.QtWidgets.QMessageBox,
-        "question",
-        lambda *args: qt.QtWidgets.QMessageBox.StandardButton.No,
-    )
+    monkeypatch.setattr(qt.screen_mod, "confirm", lambda *args: False)
     edits = fake_editor(monkeypatch, qt)[0]
     # The show is non-modal: the request itself pops the menu,
     # and a press below every row opens nothing.
@@ -1266,10 +1249,12 @@ def fake_editor(monkeypatch, qt) -> tuple[list, list]:
     slot, exactly the create dialog's shape."""
     opened: list[tuple] = []
     accepted: list[object] = []
+    parents: list[object] = []
 
     class FakeDialog:
-        def __init__(self, bridge: object, row: dict) -> None:
+        def __init__(self, bridge: object, row: dict, parent=None) -> None:
             opened.append((row["id"],))
+            parents.append(parent)
 
     class FakeAccepted:
         def connect(self, slot: object) -> None:
@@ -1278,7 +1263,7 @@ def fake_editor(monkeypatch, qt) -> tuple[list, list]:
     FakeDialog.accepted = FakeAccepted()  # type: ignore[attr-defined]
     FakeDialog.exec = lambda self: 0  # type: ignore[method-assign]
     monkeypatch.setattr(qt.screen_mod, "EditDialog", FakeDialog)
-    return opened, accepted
+    return opened, accepted, parents
 
 
 def test_edit_opens_the_editor_over_the_rows_own_facts(
@@ -1290,10 +1275,11 @@ def test_edit_opens_the_editor_over_the_rows_own_facts(
     read — and a landed resize refreshes the listing behind it.
     A workspace the last answer dropped opens nothing."""
     screen, window, bridge = make_screen(qt)
-    opened, accepted = fake_editor(monkeypatch, qt)
+    opened, accepted, parents = fake_editor(monkeypatch, qt)
     screen.edit_workspace(("ws-1", "alpha"))
     assert opened == [("ws-1",)]
     assert accepted == [screen.refresh]
+    assert parents == [screen]  # the editor parents to the list (#1014)
     # A workspace the last answer dropped names itself on the
     # status line: the editor seeds from the row's own facts or
     # not at all.
@@ -1338,11 +1324,11 @@ def test_the_context_menus_stop_confirms(qt, monkeypatch) -> None:
     screen, window, bridge = make_screen(qt)
     asked: list[tuple] = []
 
-    def refuse(parent, title, text, buttons=None, default=None):
+    def refuse(parent, title, text):
         asked.append((title, text))
-        return qt.QtWidgets.QMessageBox.StandardButton.No
+        return False
 
-    monkeypatch.setattr(qt.QtWidgets.QMessageBox, "question", refuse)
+    monkeypatch.setattr(qt.screen_mod, "confirm", refuse)
     menu = screen.row_menu(screen.row_ids()["ws-2"])
     assert [action.text() for action in menu.actions()][:2] == [
         "Edit",
@@ -1357,18 +1343,16 @@ def test_the_context_menus_stop_confirms(qt, monkeypatch) -> None:
 
 def test_delete_asks_and_removes(qt, monkeypatch) -> None:
     """The Delete action (#972): the question names the workspace
-    and its cost with No as the default; a confirmation removes
-    the workspace through the bridge, the outcome flashes, and
-    the list refreshes when the daemon answers."""
+    and its cost; a confirmation removes the workspace through
+    the bridge, the outcome flashes, and the list refreshes
+    when the daemon answers."""
     asked: list[tuple] = []
 
-    def refuse_or_allow(parent, title, text, buttons=None, default=None):
-        asked.append((title, text, buttons, default))
-        no = qt.QtWidgets.QMessageBox.StandardButton.No
-        yes = qt.QtWidgets.QMessageBox.StandardButton.Yes
-        return no if len(asked) == 1 else yes
+    def refuse_or_allow(parent, title, text):
+        asked.append((title, text))
+        return len(asked) > 1
 
-    monkeypatch.setattr(qt.QtWidgets.QMessageBox, "question", refuse_or_allow)
+    monkeypatch.setattr(qt.screen_mod, "confirm", refuse_or_allow)
     screen, window, bridge = make_screen(qt)
     bridge.calls.clear()
     screen.delete_workspace(("ws-2", "beta"))
@@ -1377,9 +1361,6 @@ def test_delete_asks_and_removes(qt, monkeypatch) -> None:
     screen.delete_workspace(("ws-2", "beta"))
     assert bridge.calls == [("workspaces-delete", "remove", ("ws-2",))]
     assert "beta" in asked[1][1] and "data" in asked[1][1]
-    assert (
-        asked[0][3] == qt.QtWidgets.QMessageBox.StandardButton.No
-    )  # No is the default
     assert not screen.row_actions["ws-1"].isEnabled()  # one flight
     screen.on_succeeded("workspaces-delete", {"status": "gone"})
     assert screen.status.text() == "beta gone"

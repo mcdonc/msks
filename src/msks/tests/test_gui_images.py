@@ -417,6 +417,9 @@ def test_activation_on_a_published_row_imports_behind_the_dialog(
         )
     ]
     assert tab.progress is not None and tab.progress.isVisible()
+    assert (
+        tab.progress.geometry().center() == window.geometry().center()
+    )  # the wait sits on the main window's center (#1014)
     assert tab.import_timer.isActive()
     tab.on_succeeded(
         images_mod.IMPORT_KEY,

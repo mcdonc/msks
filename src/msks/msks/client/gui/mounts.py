@@ -19,6 +19,7 @@ workspace page (itself lazily imported) owns the import.
 from PySide6 import QtCore, QtWidgets
 
 from .detail import mount_entries
+from .dialogs import Centered
 from .forms import read_only_table, save_cancel_row
 from .mountrows import (
     MODE_CHOICES,
@@ -55,15 +56,17 @@ MOUNT_COLUMNS = ("HOST", "GUEST", "MODE", "STATE", "REASON")
 MOUNT_CONTENT_COLUMNS = (2, 3)
 
 
-class MountDialog(QtWidgets.QDialog):
+class MountDialog(Centered, QtWidgets.QDialog):
     """The add/edit form (#987, the TUI's one form, #886): the
     host path, the guest path, and the mode, composed into one
     entry the CLI's own parser reads — a local refusal names
     itself on the note line and the form stands. An accepted
-    form carries the entry on ``entry``."""
+    form carries the entry on ``entry``. The opener's widget
+    lands as the parent (#1014): the form opens centered on
+    the main window."""
 
-    def __init__(self, entry: dict | None = None) -> None:
-        super().__init__()
+    def __init__(self, entry: dict | None = None, parent=None) -> None:
+        super().__init__(parent)
         seeded = dialog_seeds(entry)
         self.entry: dict | None = None
         self.setWindowTitle("Add a mount" if entry is None else "Edit a mount")
@@ -250,7 +253,7 @@ class MountsTab(QtWidgets.QWidget):
         """The Add action (#987): the form blank, an accepted
         entry joining the list's end — the TUI editor's own
         composition, the save posting the whole list."""
-        dialog = MountDialog()
+        dialog = MountDialog(parent=self)
         if dialog.exec() and dialog.entry is not None:
             self.change(added_mount(self.working, dialog.entry))
 
@@ -267,7 +270,7 @@ class MountsTab(QtWidgets.QWidget):
             return
         mount = self.working[index]
         pair = mount_pair(mount)
-        dialog = MountDialog(mount)
+        dialog = MountDialog(mount, self)
         if dialog.exec() and dialog.entry is not None:
             fresh = resolved_index(self.working, pair)
             if fresh < 0:

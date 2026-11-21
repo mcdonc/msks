@@ -131,18 +131,22 @@ def make_tab(qt) -> tuple:
     return tab, bridge
 
 
-def fake_dialog(monkeypatch, qt, entry: dict | None) -> None:
+def fake_dialog(monkeypatch, qt, entry: dict | None) -> list:
     """The form's stub (#987): the entry handed in is the form's
-    accepted answer, its exec returning at once."""
+    accepted answer, its exec returning at once — the opener
+    the tab passed as the form's parent recorded (#1014)."""
+    parents: list[object] = []
 
     class FakeDialog:
-        def __init__(self, seed: dict | None = None) -> None:
+        def __init__(self, seed: dict | None = None, parent=None) -> None:
             self.entry = entry
+            parents.append(parent)
 
         def exec(self) -> int:
             return 1 if entry is not None else 0
 
     monkeypatch.setattr(qt.mounts, "MountDialog", FakeDialog)
+    return parents
 
 
 def test_the_parse_reads_the_clis_own_words() -> None:
@@ -298,9 +302,10 @@ def test_an_edit_and_a_remove_run_through_the_bridge(qt, monkeypatch) -> None:
     whole list."""
     tab, bridge = make_tab(qt)
     entry = {"host": "/srv/changed", "guest": "/mnt/ok", "mode": "ro"}
-    fake_dialog(monkeypatch, qt, entry)
+    parents = fake_dialog(monkeypatch, qt, entry)
     tab.table.selectRow(0)
     tab.edit()
+    assert parents == [tab]  # the form parents to the tab (#1014)
     assert bridge.calls == [
         (
             tab.flight_key,
@@ -444,7 +449,7 @@ def test_a_refresh_inside_the_dialog_re_resolves_the_edit(
         """The form whose wait lands a tick: the daemon's list
         shrank while the operator edited row 0."""
 
-        def __init__(self, seed: dict | None = None) -> None:
+        def __init__(self, seed: dict | None = None, parent=None) -> None:
             self.entry = entry
 
         def exec(self) -> int:

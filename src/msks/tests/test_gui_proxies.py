@@ -143,7 +143,7 @@ def fake_dialog(monkeypatch, qt, body: dict | None) -> None:
     accepted answer, its exec returning at once."""
 
     class FakeDialog:
-        def __init__(self, row: dict | None = None) -> None:
+        def __init__(self, row: dict | None = None, parent=None) -> None:
             self.body = body
 
         def exec(self) -> int:
@@ -273,11 +273,7 @@ def test_the_dialog_builds_seeded_and_submits(qt) -> None:
 
 
 def test_the_guards_send_nothing(qt, monkeypatch) -> None:
-    monkeypatch.setattr(
-        qt.QtWidgets.QMessageBox,
-        "question",
-        lambda *args: qt.QtWidgets.QMessageBox.StandardButton.No,
-    )
+    monkeypatch.setattr(qt.proxies, "confirm", lambda *args: False)
     """The guards (#988): a cancelled form composes nothing, a
     tab with no selection edits and removes nothing, and a
     mutation already out gates the next."""
@@ -448,20 +444,17 @@ def test_remove_asks_and_removes(qt, monkeypatch) -> None:
     DELETE route, and a refusal sends nothing."""
     asked: list[tuple] = []
 
-    def refuse_or_allow(parent, title, text, buttons=None, default=None):
-        asked.append((title, text, default))
-        no = qt.QtWidgets.QMessageBox.StandardButton.No
-        yes = qt.QtWidgets.QMessageBox.StandardButton.Yes
-        return no if len(asked) == 1 else yes
+    def refuse_or_allow(parent, title, text):
+        asked.append((title, text))
+        return len(asked) > 1
 
-    monkeypatch.setattr(qt.QtWidgets.QMessageBox, "question", refuse_or_allow)
+    monkeypatch.setattr(qt.proxies, "confirm", refuse_or_allow)
     tab, bridge = make_tab(qt)
     tab.table.selectRow(0)
     tab.remove()
     assert bridge.calls == []  # the refusal sent nothing
     assert asked[0][0] == "Remove proxy"
     assert "-L 8080:localhost:80" in asked[0][1]
-    assert asked[0][2] is qt.QtWidgets.QMessageBox.StandardButton.No
     tab.remove()
     assert bridge.calls[0][1:] == ("remove_proxy", ("ws-a", 7))
     key = bridge.calls[0][0]

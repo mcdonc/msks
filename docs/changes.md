@@ -366,6 +366,15 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **The GUI's popups open centered on the main window
+  (#1014).** Every popup the GUI opens — the create and edit
+  forms, the mounts and proxies add and edit forms, the image
+  detail record and import progress, the mint form, and the
+  stop, delete, remove, and revoke questions — opens centered
+  on the main window instead of wherever the window manager
+  places it: the forms were parentless top-level windows, and
+  the questions' placement stayed the manager's even parented.
+
 - **The GUI window names its own widget style (#937).** A
   desktop session no longer picks the style for the window: a
   Plasma session with the union style selected previously
