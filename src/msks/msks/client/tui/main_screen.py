@@ -104,12 +104,13 @@ def listing_frame(msg: dict) -> bool:
     lifecycle transition — the ``workspace.`` family the routes
     and the watcher publish (created, removed, status, mounts,
     resized) — a volume move the storage strip follows
-    (``home.imported``, ``home.exported``), or a mode switch (the
-    ``egress.rules`` frame the switch lands). Every other family
-    — the proxies, the secrets, the holds — paints through its
-    own surface, and the listing re-reads nothing for it."""
+    (``home.imported``, ``home.exported``), a catalog move the
+    IMAGE column follows (``image.changed``), or a mode switch
+    (the ``egress.rules`` frame the switch lands). Every other
+    family — the proxies, the secrets, the holds — paints through
+    its own surface, and the listing re-reads nothing for it."""
     event = str(msg.get("event") or "")
-    return event.startswith(("workspace.", "home.")) or (
+    return event.startswith(("workspace.", "home.", "image.")) or (
         event == "egress.rules"
     )
 
@@ -315,10 +316,12 @@ class MainScreen(HelpKeys, Screen):
     def resort_rows(self) -> None:
         """Re-sort the standing rows through the listing's one
         rebuild flight (#854): a click landing while a refresh is
-        in flight is dropped here — its sort state stands, the
-        header carries it, and the in-flight refresh (or the
-        standing interval's next tick) serves the order."""
+        in flight arms the landing flight instead of dropping —
+        its sort state stands and the header carries it, and the
+        armed read serves the order (#1019 — the interval that
+        once served a dropped click is gone)."""
         if self.rows_loading:
+            self.rows_pending = True
             return
         self.rows_loading = True
         self.run_worker(self.resort_standing_rows())

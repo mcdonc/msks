@@ -1135,6 +1135,28 @@ async def test_the_detail_strip_hides_on_an_empty_list() -> None:
         assert not app.query_one("#detail", Static).display
 
 
+async def startup_quiet(pilot, app) -> None:
+    """The listing's startup pokes settled (#1019): the mount's
+    deferred read and the link's connect poke have both run — a
+    pump cycle between two quiet reads surfaces any straggler
+    the first read raced (the deferred callback can land after
+    the first paint under a traced, loaded runner)."""
+    screen = app.screen
+
+    def quiet() -> bool:
+        return (
+            screen.link is not None
+            and screen.link.state == link_mod.CONNECTED
+            and not screen.rows_loading
+            and not screen.rows_pending
+        )
+
+    await wait_for(quiet)
+    await pilot.pause()
+    await pilot.pause()
+    await wait_for(quiet)
+
+
 async def test_the_listing_counts_open_shells() -> None:
     """The listing lands the host's open shells on the rows (#858
     over #1019): the session records a live `msks ssh` writes —
@@ -1151,22 +1173,13 @@ async def test_the_listing_counts_open_shells() -> None:
     )
     data = FakeData([row()])
     app, _ = make_app(data)
-    async with app.run_test():
+    async with app.run_test() as pilot:
         await wait_for(lambda: "»1" in row_text(app, 0))
         assert "»1 stopped" in row_text(app, 0)
         await wait_for(lambda: "shells »1" in detail_text(app))
         # The startup pokes have settled before the close is
-        # watched: the link serves (its connect poke ran — the
-        # state and the poke land in one step) and no listing
-        # flight stands.
-        screen = app.screen
-        await wait_for(
-            lambda: (
-                screen.link is not None
-                and screen.link.state == link_mod.CONNECTED
-                and not screen.rows_loading
-            )
-        )
+        # watched.
+        await startup_quiet(pilot, app)
         # The session closes: the record unlinks at once, and the
         # local watch repaints the row without its marker — an
         # unchanged daemon row, no refresh, no daemon read.
@@ -1174,6 +1187,7 @@ async def test_the_listing_counts_open_shells() -> None:
         fetches = data.fetches
         await wait_for(lambda: "»" not in row_text(app, 0))
         await wait_for(lambda: "shells" not in detail_text(app))
+        await pilot.pause()
         assert data.fetches == fetches
         assert "stopped" in row_text(app, 0)
 
@@ -4360,6 +4374,9 @@ def test_listing_frame_classifies() -> None:
         {"event": "home.exported", "data": {"id": "ws-a"}}
     )
     assert main_screen_mod.listing_frame(
+        {"event": "image.changed", "data": {"ref": "debian-13:2026.09"}}
+    )
+    assert main_screen_mod.listing_frame(
         {"event": "egress.rules", "data": {"workspace_id": "ws-a"}}
     )
     assert not main_screen_mod.listing_frame(
@@ -4379,26 +4396,18 @@ async def test_a_frame_that_moves_nothing_pokes_nothing(
     factory = scripted_listing(monkeypatch, [])
     data = FakeData([row()])
     app, _ = make_app(data)
-    async with app.run_test():
+    async with app.run_test() as pilot:
         await wait_for(lambda: "1 workspace" in status_text(app))
         # The startup pokes have settled before the frame is
-        # pushed: the link serves (its connect poke ran — the
-        # state and the poke land in one step) and no listing
-        # flight stands.
-        screen = app.screen
-        await wait_for(
-            lambda: (
-                screen.link is not None
-                and screen.link.state == link_mod.CONNECTED
-                and not screen.rows_loading
-            )
-        )
+        # pushed.
+        await startup_quiet(pilot, app)
         fetches = data.fetches
         factory.made[0].push(
             '{"event": "proxy.listening", '
             '"data": {"id": "ws-a", "port": 2201}}'
         )
         await asyncio.sleep(0.2)
+        await pilot.pause()
         assert data.fetches == fetches
 
 
@@ -4410,12 +4419,14 @@ async def test_a_dropped_socket_pokes_one_refresh(monkeypatch) -> None:
     scripted_listing(monkeypatch, [])
     data = FakeData([row()])
     app, _ = make_app(data)
-    async with app.run_test():
+    async with app.run_test() as pilot:
         await wait_for(lambda: "1 workspace" in status_text(app))
         screen = app.screen
         assert screen.link is not None
-        # The scripted connection serves: the watch records the
-        # connected state without a poke.
+        # The scripted connection serves: the startup pokes settle
+        # and the watch records the connected state without a
+        # further poke.
+        await startup_quiet(pilot, app)
         await wait_for(lambda: screen.link_state == link_mod.CONNECTED)
         fetches = data.fetches
         screen.link.state = link_mod.RECONNECTING
@@ -5649,11 +5660,22 @@ async def test_a_deferred_close_without_its_link_decides_nothing(
 async def test_the_pages_reconnect_poke_rereads_the_row(
     monkeypatch,
 ) -> None:
-    """#1019: a reconnected decider socket re-reads the row — the
-    frames published while no connection stood never landed, so
-    the poke serves them."""
+    """#1019: a reconnected decider socket re-reads the row and
+    the compact proxies line — the frames published while no
+    connection stood never landed (lifecycle frames and proxy
+    transitions alike), so the poke serves them both."""
     scripted_link(monkeypatch, [])
     data = FakeData([row()])
+    data.proxy_rows = [
+        {
+            "id": 1,
+            "workspace_id": WS,
+            "direction": "forward",
+            "listen_port": 2201,
+            "target_port": 2202,
+            "status": "listening",
+        }
+    ]
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
@@ -5662,6 +5684,51 @@ async def test_the_pages_reconnect_poke_rereads_the_row(
         fetches = data.fetches
         page.link_reconnected()
         await wait_for(lambda: data.fetches > fetches)
+        # The proxies line's re-read ran beside the row's: its
+        # worker group is its own, so both flights land.
+        proxies_line = page.query_one("#proxy-line", Static)
+
+        def painted() -> str:
+            return "".join(seg.text for seg in proxies_line.render_line(0))
+
+        await wait_for(lambda: "2201" in painted())
+
+
+async def test_a_sort_click_dropped_mid_flight_is_served(
+    monkeypatch,
+) -> None:
+    """#1019: a sort click landing while a refresh stands arms the
+    landing flight — the interval that once served a dropped
+    click is gone, so the armed read serves the order."""
+    import asyncio as _asyncio
+
+    gate = _asyncio.Event()
+    fetches = 0
+
+    class GatedData(FakeData):
+        async def workspaces(self) -> list[dict]:
+            nonlocal fetches
+            fetches += 1
+            if fetches == 1:
+                await gate.wait()
+            return self.rows
+
+    data = GatedData([row(), row(id="ws-b", name="beta")])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: on_main(app))
+        screen = app.screen
+        while not screen.rows_loading:
+            await pilot.pause()
+        # The click lands inside the gated flight: the sort state
+        # stands, the header carries it, and the armed poke serves
+        # the order once the flight lands.
+        screen.pick_column(0)  # NAME — its natural direction descends
+        assert screen.sort == ("NAME", False)
+        gate.set()
+        await wait_for(lambda: fetches == 2)  # the armed read ran
+        await wait_for(lambda: "alpha" in row_text(app, 0))
+        assert "beta" in row_text(app, 1)
 
 
 async def test_enter_on_a_dimmed_row_flashes_and_runs_nothing(

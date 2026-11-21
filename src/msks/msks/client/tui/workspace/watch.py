@@ -23,10 +23,14 @@ class PageWatches:
 
     def link_reconnected(self) -> None:
         """The decider connection serves again (#1019): the row
-        may have moved while the link was down, so it re-reads
-        now — beside the replay the registration lands."""
-        if self.is_mounted:
-            self.refresh_row()
+        and the compact proxies line may have moved while the
+        link was down — lifecycle frames and proxy transitions
+        alike never landed — so both re-read now, beside the
+        replay the registration lands."""
+        if not self.is_mounted:
+            return
+        self.refresh_row()
+        self.refresh_proxies()
 
     # -- the holds watch (#454) ----------------------------------------
 
