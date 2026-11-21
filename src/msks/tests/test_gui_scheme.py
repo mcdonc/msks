@@ -114,9 +114,10 @@ def test_a_light_desktop_paints_the_light_palette_at_startup(qt):
             hub_, qt.app, initial=qt.QtCore.Qt.ColorScheme.Light
         )
         assert scheme.standing == qt.QtCore.Qt.ColorScheme.Light
-        assert window_color(qt) == qt.app.style().standardPalette().color(
-            qt.QtGui.QPalette.ColorRole.Window
-        )
+        # The light chrome's window (#1006): the constant light
+        # set, Fusion's own #efefef — not the style's live
+        # scheme-aware standardPalette read.
+        assert window_color(qt).name() == "#efefef"
         session = hub_.open_shell("ws")
         assert session.widget.color_scheme == gt.COLOR_SCHEME_LIGHT
         assert grid_of(qt, session.widget) == (
@@ -159,8 +160,9 @@ def test_a_desktop_that_names_no_scheme_keeps_today_behavior(qt):
         )
         session = hub_.open_shell("ws")
         assert session.widget.color_scheme is None
-        # The library's fallback: the render state paints black
-        # on white — no default the window path wrote.
+        # The library's fallback: the render state paints a
+        # black page with a white face — no default the window
+        # path wrote.
         assert grid_of(qt, session.widget) == ((0, 0, 0), (255, 255, 255))
     finally:
         hub_.shutdown()
@@ -180,16 +182,12 @@ def test_a_scheme_change_switches_the_window_live(qt):
         assert window_color(qt).name() == "#353535"
         assert grid_of(qt, session.widget) == ((29, 31, 33), (197, 200, 198))
         scheme.switched(qt.QtCore.Qt.ColorScheme.Light)
-        assert window_color(qt) == qt.app.style().standardPalette().color(
-            qt.QtGui.QPalette.ColorRole.Window
-        )
+        assert window_color(qt).name() == "#efefef"
         assert grid_of(qt, session.widget) == ((255, 255, 255), (0, 0, 0))
         # The desktop withdrew its answer: the standing light
         # set keeps painting.
         scheme.switched(qt.QtCore.Qt.ColorScheme.Unknown)
-        assert window_color(qt) == qt.app.style().standardPalette().color(
-            qt.QtGui.QPalette.ColorRole.Window
-        )
+        assert window_color(qt).name() == "#efefef"
         assert grid_of(qt, session.widget) == ((255, 255, 255), (0, 0, 0))
     finally:
         hub_.shutdown()
@@ -209,6 +207,29 @@ def test_the_connection_sits_on_the_style_hints(qt):
             qt.QtCore.SIGNAL("colorSchemeChanged(Qt::ColorScheme)")
         )
         assert after == before + 1
+    finally:
+        hub_.shutdown()
+
+
+def test_a_real_scheme_signal_lands_the_switch(qt):
+    """The slot the hints feed (#1006): a signal carrying the
+    scheme enum — ``colorSchemeChanged``'s own payload — lands
+    the switch through the connection, not only a direct call.
+    The offscreen platform never switches on its own, so the
+    suite drives a same-typed signal into the slot."""
+
+    class Desktop(qt.QtCore.QObject):
+        switched = qt.QtCore.Signal(qt.QtCore.Qt.ColorScheme)
+
+    hub_ = hub()
+    try:
+        scheme = qt.scheme.Scheme(hub_, qt.app)
+        desktop = Desktop()
+        desktop.switched.connect(scheme.switched)
+        desktop.switched.emit(qt.QtCore.Qt.ColorScheme.Dark)
+        assert window_color(qt).name() == "#353535"
+        desktop.switched.emit(qt.QtCore.Qt.ColorScheme.Light)
+        assert window_color(qt).name() == "#efefef"
     finally:
         hub_.shutdown()
 
@@ -348,7 +369,7 @@ def test_the_two_chrome_palettes_read_where_it_counts(qt):
     reading roles over — the window, the base, the text — dims
     its disabled roles, and carries the formula's own blue
     highlight."""
-    light = qt.scheme.light_palette(qt.app)
+    light = qt.scheme.light_palette()
     dark = qt.scheme.dark_palette()
     roles = qt.QtGui.QPalette.ColorRole
     disabled = qt.QtGui.QPalette.ColorGroup.Disabled
@@ -362,3 +383,40 @@ def test_the_two_chrome_palettes_read_where_it_counts(qt):
     assert dark.color(roles.Base).name() == "#2a2a2a"
     assert dark.color(disabled, roles.Text).name() == "#7f7f7f"
     assert dark.color(roles.Highlight).name() == "#2a82da"
+    # The roles Qt's own dark derivation adds (#1006 review):
+    # the placeholder the forms and the find bar lean on dims
+    # to the gray, not the black a fresh palette carries — and
+    # the accent names the highlight's blue.
+    assert dark.color(roles.PlaceholderText).name() == "#7f7f7f"
+    assert dark.color(roles.Accent).name() == "#2a82da"
+
+
+def test_the_light_base_sixteen_reads_on_the_white_page(qt):
+    """The light set's base sixteen (#1006): every color the
+    generator would keep from the dark family reads as text on
+    the white page — the library's own contrast measure — with
+    bright yellow the one documented exception (the day
+    family's own yellow, every light theme's weakest text).
+    """
+    import ctypes
+
+    from msks.client.gui import ghostty as gt
+    from msks.client.gui.terminal import colors
+
+    lib = gt.Lib()
+
+    def contrast(a, b):
+        return lib.color_contrast(
+            ctypes.byref(colors.rgb(a)), ctypes.byref(colors.rgb(b))
+        )
+
+    for index, values in enumerate(colors.LIGHT_BASE_16):
+        ratio = contrast(values, colors.LIGHT_BACKGROUND)
+        if index == 11:  # bright yellow, the documented caveat
+            assert ratio >= 1.8
+        else:
+            assert ratio >= 2.4, (index, values, ratio)
+    # The two ends the review probed — white and bright white —
+    # now the grays, at the ratios a light theme ships.
+    assert contrast(colors.LIGHT_BASE_16[7], colors.LIGHT_BACKGROUND) >= 5
+    assert contrast(colors.LIGHT_BASE_16[15], colors.LIGHT_BACKGROUND) >= 2.8

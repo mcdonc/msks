@@ -634,6 +634,9 @@ class Lib:
             ctypes.c_bool,
             v,
         )
+        self.color_contrast = self.prototype(
+            "ghostty_color_contrast", ctypes.c_double, v, v
+        )
         self.render_state_new = self.prototype(
             "ghostty_render_state_new", r, v, ctypes.POINTER(v)
         )
