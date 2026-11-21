@@ -14,6 +14,8 @@ a way out (no focus trap).
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from .tabstyle import mark_active
+
 #: The first tab's label (#962): the workspace screens' page.
 WORKSPACES_LABEL = "Workspaces"
 
@@ -100,6 +102,10 @@ class MainTabs(QtWidgets.QTabWidget):
         # out of it: a click picks a tab and leaves the focus
         # where it stood.
         self.tabBar().setFocusPolicy(QtCore.Qt.FocusPolicy.TabFocus)
+        # The active tab's mark (#1012): the same accent tint
+        # the workspace detail strip carries, so both tab
+        # levels read the same way.
+        mark_active(self.tabBar())
         self.tabBar().installEventFilter(self)
 
     def eventFilter(self, obj, event) -> bool:

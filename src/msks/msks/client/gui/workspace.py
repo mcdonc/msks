@@ -34,6 +34,7 @@ from .rows import (
     workspace_row,
 )
 from .shells import ShellHub, ShellsTab
+from .tabstyle import mark_active
 from .termsession import shell_argv
 from .workspaces import FLASH_MS, REFRESH_MS, WorkspaceList
 
@@ -192,6 +193,11 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.proxies_tab = ProxiesTab(bridge)
         self.events_tab = EventsTab()
         self.bar = QtWidgets.QTabBar(self)
+        # The active tab's mark (#1012): the strip paints its
+        # current tab with the accent tint the main strip
+        # carries too, so the page the operator stands on reads
+        # at a glance on both levels.
+        mark_active(self.bar)
         self.bar.addTab(SHELLS_LABEL)
         self.bar.addTab(MOUNTS_LABEL)
         self.bar.addTab(PROXIES_LABEL)

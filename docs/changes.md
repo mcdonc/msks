@@ -306,6 +306,13 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **The GUI's active-tab mark (#1012).** The main
+  Workspaces/Images/Secrets strip and the workspace detail
+  strip paint the selected tab with an accent-tinted
+  background, so the page the operator stands on reads at a
+  glance. The tint follows the session palette, and the
+  keyboard keeps a dotted rim on the focused tab.
+
 - **The GUI secrets page fills the window and drops the
   sentinel pane (#997).** The placeholder listing and the audit
   table each span the window's whole width, their columns

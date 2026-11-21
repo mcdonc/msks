@@ -132,6 +132,17 @@ def test_the_workspaces_tab_carries_the_create_opener(qt) -> None:
     assert asked == [True]
 
 
+def test_the_bar_carries_the_active_tab_mark(qt) -> None:
+    """The strip's active-tab mark (#1012): the bar wears the
+    shared sheet — the accent tint the workspace
+    detail strip carries too, so both tab levels read the same
+    way."""
+    page = qt.QtWidgets.QWidget()
+    tabs = MainTabs(page)
+    window_over(qt, tabs)
+    assert "QTabBar::tab:selected" in tabs.tabBar().styleSheet()
+
+
 def test_left_and_right_cross_the_tabs(qt) -> None:
     """The strip's own moves (#962): Left and Right on the bar
     change the current tab — the platform's native handling,
