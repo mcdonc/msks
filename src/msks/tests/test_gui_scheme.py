@@ -234,16 +234,31 @@ def test_a_real_scheme_signal_lands_the_switch(qt):
         hub_.shutdown()
 
 
-def test_a_shell_opened_after_the_scheme_joins_it(qt):
+def test_a_shell_opened_after_the_scheme_joins_it(qt, monkeypatch):
     """A shell opened while a scheme stands (#1006): the fresh
     terminal paints from the library's fallback until the
     pairing reaches it — the hub's own open signal carries the
-    standing set, the zoom's join shape (#976)."""
+    standing set, the zoom's join shape (#976), and the walk
+    skips a terminal the standing set already reached."""
+    from msks.client.gui.terminal import colors
+
     hub_ = hub()
     try:
         qt.scheme.Scheme(hub_, qt.app, initial=qt.QtCore.Qt.ColorScheme.Dark)
-        session = hub_.open_shell("ws")
-        assert grid_of(qt, session.widget) == ((29, 31, 33), (197, 200, 198))
+        first = hub_.open_shell("ws")
+        assert grid_of(qt, first.widget) == ((29, 31, 33), (197, 200, 198))
+        applied = []
+        real = colors.apply
+        monkeypatch.setattr(
+            colors,
+            "apply",
+            lambda screen, scheme: (
+                applied.append(screen) or real(screen, scheme)
+            ),
+        )
+        second = hub_.open_shell("ws")
+        assert applied == [second.widget]  # the walk skipped the first
+        assert grid_of(qt, second.widget) == ((29, 31, 33), (197, 200, 198))
     finally:
         hub_.shutdown()
 
