@@ -297,6 +297,9 @@ def test_the_page_carries_top_level_shells_and_info_tabs(qt) -> None:
         "Info",
     ]
     assert page.bar.currentIndex() == 0  # Shells, the default
+    # The active tab's mark (#1012): the strip wears the shared
+    # sheet, the same one the main window's strip carries.
+    assert "QTabBar::tab:selected" in page.bar.styleSheet()
     assert page.stack.currentIndex() == 0
     assert page.stack.widget(0) is page.shells_tab
     assert page.shells_tab.shells is page.shells
