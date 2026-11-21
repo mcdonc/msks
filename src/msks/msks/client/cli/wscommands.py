@@ -1,10 +1,10 @@
 """The workspace commands: the root callback and the lifecycle
 and reach verbs.
 
-`ls`, `agent-card`, `tui`, `gui`, `storage`, `create`, `start`,
-`stop`, `clone`, `resize`, `mount`, `umount`, `rm`, `console`,
-`forward`, `key`, `ssh`, `rsync` — thin typer wrappers over the
-workspaces/ssh/rsync modules' own commands.
+`ls`, `agent-card`, `tui`, `gui`, `gui-shortcut`, `storage`,
+`create`, `start`, `stop`, `clone`, `resize`, `mount`, `umount`,
+`rm`, `console`, `forward`, `key`, `ssh`, `rsync` — thin typer
+wrappers over the workspaces/ssh/rsync modules' own commands.
 """
 
 import typer
@@ -15,6 +15,7 @@ from ..console import run_workspace_shell
 from ..create import read_pubkey  # noqa: F401 — the tests' seam
 from ..forward import run_workspace_forward
 from ..gui.app import run as run_gui
+from ..gui.shortcut import run as run_shortcut
 from ..images import (  # noqa: F401
     cmd_image_check,
     cmd_image_default,
@@ -176,6 +177,16 @@ def gui() -> int:
     (pip install 'msks[gui]'); the workspace screens arrive
     with the plan's later phases."""
     return run_gui(conf=cliapp.invoked_conf)
+
+
+@app.command("gui-shortcut")
+@one_line_interrupts
+def gui_shortcut() -> int:
+    """Install the GUI's desktop shortcut (#1021): the window's
+    icon and launcher entry under the XDG data home, so the
+    taskbar shows the msks icon and the desktop's menus find
+    the client."""
+    return run_shortcut()
 
 
 @app.command("storage")

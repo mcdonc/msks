@@ -531,6 +531,8 @@ def test_open_window_reuses_an_existing_app(
     shown: list[str] = []
     stops: list[object] = []
     styles: list[str] = []
+    identities: list[str] = []
+    icons: list[object] = []
     central: list[object] = []
     built: list[object] = []
     screens: list[object] = []
@@ -740,6 +742,12 @@ def test_open_window_reuses_an_existing_app(
         def setStyle(self, name: str) -> None:
             styles.append(name)
 
+        def setDesktopFileName(self, name: str) -> None:
+            identities.append(name)
+
+        def setWindowIcon(self, icon: object) -> None:
+            icons.append(icon)
+
         def font(self) -> FakeFont:
             return self.the_font
 
@@ -809,6 +817,11 @@ def test_open_window_reuses_an_existing_app(
     # The font scale (#939): the default 9pt scales to 13.5 —
     # one write on the application font, before any widget.
     assert "font 13.5" in shown
+    # The window's desktop identity (#1021): the entry name the
+    # compositor matches the icon by, and the icon itself,
+    # loaded from the wheel's own master.
+    assert identities == ["msks"]
+    assert len(icons) == 1
     # The opening size (#939): nothing saved answers, so the
     # fixed 1280x720 default does.
     assert "sized 1280x720" in shown
@@ -988,6 +1001,12 @@ def test_open_window_keeps_a_user_style_choice(
 
         def setStyle(self, name: str) -> None:
             styles.append(name)
+
+        def setDesktopFileName(self, name: str) -> None:
+            pass  # the identity's own test pins the call
+
+        def setWindowIcon(self, icon: object) -> None:
+            pass
 
         def font(self) -> object:
             return self  # the font-shape pair the scale reads

@@ -1453,6 +1453,27 @@ empty-host fill keeps pointing at the workspace id your own transport must
 then reach), the same override shape ssh passthrough options have. The host
 prerequisites are `ssh` and `rsync`. The exit code is rsync's own.
 
+## `msks gui-shortcut`
+
+The GUI window shows an msks icon once the desktop can resolve
+it (#1021). A Wayland taskbar reads the window's app id, looks up
+the desktop entry with that id, and shows the icon the entry points
+at.
+
+`msks gui-shortcut` installs both under the XDG data home
+(`XDG_DATA_HOME`, else `~/.local/share`). The `msks.desktop` entry
+lands under `applications`, and the icon renders land under
+`icons/hicolor`, one PNG per size plus the scalable SVG. The entry's
+`Exec` line carries the absolute path of the `msks` command the
+installing shell resolved, so the desktop finds the client even when
+the venv's bin directory is not on the desktop's `PATH`. Run the
+command again after an upgrade to refresh the renders. It overwrites
+in place and is safe to re-run.
+
+The window itself also sets the icon directly, so on X11 and macOS the
+window carries it without the install. Linux is the only desktop the
+command serves. Elsewhere it prints one line and exits 1.
+
 ## Errors, exit codes, and timeouts
 
 Every command fails with one readable line on stderr and exit
