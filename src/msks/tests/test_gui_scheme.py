@@ -44,10 +44,9 @@ def qt(tmp_path: Path):
     teardown — the shared test app's own, so later tests in
     this worker measure the platform's default."""
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
-    from PySide6 import QtCore, QtGui, QtWidgets
-
     from msks.client.gui import scheme as scheme_mod
     from msks.client.gui.terminal import paint
+    from PySide6 import QtCore, QtGui, QtWidgets
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
         ["msks-test"]
@@ -98,9 +97,7 @@ def grid_of(qt, widget):
 
 def window_color(qt):
     """The chrome's window role as the palette paints it."""
-    return qt.app.palette().color(
-        qt.QtGui.QPalette.ColorRole.Window
-    )
+    return qt.app.palette().color(qt.QtGui.QPalette.ColorRole.Window)
 
 
 def test_a_light_desktop_paints_the_light_palette_at_startup(qt):
@@ -223,13 +220,29 @@ def test_a_shell_opened_after_the_scheme_joins_it(qt):
     standing set, the zoom's join shape (#976)."""
     hub_ = hub()
     try:
-        scheme = qt.scheme.Scheme(
-            hub_, qt.app, initial=qt.QtCore.Qt.ColorScheme.Dark
-        )
+        qt.scheme.Scheme(hub_, qt.app, initial=qt.QtCore.Qt.ColorScheme.Dark)
         session = hub_.open_shell("ws")
         assert grid_of(qt, session.widget) == ((29, 31, 33), (197, 200, 198))
     finally:
         hub_.shutdown()
+
+
+def test_one_scheme_builds_one_shared_color_set(qt):
+    """The built sets are shared (#1006): the library's answers
+    are pure functions of the scheme, so a second ask for the
+    same scheme takes the set the first built — every terminal
+    a switch reaches writes the same values."""
+    from msks.client.gui import ghostty as gt
+    from msks.client.gui.terminal import colors
+
+    lib = gt.Lib()
+    first = colors.colors_for(gt.COLOR_SCHEME_DARK, lib)
+    second = colors.colors_for(gt.COLOR_SCHEME_DARK, lib)
+    assert first is second
+    assert first.background == (29, 31, 33)
+    light = colors.colors_for(gt.COLOR_SCHEME_LIGHT, lib)
+    assert light.background == colors.LIGHT_BACKGROUND
+    assert light.palette[250] != first.palette[250]  # the ramp turned over
 
 
 def test_a_retarget_carries_the_scheme_to_a_new_hub(qt):

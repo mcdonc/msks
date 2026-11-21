@@ -62,9 +62,7 @@ def build(scheme: int, lib) -> TerminalColors:
     base = (gt.ColorRgb * 256)()
     lib.color_palette_default(base)
     if scheme == gt.COLOR_SCHEME_DARK:
-        return TerminalColors(
-            triple(base[0]), triple(base[7]), base
-        )
+        return TerminalColors(triple(base[0]), triple(base[7]), base)
     palette = (gt.ColorRgb * 256)()
     lib.color_palette_generate(
         base,
