@@ -49,10 +49,10 @@ def save_cancel_row(
     """A dialog's save and cancel buttons with their row: save
     default and wired to the submit slot, cancel left for the
     dialog's own reject."""
-    save = QtWidgets.QPushButton("save")
+    save = QtWidgets.QPushButton("Save")
     save.setDefault(True)
     save.clicked.connect(submit_slot)
-    cancel = QtWidgets.QPushButton("cancel")
+    cancel = QtWidgets.QPushButton("Cancel")
     row = QtWidgets.QHBoxLayout()
     row.addWidget(save)
     row.addWidget(cancel)

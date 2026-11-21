@@ -34,7 +34,7 @@ WORKSPACES_KEY = "secrets-mint-workspaces"
 #: back on a refused seed or a landed refusal once the note
 #: clears — the page carries no sentinel display, so the note
 #: names the action alone.
-MINT_NOTE = "mint a placeholder"
+MINT_NOTE = "Mint a placeholder"
 
 
 def picker_edge(key: int, current: int, last: int) -> bool | None:
@@ -83,28 +83,28 @@ class MintDialog(QtWidgets.QDialog):
         form = QtWidgets.QFormLayout()
         self.name = QtWidgets.QLineEdit()
         self.name.setPlaceholderText("letters, numbers, underscores")
-        form.addRow("name", self.name)
+        form.addRow("Name", self.name)
         self.dests = QtWidgets.QLineEdit()
         self.dests.setPlaceholderText("host or .suffix, comma-separated")
-        form.addRow("dests", self.dests)
+        form.addRow("Dests", self.dests)
         self.coverage = QtWidgets.QComboBox()
         for label, value in cells.COVERAGE_CHOICES:
             self.coverage.addItem(label, value)
         self.coverage.currentIndexChanged.connect(self.sync_coverage)
-        form.addRow("coverage", self.coverage)
+        form.addRow("Coverage", self.coverage)
         self.workspaces = WorkspacePicker()
         self.workspaces.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.MultiSelection
         )
-        form.addRow("workspaces", self.workspaces)
+        form.addRow("Workspaces", self.workspaces)
         self.ttl = QtWidgets.QComboBox()
         for label in MINT_TTLS:
             self.ttl.addItem(label, label)
-        form.addRow("ttl", self.ttl)
+        form.addRow("TTL", self.ttl)
         self.value = QtWidgets.QLineEdit()
         self.value.setPlaceholderText("the real secret — typed or pasted")
         self.value.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
-        form.addRow("value", self.value)
+        form.addRow("Value", self.value)
         self.mint_button = QtWidgets.QPushButton("Mint")
         self.mint_button.setDefault(True)
         self.mint_button.clicked.connect(self.submit)

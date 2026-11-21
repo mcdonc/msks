@@ -34,13 +34,13 @@ DEFAULTS_KEY = "create-defaults"
 #: The form's fields (#309's own set): the key the body carries
 #: and the label the row shows, in walk order.
 FORM_FIELDS = (
-    ("name", "name"),
-    ("image", "image ref"),
-    ("cpus", "vcpus"),
-    ("mem_mib", "memory MiB"),
-    ("root_mib", "root MiB"),
-    ("home_mib", "home MiB"),
-    ("user", "user"),
+    ("name", "Name"),
+    ("image", "Image ref"),
+    ("cpus", "VCPUs"),
+    ("mem_mib", "Memory MiB"),
+    ("root_mib", "Root MiB"),
+    ("home_mib", "Home MiB"),
+    ("user", "User"),
 )
 
 #: The fields whose values must be whole numbers (#309).
@@ -162,7 +162,7 @@ class CreateDialog(BridgeClose, QtWidgets.QDialog):
         self.hints_loaded = False
         self.flight = None
         self.setWindowTitle("Create a workspace")
-        self.note = QtWidgets.QLabel("create a workspace")
+        self.note = QtWidgets.QLabel("Create a workspace")
         form = QtWidgets.QFormLayout()
         self.fields: dict[str, QtWidgets.QWidget] = {}
         for field, label in FORM_FIELDS:
@@ -178,10 +178,10 @@ class CreateDialog(BridgeClose, QtWidgets.QDialog):
                     edit.setPlaceholderText(user_placeholder())
                 self.fields[field] = edit
             form.addRow(label, self.fields[field])
-        self.create_button = QtWidgets.QPushButton("create")
+        self.create_button = QtWidgets.QPushButton("Create")
         self.create_button.setDefault(True)
         self.create_button.clicked.connect(self.submit)
-        cancel = QtWidgets.QPushButton("cancel")
+        cancel = QtWidgets.QPushButton("Cancel")
         cancel.clicked.connect(self.reject)
         buttons = QtWidgets.QHBoxLayout()
         buttons.addWidget(self.create_button)

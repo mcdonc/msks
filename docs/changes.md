@@ -312,6 +312,15 @@ tagged `vX.Y.Z`.
   background, so the page the operator stands on reads at a
   glance. The tint follows the session palette, and the
   keyboard keeps a dotted rim on the focused tab.
+- **The GUI's popups read with capitalized words (#1018).**
+  The create, edit, and mint dialogs' field labels, note
+  lines, and buttons now start each label with a capital
+  letter — `Name`, `VCPUs`, `Memory MiB`, `Create`, `Cancel`,
+  `Apply` — matching the window titles' own style, and the
+  mount and proxy forms' labels and `Save`/`Cancel` buttons
+  follow. Acronyms keep their unit casing (`VCPUs`, `TTL`,
+  `MiB`).
+
 - **The GUI's tab pages carry their action buttons at the
   bottom (#1011).** The Workspaces tab's green plus badge is
   gone from the tab strip: Add, Edit, and Remove sit in a row
