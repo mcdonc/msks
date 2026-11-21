@@ -14,6 +14,8 @@ from __future__ import annotations
 import ctypes
 
 from PySide6.QtCore import (
+    QCoreApplication,
+    QEvent,
     QPointF,
     QSize,
     QSocketNotifier,
@@ -354,6 +356,12 @@ class TerminalWidget(QWidget):
         entered = (self.width(), self.height())
         self._fitting = True
         try:
+            # Settle chrome metrics while resize events cannot change the
+            # held grid. Deliver only font/layout events, never user input.
+            QCoreApplication.sendPostedEvents(
+                None, QEvent.Type.ApplicationFontChange
+            )
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
             for _ in range(2):
                 if not self.fit_once(window):
                     return

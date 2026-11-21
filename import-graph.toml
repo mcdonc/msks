@@ -41,6 +41,9 @@ entry_points = [
 # four groups import one module instead of pushing
 # msks.client.env past the fan-in ceiling.
 facades = [
+  # #1001: the panel shares consent duration vocabulary through its
+  # presenter module, keeping the TUI controller's fan-in unchanged.
+  "msks.client.gui.consent",
   "msks.client.context",
   "msks.client.tui.consent_ui",
   "msks.interceptor",

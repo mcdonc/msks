@@ -263,8 +263,16 @@ def test_the_grid_holds_through_the_windows_real_chrome(qt, zoomed):
     began."""
     session = zoomed.hub.open_shell("ws")
     widget = session.widget
-    shells = qt.QtWidgets.QTabWidget()
-    shells.addTab(widget, "1")
+    from msks.client.gui.consent import ConsentRow
+    from msks.client.gui.shells import ShellsTab
+    from test_gui_consentpanel import FakePresenter
+    from test_gui_workspace import StubBridge
+
+    shells = ShellsTab(zoomed.hub, StubBridge())
+    shells.host(
+        "ws",
+        FakePresenter([ConsentRow("req", "api.github.com:443", 20, "20s")]),
+    )
     page = qt.QtWidgets.QTabWidget()
     page.addTab(shells, "Shells")
     page.addTab(qt.QtWidgets.QWidget(), "Info")
@@ -282,6 +290,11 @@ def test_the_grid_holds_through_the_windows_real_chrome(qt, zoomed):
     zoomed.zoom.grow()
     qt.app.processEvents()
     assert (widget.cols, widget.rows) == held
+    action = shells.findChild(qt.QtWidgets.QToolButton, "allow-req")
+    assert action.isVisible()
+    assert (
+        action.mapTo(shells, action.rect().bottomRight()).x() < shells.width()
+    )
     zoomed.zoom.shrink()
     qt.app.processEvents()
     assert (widget.cols, widget.rows) == held

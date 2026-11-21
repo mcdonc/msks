@@ -27,6 +27,8 @@ nothing imports it at CLI parse time.
 from PySide6 import QtCore, QtWidgets
 
 from . import terminal
+from .consent import ConsentPresenter
+from .consentpanel import ConsentPanel
 from .termsession import shell_argv
 
 #: A shell tab's minimum text width, characters (#969): a tab
@@ -455,3 +457,52 @@ class ShellTabs(QtWidgets.QTabWidget):
         if self.editor is not None:
             self.editor.deleteLater()
             self.editor = None
+
+
+class ShellsTab(QtWidgets.QWidget):
+    """Consent above persistent shells, refreshed while this tab is visible."""
+
+    def __init__(self, hub: ShellHub, bridge) -> None:
+        super().__init__()
+        self.timer = QtCore.QTimer(self)
+        self.timer.setInterval(1000)
+        self.consent_panel = ConsentPanel(bridge, self)
+        self.shells = ShellTabs(hub)
+        self.consent_panel.focus_exhausted.connect(self.focus_shell)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.consent_panel)
+        layout.addWidget(self.shells, stretch=1)
+        self.timer.timeout.connect(self.consent_panel.refresh)
+        bridge.decider_landed.connect(lambda *_: self.consent_panel.refresh())
+
+    def host(self, workspace_id: str, presenter: ConsentPresenter) -> None:
+        """Replace consent state and rehost the hub's persistent shells."""
+        self.consent_panel.host(presenter)
+        self.shells.host(workspace_id)
+
+    def focus_shell(self) -> None:
+        """Restore terminal focus after the final focused hold disappears."""
+        widget = self.shells.currentWidget()
+        if widget is not None and widget is not self.shells.plus_page:
+            widget.setFocus()
+        else:
+            self.shells.tabBar().setFocus()
+
+    def resizeEvent(self, event):  # noqa: N802
+        super().resizeEvent(event)
+        if getattr(self, "consent_panel", None) is not None:
+            self.consent_panel.resize_rows()
+
+    def showEvent(self, event):  # noqa: N802
+        if getattr(self, "consent_panel", None) is not None:
+            self.consent_panel.refresh()
+            self.timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event):  # noqa: N802
+        timer = getattr(self, "timer", None)
+        if timer is not None:
+            timer.stop()
+        super().hideEvent(event)

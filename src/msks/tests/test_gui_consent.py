@@ -191,16 +191,15 @@ def test_the_decide_call_sends_verdict_and_duration_together() -> None:
     held = presenter()
     held.controller.apply_frame(request_raw("req-1"))
     held.decide("req-1", "allow")
+    first = held.bridge.calls[0][0]
     assert held.bridge.calls == [
-        (
-            "consent-decide-1",
-            "decide",
-            ("ws-a", "req-1", "allow", "tilrestart"),
-        )
+        (first, "decide", ("ws-a", "req-1", "allow", "tilrestart"))
     ]
     held.decide("req-1", "deny", "5m")
+    second = held.bridge.calls[1][0]
+    assert first != second
     assert held.bridge.calls[1] == (
-        "consent-decide-2",
+        second,
         "decide",
         ("ws-a", "req-1", "deny", "5m"),
     )
@@ -208,17 +207,18 @@ def test_the_decide_call_sends_verdict_and_duration_together() -> None:
     # verdicts each keep their own key for the panel's match —
     # and the panel's retire halves the match: an answered
     # flight's key leaves, an unknown key retires nothing.
-    assert held.decide_keys == {"consent-decide-1", "consent-decide-2"}
-    held.retire("consent-decide-1")
-    assert held.decide_keys == {"consent-decide-2"}
-    held.retire("consent-decide-9")
-    assert held.decide_keys == {"consent-decide-2"}
+    assert held.decide_keys == {first, second}
+    held.retire(first)
+    assert held.decide_keys == {second}
+    held.retire("unknown-key")
+    assert held.decide_keys == {second}
     # A fresh presenter (the page's next open) never reuses a
     # gone one's keys: the module-wide sequence runs on.
     fresh = presenter()
     fresh.decide("req-2", "deny", "once")
-    assert fresh.bridge.calls[0][0] == "consent-decide-3"
-    assert fresh.decide_keys == {"consent-decide-3"}
+    third = fresh.bridge.calls[0][0]
+    assert third not in {first, second}
+    assert fresh.decide_keys == {third}
 
 
 def test_a_row_clears_on_the_resolved_frame_not_the_click() -> None:

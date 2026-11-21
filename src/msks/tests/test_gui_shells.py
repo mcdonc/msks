@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from test_gui_consentpanel import FakePresenter
 from test_gui_workspace import SLEEPER, StubBridge, daemon_row
 
 # The hub's pty children spawn through ``fork()`` on Qt's own
@@ -98,6 +99,125 @@ def launcher_shell(qt):
     shell, hub, window = make_shell(qt, terminal_cmd=["theterm", "-e"])
     yield shell, hub, window
     hub.shutdown()
+
+
+@pytest.fixture()
+def consent_tab(qt, hub):
+    from msks.client.gui.consent import ConsentRow
+
+    bridge = StubBridge()
+    held = FakePresenter([ConsentRow("req", "host:443", 20, "20s")])
+    tab = qt.shells.ShellsTab(hub, bridge)
+    tab.resize(800, 600)
+    tab.host("ws-a", held)
+    tab.show()
+    qt.app.processEvents()
+    return tab, held, bridge
+
+
+def test_shells_container_places_consent_above_terminals(qt, consent_tab):
+    tab, held, bridge = consent_tab
+    assert tab.consent_panel.geometry().bottom() < tab.shells.geometry().top()
+    assert tab.shells.height() > tab.consent_panel.height()
+
+
+def test_empty_panel_keeps_terminal_area(qt, consent_tab):
+    tab, held, bridge = consent_tab
+    held.models.clear()
+    bridge.decider_landed.emit("resolved", None)
+    qt.app.processEvents()
+    assert tab.consent_panel.isHidden()
+    assert tab.shells.geometry() == tab.rect()
+
+
+def test_container_timer_refreshes_countdown(qt, consent_tab):
+    from msks.client.gui.consent import ConsentRow
+
+    tab, held, bridge = consent_tab
+    held.models[0] = ConsentRow("req", "host:443", 19, "19s")
+    assert tab.timer.interval() == 1000
+    tab.timer.timeout.emit()
+    countdown = tab.findChild(qt.QtWidgets.QLabel, "countdown-req")
+    assert countdown.text() == "19s"
+
+
+def test_empty_visible_shells_detects_first_hold(qt, consent_tab):
+    tab, held, bridge = consent_tab
+    models = held.models
+    held.models = []
+    tab.timer.timeout.emit()
+    assert tab.consent_panel.isHidden()
+    assert tab.timer.isActive()
+    held.models = models
+    tab.timer.timeout.emit()
+    assert not tab.consent_panel.isHidden()
+
+
+def test_hidden_shells_stops_timer_and_show_refreshes(qt, consent_tab):
+    tab, held, bridge = consent_tab
+    tab.hide()
+    assert not tab.timer.isActive()
+    held.models.clear()
+    bridge.decider_landed.emit("resolved", None)
+    assert not tab.timer.isActive()
+    tab.show()
+    assert tab.timer.isActive()
+    assert tab.consent_panel.isHidden()
+
+
+def test_stale_notification_reads_only_active_presenter(qt, consent_tab):
+    tab, held, bridge = consent_tab
+    tab.host("ws-b", FakePresenter())
+    bridge.decider_landed.emit("added", object())
+    assert tab.consent_panel.isHidden()
+    assert held.models
+
+
+def test_focused_row_removal_reaches_terminal_strip(qt, consent_tab):
+    from msks.client.gui.consent import ConsentRow
+
+    tab, held, bridge = consent_tab
+    held.models += [ConsentRow("next", "next:443", 20, "20s")]
+    tab.timer.timeout.emit()
+    first = tab.findChild(qt.QtWidgets.QToolButton, "allow-req")
+    first.setFocus()
+    held.models.pop(0)
+    tab.timer.timeout.emit()
+    assert tab.findChild(qt.QtWidgets.QToolButton, "allow-next").hasFocus()
+    held.models.clear()
+    tab.timer.timeout.emit()
+    assert tab.shells.tabBar().hasFocus()
+
+
+def test_background_resolution_does_not_steal_terminal_focus(qt, consent_tab):
+    tab, held, bridge = consent_tab
+    tab.shells.tabBar().setFocus()
+    held.models.clear()
+    tab.timer.timeout.emit()
+    assert tab.shells.tabBar().hasFocus()
+
+
+def test_shells_events_tolerate_partial_teardown(qt, consent_tab):
+    tab, held, bridge = consent_tab
+    tab.hide()
+    del tab.consent_panel
+    del tab.timer
+    tab.resizeEvent(qt.QtGui.QResizeEvent(tab.size(), tab.size()))
+    tab.showEvent(qt.QtGui.QShowEvent())
+    tab.hideEvent(qt.QtGui.QHideEvent())
+
+
+def test_large_queue_leaves_terminal_space(qt, consent_tab):
+    from msks.client.gui.consent import ConsentRow
+
+    tab, held, bridge = consent_tab
+    held.models = [
+        ConsentRow(str(i), f"host{i}:443", 20, "20s") for i in range(5)
+    ]
+    tab.timer.timeout.emit()
+    qt.app.processEvents()
+    assert tab.shells.height() > tab.consent_panel.height()
+    assert tab.consent_panel.scroll.verticalScrollBar().maximum() > 0
 
 
 def make_shell(qt, terminal_cmd=None):

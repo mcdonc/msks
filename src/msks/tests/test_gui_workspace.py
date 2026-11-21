@@ -298,13 +298,113 @@ def test_the_page_carries_top_level_shells_and_info_tabs(qt) -> None:
     ]
     assert page.bar.currentIndex() == 0  # Shells, the default
     assert page.stack.currentIndex() == 0
-    assert page.stack.widget(0) is page.shells
+    assert page.stack.widget(0) is page.shells_tab
+    assert page.shells_tab.shells is page.shells
     assert page.stack.widget(3) is page.events_tab  # the bar's own order
     info = page.stack.widget(4)
     assert info.findChildren(type(page.mounts)) == [page.mounts]
     assert page.health in info.findChildren(type(page.health))
     page.bar.setCurrentIndex(bar_index(page, "Info"))
     assert page.stack.currentWidget() is info
+
+
+def test_open_hosts_consent_before_registration(qt) -> None:
+    from test_gui_consent import request_raw
+
+    page, window, bridge = make_page(qt)
+
+    def register(workspace_id, controller):
+        controller.apply_frame(request_raw(ws=workspace_id))
+        bridge.decider_landed.emit("added", None)
+
+    bridge.start_decider = register
+    page.open("ws-a")
+    qt.app.processEvents()
+    panel = page.shells_tab.consent_panel
+    assert not panel.isHidden()
+    assert (
+        panel.findChild(qt.QtWidgets.QLabel, "destination-req-1").text()
+        == "api.github.com:443"
+    )
+    assert panel.geometry().bottom() < page.shells.geometry().top()
+
+
+def test_workspace_switch_discards_old_consent_actions_and_results(qt) -> None:
+    from test_gui_consent import request_raw
+
+    page, window, bridge = make_page(qt)
+    panel = page.shells_tab.consent_panel
+    page.consent.controller.apply_frame(request_raw())
+    panel.refresh()
+    action = panel.findChild(qt.QtWidgets.QToolButton, "allow-req-1")
+    old_choice = action.menu().actions()[0]
+    action.click()
+    old_key = bridge.calls[-1][0]
+    page.open("ws-b")
+    page.consent.controller.apply_frame(request_raw(ws="ws-b"))
+    panel.refresh()
+    before = list(bridge.calls)
+    old_choice.trigger()
+    bridge.failed.emit(old_key, RuntimeError("old refusal"))
+    assert bridge.calls == before
+    assert panel.note.text() == ""
+    assert len(page.consent.rows()) == 1
+
+
+def test_reopen_uses_fresh_presenter_without_closing_shells(qt) -> None:
+    page, window, bridge = make_page(qt)
+    terminal = page.shells.currentWidget()
+    first = page.consent
+    page.open("ws-b")
+    page.open("ws-a")
+    assert page.consent is not first
+    assert page.shells_tab.consent_panel.presenter is page.consent
+    assert page.shells.currentWidget() is terminal
+    assert page.consent.rows() == []
+
+
+@pytest.mark.parametrize("mode", ["allow", "static"])
+def test_noninteractive_empty_consent_is_collapsed(qt, mode) -> None:
+    from test_gui_consent import rules_raw
+
+    page, window, bridge = make_page(qt)
+    page.consent.controller.apply_frame(rules_raw(mode=mode))
+    bridge.decider_landed.emit("rules", None)
+    assert page.shells_tab.consent_panel.isHidden()
+
+
+def test_reset_collapses_panel_and_resolution_returns_terminal_focus(
+    qt,
+) -> None:
+    from test_gui_consent import request_raw, resolved_raw
+
+    page, window, bridge = make_page(qt)
+    panel = page.shells_tab.consent_panel
+    page.consent.controller.apply_frame(request_raw())
+    panel.refresh()
+    qt.app.processEvents()
+    action = panel.findChild(qt.QtWidgets.QToolButton, "allow-req-1")
+    action.setFocus()
+    assert action.hasFocus()
+    page.consent.controller.apply_frame(resolved_raw())
+    bridge.decider_landed.emit("resolved", None)
+    assert page.shells.currentWidget().hasFocus()
+    page.consent.controller.apply_frame(request_raw())
+    bridge.decider_landed.emit("added", None)
+    assert not panel.isHidden()
+    page.consent.controller.reset()
+    page.shells_tab.timer.timeout.emit()
+    assert panel.isHidden()
+
+
+def test_other_workspace_tabs_keep_decider_registration(qt) -> None:
+    page, window, bridge = make_page(qt)
+    stops = bridge.decider_stops
+    show_info(page)
+    assert not page.shells_tab.timer.isActive()
+    assert bridge.decider_stops == stops
+    page.bar.setCurrentIndex(0)
+    assert page.shells_tab.timer.isActive()
 
 
 def test_a_mounts_save_lands_on_the_page(qt) -> None:
@@ -399,7 +499,7 @@ def test_a_reopen_resets_the_row_and_anchors_the_terminal(qt) -> None:
     shell.detail.go_back()
     shell.listing.opened.emit("ws-a")  # reopen: a fresh open's show
     assert shell.detail.bar.currentIndex() == 0  # Shells again
-    assert shell.detail.stack.currentWidget() is shell.detail.shells
+    assert shell.detail.stack.currentWidget() is shell.detail.shells_tab
     assert window.focusWidget() is shell.detail.hub.find("ws-a", 1).widget
 
 
