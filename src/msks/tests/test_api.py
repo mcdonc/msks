@@ -353,6 +353,84 @@ async def test_stop_failure_restores_the_prior_status(client) -> None:
     assert wid not in app.state.stopping_workspaces
 
 
+async def test_request_paths_publish_their_transitions(client) -> None:
+    """#1019: every listing-affecting move a request makes is
+    published — the create, the start's starting/running pair,
+    the stop's stopping/stopped pair, a mounts set, and the
+    removal — so attached clients re-read on the frames instead
+    of a poll. The frames carry the id (and the name where one
+    stands), the watcher's own shape."""
+    http, app, _stub = client
+    queue = app.state.hub.subscribe()
+    try:
+        created = await http.post(
+            "/api/v1/workspaces",
+            json={"kernel": "/k", "rootfs": "/r", "name": "pub"},
+            headers=auth(),
+        )
+        assert created.status_code == 201, created.text
+        wid = created.json()["id"]
+        await http.post(f"/api/v1/workspaces/{wid}/start", headers=auth())
+        await http.post(f"/api/v1/workspaces/{wid}/stop", headers=auth())
+        await http.post(
+            f"/api/v1/workspaces/{wid}/mounts",
+            json={"mounts": []},
+            headers=auth(),
+        )
+        await http.post(f"/api/v1/workspaces/{wid}/reset", headers=auth())
+        await http.delete(f"/api/v1/workspaces/{wid}", headers=auth())
+    finally:
+        frames = []
+        while not queue.empty():
+            frames.append(json.loads(await queue.get()))
+    seen = [
+        (frame["event"], frame["data"])
+        for frame in frames
+        if str(frame["event"]).startswith("workspace.")
+    ]
+    assert seen == [
+        ("workspace.created", {"id": wid, "name": "pub"}),
+        ("workspace.status", {"id": wid, "status": "starting"}),
+        ("workspace.status", {"id": wid, "status": "running"}),
+        ("workspace.status", {"id": wid, "status": "stopping"}),
+        ("workspace.status", {"id": wid, "status": "stopped"}),
+        ("workspace.mounts", {"id": wid}),
+        ("workspace.status", {"id": wid, "status": "created"}),
+        ("workspace.removed", {"id": wid, "name": "pub"}),
+    ]
+
+
+async def test_a_failed_stop_publishes_the_restored_status(client) -> None:
+    """#1019: a shutdown that fails restores the prior status and
+    publishes it — a client that re-read on the stopping frame
+    learns the move back from the frame, not from a poll."""
+    http, app, stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-sfp", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    wid = created.json()["id"]
+    await http.post(f"/api/v1/workspaces/{wid}/start", headers=auth())
+    stub.fail_shutdown = True
+    queue = app.state.hub.subscribe()
+    try:
+        refused = await http.post(
+            f"/api/v1/workspaces/{wid}/stop", headers=auth()
+        )
+    finally:
+        frames = []
+        while not queue.empty():
+            frames.append(json.loads(await queue.get()))
+    assert refused.status_code == 503
+    statuses = [
+        frame["data"]["status"]
+        for frame in frames
+        if frame["event"] == "workspace.status"
+    ]
+    assert statuses == ["stopping", "running"]
+
+
 async def test_overlapping_stops_heal_to_stopped(client) -> None:
     """Two stops in one window share one marker (#789 round 1):
     the second request's ``finally`` discards the id while the

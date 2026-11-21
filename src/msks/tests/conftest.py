@@ -66,6 +66,26 @@ def preseeded_migrations(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def quiet_listing_link(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The listing's subscriber connection, scripted quiet
+    (#1019): the main screen holds one for the app's whole life,
+    and a test that does not care about its frames must not dial
+    the environment. A test that needs frames calls
+    :func:`test_main_tui.scripted_listing` on top — the later
+    patch wins, and both restore at teardown."""
+    from test_consent_page import FakeFactory
+
+    from msks.client.tui.main_screen import ListingLink, MainScreen
+
+    factory = FakeFactory([])
+    monkeypatch.setattr(
+        MainScreen,
+        "make_link",
+        lambda self: ListingLink(self.refresh_rows, ws_factory=factory),
+    )
+
+
+@pytest.fixture(autouse=True)
 def isolated_client_config(
     client_config_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
