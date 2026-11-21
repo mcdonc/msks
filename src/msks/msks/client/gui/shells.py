@@ -475,7 +475,18 @@ class ShellsTab(QtWidgets.QWidget):
         layout.addWidget(self.consent_panel)
         layout.addWidget(self.shells, stretch=1)
         self.timer.timeout.connect(self.consent_panel.refresh)
-        bridge.decider_landed.connect(lambda *_: self.consent_panel.refresh())
+        # The receiver must be this tab, a QObject in the GUI thread
+        # (#1001): the bridge emits decider_landed on its worker loop,
+        # and a plain callable connected there runs on the emitting
+        # thread — the panel would repaint off the GUI thread. The
+        # QObject receiver takes the emit queued.
+        bridge.decider_landed.connect(self.decider_frame)
+
+    @QtCore.Slot(str, object)
+    def decider_frame(self, outcome: str, payload: object) -> None:
+        """One landed decider frame: the panel re-reads the
+        presenter's rows on the GUI thread."""
+        self.consent_panel.refresh()
 
     def host(self, workspace_id: str, presenter: ConsentPresenter) -> None:
         """Replace consent state and rehost the hub's persistent shells."""
