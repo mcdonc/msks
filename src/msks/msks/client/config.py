@@ -389,6 +389,11 @@ class ClientConfig:
     ssh_options: list[str]
     daemon: str | None
     env_layer: dict[str, str] = field(default_factory=dict)
+    #: The config file the resolution read (#1009): the path
+    #: itself, or the ``none`` opt-out sentinel — the GUI's
+    # connection picker re-reads the same file its launch
+    # resolved, ``--config`` and all.
+    config_path: str = ""
 
 
 def resolve(
@@ -433,6 +438,7 @@ def resolve(
         ssh_options=resolved_ssh_options(doc, layer),
         daemon=selection.alias,
         env_layer=layer,
+        config_path=path,
     )
 
 

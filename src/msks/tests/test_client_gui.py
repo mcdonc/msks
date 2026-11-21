@@ -692,16 +692,21 @@ def test_open_window_reuses_an_existing_app(
     class FakeListing:
         """The shell's listing stub (#1009): the picker rides its
         status row — the presets host on it, the picks cross on
-        its signal — recording both for the wiring pins."""
+        its signal, a refused pick flashes its status line —
+        recording all three for the wiring pins."""
 
         connection_picked = PickedSignal()
 
         def __init__(self) -> None:
             self.hosted: list[object] = []
+            self.flashed: list[str] = []
             listings.append(self)
 
         def host_presets(self, presets: object) -> None:
             self.hosted.append(presets)
+
+        def flash(self, message: str) -> None:
+            self.flashed.append(message)
 
     class FakeConnections:
         """The picker's presenter stub (#1009): one plain row,
@@ -808,6 +813,11 @@ def test_open_window_reuses_an_existing_app(
         assert len(started) == 2
         assert len(central) == 2
         assert len(listings[1].hosted) == 2
+        # The refusal names itself where every flash does
+        # (#1009): the listing's own status line.
+        assert listings[1].flashed == [
+            "the connection pick was refused — farm did not resolve"
+        ]
         shown.append("driven")
     finally:
         Bridge.start, Bridge.stop = real_start, real_stop  # type: ignore[method-assign]

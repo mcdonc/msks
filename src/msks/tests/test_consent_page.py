@@ -2590,6 +2590,11 @@ def test_ws_connect_kwargs_and_shared_ssl(monkeypatch) -> None:
 
     ctx = ssl.create_default_context()
     monkeypatch.setattr(env_mod, "_SHARED_SSL", [ctx])
+    # The cache keys on the CA (#1009): a seeded context carries
+    # the key of the CA that stands, or the read rebuilds.
+    monkeypatch.setattr(
+        env_mod, "_SHARED_SSL_KEY", [os.environ.get("MSKSC_CAFILE") or ""]
+    )
     kwargs = consent_ui.ws_connect_kwargs("http://d", "t", ctx)
     assert kwargs["ssl"] is None
     kwargs = consent_ui.ws_connect_kwargs("https://d", "t", ctx)

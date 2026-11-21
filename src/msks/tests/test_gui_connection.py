@@ -346,3 +346,134 @@ def test_a_picked_row_that_leaves_marks_its_own_dial(
     (state / "port").unlink()
     rows = held.presets()
     assert [(row.name, row.active) for row in rows] == [("environment", True)]
+
+
+def test_a_pick_starts_from_the_open_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CLI's own compose rule (#1009): every pick applies
+    over the open's snapshot, so an earlier pick's token or CA
+    never rides a later pick's URL — the dev token and CA a dev
+    pick wrote leave with the next alias pick, whose entry names
+    an address alone."""
+    token = tmp_path / "farm.tok"
+    token.write_text("farmtok")
+    config = config_file(
+        tmp_path,
+        "daemons:\n  bare:\n    url: https://10.0.0.9:9660\n"
+        f"  farm:\n    url: https://farm:9660\n    token_file: {token}\n",
+    )
+    state = dev_state(tmp_path, port="9669")
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(state))
+    held = connection_mod.Connections(None, config=config)
+    rows = {row.name: row for row in held.presets()}
+    assert held.pick(rows["dev daemon"]) is True
+    assert os.environ["MSKSC_TOKEN"] == "devtok"
+    assert os.environ["MSKSC_CAFILE"] == str(state / "msks-ca.pem")
+    # The bare alias names an address alone: the dev pick's
+    # token and CA leave with the pick's own starting point.
+    assert held.pick(rows["bare"]) is True
+    assert os.environ["MSKSC_URL"] == "https://10.0.0.9:9660"
+    assert "MSKSC_TOKEN" not in os.environ
+    assert "MSKSC_CAFILE" not in os.environ
+
+
+def test_a_refused_pick_leaves_the_standing_dial_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal's restore (#1009): the standing tree's calls
+    read the environment per exchange, so a pick that cannot
+    apply restores the dial as it stood — not the open's
+    snapshot, a redirect the operator never asked for."""
+    token = tmp_path / "farm.tok"
+    token.write_text("farmtok")
+    config = config_file(tmp_path, ALIASES.format(token=token))
+    state = dev_state(tmp_path, port="9671")
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(state))
+    held = connection_mod.Connections(None, config=config)
+    rows = {row.name: row for row in held.presets()}
+    assert held.pick(rows["dev daemon"]) is True
+    standing = dict(
+        (name, os.environ.get(name, ""))
+        for name in connection_mod.SHAPING_VARS
+    )
+    token.unlink()
+    assert held.pick(rows["farm"]) is False
+    after = dict(
+        (name, os.environ.get(name, ""))
+        for name in connection_mod.SHAPING_VARS
+    )
+    assert after == standing
+    assert held.pick(rows["dev daemon"]) is True  # the dial still stands
+
+
+def test_a_changed_ca_builds_a_fresh_tls_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The TLS cache keys on the CA (#1009): the process's one
+    context is built from the CA that stood when it was first
+    used, and a pick re-dials a daemon whose CA posture can
+    differ — a changed ``MSKSC_CAFILE`` builds the next context
+    fresh (pinned or TOFU whichever the new dial names), an
+    unchanged one keeps the cached context, and a pick whose CA
+    did not move reuses it."""
+    import msks.client.env as env_mod
+
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(tmp_path / "no-dev"))
+    monkeypatch.setenv("MSKSC_URL", "https://shell.example:9660")
+    ca = tmp_path / "ca.pem"
+    ca.write_text("CA\n")
+    monkeypatch.setattr(env_mod, "_SHARED_SSL", [None])
+    monkeypatch.setattr(env_mod, "_SHARED_SSL_KEY", [None])
+    builds: list[object] = []
+    monkeypatch.setattr(
+        env_mod, "ssl_context", lambda: builds.append(object()) or builds[-1]
+    )
+    held = connection_mod.Connections(None, config="none")
+    held.pick(held.presets()[0])  # the environment: no CA stood
+    first = env_mod.shared_ssl()
+    again = env_mod.shared_ssl()
+    assert first is again  # an unchanged CA keeps the context
+    assert builds == [first]  # one build, not one per call
+    # A pick that pins a CA builds the next context fresh.
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "port").write_text("9680")
+    (state / "bootstrap-token").write_text("tok\n")
+    (state / "msks-ca.pem").write_text("CA2\n")
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(state))
+    dev = next(row for row in held.presets() if row.kind == connection_mod.DEV)
+    assert held.pick(dev) is True
+    assert os.environ["MSKSC_CAFILE"] == str(state / "msks-ca.pem")
+    fresh = env_mod.shared_ssl()
+    assert fresh is not first
+    assert builds == [first, fresh]
+
+
+def test_the_conf_names_the_config_file_the_picker_reads(
+    tmp_path: Path,
+) -> None:
+    """The ``--config`` plumb (#1009): the invocation's resolved
+    config carries the file it read, and the picker built on
+    that conf alone lists that file's aliases — the custom file
+    a launch bootstrapped from, not the default tree beside
+    it."""
+    from msks.client.config import resolve
+
+    token = tmp_path / "t.tok"
+    token.write_text("tok")
+    config = config_file(
+        tmp_path,
+        "daemons:\n  custom:\n    url: https://custom:9660\n"
+        f"    token_file: {token}\n",
+    )
+    conf = resolve(config=config)
+    assert conf.config_path == config
+    rows = connection_mod.Connections(conf).presets()
+    assert [(row.name, row.address) for row in rows] == [
+        ("custom", "https://custom:9660")
+    ]
+    # A pick resolves through the same file.
+    assert connection_mod.Connections(conf).pick(rows[0]) is True
+    assert os.environ["MSKSC_URL"] == "https://custom:9660"
+    assert os.environ["MSKSC_TOKEN"] == "tok"

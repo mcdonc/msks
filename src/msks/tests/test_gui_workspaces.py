@@ -1590,3 +1590,28 @@ def test_a_picker_menu_pick_crosses_as_the_signal(qt) -> None:
     screen.connection_picked.connect(landed.append)
     screen.connection.menu().actions()[0].trigger()
     assert landed == [preset]
+
+
+def test_a_rehosted_picker_releases_its_replaced_menu(qt) -> None:
+    """The menu's lifetime (#1009): a re-host builds a fresh
+    menu and the replaced one leaves with its actions — the
+    button's children do not pile a menu per pick across a
+    window's life."""
+    import shiboken6
+    from msks.client.gui.connection import ALIAS, ConnectionPreset
+
+    screen, window, bridge = make_screen(qt)
+    screen.host_presets(
+        [ConnectionPreset("farm", ALIAS, "https://10.0.0.9:9660")]
+    )
+    gone = screen.connection.menu()
+    screen.host_presets(
+        [ConnectionPreset("farm", ALIAS, "https://10.0.0.9:9660", active=True)]
+    )
+    qt.app.processEvents()
+    qt.QtCore.QCoreApplication.sendPostedEvents(
+        None, qt.QtCore.QEvent.Type.DeferredDelete
+    )
+    qt.app.processEvents()
+    assert not shiboken6.isValid(gone)
+    assert screen.connection.menu() is not gone

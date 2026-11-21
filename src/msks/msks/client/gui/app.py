@@ -399,6 +399,13 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
         menu) re-dials nothing — the picker re-hosts on the
         standing truth instead."""
         if not connections.pick(preset):
+            # The refusal shows where every flash shows (#1009):
+            # the listing's own status line, the menu re-hosted
+            # on the standing truth beside it.
+            tree["shell"].listing.flash(
+                f"the connection pick was refused — {preset.name} "
+                "did not resolve"
+            )
             tree["shell"].listing.host_presets(connections.presets())
             return
         tree["bridge"].stop()

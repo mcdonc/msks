@@ -54,6 +54,7 @@ class ConnectionButton(QtWidgets.QToolButton):
         per preset, its text the name beside the address and a
         check on the standing one, the button's own label naming
         the standing connection."""
+        gone = self.menu()
         menu = QtWidgets.QMenu(self)
         standing = NO_STANDING
         for preset in presets:
@@ -67,4 +68,6 @@ class ConnectionButton(QtWidgets.QToolButton):
             if preset.active:
                 standing = preset.name
         self.setMenu(menu)
+        if gone is not None:
+            gone.deleteLater()  # the replaced menu leaves with its lambdas
         self.setText(standing)

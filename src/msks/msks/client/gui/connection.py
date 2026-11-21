@@ -302,18 +302,14 @@ def marked(
     ]
 
 
-def apply_alias(name: str, config: str | None) -> bool:
+def apply_alias(name: str, config: str | None) -> None:
     """One alias pick through the config layer's own resolution
     (#1009): exactly what ``msks --daemon <name>`` materializes.
     A file that can no longer resolve the name (it changed under
-    the menu, its token file left) answers False with the
-    environment untouched — the config layer's own refusal
-    naming nothing to re-dial."""
-    try:
-        apply_config(resolve(name, config))
-    except ValueError:
-        return False
-    return True
+    the menu, its token file left) raises the config layer's own
+    refusal — nothing to re-dial, the caller's environment its
+    own to keep whole."""
+    apply_config(resolve(name, config))
 
 
 def apply_dev() -> bool:
@@ -343,7 +339,15 @@ class Connections:
 
     def __init__(self, conf=None, *, config: str | None = None) -> None:
         self.conf = conf
-        self.config = config
+        # The config file the picker reads (#1009): the caller's
+        # own override first, else the one the invocation's
+        # resolved config names — ``msks --config <file> gui``
+        # lists and resolves the same file it bootstrapped from.
+        self.config = (
+            config
+            if config is not None
+            else (getattr(conf, "config_path", "") or None)
+        )
         self.startup = snapshot()
         #: The last applied pick (#1009): it drives the marking
         #: of every later menu, the operator's own act outranking
@@ -357,14 +361,25 @@ class Connections:
 
     def pick(self, preset: ConnectionPreset) -> bool:
         """Apply one preset to the environment (#1009), the
-        answer naming whether the pick applied."""
+        answer naming whether the pick applied. Every pick
+        starts from the open's snapshot — the CLI's own compose
+        rule, a shell's exports the starting point — so an
+        earlier pick's token or CA never rides a later pick's
+        URL, and a refusal restores the standing dial whole
+        (the standing tree's own calls read the environment per
+        exchange, and a failed pick must not redirect them).
+        """
+        before = snapshot()
+        restore(self.startup)
         if preset.kind == ALIAS:
-            if not apply_alias(preset.name, self.config):
+            try:
+                apply_alias(preset.name, self.config)
+            except ValueError:
+                restore(before)
                 return False
         elif preset.kind == DEV:
             if not apply_dev():
+                restore(before)
                 return False
-        else:
-            restore(self.startup)
         self.picked = preset
         return True
