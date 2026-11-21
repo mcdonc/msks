@@ -137,6 +137,11 @@ subtree, the sessions' own root). A saved geometry no connected screen
 shows is ignored, so an unplugged monitor cannot strand the window off the
 desktop.
 
+A Ctrl-C in the terminal that started the window closes it (#1037). The
+close takes the window's own quit path: every open shell closes and the
+geometry saves, exactly as the close button ends it. The client exits
+with 130, the terminal's interrupted status.
+
 `MSKSC_PUBKEY_FILE` points at your key's public half, a `.pub`
 file ([the identity section](first-run.md#the-key-files)
 owns the agent requirement this form carries). A create with it

@@ -539,6 +539,7 @@ def test_open_window_reuses_an_existing_app(
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("PySide6 is not installed on this host")
     from msks.client.gui import connection as connection_mod
+    from msks.client.gui import interrupt as interrupt_mod
     from msks.client.gui import menubar as menubar_mod
     from msks.client.gui import scheme as scheme_mod
     from msks.client.gui import tabs as tabs_mod
@@ -570,6 +571,19 @@ def test_open_window_reuses_an_existing_app(
     monkeypatch.setattr(
         menubar_mod, "install_bar", lambda window: bars.append(window)
     )
+
+    armed: list[object] = []
+    settled: list[int] = []
+
+    def fake_arm(qapp: object):
+        """The Ctrl-C wiring's stub (#1037): the recording pins
+        the arming over the standing app and the settle over
+        the loop's code; the real wiring runs in its own
+        suite."""
+        armed.append(qapp)
+        return lambda code: settled.append(code) or code
+
+    monkeypatch.setattr(interrupt_mod, "arm_sigint", fake_arm)
 
     class FakeSignal:
         def connect(self, slot: object) -> None:
@@ -915,6 +929,11 @@ def test_open_window_reuses_an_existing_app(
     # rect, as the next open reads it.
     saved = json.loads((tmp_path / "gui-window.json").read_text())
     assert saved == {"x": 10, "y": 20, "width": 640, "height": 480}
+    # The Ctrl-C wiring (#1037): armed over the standing app
+    # before the loop, the settle applied to the loop's own
+    # code on the way out.
+    assert armed == [existing]
+    assert settled == [3]
 
 
 def test_open_window_keeps_a_user_style_choice(
@@ -941,6 +960,15 @@ def test_open_window_keeps_a_user_style_choice(
     # install is stubbed the same way as the reuse test's, the
     # construction itself pinned in the bar's own suite.
     monkeypatch.setattr(menubar_mod, "install_bar", lambda window: None)
+
+    # The Ctrl-C wiring's stub (#1037): armed, the settle an
+    # identity — the style test reads the environment and the
+    # app font only; the real wiring runs in its own suite.
+    from msks.client.gui import interrupt as interrupt_mod
+
+    monkeypatch.setattr(
+        interrupt_mod, "arm_sigint", lambda qapp: lambda code: code
+    )
 
     styles: list[str] = []
     central: list[object] = []

@@ -396,6 +396,12 @@ gui`. The nix package keeps the daemon's closure lean, so on
 
 ### Fixed
 
+- **Ctrl-C closes the GUI window (#1037).** A Ctrl-C in the
+  terminal that started `msks gui` now ends the window through
+  its own quit path, the one the close button takes: every
+  open shell closes and the window geometry saves. The client
+  exits with 130, the terminal's interrupted status.
+
 - **Quitting the GUI with a focused terminal no longer
   crashes the client (#1034).** Closing a terminal freed the
   emulator's handles before Qt delivered the focus-out of the
