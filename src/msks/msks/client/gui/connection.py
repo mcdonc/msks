@@ -27,7 +27,7 @@ shell's own exports, not to a previous pick's writes.
 """
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..config import NO_CONFIG, load_config, resolve, resolve_config_path
@@ -212,38 +212,94 @@ def dev_row(
 
 
 def environment_row(
-    startup: dict[str, str], standing: str, rows: list[ConnectionPreset]
+    startup: dict[str, str], rows: list[ConnectionPreset]
 ) -> ConnectionPreset | None:
     """The environment's preset row (#1009), or None when the
-    shell exported no address. The row stands active when no
-    other row already holds the standing connection."""
-    if not (startup.get("MSKSC_URL") or startup.get("MSKSC_SOCKET")):
+    shell exported no address — the row's display is the
+    exports' own address, the dial a pick on it restores. A dev
+    row already carrying the same address drops the row: the
+    devenv shell's exports ARE the dev daemon's state dir, and
+    one dial under two names reads as a toggle that cannot move
+    — the dev row names it, its state-dir source the fresher
+    read. The row stands active when no other row already holds
+    the standing connection."""
+    address = startup.get("MSKSC_URL") or startup.get("MSKSC_SOCKET")
+    if not address:
+        return None
+    if carries_dial(rows, address):
         return None
     return ConnectionPreset(
         "environment",
         ENVIRONMENT,
-        standing,
+        address,
         active=not any(row.active for row in rows),
     )
 
 
+def carries_dial(rows: list[ConnectionPreset], address: str) -> bool:
+    """Whether a dev row already carries the address (#1009):
+    the dedupe's own question, the environment row asking it of
+    the rows built ahead of it."""
+    for row in rows:
+        if (row.kind, row.address) == (DEV, address):
+            return True
+    return False
+
+
 def build_presets(
-    conf, startup: dict[str, str], config: str | None
+    conf,
+    startup: dict[str, str],
+    config: str | None,
+    picked: ConnectionPreset | None = None,
 ) -> list[ConnectionPreset]:
     """The menu's presets (#1009): the file's aliases in the
     file's own order, the dev daemon when its state dir names a
     dial, and the environment when the shell exported an
-    address."""
+    address. A preset the operator already picked drives the
+    marking — the launch's own inference names the standing row
+    until the first pick, and the pick's row stands marked after
+    it (a launch-time resolution the window still carries would
+    otherwise keep naming a dial the operator just left)."""
     active_alias = getattr(conf, "daemon", None)
     standing = standing_address(conf, startup)
     rows = alias_rows(read_doc(config), active_alias)
     dev = dev_row(standing, active_alias)
     if dev is not None:
         rows.append(dev)
-    env = environment_row(startup, standing, rows)
+    env = environment_row(startup, rows)
     if env is not None:
         rows.append(env)
+    if picked is not None:
+        return marked(rows, picked)
     return rows
+
+
+def chosen_marks(
+    rows: list[ConnectionPreset], picked: ConnectionPreset
+) -> list[bool]:
+    """The rows' marks for one pick (#1009): the picked row's
+    own mark first; when the picked row itself is gone — the
+    state dir a re-host re-read no longer names it, the
+    environment row a dedupe dropped — the row carrying the
+    pick's address stands in, the dial the pick landed on being
+    the dial that stands."""
+    marks = [
+        (row.kind, row.name) == (picked.kind, picked.name) for row in rows
+    ]
+    if not any(marks):
+        return [row.address == picked.address for row in rows]
+    return marks
+
+
+def marked(
+    rows: list[ConnectionPreset], picked: ConnectionPreset
+) -> list[ConnectionPreset]:
+    """The pick's own marking (#1009): the row the operator
+    picked stands checked, every other clears."""
+    return [
+        replace(row, active=mark)
+        for row, mark in zip(rows, chosen_marks(rows, picked))
+    ]
 
 
 def apply_alias(name: str, config: str | None) -> bool:
@@ -289,18 +345,26 @@ class Connections:
         self.conf = conf
         self.config = config
         self.startup = snapshot()
+        #: The last applied pick (#1009): it drives the marking
+        #: of every later menu, the operator's own act outranking
+        #: the launch-time inference.
+        self.picked: ConnectionPreset | None = None
 
     def presets(self) -> list[ConnectionPreset]:
-        """The menu's rows, built over the open's own
-        snapshot."""
-        return build_presets(self.conf, self.startup, self.config)
+        """The menu's rows, built over the open's own snapshot
+        and the last applied pick."""
+        return build_presets(self.conf, self.startup, self.config, self.picked)
 
     def pick(self, preset: ConnectionPreset) -> bool:
         """Apply one preset to the environment (#1009), the
         answer naming whether the pick applied."""
         if preset.kind == ALIAS:
-            return apply_alias(preset.name, self.config)
-        if preset.kind == DEV:
-            return apply_dev()
-        restore(self.startup)
+            if not apply_alias(preset.name, self.config):
+                return False
+        elif preset.kind == DEV:
+            if not apply_dev():
+                return False
+        else:
+            restore(self.startup)
+        self.picked = preset
         return True

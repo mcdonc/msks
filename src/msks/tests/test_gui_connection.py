@@ -66,6 +66,11 @@ def test_the_presets_list_the_file_the_dev_daemon_and_the_environment(
     token.write_text("farmtok")
     config = config_file(tmp_path, ALIASES.format(token=token))
     monkeypatch.setenv("MSKSD_STATE_DIR", str(dev_state(tmp_path)))
+    # The devenv shape (#1009): the shell's exports ARE the dev
+    # daemon's state dir — one dial, one row. The environment
+    # row dedupes into the dev row (its state-dir source the
+    # fresher read), and the dev row marks itself the standing
+    # connection.
     monkeypatch.setenv("MSKSC_URL", "https://127.0.0.1:9661")
     conf = SimpleNamespace(daemon=None, url="", socket="")
     rows = connection_mod.Connections(conf, config=config).presets()
@@ -73,16 +78,30 @@ def test_the_presets_list_the_file_the_dev_daemon_and_the_environment(
         ("farm", connection_mod.ALIAS, False),
         ("laptop", connection_mod.ALIAS, False),
         ("dev daemon", connection_mod.DEV, True),
-        ("environment", connection_mod.ENVIRONMENT, False),
     ]
     assert rows[0].address == "https://10.0.0.9:9660"
     assert rows[1].address == "/run/msks/local.sock"
     assert rows[2].address == "https://127.0.0.1:9661"
     # An alias the invocation itself picked marks that alias,
-    # and the dev and environment rows stand down.
+    # and the dev row stands down; the environment row stays
+    # deduped either way.
     conf = SimpleNamespace(daemon="laptop", url="", socket="")
     rows = connection_mod.Connections(conf, config=config).presets()
-    assert [row.active for row in rows] == [False, True, False, False]
+    assert [row.active for row in rows] == [False, True, False]
+    # A shell whose exports name another dial keeps both rows —
+    # two dials, two names — the environment row marking itself
+    # the standing connection.
+    monkeypatch.setenv("MSKSC_URL", "https://other.example:9660")
+    rows = connection_mod.Connections(
+        SimpleNamespace(daemon=None, url="", socket=""), config=config
+    ).presets()
+    assert [(row.name, row.active) for row in rows] == [
+        ("farm", False),
+        ("laptop", False),
+        ("dev daemon", False),
+        ("environment", True),
+    ]
+    assert rows[3].address == "https://other.example:9660"
 
 
 def test_the_environment_row_marks_itself_the_standing_dial(
@@ -272,3 +291,58 @@ def test_a_dev_pick_without_a_ca_dials_unpinned(
     assert held.pick(held.presets()[0]) is True
     assert os.environ["MSKSC_URL"] == "https://127.0.0.1:9663"
     assert "MSKSC_CAFILE" not in os.environ
+
+
+def test_a_pick_drives_the_marking_after_it_lands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pick's own marking (#1009): the row the operator
+    picked stands checked on every later menu — a launch-time
+    resolution the window still carries cannot keep naming a
+    dial the operator just left, the toggle's whole point."""
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(dev_state(tmp_path)))
+    monkeypatch.setenv("MSKSC_URL", "https://other.example:9660")
+    conf = SimpleNamespace(daemon=None, url="", socket="")
+    held = connection_mod.Connections(conf, config="none")
+    # Pick the dev daemon: its row marks itself, the
+    # environment row clears.
+    dev = held.presets()[0]
+    assert dev.kind == connection_mod.DEV
+    assert held.pick(dev) is True
+    assert [(row.name, row.active) for row in held.presets()] == [
+        ("dev daemon", True),
+        ("environment", False),
+    ]
+    # Pick the environment back: the toggle moves with it, the
+    # launch-time inference (which named the environment at the
+    # open) nothing the operator's act cannot outrank.
+    env = held.presets()[1]
+    assert env.kind == connection_mod.ENVIRONMENT
+    assert held.pick(env) is True
+    assert [(row.name, row.active) for row in held.presets()] == [
+        ("dev daemon", False),
+        ("environment", True),
+    ]
+
+
+def test_a_picked_row_that_leaves_marks_its_own_dial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pick's row gone (#1009): the state dir a re-host
+    re-read no longer naming a dial, the row carrying the
+    pick's own address stands in — the dial the pick landed on
+    is the dial that stands."""
+    state = dev_state(tmp_path, port="9670")
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(state))
+    # The shell exported the same dial the state dir names, so
+    # the environment row dedupes into the dev row at the open.
+    monkeypatch.setenv("MSKSC_URL", "https://127.0.0.1:9670")
+    held = connection_mod.Connections(None, config="none")
+    dev = held.presets()[0]
+    assert held.pick(dev) is True
+    # The state dir rotates away; the environment row — the
+    # shell's own export, still standing — carries the pick's
+    # address.
+    (state / "port").unlink()
+    rows = held.presets()
+    assert [(row.name, row.active) for row in rows] == [("environment", True)]
