@@ -9668,12 +9668,13 @@ async def test_d_off_a_catalog_row_and_a_refused_default(
 async def test_a_refresh_in_flight_skips_instead_of_cancelling(
     monkeypatch,
 ) -> None:
-    """#776's mac-lane diagnosis: an exclusive refresh worker
-    cancelled inside the swap strands the tree — the old list
-    removed, the fresh one never mounted — and the recorded rows
-    then skip every later refresh against a listing that never
-    painted. The in-flight mark skips a second refresh while one
-    runs; the next call after it lands serves the rows."""
+    """#776's mac-lane diagnosis, over #1019: an exclusive refresh
+    worker cancelled inside the swap strands the tree — the old
+    list removed, the fresh one never mounted — and the recorded
+    rows then skip every later refresh against a listing that
+    never painted. The in-flight mark skips a second refresh
+    while one runs, and the landing flight serves the armed poke
+    — the skip never loses a frame."""
     import asyncio as _asyncio
 
     gate = _asyncio.Event()
@@ -9693,7 +9694,7 @@ async def test_a_refresh_in_flight_skips_instead_of_cancelling(
         await wait_for(lambda: on_main(app))
         screen = app.screen
         # The first refresh still awaits its gate: a second
-        # refresh arrives (the interval's tick, a resume) and is
+        # refresh arrives (a frame's poke, a resume) and is
         # skipped, not queued, not cancelling the first.
         while not screen.rows_loading:
             await pilot.pause()
@@ -9707,8 +9708,7 @@ async def test_a_refresh_in_flight_skips_instead_of_cancelling(
         assert fetches == 1  # the gated flight alone
         gate.set()
         await wait_for(lambda: list_children(app) == 1)
-        # The flight that landed freed the mark: the next refresh
-        # runs for real.
-        screen.refresh_rows()
+        # The armed poke served: the landing flight re-reads — the
+        # skip never lost the frame, and the tree never stranded.
         await wait_for(lambda: fetches == 2)
         assert screen.rows_widget() is not None
