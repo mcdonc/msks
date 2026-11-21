@@ -477,3 +477,57 @@ def test_the_conf_names_the_config_file_the_picker_reads(
     assert connection_mod.Connections(conf).pick(rows[0]) is True
     assert os.environ["MSKSC_URL"] == "https://custom:9660"
     assert os.environ["MSKSC_TOKEN"] == "tok"
+
+
+def test_the_launchs_materialized_winners_leave_the_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CLI parity the snapshot owes (#1009): a window
+    launched ``--daemon farm`` — or with ``active_daemon:``
+    naming one — carries bootstrap's materialized winners in
+    its environment, and the snapshot must subtract them (the
+    conf's own ``env_layer`` is exactly those pairs): the
+    shell's exports alone are the starting point, so a weaker
+    alias pick composes with nothing the launch alias carried,
+    and the environment row names a shell export, not the
+    launch's materialized dial."""
+    token = tmp_path / "farm.tok"
+    token.write_text("farmtok")
+    config = config_file(
+        tmp_path,
+        "daemons:\n  bare:\n    url: https://10.0.0.9:9660\n"
+        f"  farm:\n    url: https://farm:9660\n    token_file: {token}\n"
+        "    cafile: /tmp/farm-ca.pem\n",
+    )
+    # The launch shape: bootstrap resolved and materialized the
+    # farm pick into the environment, exactly as a real
+    # ``msks --daemon farm gui`` leaves it.
+    from msks.client.config import apply as apply_config
+    from msks.client.config import resolve
+
+    conf = resolve(daemon="farm", config=config)
+    apply_config(conf)
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(tmp_path / "no-dev"))
+    held = connection_mod.Connections(conf)
+    # The materialized URL left the snapshot: no environment row
+    # rides beside the aliases (the launch's alias marked).
+    rows = {row.name: row for row in held.presets()}
+    assert set(rows) == {"farm", "bare"}
+    assert rows["farm"].active
+    # The weaker alias pick composes with nothing farm carried —
+    # the CLI's own dial from the same clean shell.
+    assert held.pick(rows["bare"]) is True
+    assert os.environ["MSKSC_URL"] == "https://10.0.0.9:9660"
+    assert "MSKSC_TOKEN" not in os.environ
+    assert "MSKSC_CAFILE" not in os.environ
+    # The environment pick restores the shell's exports: nothing
+    # materialized rides back.
+    monkeypatch.setenv("MSKSC_URL", "https://shell.example:9660")
+    held = connection_mod.Connections(conf)
+    env = next(
+        row for row in held.presets() if row.kind == connection_mod.ENVIRONMENT
+    )
+    assert env.address == "https://shell.example:9660"
+    assert held.pick(env) is True
+    assert os.environ["MSKSC_URL"] == "https://shell.example:9660"
+    assert "MSKSC_TOKEN" not in os.environ

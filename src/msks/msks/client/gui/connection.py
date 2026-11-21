@@ -330,6 +330,26 @@ def apply_dev() -> bool:
     return True
 
 
+def launchless(startup: dict[str, str], conf) -> dict[str, str]:
+    """The snapshot minus the launch's own materialized winners
+    (#1009): bootstrap wrote the file and flag layers into the
+    environment before the window opened, and the snapshot must
+    hold the shell's exports alone — the CLI's own starting
+    point, a fresh process dialing from what the operator
+    exported. Without the subtraction, a window launched
+    ``--daemon farm`` composes farm's token and CA into every
+    weaker alias pick, credentials the CLI would never send. The
+    conf's own ``env_layer`` names exactly the pairs bootstrap
+    wrote, and a value the operator changed after the launch is
+    a genuine export, not the materialized one — the
+    subtraction takes only what the launch left standing.
+    """
+    for name, value in (getattr(conf, "env_layer", None) or {}).items():
+        if startup.get(name) == value:
+            startup[name] = ""
+    return startup
+
+
 class Connections:
     """The picker's state and application seam (#1009): the
     preset list the menu builds from, and the pick that applies
@@ -348,7 +368,7 @@ class Connections:
             if config is not None
             else (getattr(conf, "config_path", "") or None)
         )
-        self.startup = snapshot()
+        self.startup = launchless(snapshot(), conf)
         #: The last applied pick (#1009): it drives the marking
         #: of every later menu, the operator's own act outranking
         #: the launch-time inference.

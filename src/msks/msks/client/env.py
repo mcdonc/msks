@@ -153,11 +153,14 @@ def env_token() -> str | None:
 _SHARED_SSL: list = [None]
 
 #: The CA the cached context was built against (#1009): the
-#: cache keys on it, so a changed ``MSKSC_CAFILE`` — a
-#: connection pick re-dialing a daemon with another CA posture
-#: — builds the next context fresh, pinned or TOFU whichever
-#: the new dial names, while an unchanged CA keeps the one
-#: context (the warning stays once per process).
+#: cache keys on the ``MSKSC_CAFILE`` path, so a changed value
+#: — a connection pick re-dialing a daemon with another CA
+#: posture — builds the next context fresh, pinned or TOFU
+#: whichever the new dial names, while an unchanged value keeps
+#: the one context (the warning stays once per process). The
+#: key is the path, not the file's contents: a CA re-seeded in
+#: place under the same name outlives a standing window, a
+#: relaunch answering it.
 _SHARED_SSL_KEY: list = [None]
 
 
