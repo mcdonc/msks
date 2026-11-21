@@ -490,11 +490,6 @@ class ShellsTab(QtWidgets.QWidget):
         else:
             self.shells.tabBar().setFocus()
 
-    def resizeEvent(self, event):  # noqa: N802
-        super().resizeEvent(event)
-        if getattr(self, "consent_panel", None) is not None:
-            self.consent_panel.resize_rows()
-
     def showEvent(self, event):  # noqa: N802
         if getattr(self, "consent_panel", None) is not None:
             self.consent_panel.refresh()
