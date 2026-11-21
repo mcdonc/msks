@@ -413,8 +413,6 @@ def test_the_light_base_sixteen_reads_on_the_white_page(qt):
     bright yellow the one documented exception (the day
     family's own yellow, every light theme's weakest text).
     """
-    import ctypes
-
     from msks.client.gui import ghostty as gt
     from msks.client.gui.terminal import colors
 

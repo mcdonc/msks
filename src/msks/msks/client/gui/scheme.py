@@ -94,7 +94,7 @@ _LIGHT_ACTIVE = {
     _ROLES.Link: (0, 0, 255),
     _ROLES.Highlight: (48, 140, 198),
     _ROLES.HighlightedText: _WHITE,
-    _ROLES.PlaceholderText: _BLACK,
+    _ROLES.PlaceholderText: (0, 0, 0, 128),
     _ROLES.Accent: (48, 140, 198),
 }
 _LIGHT_DISABLED = {
@@ -112,7 +112,9 @@ _LIGHT_DISABLED = {
 def palette_from(active: dict, disabled: dict) -> QtGui.QPalette:
     """One chrome set from its role tables: the active roles
     written across every group, the disabled ones dimmed over
-    them."""
+    them. A four-value entry carries its alpha — the light
+    placeholder's own half-transparent black, the one value
+    the standard palette ships with alpha."""
     pal = QtGui.QPalette()
     for role, values in active.items():
         pal.setColor(role, QtGui.QColor(*values))
