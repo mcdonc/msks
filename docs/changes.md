@@ -472,6 +472,15 @@ gui`. The nix package keeps the daemon's closure lean, so on
   (#1043).** The bold application menu read the process name —
   `python3.14` for the console script — until the application
   name was set; it now reads `msks`, matching the About dialog.
+- **A mount set that leaves and returns re-provisions again
+  (#1069).** The seed's instance-id suffix now mixes the
+  workspace's seed epoch beside the CA and the mount-set
+  fingerprint. Before, removing a mount and re-adding it
+  re-minted an instance-id the guest had already consumed, and
+  cloud-init skipped the re-provision — the daemon reported the
+  share attached while the guest path stayed an empty
+  directory. Every renewal now lands a fresh id, and the guest
+  installs the returned share's mount unit on its next start.
 
 - **`scripts/cut-release.sh` resolves `python3` explicitly
   (#1038).** The script's two python reads (the tagged version

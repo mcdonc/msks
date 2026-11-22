@@ -128,6 +128,16 @@ class VmSpec:
     # None is a spec built outside the row path (conformance
     # checkers, direct launches); the seed falls back to the id.
     name: str | None = None
+    # The row's seed epoch (#803): a monotonic counter, one bump
+    # per bake, read at spec time — before the bump the launch's
+    # pending bake lands. The renewal suffix mixes it in (#1069):
+    # cloud-init keys its once-per-instance semantics off the
+    # instance-id, so a mount set that leaves and returns must
+    # renew under an id the guest has not consumed, and the
+    # epoch is what distinguishes two bakes of one content. Zero
+    # is a spec built outside the row path — the create-time
+    # bake, which keeps the plain id.
+    seed_epoch: int = 0
 
 
 class VmStatus(StrEnum):

@@ -315,17 +315,29 @@ def seed_ca_is_current(vm_dir: Path, ca_pem: str) -> bool:
     return marker.is_file() and marker.read_text() == ca_fingerprint(ca_pem)
 
 
-def renewal_suffix(ca_pem: str | None, mounts_fp: str) -> str:
-    """The instance-id suffix a renewal pins (#485, #623): keyed
-    to everything that can drift — the CA and the mount set — so
-    any change lands a new instance-id and cloud-init re-runs the
-    seed script (idempotent by design; the operator's payload
-    re-executes with the re-provision, the standing #485
-    trade)."""
+def renewal_suffix(ca_pem: str | None, mounts_fp: str, seed_epoch: int) -> str:
+    """The instance-id suffix a renewal pins (#485, #623, #1069):
+    keyed to everything that can drift — the CA and the mount set
+    — and to the row's seed epoch, so any change lands a new
+    instance-id and cloud-init re-runs the seed script
+    (idempotent by design; the operator's payload re-executes
+    with the re-provision, the standing #485 trade).
+
+    The epoch is the half that makes a returning mount set work
+    (#1069): a suffix over content alone re-mints an id whose
+    once-per-instance state (/var/lib/cloud/instances/<id>/ on
+    the root overlay) the guest still holds, and cloud-init
+    answers "already ran" without re-provisioning — the share
+    never mounts. The counter bumps once per bake ahead of the
+    renewal, and the spec reads it pre-bump, so every bake hashes
+    a value strictly larger than the last and no two bakes share
+    an id."""
     digest = hashlib.sha256()
     digest.update((ca_pem or "").encode())
     digest.update(b"\x00")
     digest.update(mounts_fp.encode())
+    digest.update(b"\x00")
+    digest.update(str(seed_epoch).encode())
     return digest.hexdigest()[:12]
 
 
@@ -512,7 +524,9 @@ async def create_seed(
     stage = tmp_sibling(target)
     stage.mkdir(mode=0o700)
     suffix = (
-        renewal_suffix(ca_pem, mounts_fingerprint(spec.mounts))
+        renewal_suffix(
+            ca_pem, mounts_fingerprint(spec.mounts), spec.seed_epoch
+        )
         if renewing
         else None
     )

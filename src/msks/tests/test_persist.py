@@ -135,6 +135,7 @@ def spec(
     name=None,
     mounts: tuple = (),
     timezone: str | None = None,
+    seed_epoch: int = 0,
 ) -> VmSpec:
     return VmSpec(
         workspace_id=WID,
@@ -147,6 +148,7 @@ def spec(
         user_data=user_data,
         ssh_pubkey=ssh_pubkey,
         timezone=timezone,
+        seed_epoch=seed_epoch,
     )
 
 
@@ -772,7 +774,7 @@ async def test_a_seed_is_renewed_when_its_ca_marker_drifts(tools) -> None:
     # the fingerprint suffix, so cloud-init re-provisions the
     # already-booted guest.
     suffix = persist.renewal_suffix(
-        CA_B, persist.mounts_fingerprint(spec_a.mounts)
+        CA_B, persist.mounts_fingerprint(spec_a.mounts), spec_a.seed_epoch
     )
     assert f"instance-id: {WID}-{suffix}" in log
 
@@ -875,7 +877,7 @@ async def test_a_seed_renews_when_its_mount_set_drifts(tools) -> None:
     assert "mnt-extra.mount" in log
     assert (
         f"instance-id: {WID}-"
-        f"{persist.renewal_suffix(None, persist.mounts_fingerprint(grown))}"
+        f"{persist.renewal_suffix(None, persist.mounts_fingerprint(grown), 0)}"
         in log
     )
     assert persist.seed_mounts_mark(seed.parent).read_text() == (
@@ -904,6 +906,62 @@ async def test_an_emptied_mount_set_renews_with_the_prune(tools) -> None:
     assert "<<'MSEOF'\nMSEOF" in log
     assert 'systemctl stop "${u##*/}"' in log
     assert "sh '/var/lib/cloud/scripts/per-boot/50-msks-mounts'" in log
+
+
+async def test_a_returning_mount_set_renews_under_a_fresh_id(
+    tools,
+) -> None:
+    """The leaving-and-returning renewal (#1069): the row's seed
+    epoch rides the suffix, so a mount set that returns to a
+    state the guest already provisioned under still lands an
+    instance-id cloud-init has not consumed. A suffix over
+    content alone re-minted the first id, and cloud-init answered
+    "already ran" from the stale per-instance state on the
+    overlay — the share never mounted again. Each renewal reads
+    the row pre-bump, so the epoch strictly grows bake over bake
+    and the ids never repeat."""
+    settings, record, base = tools
+    mounts = two_mounts()
+    # The create-time bake: the plain id, epoch still zero (no
+    # row exists to bump).
+    await persist.create_seed(
+        spec(base, ssh_pubkey="key-one", mounts=mounts), settings, 8770, None
+    )
+    seed = persist.seed_path(settings.state_dir, WID)
+    assert f"instance-id: {WID}\n" in record.read_text()
+
+    # The set leaves (epoch 1 at the row this start read), then
+    # returns (epoch 2): the return's fingerprint equals the set
+    # the first renewal's predecessor baked, and only the epoch
+    # separates the two ids.
+    await persist.ensure_artifacts(
+        spec(base, ssh_pubkey="key-one", seed_epoch=1), settings, 8770, None
+    )
+    returning = spec(base, ssh_pubkey="key-one", mounts=mounts, seed_epoch=2)
+    await persist.ensure_artifacts(returning, settings, 8770, None)
+    log = record.read_text()
+    id_left = persist.renewal_suffix(None, "", 1)
+    id_returned = persist.renewal_suffix(
+        None, persist.mounts_fingerprint(mounts), 2
+    )
+    assert f"instance-id: {WID}-{id_left}" in log
+    assert f"instance-id: {WID}-{id_returned}" in log
+    assert id_left != id_returned
+    # The content-hash collision the epoch breaks: the same
+    # (CA, fingerprint) pair, one epoch apart, mints distinct
+    # ids — and the same pair at the same epoch stays
+    # deterministic.
+    assert persist.renewal_suffix(
+        None, persist.mounts_fingerprint(mounts), 2
+    ) != persist.renewal_suffix(None, persist.mounts_fingerprint(mounts), 3)
+    assert persist.renewal_suffix(
+        None, persist.mounts_fingerprint(mounts), 2
+    ) == persist.renewal_suffix(None, persist.mounts_fingerprint(mounts), 2)
+    # The marker names the returned set, so an unchanged next
+    # start bakes nothing.
+    assert persist.seed_mounts_mark(seed.parent).read_text() == (
+        persist.mounts_fingerprint(mounts)
+    )
 
 
 async def test_a_pre_mounts_seed_is_left_alone_until_mounts_arrive(
