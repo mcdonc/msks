@@ -1,5 +1,5 @@
-"""The secrets tab (phase 4.6 of #924, #966, #997): the thin
-widget that renders the presenter's row models
+"""The secrets tab (phase 4.6 of #924, #966, #997, #1060): the
+thin widget that renders the presenter's row models
 (:mod:`msks.client.gui.secretrows`) as the TUI secrets page's
 counterpart — the placeholder listing (coverage, name,
 destinations, a live TTL countdown, the created label, the lock
@@ -7,11 +7,17 @@ state) with the audit group beneath, each table's columns
 sharing all the horizontal space the window gives it
 (:func:`msks.client.gui.listtable.fill_columns`, re-flowed on
 every window and pane resize, a scrollbar's appearance
-included). The tab holds no business logic: its one
-refresh walks the bridge to the gathered read
+included). The tab holds no business logic: its reads walk
+the bridge to the gathered read
 (:meth:`msks.client.gui.data.GuiData.secrets_page`), and the
-answers rebuild the groups from the plain models. The TTL
-column counts down from the deadline epoch the presenter lands
+answers rebuild the groups from the plain models. The reads run
+at every show, behind every action's landing, and on the
+pushed secret family (#1060): the frames the routes, the
+watcher, and the interceptor publish (mint, revoke, unlock,
+expiry — rare — and swap, sighting, one per intercepted
+request) coalesce behind a short window into one re-read while
+the tab owns the window, so the page holds no Refresh button.
+The TTL column counts down from the deadline epoch the presenter lands
 — a per-second repaint over the cached models, no daemon call
 per tick. Mint opens the form (:mod:`.mint`), renew opens the
 TTL picker, and revoke asks first — each action landing
@@ -30,6 +36,8 @@ guards.
 from PySide6 import QtCore, QtWidgets
 
 from ...data import RestFailure
+from ...frames import secrets_frame
+from ..feedpage import FeedPage
 from ..forms import confirm, pick_item
 from ..listtable import (
     ListTable,
@@ -85,8 +93,9 @@ class RowTable(ListTable):
         QtWidgets.QWidget.focusNextPrevChild(self, hand)
 
 
-#: The tab's gathered refresh key (#966): the open's first read
-#: and every later one — one flight, both groups.
+#: The tab's gathered refresh key (#966): every read it takes
+#: — the show, the serve poke, an action's landing, the frame
+#: window's fire — one flight, both groups.
 PAGE_KEY = "secrets-page"
 
 #: The renew and revoke flights' keys (#966).
@@ -104,15 +113,28 @@ FLASH_MS = 4000
 #: cached models.
 TICK_MS = 1000
 
+#: The frame-driven re-read's coalescing window (#1060),
+#: milliseconds: the secret family's frames batch into one
+#: flight — the window arms at a frame and fires once, frames
+#: landing inside it absorbed into the read its end takes, and
+#: a sustained burst re-arms it flight by flight, one read per
+#: window. The interceptor's chatty kinds (``secret.swap``, one
+#: frame per intercepted request) are the load the window
+#: holds back; the rare kinds wait it out too — half a second
+#: under a mint no operator reads as delay.
+FRAME_WINDOW_MS = 500
 
-class SecretsTab(QtWidgets.QWidget):
-    """The Secrets tab of the main window's strip (#966, #997):
-    the placeholder listing and the audit group stacked full
-    width, refreshed whole when the tab opens and through the
-    manual action or an action's landing. Every daemon exchange
-    walks the bridge; the answers arrive on the GUI thread
-    through this widget's slots, and a failure flashes the
-    status line while the groups already on screen stand."""
+
+class SecretsTab(FeedPage, QtWidgets.QWidget):
+    """The Secrets tab of the main window's strip (#966, #997,
+    #1060): the placeholder listing and the audit group stacked
+    full width — refreshed whole at every show, behind every
+    action's landing, and on the pushed secret family behind
+    its coalescing window while the tab owns the window. Every
+    daemon exchange walks the bridge; the answers arrive on the
+    GUI thread through this widget's slots, and a failure
+    flashes the status line while the groups already on screen
+    stand."""
 
     def __init__(self, bridge) -> None:
         super().__init__()
@@ -130,6 +152,15 @@ class SecretsTab(QtWidgets.QWidget):
         self.audit_models: list = []
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
+        # The pushed frames and the feed's state (#1060): the
+        # secret family re-reads the page behind its coalescing
+        # window while it owns the window, the serve poke
+        # re-reads it whole, and a drop flashes — the pushed
+        # frames are the page's freshness now that no button
+        # stands.
+        bridge.landed.connect(self.frame_landed)
+        bridge.feed_served.connect(self.feed_served)
+        bridge.feed_dropped.connect(self.feed_dropped)
         self.table = RowTable(0, len(cells.LIST_COLUMNS), self)
         self.table.setHorizontalHeaderLabels(cells.LIST_COLUMNS)
         self.build_table(self.table)
@@ -153,12 +184,9 @@ class SecretsTab(QtWidgets.QWidget):
         # reason.
         self.audit_empty.setWordWrap(True)
         self.status = QtWidgets.QLabel("", self)
-        self.refresh_button = QtWidgets.QPushButton("Refresh", self)
-        self.refresh_button.clicked.connect(self.refresh)
         self.mint_button = QtWidgets.QPushButton("Mint…", self)
         self.mint_button.clicked.connect(self.open_mint)
-        for button in (self.refresh_button, self.mint_button):
-            button.installEventFilter(self)
+        self.mint_button.installEventFilter(self)
         self.counts = QtWidgets.QLabel("", self)
         self.counts.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
@@ -166,17 +194,23 @@ class SecretsTab(QtWidgets.QWidget):
         self.tick_timer = QtCore.QTimer(self)
         self.tick_timer.setInterval(TICK_MS)
         self.tick_timer.timeout.connect(self.on_tick)
+        # The frame window's own timer (#1060): single-shot, one
+        # flight at its fire — armed by the family's frames
+        # while the tab owns the window, stopped when it hides
+        # (the next show re-reads whole whatever moved).
+        self.frame_timer = QtCore.QTimer(self)
+        self.frame_timer.setSingleShot(True)
+        self.frame_timer.setInterval(FRAME_WINDOW_MS)
+        self.frame_timer.timeout.connect(self.frame_due)
         self.layout_widgets()
 
     def layout_widgets(self) -> None:
-        """The tab's panes (#997, #1011): the placeholder listing
-        and the audit group stacked full width — each spanning
-        the window's whole width — the Refresh and Mint buttons
-        in a row at the bottom of the page (the detail pages'
-        Mounts and Proxies pattern), and the standing counts on
-        the bottom line."""
+        """The tab's panes (#997, #1011, #1060): the placeholder
+        listing and the audit group stacked full width — each
+        spanning the window's whole width — the Mint button and
+        the flash line in a row at the bottom of the page, and
+        the standing counts on the bottom line."""
         bar = QtWidgets.QHBoxLayout()
-        bar.addWidget(self.refresh_button)
         bar.addWidget(self.mint_button)
         bar.addWidget(self.status, stretch=1)
         listing = QtWidgets.QGroupBox(cells.LIST_GROUP, self)
@@ -234,11 +268,11 @@ class SecretsTab(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def refresh(self) -> None:
-        """The tab's whole refresh (#966): the open's first read,
-        the manual action's, and the one an action's landing
-        takes — both groups from one flight, the status line
-        saying the fetch is out. A refresh already in flight is
-        skipped, the listing's own guard (#470)."""
+        """The tab's whole refresh (#966): the read every show
+        takes and the serve poke's (#1060) — both groups from
+        one flight, the status line saying the fetch is out. A
+        refresh already in flight is skipped, the listing's own
+        guard (#470)."""
         self.status.setText("fetching the placeholders and the audit rows…")
         self.take_flight()
 
@@ -257,6 +291,33 @@ class SecretsTab(QtWidgets.QWidget):
         self.pending = True
         self.flash_seq += 1  # retire any pending flash timeout
         self.bridge.call(PAGE_KEY, "secrets_page")
+
+    # -- the pushed frames and the feed (#1060) -----------------------------
+
+    @QtCore.Slot(object)
+    def frame_landed(self, frame: dict) -> None:
+        """One pushed frame (#1060): the secret family — the
+        routes' mint, revoke, and unlock, the watcher's expiry,
+        the interceptor's swap and sighting, whatever client
+        made the move — arms the coalescing window while the tab
+        owns the window; every other family is another surface's
+        own, and a hidden tab re-reads whole at its next show.
+        The window arms once and fires once: frames landing
+        inside it absorb into the one read its end takes."""
+        if not secrets_frame(frame) or not self.isVisible():
+            return
+        if not self.frame_timer.isActive():
+            self.frame_timer.start()
+
+    @QtCore.Slot()
+    def frame_due(self) -> None:
+        """The window's fire (#1060): the coalesced re-read
+        flies, its status line untouched — the page's own flash
+        stands while it reads, the action landings' own rule.
+        A flight already out carries the need instead
+        (:meth:`take_flight`'s guard), one re-flight per
+        landing."""
+        self.take_flight()
 
     @QtCore.Slot(str, object)
     def on_succeeded(self, key: str, result: object) -> None:
@@ -584,11 +645,12 @@ class SecretsTab(QtWidgets.QWidget):
     # -- the widget's own events --------------------------------------------
 
     def showEvent(self, event) -> None:
-        """The tab's first refresh at open (#966): the groups
-        fill when the tab is shown, not when the window builds
-        its strip, and the countdown's tick starts with them. A
-        wrapper without its ``bridge`` (#959) fetches nothing
-        either."""
+        """The tab's refresh at every show (#966, #1060): the
+        groups fill when the tab is shown, not when the window
+        builds its strip, and the countdown's tick starts with
+        them — a return to the page re-reads whatever moved
+        while it stood hidden. A wrapper without its ``bridge``
+        (#959) fetches nothing either."""
         if getattr(self, "bridge", None) is not None:
             self.refresh()
             self.tick_timer.start()
@@ -597,8 +659,12 @@ class SecretsTab(QtWidgets.QWidget):
     def hideEvent(self, event) -> None:
         """A hidden tab stops its tick (#966): a background
         page repaints nothing — the countdown resumes with the
-        tab, whole, from the epochs the models carry."""
+        tab, whole, from the epochs the models carry. The frame
+        window stops with it (#1060): a page the operator
+        cannot see re-reads at its next show, not at a fire the
+        hide outraced."""
         self.tick_timer.stop()
+        self.frame_timer.stop()
         super().hideEvent(event)
 
     def resizeEvent(self, event) -> None:
@@ -614,25 +680,24 @@ class SecretsTab(QtWidgets.QWidget):
     def eventFilter(
         self, watched: QtCore.QObject, event: QtCore.QEvent
     ) -> bool:
-        """The bar buttons' arrow bridges (#962's rule) beside a
+        """The Mint button's arrow bridges (#962's rule) beside a
         pane's own resize (#997): Up from the page's bottom
-        button row climbs the reading order — Refresh from
-        Mint, the audit group from the row's head — and Down
-        hands the keyboard out of the page, onward down the
-        chain (the strip the wrap reaches), so the arrows cross
-        the page in reading order without a Tab; a group pane's
-        resize re-flows its columns.
+        button climbs the reading order — the audit group above
+        it — and Down hands the keyboard out of the page, onward
+        down the chain (the strip the wrap reaches), so the
+        arrows cross the page in reading order without a Tab; a
+        group pane's resize re-flows its columns.
         """
         self.pane_resized(watched, event)
-        if watched not in (self.refresh_button, self.mint_button) or (
+        if watched is not self.mint_button or (
             event.type() != QtCore.QEvent.Type.KeyPress
         ):
             return super().eventFilter(watched, event)
         if event.key() == QtCore.Qt.Key.Key_Up:
-            QtWidgets.QWidget.focusNextPrevChild(self.refresh_button, False)
+            QtWidgets.QWidget.focusNextPrevChild(self.mint_button, False)
             return True
         if event.key() == QtCore.Qt.Key.Key_Down:
-            QtWidgets.QWidget.focusNextPrevChild(self.refresh_button, True)
+            QtWidgets.QWidget.focusNextPrevChild(self.mint_button, True)
             return True
         return super().eventFilter(watched, event)
 

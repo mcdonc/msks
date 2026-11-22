@@ -21,6 +21,7 @@ if importlib.util.find_spec("PySide6") is None:
 
 from msks.client.config import DEFAULT_IMAGE_MANIFEST_URL  # noqa: E402
 from msks.client.data import RestFailure  # noqa: E402
+from msks.client.frames import images_frame  # noqa: E402
 from msks.client.gui.imagerows import IMPORTED_MARKER  # noqa: E402
 from msks.client.gui.images import cells as cells  # noqa: E402
 from msks.client.gui.images import layout as layout_mod  # noqa: E402
@@ -46,14 +47,18 @@ class FakeSignal:
 
 
 class StubBridge:
-    """The bridge's surface for the tab's tests: the two signals
-    the tab reads and the one verb it calls, every call recorded
-    — no worker, no network."""
+    """The bridge's surface for the tab's tests: the signals the
+    tab reads — the calls' answers, the pushed frames, the
+    feed's state (#1060) — and the one verb it calls, every
+    call recorded — no worker, no network."""
 
     def __init__(self) -> None:
         self.calls: list[tuple] = []
         self.succeeded = FakeSignal()
         self.failed = FakeSignal()
+        self.landed = FakeSignal()
+        self.feed_served = FakeSignal()
+        self.feed_dropped = FakeSignal()
 
     def call(self, key: str, method: str, *args: object) -> None:
         self.calls.append((key, method, args))
@@ -272,17 +277,17 @@ def test_a_later_answer_replaces_the_groups(qt) -> None:
     window.close()
 
 
-def test_the_manual_refresh_skips_a_flight_already_out(qt) -> None:
+def test_a_refresh_skips_a_flight_already_out(qt) -> None:
     """The refresh guard (#964, the listing's own #470 rule): a
-    refresh already in flight swallows the button's click, and
-    the flight's landing releases the guard for the next one."""
+    refresh already in flight swallows the next ask, and the
+    flight's landing releases the guard for the next one."""
     tab, window, bridge = make_tab(qt)
     bridge.calls.clear()
     tab.pending = True
-    tab.refresh_button.click()
+    tab.refresh()
     assert bridge.calls == []
     tab.pending = False
-    tab.refresh_button.click()
+    tab.refresh()
     assert bridge.calls == [(images_mod.PAGE_KEY, "images_page", (CHANNEL,))]
     window.close()
 
@@ -323,12 +328,16 @@ def test_a_failed_page_fetch_flashes_and_the_groups_stand(qt) -> None:
 
 
 def test_a_failed_catalog_read_flashes_only(qt) -> None:
-    """A refused catalog refresh (#964): the failure flashes and
-    the guard releases; the groups stand as they were."""
+    """A refused catalog refresh (#964, #1060): the failure
+    flashes, the guard releases, and a carried ask dies with
+    the flight it waited on — the outage flash already names
+    the retry; the groups stand as they were."""
     tab, window, _bridge = make_tab(qt)
     tab.catalog_pending = True
+    tab.catalog_due = True
     tab.on_failed(images_mod.CATALOG_KEY, RestFailure("locked", reach=False))
     assert not tab.catalog_pending
+    assert not tab.catalog_due
     assert tab.status.text() == "locked"
     assert tab.catalog_table.rowCount() == 2
     window.close()
@@ -628,20 +637,12 @@ def test_the_flash_clears_after_its_span(qt) -> None:
     window.close()
 
 
-def test_the_refresh_button_crosses_by_arrows(qt) -> None:
-    """The refresh button's arrow bridges (#962's rule): the
-    filter answers the Up and the Down itself — handing the
-    keyboard onward from where the operator stands — and
-    leaves every other event to Qt's own handling."""
+def test_the_tab_carries_no_refresh_button(qt) -> None:
+    """#1060: the page holds no button — the pushed frames and
+    the show re-read the page, so nothing stands on it to
+    press."""
     tab, window, _bridge = make_tab(qt)
-    key = qt.QtCore.Qt.Key
-    press = qt.QtCore.QEvent.Type.KeyPress
-    mods = qt.QtCore.Qt.KeyboardModifier.NoModifier
-    down = qt.QtGui.QKeyEvent(press, key.Key_Down, mods)
-    up = qt.QtGui.QKeyEvent(press, key.Key_Up, mods)
-    assert tab.eventFilter(tab.refresh_button, down) is True
-    assert tab.eventFilter(tab.refresh_button, up) is True
-    assert tab.eventFilter(tab.catalog_table, down) is False
+    assert not tab.findChildren(qt.QtWidgets.QPushButton)
     window.close()
 
 
@@ -675,17 +676,129 @@ def test_the_channel_url_reads_the_config_override() -> None:
     )
 
 
-def test_a_catalog_refresh_skips_a_flight_already_out(qt) -> None:
-    """The catalog refresh's own guard (#964): a read already in
-    flight swallows the next ask until its answer lands."""
+def test_a_catalog_refresh_carries_under_a_flight_already_out(
+    qt,
+) -> None:
+    """The catalog refresh's own guard (#964, #1060): an ask
+    under a read already out is carried, not swallowed — the
+    landing takes the read, so a catalog move the standing
+    flight predates still lands."""
     tab, window, bridge = make_tab(qt)
     bridge.calls.clear()
     tab.catalog_pending = True
     tab.refresh_catalog()
     assert bridge.calls == []
+    assert tab.catalog_due
     tab.catalog_pending = False
-    tab.refresh_catalog()
+    tab.catalog_landed([catalog_raw()[0]])
     assert bridge.calls == [(images_mod.CATALOG_KEY, "images", ())]
+    assert not tab.catalog_due
+    window.close()
+
+
+def test_a_pushed_catalog_move_re_reads_the_catalog(qt) -> None:
+    """#1060: a pushed ``image.changed`` — whatever client made
+    the move — takes the catalog-only read while the tab owns
+    the window: one flight, the channel unrefetched, the TUI's
+    own rule."""
+    tab, window, bridge = make_tab(qt)
+    bridge.calls.clear()
+    bridge.landed.emit(
+        {"event": "image.changed", "data": {"ref": "debian:13.6"}}
+    )
+    assert bridge.calls == [(images_mod.CATALOG_KEY, "images", ())]
+    window.close()
+
+
+def test_a_pushed_frame_on_a_hidden_tab_reads_nothing(qt) -> None:
+    """#1060: a hidden tab re-reads whole at its next show, not
+    at every frame — a background page fetches nothing."""
+    tab, window, bridge = make_tab(qt)
+    bridge.calls.clear()
+    window.hide()
+    qt.app.processEvents()
+    bridge.landed.emit(
+        {"event": "image.changed", "data": {"ref": "debian:13.6"}}
+    )
+    assert bridge.calls == []
+    window.close()
+
+
+def test_a_frame_outside_the_images_family_reads_nothing(qt) -> None:
+    """#1060: another surface's family is not this page's to
+    read — a workspace or secrets frame lands and decides
+    nothing here."""
+    tab, window, bridge = make_tab(qt)
+    bridge.calls.clear()
+    bridge.landed.emit({"event": "workspace.status", "data": {}})
+    bridge.landed.emit({"event": "secret.swap", "data": {}})
+    assert bridge.calls == []
+    window.close()
+
+
+def test_the_serve_poke_re_reads_whole(qt) -> None:
+    """#1019's rule on the page (#1060): the feed's serve poke
+    re-reads whole while the tab owns the window — frames
+    published before the connection stood never landed — and a
+    hidden tab reads nothing."""
+    tab, window, bridge = make_tab(qt)
+    bridge.calls.clear()
+    bridge.feed_served.emit()
+    assert bridge.calls == [(images_mod.PAGE_KEY, "images_page", (CHANNEL,))]
+    bridge.calls.clear()
+    window.hide()
+    qt.app.processEvents()
+    bridge.feed_served.emit()
+    assert bridge.calls == []
+    window.close()
+
+
+def test_a_feed_drop_flashes_on_the_page_that_owns_the_window(
+    qt,
+) -> None:
+    """#946's outage tell on the page (#1060): the pushed frames
+    are the page's freshness now that no button stands, so the
+    drop flashes on the tab the operator sees and stays quiet
+    on a hidden one."""
+    tab, window, bridge = make_tab(qt)
+    bridge.feed_dropped.emit("the socket broke")
+    assert tab.status.text() == ("the events feed dropped — the socket broke")
+    window.hide()
+    qt.app.processEvents()
+    tab.status.clear()
+    bridge.feed_dropped.emit("the socket broke again")
+    assert tab.status.text() == ""
+    window.close()
+
+
+def test_a_frame_under_a_catalog_flight_is_carried(qt) -> None:
+    """#1060: a pushed move under a catalog read already out is
+    carried — the landing takes the read, so the second move
+    lands too; the own action's landing and its own frame share
+    the same carry."""
+    tab, window, bridge = make_tab(qt)
+    bridge.calls.clear()
+    tab.refresh_catalog()  # the first move's flight
+    bridge.landed.emit(
+        {"event": "image.changed", "data": {"ref": "alpine:3.21"}}
+    )
+    assert bridge.calls == [(images_mod.CATALOG_KEY, "images", ())]
+    tab.catalog_landed(catalog_raw())
+    assert bridge.calls[-1] == (images_mod.CATALOG_KEY, "images", ())
+    assert len(bridge.calls) == 2
+    window.close()
+
+
+def test_the_images_frame_classifier() -> None:
+    """#1060: the page's classifier — the catalog-move family
+    the image routes publish reads, every other family is
+    another surface's own."""
+    assert images_frame(
+        {"event": "image.changed", "data": {"ref": "debian:13.6"}}
+    )
+    assert not images_frame({"event": "workspace.status", "data": {}})
+    assert not images_frame({"event": "secret.sighting", "data": {}})
+    assert not images_frame({})
 
 
 def test_activation_on_an_empty_row_answers_nothing(qt, monkeypatch) -> None:
@@ -785,18 +898,6 @@ def test_a_press_below_the_rows_opens_no_menu(qt) -> None:
     tab.menu_requested(qt.QtCore.QPoint(2, 10_000))
     tab.published_menu_requested(qt.QtCore.QPoint(2, 10_000))
     assert bridge.calls == []
-
-
-def test_the_button_filter_leaves_other_keys_alone(qt) -> None:
-    """The refresh button's filter answers only the arrows
-    (#962's bridge): every other key on the button reaches Qt's
-    own handling."""
-    tab, window, _bridge = make_tab(qt)
-    press = qt.QtCore.QEvent.Type.KeyPress
-    mods = qt.QtCore.Qt.KeyboardModifier.NoModifier
-    other = qt.QtGui.QKeyEvent(press, qt.QtCore.Qt.Key.Key_Return, mods)
-    assert tab.eventFilter(tab.refresh_button, other) is False
-    window.close()
 
 
 def test_a_press_on_a_row_opens_the_menu(qt) -> None:
@@ -1422,19 +1523,16 @@ def test_a_spare_pane_spreads_the_room(qt) -> None:
     window.close()
 
 
-def test_the_refresh_button_leads_the_bar(qt) -> None:
-    """The refresh action's place (#964, the operator's ask;
-    the bar at the page's bottom since #1011, the Mounts and
-    Proxies pattern): the button on the bar's left, the flash
-    line taking the rest beside it, and the bar below the two
-    groups it reads."""
+def test_the_flash_line_sits_below_the_groups(qt) -> None:
+    """The page's standing shape (#964, #1011, #1060): the
+    flash line below the two groups it reads, the standing
+    counts beneath it — no button on the page, the pushed
+    frames re-read it."""
     tab, window, _bridge = make_tab(qt)
     layout = tab.layout()
     assert layout.itemAt(0).widget().title() == cells.CATALOG_GROUP
     assert layout.itemAt(1).widget().title() == cells.PUBLISHED_GROUP
-    bar = layout.itemAt(2)  # the page's bottom bar
-    assert bar.itemAt(0).widget() is tab.refresh_button
-    assert bar.itemAt(1).widget() is tab.status
+    assert layout.itemAt(2).widget() is tab.status
     assert layout.itemAt(3).widget() is tab.counts
     window.close()
 

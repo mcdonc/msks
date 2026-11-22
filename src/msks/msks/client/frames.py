@@ -1,8 +1,8 @@
 """The events frame's shared vocabulary (#1019 over the
 import-graph fan-in ceiling): the wire decoder and the
 frame-family predicates both clients read — the TUI's listing
-and workspace page, the GUI's listing and workspace page —
-split out of :mod:`msks.client.tui.consent` (the decoder) and
+and workspace page, the GUI's listing, workspace, images, and
+secrets pages — split out of :mod:`msks.client.tui.consent` (the decoder) and
 the TUI's own screens (the predicates) when the listing's and
 proxies page's imports pushed the consent module's importers
 over the ceiling. The module owns pure frame math only: no
@@ -38,6 +38,28 @@ def listing_frame(msg: dict) -> bool:
     return event.startswith(("workspace.", "home.", "image.")) or (
         event == "egress.rules"
     )
+
+
+def images_frame(msg: dict) -> bool:
+    """Whether one decoded frame moves the images page (#1060):
+    a catalog move — the ``image.`` family the image routes
+    publish (import, rename, remove). The channel manifest's
+    rows have no frame of their own: the channel is a plain
+    HTTPS fetch the daemon never sees, and the page's gathered
+    read (every show, every serve poke) re-fetches it."""
+    event = str(msg.get("event") or "")
+    return event.startswith("image.")
+
+
+def secrets_frame(msg: dict) -> bool:
+    """Whether one decoded frame moves the secrets page
+    (#1060): the ``secret.`` family — the rare kinds the routes
+    and the watcher publish (mint, revoke, unlock, expiry) and
+    the chatty kinds the interceptor publishes per request
+    (swap, sighting). The page coalesces the family's frames
+    behind one window before it re-reads."""
+    event = str(msg.get("event") or "")
+    return event.startswith("secret.")
 
 
 def row_frame(msg: dict, workspace_id: str) -> bool:

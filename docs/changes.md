@@ -372,7 +372,17 @@ tagged `vX.Y.Z`.
   mitmproxy, and every other dependent from source. An eval-time
   gate (`nix/certifi-gate.nix`) names a composed set that misses
   the floor, reading it from pyproject.toml.
-
+- **The GUI's Images and Secrets pages update on pushed events
+  (#1060).** Both pages re-read at every show and on the
+  daemon's pushed frames: an `image.changed` frame repaints the
+  catalog group, and the secret family's frames repaint the
+  placeholders and audit (batched into one re-read per half
+  second, so a busy interception stream stays cheap). The
+  events feed's drop flashes on whichever page owns the window,
+  and a reconnecting feed re-reads the page whole. The two
+  Refresh buttons are gone; the published channel
+  manifest still refetches only through the page's re-reads
+  because the channel publishes no frame.
 - **The attached clients follow the daemon over the events
   websocket instead of polling (#1019).** The TUI's workspaces
   list, workspace page, and proxies page, and the GUI's
