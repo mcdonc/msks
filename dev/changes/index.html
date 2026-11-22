@@ -2664,6 +2664,18 @@ gui</code>. The nix package keeps the daemon's closure lean, so on
   name was set; it now reads <code>msks</code>, matching the About dialog.</p>
 </li>
 <li>
+<p><strong>A mount set that leaves and returns re-provisions again
+  (#1069).</strong> The seed's instance-id suffix now mixes the
+  workspace's seed epoch beside the CA and the mount-set
+  fingerprint. Before, removing a mount and re-adding it
+  re-minted an instance-id the guest had already consumed, and
+  cloud-init skipped the re-provision — the daemon reported the
+  share attached while the guest path stayed an empty
+  directory. Every renewal now bakes an id the guest has not
+  consumed, and the guest installs the returned share's mount
+  unit on its next start.</p>
+</li>
+<li>
 <p><strong><code>scripts/cut-release.sh</code> resolves <code>python3</code> explicitly
   (#1038).</strong> The script's two python reads (the tagged version
   and the release-notes gate) ran a bare <code>python</code>, which macOS
