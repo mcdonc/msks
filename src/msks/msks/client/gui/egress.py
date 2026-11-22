@@ -1,22 +1,27 @@
 """The workspace Egress tab (#1042): the page's egress posture
 surface — the workspace's current mode with its meaning, the
 mode switch in place through the policy route the CLI's
-``egress mode`` drives (#1049), and the static allowlist editor
+``egress mode`` drives (#1049), the static allowlist editor
 (#1050): the list from the rules frame, one entry added or
 removed at a time, each write posting the whole new list
-through the same policy route with the standing mode. A pick
-on the switcher commits at once, the picked mode's meaning
-beside the pick. Allow and deny of a live hold stay in the
-consent panel (#999, #1000), and the audit trail and the
-decider presence indicator are #1042's later sub-issues. The
-nothing-effectively-allowed refusal to ``static`` — the
-offline-workspace escape — reaches the operator as a question
-with an explicit confirm, never a silent failure or a raw
-error: the switch asks before it sends when the standing read
-shows the gate, and the route's own refusal (a read gone stale
-between the two) asks the same question again — the editor's
-writes take the same two arms, a remove that empties a static
-posture being the one edit that can meet the gate.
+through the same policy route with the standing mode, and the
+audit surface (#1051): the in-effect verdicts the rules frame
+carries, each revocable in place through the revoke route, and
+the consent rows' audit trail with its deny-to-allowlist
+action — a denial's name joining the allowlist through the
+same write path the editor owns. A pick on the switcher
+commits at once, the picked mode's meaning beside the pick.
+Allow and deny of a live hold stay in the consent panel (#999,
+#1000), and the decider presence indicator is #1042's later
+sub-issue. The nothing-effectively-allowed refusal to
+``static`` — the offline-workspace escape — reaches the
+operator as a question with an explicit confirm, never a
+silent failure or a raw error: the switch asks before it sends
+when the standing read shows the gate, and the route's own
+refusal (a read gone stale between the two) asks the same
+question again — the editor's writes take the same two arms, a
+remove that empties a static posture being the one edit that
+can meet the gate.
 
 This module imports PySide6 at module scope — the screens' own
 contract: nothing imports it at CLI parse time, and the
@@ -25,17 +30,19 @@ workspace page (itself lazily imported) owns the import.
 
 from dataclasses import replace
 
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from .consent import (
     EGRESS_MODES,
     EMPTY_STATIC_QUESTION,
+    ConsentRule,
     EgressRules,
     effective_allows,
     parse_rules,
 )
 from .dialogs import Centered
-from .forms import confirm, muted_note, save_cancel_row
+from .egressaudit import AuditTrail
+from .forms import ModePicker, confirm, muted_note, save_cancel_row
 
 #: The rules read's key stem (#1042): each flight carries its own
 #: key off it, the per-flight rule the tabs share — a late answer
@@ -99,17 +106,59 @@ ALLOWLIST_HEADING = "static allowlist"
 #: shape, ``(empty)``, as the tab's muted note.
 ALLOWLIST_EMPTY = "no entries"
 
+#: The verdicts section's heading (#1051).
+VERDICTS_HEADING = "in-effect verdicts"
 
-class ModePicker(QtWidgets.QComboBox):
-    """The switcher's combo (#1049 review): the wheel passes
-    through — a scroll across the pane never switches a live
-    posture — while popup picks and typed selection commit
-    through ``activated`` as every deliberate pick does."""
+#: The empty verdicts' stand-in (#1051).
+VERDICTS_EMPTY = "no in-effect verdicts"
 
-    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
-        """One wheel event over the switcher ignores itself: the
-        parent takes the scroll, the pick stands."""
-        event.ignore()
+#: The revoke flights' key stem (#1051): one revoke at a time,
+#: its key its own beside the policy flights.
+REVOKE_STEM = "egress-revoke"
+
+#: The revoke question's title (#1051).
+REVOKE_TITLE = "Revoke the verdict"
+
+#: The revoke landing's note (#1051): the destination gates
+#: again on the next connection — the revoke route's own
+#: contract.
+REVOKE_LANDING = (
+    "verdict revoked — the destination gates again on the next connection"
+)
+
+#: The standing-write answer on a deny-to-allowlist ask (#1051):
+#: the policy route is one, and a switch or a write already out
+#: holds the ask until it lands.
+WRITE_HELD = "a policy write is already in flight — try again"
+
+#: The already-listed answer on a deny-to-allowlist ask (#1051).
+ALREADY_LISTED = "already on the allowlist"
+
+
+def verdict_dest(rule: ConsentRule) -> str:
+    """One in-effect verdict's destination label: ``host:port``,
+    with port 0 — a non-TCP/UDP flow — reading as all ports,
+    the consent queue's own spelling."""
+    if rule.dest_port == 0:
+        return f"{rule.dest_host} (all ports)"
+    return f"{rule.dest_host}:{rule.dest_port}"
+
+
+def verdict_text(rule: ConsentRule) -> str:
+    """One in-effect verdict's row: the destination label with
+    the duration beside it, the TUI verdict table's own
+    cells."""
+    return f"{verdict_dest(rule)} — {rule.duration or '-'}"
+
+
+def revoke_question(dest: str) -> str:
+    """The revoke question (#1051): the destination named, the
+    consequence beside it — No the default, the operator's
+    call."""
+    return (
+        f"Revoke the verdict for {dest}? The destination gates "
+        "again on its next connection."
+    )
 
 
 class EntryDialog(Centered, QtWidgets.QDialog):
@@ -155,13 +204,19 @@ class EntryDialog(Centered, QtWidgets.QDialog):
 class EgressTab(QtWidgets.QWidget):
     """The page's egress posture surface (#1042): the current mode
     with its meaning, the switcher under it — a pick commits at
-    once — the static allowlist's entries under that with Add and
-    Remove beside them, and the note line a refusal names itself
-    on. The rules read refreshes on the page's tick and on every
-    pushed ``egress.rules`` frame — a switch the CLI made
+    once — then two columns (#1051): the allowlist editor with
+    the in-effect verdicts and their Revoke under it on the
+    left, the audit trail with its filter and its
+    deny-to-allowlist action on the right, the note line under
+    both. The note answers the switch, the writes, and the
+    revokes. The rules read refreshes on the page's tick and on
+    every pushed ``egress.rules`` frame — a switch the CLI made
     elsewhere paints itself here — and the switch and the
     allowlist write each fly one flight at a time, the reply the
-    fresh rules frame with the ``applied`` fact beside it."""
+    fresh rules frame with the ``applied`` fact beside it. The
+    revoke is its own route beside the policy one: it flies one
+    at a time too, its landing re-reading both the posture and
+    the trail."""
 
     def __init__(self, bridge) -> None:
         super().__init__()
@@ -178,10 +233,14 @@ class EgressTab(QtWidgets.QWidget):
         self.pending_write = False
         self.working: list[str] = []
         self.wrote_mode = ""
+        self.revoke_flight = None
+        self.pending_revoke = False
+        self.verdict_rows: list[ConsentRule] = []
         self.seq = 0
         self.list_key = ""
         self.switch_key = ""
         self.write_key = ""
+        self.revoke_key = ""
         self.mode_line = QtWidgets.QLabel("", self)
         self.mode_line.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
@@ -200,6 +259,13 @@ class EgressTab(QtWidgets.QWidget):
         row.addWidget(self.words, stretch=1)
         self.heading = QtWidgets.QLabel(ALLOWLIST_HEADING, self)
         self.entries = QtWidgets.QListWidget(self)
+        # The three scroll areas carry no minimum of their own
+        # (#1051): the tab's two columns stack two lists and a
+        # table, and the window's own minimum reads the tallest
+        # column's — the lists share what the pane gives, each
+        # scrolling its own, instead of holding the window open
+        # under a page that cannot show whole.
+        self.entries.setMinimumHeight(0)
         self.entries.itemSelectionChanged.connect(self.sync_buttons)
         self.empty = muted_note(ALLOWLIST_EMPTY)
         self.empty.setVisible(False)
@@ -216,13 +282,43 @@ class EgressTab(QtWidgets.QWidget):
         self.note.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
         )
+        self.verdicts_heading = QtWidgets.QLabel(VERDICTS_HEADING, self)
+        self.verdicts = QtWidgets.QListWidget(self)
+        self.verdicts.setMinimumHeight(0)
+        self.verdicts.itemSelectionChanged.connect(self.sync_buttons)
+        self.verdicts_empty = muted_note(VERDICTS_EMPTY)
+        self.verdicts_empty.setVisible(False)
+        self.revoke_button = QtWidgets.QPushButton("Revoke")
+        self.revoke_button.clicked.connect(self.revoke)
+        self.revoke_button.setEnabled(False)
+        verdict_buttons = QtWidgets.QHBoxLayout()
+        verdict_buttons.addWidget(self.verdicts_empty)
+        verdict_buttons.addStretch(1)
+        verdict_buttons.addWidget(self.revoke_button)
+        self.audit = AuditTrail(bridge)
+        self.audit.allow_wanted.connect(self.allow_denied)
+        # Two columns under the posture row (#1051): the posture
+        # — the allowlist editor with the verdicts under it — on
+        # the left, the audit trail on the right, the note line
+        # under both. The window is wide (its default is 1280)
+        # and the sections are short: side by side they read in
+        # one glance, and the tab's minimum stops holding the
+        # window open under a page that cannot show whole.
+        posture = QtWidgets.QVBoxLayout()
+        posture.addWidget(self.heading)
+        posture.addWidget(self.entries, stretch=1)
+        posture.addWidget(self.empty)
+        posture.addLayout(buttons)
+        posture.addWidget(self.verdicts_heading)
+        posture.addWidget(self.verdicts, stretch=1)
+        posture.addLayout(verdict_buttons)
+        columns = QtWidgets.QHBoxLayout()
+        columns.addLayout(posture, stretch=1)
+        columns.addWidget(self.audit, stretch=1)
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.mode_line)
         layout.addLayout(row)
-        layout.addWidget(self.heading)
-        layout.addWidget(self.entries, stretch=1)
-        layout.addWidget(self.empty)
-        layout.addLayout(buttons)
+        layout.addLayout(columns, stretch=1)
         layout.addWidget(self.note)
         self.sync()
         bridge.succeeded.connect(self.on_succeeded)
@@ -240,23 +336,28 @@ class EgressTab(QtWidgets.QWidget):
             self.list_flight,
             self.switch_flight,
             self.write_flight,
+            self.revoke_flight,
         ):
             if flight is not None and not flight.done():
                 flight.cancel()
         self.list_flight = None
         self.switch_flight = None
         self.write_flight = None
+        self.revoke_flight = None
         self.list_pending = False
         self.pending_switch = False
         self.pending_write = False
+        self.pending_revoke = False
         self.list_key = ""
         self.switch_key = ""
         self.write_key = ""
+        self.revoke_key = ""
         self.wrote_mode = ""
         self.workspace_id = workspace_id
         self.frame = None
         self.rules = None
         self.note.setText("")
+        self.audit.host(workspace_id)
         self.take({})
 
     @property
@@ -277,6 +378,7 @@ class EgressTab(QtWidgets.QWidget):
         self.list_flight = self.bridge.call(
             self.list_key, "egress_rules", self.workspace_id
         )
+        self.audit.poke()
 
     def take(self, frame: object) -> None:
         """One rules frame into the tab's standing state (#1042,
@@ -294,6 +396,7 @@ class EgressTab(QtWidgets.QWidget):
         )
         self.follow(mode)
         self.retake_entries()
+        self.retake_verdicts()
         self.sync()
 
     def retake_entries(self) -> None:
@@ -309,6 +412,36 @@ class EgressTab(QtWidgets.QWidget):
         )
         self.repaint_entries()
 
+    def retake_verdicts(self) -> None:
+        """The verdicts from the landed frame (#1051): the
+        in-effect allowed verdicts stand as the rows the list
+        builds from, the repaint guard's own rule beside the
+        entries'."""
+        rows = list(self.rules.allowed) if self.rules is not None else []
+        self.verdict_rows = rows
+        self.repaint_verdicts(rows)
+
+    def repaint_verdicts(self, rows: list) -> None:
+        """The verdicts list from the rows (#1051): one row per
+        verdict, the empty state's stand-in beneath while none
+        stands. A rebuild the rows already show skips itself:
+        the page's ticks repaint every few seconds, and the
+        selection the Revoke action reads must survive the
+        ticks that change nothing — a frame that changes the
+        rows rebuilds the list and the selection goes with
+        it."""
+        texts = [verdict_text(rule) for rule in rows]
+        shown = [
+            self.verdicts.item(row).text()
+            for row in range(self.verdicts.count())
+        ]
+        if shown != texts:
+            self.verdicts.clear()
+            for text in texts:
+                self.verdicts.addItem(text)
+            self.verdicts_empty.setVisible(not rows)
+        self.sync_buttons()
+
     def follow(self, mode: str) -> None:
         """The pick follows the daemon while no switch is out
         (#1042): its answer repaints, and an older read the page
@@ -320,16 +453,18 @@ class EgressTab(QtWidgets.QWidget):
         self.pick.setCurrentIndex(index)
 
     def push(self, frame: dict) -> None:
-        """One pushed frame (#1042): a fresh ``egress.rules`` —
-        the daemon broadcasts one on every policy change — repaints
-        the posture and the list, whatever made the change;
-        anything else is not this tab's state."""
-        if frame.get("event") != "egress.rules":
+        """One pushed frame (#1042, #1051): a fresh
+        ``egress.rules`` — the daemon broadcasts one on every
+        policy change — repaints the posture and the list,
+        whatever made the change; a resolved frame — the
+        trail's newest row — reaches the audit trail. Anything
+        else is not this tab's state."""
+        if frame.get("event") == "egress.rules":
+            data = frame.get("data") or {}
+            if data.get("workspace_id") == self.workspace_id:
+                self.take(data)
             return
-        data = frame.get("data") or {}
-        if data.get("workspace_id") != self.workspace_id:
-            return
-        self.take(data)
+        self.audit.push(frame)
 
     @QtCore.Slot()
     def sync(self) -> None:
@@ -376,10 +511,17 @@ class EgressTab(QtWidgets.QWidget):
     def sync_buttons(self) -> None:
         """The editor buttons' state (#1050): Add on the editable
         ground, Remove on a selected row besides — the mounts
-        tab's own rule."""
+        tab's own rule — and the Revoke button on a selected
+        verdict while no revoke flies (#1051)."""
         held = 0 <= self.entries.currentRow() < self.entries.count()
         self.add_button.setEnabled(self.editable())
         self.remove_button.setEnabled(held and self.editable())
+        verdict_held = 0 <= self.verdicts.currentRow() < self.verdicts.count()
+        self.revoke_button.setEnabled(
+            verdict_held
+            and bool(self.workspace_id)
+            and not self.pending_revoke
+        )
 
     @QtCore.Slot()
     def switch(self) -> None:
@@ -526,15 +668,88 @@ class EgressTab(QtWidgets.QWidget):
             entries,
         )
 
+    @QtCore.Slot(str)
+    def allow_denied(self, host: str) -> None:
+        """The deny-to-allowlist ask from the trail (#1051): the
+        denied name joins the working list and the whole new
+        list posts through the policy route — the same write
+        path the editor owns, the same offline gate among its
+        arms. A name already listed answers itself on the note
+        line, and a standing policy flight holds the ask: the
+        route is one."""
+        if not self.editable():
+            self.note.setText(WRITE_HELD)
+            return
+        if host in self.working:
+            self.note.setText(f"{host} {ALREADY_LISTED}")
+            return
+        self.change([*self.working, host])
+
+    @QtCore.Slot()
+    def revoke(self) -> None:
+        """The Revoke action (#1051): the selected verdict's
+        question first — the pattern every verdict row takes, No
+        the default — and a yes sends the revoke through its own
+        route, one flight at a time. The daemon broadcasts a
+        fresh rules frame on the revoke, and the landing pokes
+        both reads beside it: the verdicts repaint and the
+        trail's row flips."""
+        index = self.verdicts.currentRow()
+        if not 0 <= index < len(self.verdict_rows):
+            return
+        rule = self.verdict_rows[index]
+        if self.pending_revoke or not self.workspace_id:
+            return
+        dest = verdict_dest(rule)
+        if not confirm(self, REVOKE_TITLE, revoke_question(dest)):
+            return
+        self.pending_revoke = True
+        self.seq += 1
+        self.revoke_key = f"{REVOKE_STEM}-{self.seq}"
+        self.note.setText("revoking …")
+        self.revoke_flight = self.bridge.call(
+            self.revoke_key, "revoke", self.workspace_id, rule.id
+        )
+
+    def revoke_landed(self, key: str) -> bool:
+        """The revoke's answer (#1051): the note names the
+        consequence, and both reads fly again — the broadcast
+        rules frame repaints the verdicts, and the trail's row
+        flips to revoked. False when the key names no flight of
+        the revoke's own."""
+        if key != self.revoke_key or not self.revoke_key:
+            return False
+        self.pending_revoke = False
+        self.revoke_flight = None
+        self.note.setText(REVOKE_LANDING)
+        self.poke()
+        self.audit.poke()
+        return True
+
+    def revoke_refused(self, key: str, failure: object) -> bool:
+        """The revoke's refusal (#1051): the route's own words
+        land on the note line and the row stands — a verdict the
+        daemon no longer holds leaves with the next read. False
+        when the key names no flight of the revoke's own."""
+        if key != self.revoke_key or not self.revoke_key:
+            return False
+        self.pending_revoke = False
+        self.revoke_flight = None
+        self.note.setText(f"refused: {failure}")
+        return True
+
     @QtCore.Slot(str, object)
     def on_succeeded(self, key: str, result: object) -> None:
-        """One answered call (#1042, #1050): the read's, the
-        write's, and the switch's answers each land on the arm
-        that asked — each reply the fresh rules frame — and
-        another key's answer is not this tab's to take."""
+        """One answered call (#1042, #1050, #1051): the read's,
+        the write's, the revoke's, and the switch's answers each
+        land on the arm that asked — the policy replies the fresh
+        rules frame, the revoke its own fact — and another key's
+        answer is not this tab's to take."""
         if self.read_landed(key, result):
             return
         if self.write_landed(key, result):
+            return
+        if self.revoke_landed(key):
             return
         self.switch_landed(key, result)
 
@@ -588,15 +803,17 @@ class EgressTab(QtWidgets.QWidget):
 
     @QtCore.Slot(str, object)
     def on_failed(self, key: str, failure: object) -> None:
-        """One refused call (#1042, #1050): the read's, the
-        write's, and the switch's refusals each land on the arm
-        that asked — the shared question's two arms over the
-        offline escape, the route's own words over everything
-        else — and another key's failure is not this tab's to
-        take."""
+        """One refused call (#1042, #1050, #1051): the read's,
+        the write's, the revoke's, and the switch's refusals
+        each land on the arm that asked — the shared question's
+        two arms over the offline escape, the route's own words
+        over everything else — and another key's failure is not
+        this tab's to take."""
         if self.read_refused(key):
             return
         if self.write_refused(key, failure):
+            return
+        if self.revoke_refused(key, failure):
             return
         self.switch_refused(key, failure)
 

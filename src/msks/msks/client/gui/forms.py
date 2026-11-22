@@ -14,6 +14,20 @@ from PySide6 import QtGui, QtWidgets
 from .dialogs import center_on_parent
 
 
+class ModePicker(QtWidgets.QComboBox):
+    """A combo that commits only on a deliberate pick (#1049
+    review): the wheel passes through — a scroll across the pane
+    never changes a live choice (an egress posture, an audit
+    filter) — while popup picks and typed selection commit
+    through ``activated`` as every deliberate pick does. The
+    Egress tab's switcher and its audit filter share it."""
+
+    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
+        """One wheel event over the picker ignores itself: the
+        parent takes the scroll, the choice stands."""
+        event.ignore()
+
+
 def muted_note(text: str) -> QtWidgets.QLabel:
     """A muted section note: the empty state's honest stand-in,
     colored the palette's own shadow (#945's own shape, shared

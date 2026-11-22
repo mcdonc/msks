@@ -60,6 +60,7 @@ from ..tui.consent import (
     ConsentRequest,
     fmt_duration,
 )
+from ..tui.consent import ConsentRule as ConsentRule
 from ..tui.consent import EgressRules as EgressRules
 from ..tui.consent import effective_allows as effective_allows
 from ..tui.consent import parse_rules as parse_rules

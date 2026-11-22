@@ -28,17 +28,23 @@ def scripted(
     seen: list[tuple[str, str, dict | None]],
 ) -> httpx.MockTransport:
     """A transport answering the named (method, path) exchanges
-    in order and recording each request's method, path, and
-    body."""
+    in order and recording each request's method, path (its
+    query string included, #1051), and body."""
     queue = list(replies)
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = (
             json.loads(request.content.decode()) if request.content else None
         )
-        seen.append((request.method, request.url.path, body))
+        full = str(request.url.path)
+        query = request.url.query
+        if query:
+            if isinstance(query, bytes):
+                query = query.decode()
+            full = f"{full}?{query}"
+        seen.append((request.method, full, body))
         method, path, reply = queue.pop(0)
-        assert (request.method, request.url.path) == (method, path)
+        assert (request.method, full) == (method, path)
         return reply
 
     return httpx.MockTransport(handler)
@@ -127,6 +133,20 @@ CASES = [
         ("ws-1",),
         "GET",
         "/api/v1/workspaces/ws-1/egress",
+        None,
+    ),
+    (
+        "egress_requests",
+        ("ws-1",),
+        "GET",
+        "/api/v1/workspaces/ws-1/egress/requests?limit=100",
+        None,
+    ),
+    (
+        "egress_requests",
+        ("ws-1", "denied", 50),
+        "GET",
+        "/api/v1/workspaces/ws-1/egress/requests?decision=denied&limit=50",
         None,
     ),
     (

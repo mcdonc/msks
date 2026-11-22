@@ -254,6 +254,23 @@ class RestData:
             body,
         )
 
+    async def egress_requests(
+        self,
+        workspace_id: str,
+        decision: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """GET the consent rows, newest first (#1051) — the GUI
+        Egress tab's audit trail: every answered row the
+        workspace holds, filterable by decision and bounded by
+        ``limit``, the same exchange ``msks egress requests``
+        makes. ``decision`` None reads every decision."""
+        path = f"/api/v1/workspaces/{workspace_id}/egress/requests"
+        query = f"limit={limit}"
+        if decision is not None:
+            query = f"decision={decision}&{query}"
+        return await self.rest("GET", f"{path}?{query}")
+
     async def decide(
         self,
         workspace_id: str,
