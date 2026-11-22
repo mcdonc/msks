@@ -753,6 +753,39 @@ def test_the_serve_poke_re_reads_whole(qt) -> None:
     window.close()
 
 
+def test_a_serve_poke_under_a_page_flight_is_carried(qt) -> None:
+    """#1060's review round: the poke under a gathered flight
+    already out is carried, not swallowed — the landing takes
+    the read, so a reconnect's gap never reads as fresh when
+    the standing flight predates it."""
+    tab, window, bridge = make_tab(qt)
+    bridge.calls.clear()
+    tab.pending = True  # a gathered flight the outage stalled
+    bridge.feed_served.emit()
+    assert bridge.calls == []
+    assert tab.page_due
+    tab.pending = False
+    tab.page_landed(page_answer())
+    assert bridge.calls == [(images_mod.PAGE_KEY, "images_page", (CHANNEL,))]
+    assert not tab.page_due
+    window.close()
+
+
+def test_a_carried_page_ask_dies_with_a_failed_flight(qt) -> None:
+    """#1060's review round: the carried ask dies with the flight
+    it waited on — the outage flash already names the retry, and
+    a later landing must not fire a read nobody asked for."""
+    tab, window, bridge = make_tab(qt)
+    tab.pending = True
+    tab.page_due = True
+    tab.on_failed(
+        images_mod.PAGE_KEY, RestFailure("the daemon is gone", reach=True)
+    )
+    assert not tab.pending
+    assert not tab.page_due
+    window.close()
+
+
 def test_a_feed_drop_flashes_on_the_page_that_owns_the_window(
     qt,
 ) -> None:

@@ -541,6 +541,19 @@ def test_a_sustained_burst_re_arms_the_window_flight_by_flight(
     window.close()
 
 
+def test_the_frame_window_fires_on_the_real_timer(qt, monkeypatch) -> None:
+    """#1060's review round: the window is a real single-shot
+    timer — a frame arms it, the fire lands on the event loop's
+    own clock, and the coalesced read flies without any hand
+    calling the slot."""
+    tab, window, bridge = make_tab(qt, monkeypatch)
+    bridge.calls.clear()
+    bridge.landed.emit({"event": "secret.mint", "data": {}})
+    qt.QtTest.QTest.qWait(700)
+    assert bridge.calls == [(secrets_mod.PAGE_KEY, "secrets_page", ())]
+    window.close()
+
+
 def test_a_pushed_frame_on_a_hidden_tab_reads_nothing(qt, monkeypatch) -> None:
     """#1060: a hidden tab re-reads whole at its next show, not
     at every frame — and the hide stops a window the frames
@@ -548,11 +561,13 @@ def test_a_pushed_frame_on_a_hidden_tab_reads_nothing(qt, monkeypatch) -> None:
     see."""
     tab, window, bridge = make_tab(qt, monkeypatch)
     bridge.calls.clear()
+    bridge.landed.emit({"event": "secret.expiry", "data": {}})
+    assert tab.frame_timer.isActive()  # the window armed while shown
     window.hide()
     qt.app.processEvents()
-    bridge.landed.emit({"event": "secret.expiry", "data": {}})
-    assert bridge.calls == []
     assert not tab.frame_timer.isActive()
+    qt.QtTest.QTest.qWait(700)
+    assert bridge.calls == []
     window.close()
 
 

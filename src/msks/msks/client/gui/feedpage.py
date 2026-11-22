@@ -1,10 +1,13 @@
 """The strip pages' shared feed wiring (#1060): the serve poke
-and the drop flash every top-level page takes beside its own
+and the drop flash a frame-driven page takes beside its own
 frame filter — the pushed frames are a page's freshness, so the
 page that owns the window re-reads when the feed serves and
 flashes when it drops. The two slots are the whole contract: a
 page mixes this in beside its QWidget base and connects the
 bridge's ``feed_served`` and ``feed_dropped`` signals to them.
+The workspaces shell keeps its own wiring in
+:mod:`msks.client.gui.workspace`: its screens re-read per frame
+family, and #946 wrote their drop and recovery tells.
 
 This module imports PySide6 at module scope — the screens' own
 contract: nothing imports it at CLI parse time, and the screens'

@@ -170,6 +170,11 @@ class ImagesTab(FeedPage, QtWidgets.QWidget):
         self.read_seq = 0
         self.page_seq = 0
         self.catalog_seq = 0
+        # The gathered read a landing owes (#1060's review round): an
+        # ask the one-flight guard refused while a page flight stood
+        # out — its landing takes the read, so a serve poke or a
+        # show under a stalled flight still lands.
+        self.page_due = False
         # The catalog read a landing owes (#1060): an ask the
         # one-flight guard refused while a catalog read stood
         # out — its landing takes the read, so a catalog move
@@ -291,9 +296,12 @@ class ImagesTab(FeedPage, QtWidgets.QWidget):
         """The tab's whole refresh (#964): the read every show
         takes and the serve poke's (#1060) — both groups from
         one flight, the status line saying the fetch is out. A
-        refresh already in flight is skipped, the listing's own
-        guard (#470)."""
+        refresh already in flight carries the ask instead (#1060's
+        review round): its landing takes the read the guard refused,
+        so a serve poke or a show under a stalled flight still
+        lands — the secrets page's own rule."""
         if self.pending:
+            self.page_due = True
             return
         self.pending = True
         self.flash_seq += 1  # retire any pending flash timeout
@@ -356,7 +364,10 @@ class ImagesTab(FeedPage, QtWidgets.QWidget):
         the presenter's models — the published half always, the
         catalog half only when no fresher catalog read landed
         under the flight — the raw rows cached for the detail
-        view and the after-action markers."""
+        view and the after-action markers. A carried ask
+        (#1060's review round) takes its read here: the guard
+        held it while this flight stood, and the move it names
+        may postdate this answer."""
         self.pending = False
         page = result or {}
         self.published_raw = list(page.get("published") or [])
@@ -364,6 +375,16 @@ class ImagesTab(FeedPage, QtWidgets.QWidget):
             self.catalog_raw = list(page.get("catalog") or [])
         self.rebuild()
         self.standing(counts_text(self.catalog_raw, self.published_raw))
+        self.carried_page()
+
+    def carried_page(self) -> None:
+        """The gathered flight's owed read (#1060's review round):
+        an ask the one-flight guard held while this flight stood
+        takes its read here — the move it names may postdate
+        this answer."""
+        if self.page_due:
+            self.page_due = False
+            self.refresh()
 
     def catalog_landed(self, result: object) -> None:
         """The catalog answer (#964): the catalog group and the
@@ -527,6 +548,11 @@ class ImagesTab(FeedPage, QtWidgets.QWidget):
         key's failure is not this tab's to show."""
         if key == PAGE_KEY:
             self.pending = False
+            # The carried ask dies with the flight it waited on
+            # (#1060, the secrets page's own rule): the outage
+            # flash already names the retry, and a later landing
+            # must not fire a read nobody asked for.
+            self.page_due = False
             self.flash(str(failure), outage=failure.reach)
         elif key == CATALOG_KEY:
             self.catalog_pending = False

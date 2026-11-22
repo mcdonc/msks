@@ -301,6 +301,10 @@ the channel's manifest, which the client fetches itself. The
 channel publishes no frame, so its rows move only through the
 page's re-reads.
 
+A dropped events feed flashes the page while it is open. The
+page re-reads whole when the feed serves again, so the gap
+between the drop and the recovery lands on screen.
+
 ## The Secrets tab
 
 ![The Secrets tab: the placeholder listing above the audit group](screens/gui-secrets.png)
@@ -336,6 +340,10 @@ any attached client repaints both groups. A workspace reading
 its placeholders pushes a frame per request, so the page
 batches frames behind half a second and takes one re-read per
 batch.
+
+A dropped events feed flashes the page while it is open. The
+page re-reads whole when the feed serves again, so the gap
+between the drop and the recovery lands on screen.
 
 ## The zoom keys
 
