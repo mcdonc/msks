@@ -417,21 +417,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#install-and-first-open" class="md-nav__link">
+  <a href="#the-connection-picker" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Install and first open
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-connection" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The connection
+        The connection picker
       </span>
     </span>
   </a>
@@ -603,6 +592,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Light and dark palettes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-icons-and-scaling" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Environment, icons and scaling
       </span>
     </span>
   </a>
@@ -1059,21 +1059,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#install-and-first-open" class="md-nav__link">
+  <a href="#the-connection-picker" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Install and first open
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-connection" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The connection
+        The connection picker
       </span>
     </span>
   </a>
@@ -1252,6 +1241,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#environment-icons-and-scaling" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Environment, icons and scaling
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-macos-menu-bar" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1283,88 +1283,34 @@
 
 
 <h1 id="the-gui">The GUI<a class="headerlink" href="#the-gui" title="Permanent link">&para;</a></h1>
-<p>The desktop GUI and the terminal UI are one program: <code>msks</code>. The
-GUI is a desktop window over the daemon's REST API. It reads the
-same environment variables, the same config file, and the same
-daemon aliases as the TUI and the CLI. It reads no daemon state
+<p>The desktop GUI and the terminal UI are one program: <code>msks</code>. The GUI is a
+desktop window over the daemon's REST API. It reads the same environment
+variables and config file as the TUI and the CLI. It reads no daemon state
 directly: every page uses the API.</p>
 <p><code>msks gui</code> opens the window.</p>
-<h2 id="install-and-first-open">Install and first open<a class="headerlink" href="#install-and-first-open" title="Permanent link">&para;</a></h2>
-<p>The GUI ships in the base install. <code>pip install msks</code> installs
-the Qt binding and the terminal library the window uses together
-with everything else. The GUI adds about 85 MB to the wheel
-download and about 250 MB installed, measured on Linux.</p>
-<p>The window needs a display. A Linux session provides one through
-<code>DISPLAY</code> or <code>WAYLAND_DISPLAY</code>, and <code>QT_QPA_PLATFORM=offscreen</code>
-also works. A start that finds no display prints one line on
-stderr and exits. A macOS session needs a desktop login. The
-window opens fine over ssh while one stands.</p>
-<p>The window plants its own desktop entry and taskbar icon on a
-Linux desktop. Every <code>msks gui</code> launch installs both under the
-XDG data home before the window opens. The taskbar shows the
-msks icon from the first launch after a fresh install, and the
-next launch after an upgrade refreshes the icon renders. When
-the install fails, msks prints one line on stderr and the
-window still opens. <code>msks gui-shortcut</code> does the same work by
-hand and prints the entry's path. On macOS nothing is planted.
-The dock reads the icon the window itself already carries.</p>
-<p>Uninstalling the wheel leaves the entry and the icons in
-place, because they live in the XDG data home, outside the
-wheel's tree. Delete <code>~/.local/share/applications/msks.desktop</code>
-and the <code>msks.*</code> files under <code>~/.local/share/icons/hicolor</code> to
-remove them by hand.</p>
-<p>The window opens 1280 by 720 the first time. Every later open
-takes back the place and size the last close left, as long as a
-connected screen still shows some of that rect.</p>
-<p><code>MSKSC_GUI_FONT_SCALE</code> multiplies the window's base font size.
-The base is 15 logical pixels, the size the terminal face's
-15pt default rasterizes to on macOS. A Linux session rasterizes
-a point size larger (96 against 72 font dpi), so the window
-anchors its chrome in pixels and converts through the screen's
-own dpi: the chrome opens at the same size on every platform
-(#1056). The terminal content keeps its own 15pt default, so
-it opens larger than the chrome on a 96-dpi session. The
-default multiplier is 1.0. The <a href="#the-zoom-keys">zoom
-keys</a> change both sizes at runtime.</p>
-<h2 id="the-connection">The connection<a class="headerlink" href="#the-connection" title="Permanent link">&para;</a></h2>
-<p>The GUI reads the <a href="../cli/#client-environment">client
-environment</a> the TUI reads. Export
-<code>MSKSC_URL</code>, <code>MSKSC_TOKEN</code>, and <code>MSKSC_CAFILE</code> before <code>msks
-gui</code>, or write them into the config file, exactly as for any
-other command.</p>
-<p>A shell inside a devenv tree needs no exports. The connection
-picker reads the dev daemon's state dir and offers that
-connection as a preset. The default state dir is
-<code>.devenv/state/msksd</code>, and <code>MSKSD_STATE_DIR</code> moves it.</p>
+<h2 id="the-connection-picker">The connection picker<a class="headerlink" href="#the-connection-picker" title="Permanent link">&para;</a></h2>
 <p><img alt="The connection picker's menu: two aliases and the dev daemon, the standing one checked" src="../screens/gui-connection.png" /></p>
 <p>The status row's right end carries the connection picker: the
 standing daemon's name beside a menu. The menu lists the config
 file's <a href="../cli/#daemon-aliases">daemon aliases</a> in file order, the
 dev daemon's state dir, and the environment's own exports when
-they carry an address. The standing connection is checked.</p>
+they carry an address.</p>
 <p>A pick switches the whole window to the picked daemon. The
 current screens close and fresh ones open over the new
 connection. Shell sessions open on the old connection close with
-it. A pick that cannot resolve (the config file changed under
-the menu) switches nothing: the status line carries the refusal
-and the menu re-reads the standing truth.</p>
+it.</p>
 <h2 id="the-main-window">The main window<a class="headerlink" href="#the-main-window" title="Permanent link">&para;</a></h2>
 <p>The window opens on three top-level tabs: <strong>Workspaces</strong>,
 <strong>Images</strong>, and <strong>Secrets</strong>.</p>
-<p>Left and Right move between the tabs. Down enters the page
-below. A click picks a tab and leaves the keyboard focus where
-it stood. Tab and Shift-Tab still work everywhere.</p>
 <h2 id="the-workspace-list">The workspace list<a class="headerlink" href="#the-workspace-list" title="Permanent link">&para;</a></h2>
 <p><img alt="The workspaces list: three rows, the action buttons at each row's end, the connection picker at the status row's right" src="../screens/gui-list.png" /></p>
 <p>The <strong>Workspaces</strong> tab opens on the list: one row per workspace,
 newest first, in five columns. NAME, STATUS, ID, IMAGE, and
 CREATED. A start/stop toggle and a shell button close each row.</p>
-<p>The list re-reads the daemon when the daemon publishes a move:
-a workspace changed from another surface (the CLI, another
+<p>The list re-reads the daemon when the daemon publishes a websocket
+event: a workspace changed from another surface (the CLI, another
 operator) appears without a click, and a daemon at rest receives
-no periodic listing traffic from an open window. The events
-websocket carries the frames, and the window re-reads when the
-connection serves again after a drop.</p>
+no periodic listing traffic from an open window.</p>
 <p>Click a column header to sort by it. CREATED sorts newest first
 by default. STATUS sorts in the lifecycle order (created,
 starting, running, paused, stopping, stopped, absent, unknown).
@@ -1414,11 +1360,7 @@ image</a> before the first
 create.</p>
 <p><strong>Edit</strong> opens a dialog seeded with the workspace's sizes and
 topology: VCPUs, memory, and the root and home volumes. Apply
-posts to the same endpoint <code>msks resize</code> uses. The sizes move
-while the workspace stands stopped, and the GUI never stops it
-for you: stop it first. A running workspace's Apply comes back
-as a refusal on the note line. A change that waits for the
-next boot shows the row's <code>↻N</code> marker once the list refreshes.</p>
+posts to the same endpoint <code>msks resize</code> uses.</p>
 <h2 id="the-workspace-page">The workspace page<a class="headerlink" href="#the-workspace-page" title="Permanent link">&para;</a></h2>
 <p><img alt="The workspace page: the back arrow, the tab strip, the consent panel, the terminal" src="../screens/gui-shells.png" /></p>
 <p>Enter on a row opens the workspace's page. The back arrow (or
@@ -1430,8 +1372,9 @@ line, and the external-terminal button at the right end. The tab
 strip holds <strong>Shells</strong> (the default), <strong>Mounts</strong>, <strong>Proxies</strong>,
 <strong>Egress</strong>, and <strong>Events</strong>. The footer strip at the bottom repeats
 the list's quick-facts line for this workspace.</p>
-<p>The page re-reads the daemon every five seconds, and the events
-feed pushes changes at once. A proxy transition repaints the
+<p>The page re-reads the daemon at its open, when the events
+connection serves, and on every move the events feed pushes.
+A proxy transition repaints the
 Proxies tab without a click, and every frame appends to the
 Events tab.</p>
 <p>A listing that can no longer see the workspace returns you to
@@ -1620,6 +1563,39 @@ switch mid-session repaints the window live, with no restart.</p>
 terminal that sets its own colors keeps winning over the theme.
 A desktop that states no scheme keeps the palette the platform
 handed the window.</p>
+<h2 id="environment-icons-and-scaling">Environment, icons and scaling<a class="headerlink" href="#environment-icons-and-scaling" title="Permanent link">&para;</a></h2>
+<p>The window needs a display. A Linux session provides one through
+<code>DISPLAY</code> or <code>WAYLAND_DISPLAY</code>, and <code>QT_QPA_PLATFORM=offscreen</code>
+also works. A start that finds no display prints one line on
+stderr and exits. A macOS session needs a desktop login. The
+window opens fine over ssh while one stands.</p>
+<p>The window plants its own desktop entry and taskbar icon on a
+Linux desktop. Every <code>msks gui</code> launch installs both under the
+XDG data home before the window opens. The taskbar shows the
+msks icon from the first launch after a fresh install, and the
+next launch after an upgrade refreshes the icon renders. When
+the install fails, msks prints one line on stderr and the
+window still opens. <code>msks gui-shortcut</code> does the same work by
+hand and prints the entry's path. On macOS nothing is planted.
+The dock reads the icon the window itself already carries.</p>
+<p>Uninstalling the wheel leaves the entry and the icons in
+place, because they live in the XDG data home, outside the
+wheel's tree. Delete <code>~/.local/share/applications/msks.desktop</code>
+and the <code>msks.*</code> files under <code>~/.local/share/icons/hicolor</code> to
+remove them by hand.</p>
+<p>The window opens 1280 by 720 the first time. Every later open
+takes back the place and size the last close left, as long as a
+connected screen still shows some of that rect.</p>
+<p><code>MSKSC_GUI_FONT_SCALE</code> multiplies the window's base font size.
+The base is 15 logical pixels, the size the terminal face's
+15pt default rasterizes to on macOS. A Linux session rasterizes
+a point size larger (96 against 72 font dpi), so the window
+anchors its chrome in pixels and converts through the screen's
+own dpi: the chrome opens at the same size on every platform
+(#1056). The terminal content keeps its own 15pt default, so
+it opens larger than the chrome on a 96-dpi session. The
+default multiplier is 1.0. The <a href="#the-zoom-keys">zoom
+keys</a> change both sizes at runtime.</p>
 <h2 id="the-macos-menu-bar">The macOS menu bar<a class="headerlink" href="#the-macos-menu-bar" title="Permanent link">&para;</a></h2>
 <p>On macOS the window adds the platform's menu bar with the two
 standard roles. About opens a dialog with the client's name and
