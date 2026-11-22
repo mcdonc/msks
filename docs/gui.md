@@ -177,8 +177,8 @@ header lives.
 The page's top row holds the back arrow, the tab strip, a status
 line, and the external-terminal button at the right end. The tab
 strip holds **Shells** (the default), **Mounts**, **Proxies**,
-and **Events**. The footer strip at the bottom repeats the list's
-quick-facts line for this workspace.
+**Egress**, and **Events**. The footer strip at the bottom repeats
+the list's quick-facts line for this workspace.
 
 The page re-reads the daemon every five seconds, and the events
 feed pushes changes at once. A proxy transition repaints the
@@ -256,6 +256,34 @@ The listing refreshes after every mutation and on every proxy
 transition the events feed pushes. A bind that fails while the
 tab stands paints itself without a click. The [proxies
 chapter](proxies.md) describes what a proxy is.
+
+### The Egress tab
+
+The tab manages the workspace's egress posture. The top shows
+the current mode with its meaning. The switcher under it
+changes the mode in place. A running workspace swaps its rules
+in one transaction, and a stopped workspace builds the new
+posture at its next start. The note line at the bottom says
+which one happened.
+
+A switch to `static` with nothing effectively allowed asks a
+question first. That posture answers every name NXDOMAIN, so
+the workspace would be offline. **Yes** confirms the switch.
+
+The lower half edits the static allowlist. The list reads the
+workspace's entries. **Add** opens a one-field form. The entry
+is a host, a scope (`.debian.org`, `*.example.com`), an
+address, a CIDR, or `host:port`. **Remove** drops the selected
+entry. Each write posts the whole new list through the policy
+route, and the reply repaints the list.
+
+The daemon owns the entry's shape. An entry the route rejects
+appears with the route's reason on the tab's note line, and the
+list rolls back to the last set the daemon accepted. Removing
+the last entry under `static` asks the same offline question
+the mode switch asks. The [egress consent
+chapter](egress-consent.md) explains what the modes, the
+allowlist, and the verdicts cover.
 
 ### The Events tab
 

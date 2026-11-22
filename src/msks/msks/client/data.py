@@ -217,15 +217,24 @@ class RestData:
         )
 
     async def set_egress_mode(
-        self, workspace_id: str, mode: str, confirm_empty: bool = False
+        self,
+        workspace_id: str,
+        mode: str,
+        confirm_empty: bool = False,
+        allow_list: list[str] | None = None,
     ) -> dict:
-        """PUT the egress policy (#280) — the detail screen's mode
-        switch (#344), the same exchange ``msks egress mode``
-        makes. ``confirm_empty`` is sent only when set — the
-        daemon's refusal names it — and stays positional: the
-        GUI bridge's one verb passes arguments by position
-        (#1042). Returns the reply: the fresh rules frame with
-        ``applied`` beside it."""
+        """PUT the egress policy (#280) — the mode switch the
+        detail screen's pick (#344), the GUI Egress tab's
+        switcher (#1042), and the tab's allowlist editor (#1050)
+        drive, the same exchange ``msks egress mode`` makes.
+        ``confirm_empty`` is sent only when set — the daemon's
+        refusal names it — and stays positional: the GUI
+        bridge's one verb passes arguments by position (#1042).
+        An ``allow_list`` replaces the row's static allowlist
+        with the full new list (the editor's add and remove
+        both); None keeps the list the row carries. Returns the
+        reply: the fresh rules frame with ``applied`` beside
+        it."""
         body: dict = {"mode": mode}
         if confirm_empty:
             # The wire key's spelling is pinned where the wire
@@ -234,6 +243,11 @@ class RestData:
             # the flag — is copied verbatim into the Egress tab's
             # tests (#1042).
             body["confirm_empty"] = True
+        if allow_list is not None:
+            # The full new list, whole: an omitted allow_list
+            # keeps the row's, and the editor's tests pin this
+            # body's list the same way (#1050).
+            body["allow_list"] = allow_list
         return await self.rest(
             "PUT",
             f"/api/v1/workspaces/{workspace_id}/egress/policy",

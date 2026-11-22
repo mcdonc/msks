@@ -1,10 +1,16 @@
-"""The workspace Egress tab (#1042's first sub-issue, #1049): the
-posture surface over a stub bridge — the rules read painting the
-mode, the switch through the policy route with its effect note,
-the empty-static gate's question before the send, the route's own
-refusal asking the same question again, and the pushed rules
-frame repainting a switch another surface made. The widgets run
-under the offscreen platform on every host.
+"""The workspace Egress tab (#1042): the posture surface over
+a stub bridge — the rules read painting the mode, the switch
+through the policy route with its effect note, the empty-static
+gate's question before the send, the route's own refusal asking
+the same question again, and the pushed rules frame repainting
+a switch another surface made — and the static allowlist
+editor (#1050): the read painting the list, add and remove
+posting the whole new list through the policy route, the
+optimistic row and its restore on a refusal, the route's
+reason for a rejected entry naming itself inline, and the
+empty-static gate's two arms over a write that empties the
+list. The widgets run under the offscreen platform on every
+host.
 """
 
 import importlib.util
@@ -25,7 +31,7 @@ from msks.client.tui.consent import (  # noqa: E402
     effective_allows,
     parse_rules,
 )
-from PySide6 import QtCore, QtGui  # noqa: E402
+from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
 
 #: The route's nothing-effectively-allowed refusal, verbatim
 #: (#280) — the message the tab's refusal arm matches.
@@ -170,6 +176,31 @@ def choose(tab, mode: str) -> None:
     index = egress_mod.EGRESS_MODES.index(mode)
     tab.pick.setCurrentIndex(index)
     tab.pick.activated.emit(index)
+
+
+def entry_rows(tab) -> list[str]:
+    """The editor's list as a plain list of strings — the rows
+    the operator reads."""
+    return [tab.entries.item(row).text() for row in range(tab.entries.count())]
+
+
+def fake_entry_dialog(monkeypatch, entry: str) -> list:
+    """The Add form's stub (#1050): the entry handed in is the
+    form's accepted answer, its exec returning at once — an
+    empty entry answers a cancel — and each construction
+    recorded with the parent the tab passed (#1014)."""
+    built: list[object] = []
+
+    class FakeDialog:
+        def __init__(self, parent=None) -> None:
+            self.entry = entry
+            built.append(parent)
+
+        def exec(self) -> int:
+            return 1 if entry else 0
+
+    monkeypatch.setattr(egress_mod, "EntryDialog", FakeDialog)
+    return built
 
 
 def test_effective_allows_reads_the_shared_rule() -> None:
@@ -492,3 +523,424 @@ def test_another_keys_answer_is_not_the_tabs_to_take(qt) -> None:
     bridge.failed.emit("egress-switch-99", "not this tab's")
     assert tab.mode_line.text() == "current mode: interactive"
     assert tab.note.text() == ""
+
+
+def test_the_read_paints_the_allowlist(qt) -> None:
+    """The editor's read (#1050): the landed frame's allowlist is
+    the list the operator reads, the empty state's stand-in under
+    a frame with no entries, and the buttons follow the ground —
+    Add on a landed read, Remove on a selected row besides. A
+    blanked read blanks the list the same way."""
+    tab, _bridge = make_tab(qt)
+    assert entry_rows(tab) == [".debian.org"]
+    assert not tab.empty.isVisibleTo(tab)
+    assert tab.add_button.isEnabled()
+    assert not tab.remove_button.isEnabled()  # nothing selected
+    tab.push(
+        {
+            "event": "egress.rules",
+            "data": rules_frame(allow_list=(".debian.org", "example.com")),
+        }
+    )
+    assert entry_rows(tab) == [".debian.org", "example.com"]
+    tab.entries.setCurrentRow(1)  # the selection gates Remove
+    assert tab.remove_button.isEnabled()
+    tab.take("not a frame")  # the blanked read
+    assert entry_rows(tab) == []
+    assert tab.empty.isVisibleTo(tab)
+    assert not tab.add_button.isEnabled()
+
+
+def test_add_posts_the_whole_list_and_lands_with_its_effect(
+    qt, monkeypatch
+) -> None:
+    """The Add action (#1050): an accepted entry joins the list's
+    end and the whole new list posts through the policy route
+    with the standing mode — the row shows the operator's edit at
+    once, the reply's fresh frame repaints it, and the note names
+    the write's effect with the reply's fact. A write already out
+    gates the next add: the form never opens."""
+    tab, bridge = make_tab(qt)
+    built = fake_entry_dialog(monkeypatch, "example.com:443")
+    tab.add()
+    assert built == [tab]  # the opener lands as the parent (#1014)
+    assert bridge.calls == [
+        (
+            tab.write_key,
+            "set_egress_mode",
+            ("ws-a", "interactive", False, [".debian.org", "example.com:443"]),
+        )
+    ]
+    assert entry_rows(tab) == [".debian.org", "example.com:443"]
+    assert tab.note.text() == "saving …"
+    tab.add()  # one write at a time: the form never opens again
+    assert len(built) == 1
+    assert len(bridge.calls) == 1
+    bridge.succeeded.emit(
+        tab.write_key,
+        {
+            **rules_frame(allow_list=(".debian.org", "example.com:443")),
+            "applied": True,
+        },
+    )
+    assert entry_rows(tab) == [".debian.org", "example.com:443"]
+    assert tab.note.text() == "allowlist saved — in effect now"
+    assert tab.add_button.isEnabled()  # the flight cleared
+
+
+def test_a_cancelled_add_form_sends_nothing(qt, monkeypatch) -> None:
+    """A cancelled form (#1050): nothing composes — the bridge
+    hears no call and the list stands."""
+    tab, bridge = make_tab(qt)
+    fake_entry_dialog(monkeypatch, "")
+    tab.add()
+    assert bridge.calls == []
+    assert entry_rows(tab) == [".debian.org"]
+    tab.remove()  # nothing selected: the remove decides nothing
+    assert bridge.calls == []
+
+
+def test_a_read_blank_under_the_form_decides_nothing(qt, monkeypatch) -> None:
+    """The change's own gate (#1050): a read that lands while
+    the form stands can blank the posture (a malformed answer);
+    the closed form's composition then decides nothing — no
+    ground, no write — the same ground the add's own gate
+    reads before the form opens."""
+    tab, bridge = make_tab(qt)
+
+    class BlankDialog:
+        def __init__(self, parent=None) -> None:
+            self.entry = "example.com"
+
+        def exec(self) -> int:
+            tab.take("not a frame")  # the read blanks under the form
+            return 1
+
+    monkeypatch.setattr(egress_mod, "EntryDialog", BlankDialog)
+    tab.add()
+    assert bridge.calls == []
+    assert entry_rows(tab) == []
+
+
+def test_remove_posts_the_whole_list_and_lands(qt) -> None:
+    """The Remove action (#1050): the selected row's entry leaves
+    the list and the remaining list posts whole through the
+    policy route; the reply repaints and the note names the
+    effect — a stopped workspace's write waits for the next
+    start."""
+    tab, bridge = make_tab(qt)
+    tab.entries.setCurrentRow(0)
+    tab.remove()
+    assert bridge.calls == [
+        (tab.write_key, "set_egress_mode", ("ws-a", "interactive", False, []))
+    ]
+    assert entry_rows(tab) == []  # the operator's edit at once
+    assert tab.empty.isVisibleTo(tab)
+    bridge.succeeded.emit(
+        tab.write_key, {**rules_frame(allow_list=()), "applied": False}
+    )
+    assert entry_rows(tab) == []
+    assert tab.note.text() == "allowlist saved — takes effect at next start"
+
+
+def test_an_invalid_entry_surfaces_the_routes_reason(qt, monkeypatch) -> None:
+    """A rejected entry (#1050): the route's own reason — the 400
+    ``parse_allowlist`` answers — lands whole on the note line and
+    the daemon restores the list from its standing frame: the
+    daemon is the authority, and the refused entry rides no later
+    write."""
+    tab, bridge = make_tab(qt)
+    fake_entry_dialog(monkeypatch, "not a host!")
+    tab.add()
+    assert entry_rows(tab) == [".debian.org", "not a host!"]
+    bridge.failed.emit(
+        tab.write_key, "invalid egress allowlist entries: 'not a host!'"
+    )
+    assert tab.note.text() == (
+        "refused: invalid egress allowlist entries: 'not a host!'"
+    )
+    assert entry_rows(tab) == [".debian.org"]  # the restore
+    fake_entry_dialog(monkeypatch, "example.com")  # the editor stands ready
+    tab.add()
+    assert len(bridge.calls) == 2
+
+
+def test_removing_the_last_entry_under_static_asks_before_it_sends(
+    qt, monkeypatch
+) -> None:
+    """The offline gate before the editor's send (#1050): a
+    remove that empties a static posture with no in-effect
+    allowed verdict asks the shared question first — a No sends
+    nothing, a Yes sends the confirmed write with the empty
+    list."""
+    frame = rules_frame(mode="static", allow_list=(".d.org",), allowed=())
+    tab, bridge = make_tab(qt)
+    bridge.succeeded.emit(tab.list_key, frame)
+    asks = fake_confirm(monkeypatch, False)
+    tab.entries.setCurrentRow(0)
+    tab.remove()
+    assert asks == [(tab, "Switch to static", EMPTY_STATIC_QUESTION)]
+    assert bridge.calls == []  # the No decided nothing
+    asks = fake_confirm(monkeypatch, True)
+    tab.remove()
+    assert bridge.calls == [
+        (tab.write_key, "set_egress_mode", ("ws-a", "static", True, []))
+    ]
+
+
+def test_the_routes_confirm_refusal_on_a_write_asks_and_resends(
+    qt, monkeypatch
+) -> None:
+    """The route's own refusal on a write (#1050): a remove that
+    passed the local gate — the read held an in-effect allowed
+    verdict — can still meet the daemon's nothing-effectively-
+    allowed refusal when the verdict left between the read and
+    the send. The refusal surfaces as the shared question: a Yes
+    resends the composition confirmed, a No rolls the list back
+    and decides nothing."""
+    frame = rules_frame(mode="static", allow_list=(".d.org",))
+    tab, bridge = make_tab(qt)
+    bridge.succeeded.emit(tab.list_key, frame)
+    tab.entries.setCurrentRow(0)
+    tab.remove()
+    assert bridge.calls[-1] == (
+        tab.write_key,
+        "set_egress_mode",
+        ("ws-a", "static", False, []),
+    )
+    asks = fake_confirm(monkeypatch, True)
+    bridge.failed.emit(tab.write_key, EMPTY_REFUSAL)
+    assert asks == [(tab, "Switch to static", EMPTY_STATIC_QUESTION)]
+    assert bridge.calls[-1] == (
+        tab.write_key,
+        "set_egress_mode",
+        ("ws-a", "static", True, []),
+    )
+    asks = fake_confirm(monkeypatch, False)
+    bridge.failed.emit(tab.write_key, EMPTY_REFUSAL)
+    assert len(asks) == 1
+    assert tab.note.text() == ""  # the No decided nothing
+    assert entry_rows(tab) == [".d.org"]  # the restore
+
+
+def test_one_policy_flight_gates_the_other_shape(qt, monkeypatch) -> None:
+    """The route is one (#1050): a write already out gates the
+    switch's send, and a switch already out gates the editor's —
+    the two shapes never race each other to the policy route."""
+    tab, bridge = make_tab(qt)
+    fake_entry_dialog(monkeypatch, "example.com")
+    tab.add()
+    choose(tab, "allow")  # a write is out: the pick sends nothing
+    assert len(bridge.calls) == 1
+    bridge.succeeded.emit(
+        tab.write_key,
+        {
+            **rules_frame(allow_list=(".debian.org", "example.com")),
+            "applied": True,
+        },
+    )
+    choose(tab, "allow")  # the switch flies
+    assert len(bridge.calls) == 2
+    fake_entry_dialog(monkeypatch, "example.org")
+    tab.add()  # a switch is out: the form never opens
+    assert len(bridge.calls) == 2
+    bridge.succeeded.emit(
+        tab.switch_key, {**rules_frame(mode="allow"), "applied": True}
+    )
+    tab.add()  # the flight cleared: the editor writes
+    assert len(bridge.calls) == 3
+
+
+def test_a_reply_that_is_not_a_frame_names_the_effect(qt, monkeypatch) -> None:
+    """The landing note's tolerance (#1050): a reply that carries
+    no frame — no route shape, only the tab's own — blanks the
+    posture like the read's own arm and still names the write's
+    effect from the reply's facts."""
+    tab, bridge = make_tab(qt)
+    fake_entry_dialog(monkeypatch, "example.com")
+    tab.add()
+    bridge.succeeded.emit(tab.write_key, "not a frame")
+    assert tab.mode_line.text() == "current mode: —"
+    assert entry_rows(tab) == []
+    assert tab.note.text() == "allowlist saved — takes effect at next start"
+
+
+def test_a_read_under_a_pending_write_keeps_the_edit(qt, monkeypatch) -> None:
+    """A read the page raced under the write (#1050): the
+    operator's edit stands — the answer repaints, and an older
+    frame cannot roll the posted list back out from under it."""
+    tab, bridge = make_tab(qt)
+    fake_entry_dialog(monkeypatch, "example.com")
+    tab.add()
+    tab.poke()
+    bridge.succeeded.emit(tab.list_key, rules_frame())  # the older list
+    assert entry_rows(tab) == [".debian.org", "example.com"]
+    bridge.succeeded.emit(
+        tab.write_key,
+        {
+            **rules_frame(allow_list=(".debian.org", "example.com")),
+            "applied": True,
+        },
+    )
+    assert entry_rows(tab) == [".debian.org", "example.com"]
+
+
+def test_a_workspace_switch_cancels_the_write_flight(qt, monkeypatch) -> None:
+    """The open's reset over the editor (#1050): a workspace
+    switch cancels a write the old workspace still had out — its
+    answer is not the new workspace's to take — and blanks the
+    list for the new workspace's own read."""
+    tab, bridge = make_tab(qt)
+    fake_entry_dialog(monkeypatch, "example.com")
+    tab.add()
+    stale = tab.write_key
+    tab.host("ws-b")
+    assert entry_rows(tab) == []
+    bridge.succeeded.emit(stale, rules_frame(mode="allow"))
+    assert tab.mode_line.text() == "current mode: —"
+    tab.poke()
+    bridge.succeeded.emit(
+        tab.list_key,
+        {
+            **rules_frame(allow_list=(".debian.org",)),
+            "workspace_id": "ws-b",
+        },
+    )
+    assert entry_rows(tab) == [".debian.org"]
+
+
+def test_the_entry_dialog_builds_and_submits(qt) -> None:
+    """The Add form itself (#1050): the accepted forms named on
+    its note line, a blank submit keeping the form standing with
+    its reason, and a whole entry accepting with the typed text
+    stripped."""
+    dialog = egress_mod.EntryDialog()
+    qt.keep.append(dialog)
+    assert dialog.windowTitle() == "Add an allowlist entry"
+    assert dialog.entry == ""
+    assert dialog.note.text() == egress_mod.ENTRY_HINT
+    dialog.submit()  # blank: the required field says itself
+    assert dialog.entry == ""
+    assert dialog.note.text() == "the entry is the form's one required field"
+    dialog.field.setText("  example.com  ")
+    dialog.submit()
+    assert dialog.entry == "example.com"
+    assert dialog.result() == QtWidgets.QDialog.DialogCode.Accepted
+
+
+def asking_with_frame(tab, monkeypatch, frame: dict) -> list:
+    """The question's stub over a landing frame (#1050 review):
+    the ask pushes the frame — a switch another surface made
+    while the question stood — then answers Yes."""
+    asks: list[tuple] = []
+
+    def ask(parent, title: str, text: str) -> bool:
+        asks.append((parent, title, text))
+        tab.push({"event": "egress.rules", "data": frame})
+        return True
+
+    monkeypatch.setattr(egress_mod, "confirm", ask)
+    return asks
+
+
+def test_the_confirmed_write_keeps_the_composed_posture(
+    qt, monkeypatch
+) -> None:
+    """The confirmation's unit (#1050 review): the posture the
+    composition captured is the posture the confirmed write
+    carries — a frame the modal ask lets land cannot repoint the
+    write the operator answers for, on the gate's own ask and on
+    the route's refusal ask alike."""
+    tab, bridge = make_tab(qt)
+    bridge.succeeded.emit(
+        tab.list_key,
+        rules_frame(mode="static", allow_list=(".d.org",), allowed=()),
+    )
+    tab.entries.setCurrentRow(0)
+    asking_with_frame(tab, monkeypatch, rules_frame(mode="interactive"))
+    tab.remove()  # the gate's ask: the frame lands under the question
+    assert bridge.calls[-1] == (
+        tab.write_key,
+        "set_egress_mode",
+        ("ws-a", "static", True, []),
+    )
+    bridge.succeeded.emit(
+        tab.write_key,
+        {
+            **rules_frame(mode="static", allow_list=(), allowed=()),
+            "applied": True,
+        },
+    )
+    # The route's refusal arm: a verdict stood at the send and
+    # left before the answer — the local gate passes, the daemon
+    # refuses, and the ask lands the same racing frame.
+    bridge.succeeded.emit(
+        tab.list_key, rules_frame(mode="static", allow_list=(".d.org",))
+    )
+    tab.entries.setCurrentRow(0)
+    tab.remove()
+    assert bridge.calls[-1] == (
+        tab.write_key,
+        "set_egress_mode",
+        ("ws-a", "static", False, []),
+    )
+    asking_with_frame(
+        tab,
+        monkeypatch,
+        rules_frame(mode="interactive", allow_list=(".d.org",)),
+    )
+    bridge.failed.emit(tab.write_key, EMPTY_REFUSAL)
+    assert bridge.calls[-1] == (
+        tab.write_key,
+        "set_egress_mode",
+        ("ws-a", "static", True, []),
+    )
+
+
+def test_a_tick_that_changes_nothing_keeps_the_selection(qt) -> None:
+    """The tick's repaint (#1050 review): a frame whose list the
+    rows already show rebuilds nothing — the selection the
+    Remove action reads survives the page's ticks — and a frame
+    that changes the list rebuilds the rows, the selection going
+    with it."""
+    tab, _bridge = make_tab(qt)
+    tab.entries.setCurrentRow(0)
+    assert tab.remove_button.isEnabled()
+    tab.take(rules_frame())  # the same list: the rows stand
+    assert tab.entries.currentRow() == 0
+    assert tab.remove_button.isEnabled()
+    tab.take(rules_frame(allow_list=(".debian.org", "example.com")))
+    assert tab.entries.currentRow() == -1  # a changed list rebuilds
+    assert not tab.remove_button.isEnabled()
+
+
+def test_each_accepted_form_persists_through_the_route(
+    qt, monkeypatch
+) -> None:
+    """The daemon's accepted forms (#1050): one add of each — a
+    host, a scope, an address, a CIDR, and host:port — each
+    posts the whole list through the policy route and stays on
+    the list the reply repaints."""
+    tab, bridge = make_tab(qt)
+    forms = (
+        "example.com",
+        "*.example.com",
+        "10.1.2.3",
+        "10.0.0.0/8",
+        "example.com:443",
+    )
+    standing = [".debian.org"]
+    for form in forms:
+        fake_entry_dialog(monkeypatch, form)
+        tab.add()
+        standing = [*standing, form]
+        assert bridge.calls[-1] == (
+            tab.write_key,
+            "set_egress_mode",
+            ("ws-a", "interactive", False, standing),
+        )
+        bridge.succeeded.emit(
+            tab.write_key,
+            {**rules_frame(allow_list=tuple(standing)), "applied": True},
+        )
+        assert entry_rows(tab) == standing
