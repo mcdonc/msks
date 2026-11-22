@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from msks.client import cli
 from msks.client.gui import app as app_mod
-from msks.client.gui import shortcut
+from msks.client.gui import rows, shortcut
 from test_client_cli import client_env
 
 #: The PNG renders the wheel ships (#1021): one per hicolor
@@ -239,10 +239,12 @@ def test_the_command_names_a_home_it_cannot_resolve(
 
 def test_the_window_names_the_entry_and_carries_the_icon() -> None:
     """The window's desktop identity (#1021): the desktop file
-    name the compositor matches — the app id a Wayland
-    taskbar resolves the icon by — and the window icon itself,
-    loaded from the master the wheel ships beside the
-    module."""
+    name the compositor matches — the app id a Wayland taskbar
+    resolves the icon by — and the window icon itself, loaded
+    from the master the wheel ships beside the module. The
+    application name (#1043) sits beside them: macOS's menu
+    bar titles the application menu after it, and a bare
+    console script would name the interpreter there."""
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("PySide6 is not installed on this host")
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
@@ -252,5 +254,6 @@ def test_the_window_names_the_entry_and_carries_the_icon() -> None:
         ["msks-test"]
     )
     app_mod.apply_identity(application)
+    assert application.applicationName() == rows.WINDOW_TITLE
     assert application.desktopFileName() == shortcut.DESKTOP_ID
     assert not application.windowIcon().isNull()
