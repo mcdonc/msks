@@ -140,7 +140,14 @@ def shutdown(widget) -> None:
 def drain_until(widget, marker: bytes, timeout: float = 5.0) -> bytes:
     """Read the master until the marker shows up (the pty's
     echo answers what the terminal writes), feeding the
-    emulator as we go so the widget's state stays current."""
+    emulator as we go so the widget's state stays current.
+
+    This loop must stay the master's only reader between the
+    write under test and the marker's arrival. The widget's
+    socket notifier is armed on the same fd, and one event-loop
+    pump fires ``read_master``, whose ``session.drain()``
+    consumes the echo into the emulator where this loop cannot
+    see it — the macOS job's flake (#1074)."""
     deadline = time.monotonic() + timeout
     seen = b""
     while time.monotonic() < deadline:
@@ -580,9 +587,11 @@ def test_tab_reaches_the_child_and_keeps_focus(qt):
         qt.app.processEvents()
         assert widget.hasFocus()  # the refusal answers from here
         # The interception's own entry: the event through Qt's
-        # full delivery, not the key handler alone.
+        # full delivery, not the key handler alone. The delivery
+        # is synchronous, so no pump is needed here — and none
+        # may stand between this write and the drain below: the
+        # helper's docstring names the race one pump opens (#1074).
         qt.app.sendEvent(widget, key_event(qt, qt.QtCore.Qt.Key.Key_Tab))
-        qt.app.processEvents()
         assert b"\t" in drain_until(widget, b"\t")
         assert widget.hasFocus()
         assert widget.focusNextPrevChild(True) is False
