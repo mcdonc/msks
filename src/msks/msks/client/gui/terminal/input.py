@@ -67,6 +67,11 @@ NAMED_KEYS = {
     Qt.Key.Key_Return: "ENTER",
     Qt.Key.Key_Enter: "ENTER",
     Qt.Key.Key_Tab: "TAB",
+    # Shift+Tab arrives as Backtab with empty text (#1066): it
+    # maps to TAB, and the event's shift modifier stays in the
+    # mask the encoder reads; without the entry the key drops
+    # through the empty-text fallthrough.
+    Qt.Key.Key_Backtab: "TAB",
     Qt.Key.Key_Backspace: "BACKSPACE",
     Qt.Key.Key_Delete: "DELETE",
     Qt.Key.Key_Escape: "ESCAPE",

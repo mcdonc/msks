@@ -461,6 +461,12 @@ gui`. The nix package keeps the daemon's closure lean, so on
 
 ### Fixed
 
+- **Tab completion inside a GUI terminal (#1066).** Tab and
+  Shift+Tab in a terminal subtab now reach the program inside
+  the terminal: Tab sends the tab byte the shell's completion
+  reads, and Shift+Tab sends the shifted tab (the
+  reverse-completion sequence). Before, both moved the
+  keyboard focus to the next widget in the window.
 - **The secrets audit rows' time labels (#1064).** The audit
   rows in the GUI's Secrets tab and in the TUI's audit views
   show the local clock for a row from the viewer's own day,
