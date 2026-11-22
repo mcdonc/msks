@@ -2168,6 +2168,15 @@ tagged <code>vX.Y.Z</code>.</p>
 </ul>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>The Egress tab's static allowlist editor (#1050).</strong> The
+  GUI workspace page's Egress tab lists the workspace's static
+  allowlist entries and edits them in place: one entry added at
+  a time (a host, a scope, an address, a CIDR, or <code>host:port</code>)
+  and any entry removed, each write posting the whole new list
+  through the egress policy route. A rejected entry surfaces
+  the route's reason on the tab's note line and the list stands.
+  Removing the last entry under <code>static</code> mode asks the same
+  offline-workspace confirmation the mode switch asks.</li>
 <li><strong>The GUI launch plants the desktop shortcut (#1045).</strong> On
   a Linux desktop, every <code>msks gui</code> launch installs the
   desktop entry and the icon renders under the XDG data home

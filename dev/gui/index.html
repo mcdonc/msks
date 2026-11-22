@@ -528,6 +528,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-egress-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Egress tab
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-events-tab" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1159,6 +1170,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-egress-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Egress tab
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-events-tab" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1402,8 +1424,8 @@ header lives.</p>
 <p>The page's top row holds the back arrow, the tab strip, a status
 line, and the external-terminal button at the right end. The tab
 strip holds <strong>Shells</strong> (the default), <strong>Mounts</strong>, <strong>Proxies</strong>,
-and <strong>Events</strong>. The footer strip at the bottom repeats the list's
-quick-facts line for this workspace.</p>
+<strong>Egress</strong>, and <strong>Events</strong>. The footer strip at the bottom repeats
+the list's quick-facts line for this workspace.</p>
 <p>The page re-reads the daemon every five seconds, and the events
 feed pushes changes at once. A proxy transition repaints the
 Proxies tab without a click, and every frame appends to the
@@ -1463,6 +1485,29 @@ reopens the form seeded with the row. <strong>Remove</strong> asks first.</p>
 transition the events feed pushes. A bind that fails while the
 tab stands paints itself without a click. The <a href="../proxies/">proxies
 chapter</a> describes what a proxy is.</p>
+<h3 id="the-egress-tab">The Egress tab<a class="headerlink" href="#the-egress-tab" title="Permanent link">&para;</a></h3>
+<p>The tab manages the workspace's egress posture. The top shows
+the current mode with its meaning. The switcher under it
+changes the mode in place. A running workspace swaps its rules
+in one transaction, and a stopped workspace builds the new
+posture at its next start. The note line at the bottom says
+which one happened.</p>
+<p>A switch to <code>static</code> with nothing effectively allowed asks a
+question first. That posture answers every name NXDOMAIN, so
+the workspace would be offline. <strong>Yes</strong> confirms the switch.</p>
+<p>The lower half edits the static allowlist. The list reads the
+workspace's entries. <strong>Add</strong> opens a one-field form. The entry
+is a host, a scope (<code>.debian.org</code>, <code>*.example.com</code>), an
+address, a CIDR, or <code>host:port</code>. <strong>Remove</strong> drops the selected
+entry. Each write posts the whole new list through the policy
+route, and the reply repaints the list.</p>
+<p>The daemon owns the entry's shape. An entry the route rejects
+appears with the route's reason on the tab's note line, and the
+list rolls back to the last set the daemon accepted. Removing
+the last entry under <code>static</code> asks the same offline question
+the mode switch asks. The <a href="../egress-consent/">egress consent
+chapter</a> explains what the modes, the
+allowlist, and the verdicts cover.</p>
 <h3 id="the-events-tab">The Events tab<a class="headerlink" href="#the-events-tab" title="Permanent link">&para;</a></h3>
 <p><img alt="The Events tab: three rows, newest last" src="../screens/gui-events.png" /></p>
 <p>The tab is the workspace's recent-events window. Each row is one
