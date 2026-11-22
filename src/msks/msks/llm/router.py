@@ -168,10 +168,10 @@ class LlmRouter:
         # (an aiohttp ClientSession wrapped as an httpx transport).
         # The daemon's completions ride plain httpx instead — the
         # same client the passthrough mode already uses — so the
-        # closure's aiohttp (the pinned nixpkgs serves it below
-        # litellm's own floor; nix/litellm-pkg.nix records why)
-        # never carries a request: it stays an import-time
-        # requirement of litellm's metadata, nothing more.
+        # closure's aiohttp never carries a request: it stays an
+        # import-time requirement of litellm's metadata, nothing
+        # more (nix/litellm-pkg.nix records the CVE-bearing history
+        # of the bounds a module host's older set can sit in).
         litellm.disable_aiohttp_transport = True
         return litellm.Router(
             model_list=model_list,
@@ -364,4 +364,7 @@ class LlmRouter:
         """The configured logical model names (router mode)."""
         if self._router is None:
             return []
-        return list(self._router.get_model_names())
+        # The registry view, not litellm's deprecated get_model_names
+        # shortcut — 1.110.2 deprecates the shortcut with a warning
+        # per call.
+        return list(self._router.registry().names())

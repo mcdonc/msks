@@ -182,6 +182,17 @@ def test_is_passthrough_is_exactly_one_wildcard() -> None:
 # --- the router ------------------------------------------------------------
 
 
+class FakeRegistry:
+    """The litellm registry view litellm 1.110.2's Router exposes:
+    names() for the configured logical names."""
+
+    def __init__(self, names: list[str]) -> None:
+        self._names = names
+
+    def names(self) -> list[str]:
+        return list(self._names)
+
+
 class FakeLitellmRouter:
     """The litellm.Router stand-in: records the call, answers preset."""
 
@@ -196,8 +207,8 @@ class FakeLitellmRouter:
             return _chunk_generator(self.chunks)
         return self.answer
 
-    def get_model_names(self) -> list[str]:
-        return ["one", "two"]
+    def registry(self) -> FakeRegistry:
+        return FakeRegistry(["one", "two"])
 
 
 async def _chunk_generator(chunks):
@@ -684,8 +695,8 @@ def test_parse_entry_without_a_base_or_key() -> None:
 
 async def test_resolve_router_model_names_the_empty_list() -> None:
     class Empty(FakeLitellmRouter):
-        def get_model_names(self) -> list[str]:
-            return []
+        def registry(self) -> FakeRegistry:
+            return FakeRegistry([])
 
     router = LlmRouter()
     router._router = Empty()
@@ -1149,10 +1160,12 @@ def test_a_real_litellm_router_never_rides_the_aiohttp_transport(
 ) -> None:
     """Building the real Router leaves litellm's aiohttp transport
     off: litellm's async handlers default to an aiohttp ClientSession
-    wrapped as an httpx transport, and the closure's aiohttp sits
-    below litellm's own floor (nix/litellm-pkg.nix records the
-    CVE-bearing history), so the daemon's completions stay on plain
-    httpx — the transport the passthrough mode already uses. Both
+    wrapped as an httpx transport, and the completions stay on plain
+    httpx — the transport the passthrough mode already uses — so an
+    aiohttp with the CVE-2026-69244 read (<= 3.14.2) never carries
+    one regardless of which set serves the closure
+    (nix/litellm-pkg.nix records the CVE-bearing history of the
+    bounds a module host's older set can sit in). Both
     halves of the contract are pinned: msks sets the module flag,
     and litellm's own transport selector — the same function its
     health endpoints report — answers that no aiohttp transport is
@@ -1187,10 +1200,10 @@ def test_normalize_copies_deep_between_configures(real_litellm) -> None:
     }
     router = LlmRouter()
     router.ensure(llm_settings((entry,)))
-    first = router._router.model_list[0]
+    first = router._router.registry().all()[0]
     first["litellm_params"]["metadata"]["team"] = "mutated"
     router.ensure(llm_settings((entry,)))
-    again = router._router.model_list[0]
+    again = router._router.registry().all()[0]
     assert again["litellm_params"]["metadata"]["team"] == "core"
     assert entry["litellm_params"]["metadata"]["team"] == "core"
 
