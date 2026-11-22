@@ -20,9 +20,10 @@ from pathlib import Path
 from types import ModuleType
 
 from ..sshsessions import state_dir
+from .assets import icon_dir
 from .data import GuiData
 from .rows import WINDOW_TITLE
-from .shortcut import DESKTOP_ID, ICON_FILE, ensure_installed, icon_dir
+from .shortcut import DESKTOP_ID, ICON_FILE, ensure_installed
 
 # What a stripped or partial install hears when it asks for
 # the window (#928) — and what a nix-built install hears by

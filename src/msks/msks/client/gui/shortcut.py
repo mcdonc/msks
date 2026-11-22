@@ -13,6 +13,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from .assets import icon_dir
+
 #: What the installer says on a system without the Linux
 #: desktop conventions (#1021): the entry and the icon theme
 #: are that desktop's own; macOS's dock reads the window icon
@@ -50,14 +52,6 @@ RESERVED = set(" \t\n\"'`$><|&*?#()\\;~%=")
 #: a relative value would plant the tree under whatever the
 #: working directory happened to be.
 NOT_ABSOLUTE = "msks: XDG_DATA_HOME must be an absolute path"
-
-
-def icon_dir() -> Path:
-    """The wheel's icon assets (#1021): the directory this
-    package ships them in — the master SVG the window loads,
-    the desktop entry template, and the hicolor tree of PNG
-    renders the installer copies."""
-    return Path(__file__).resolve().parent / "icons"
 
 
 def usable_exe(exe: str) -> bool:
@@ -218,16 +212,32 @@ def ensure_installed() -> None:
 
 
 def run() -> int:
-    """The ``msks gui-shortcut`` command body (#1021): install
-    the shortcut under the XDG data home — the variable's own
-    value when set, else ``~/.local/share`` — and print the
-    entry's path, the client's one-line convention. A desktop
-    outside Linux hears it has no part in this, a relative
-    data home hears the absolute-path rule, and a write the
-    filesystem refuses names itself and fails the same way."""
+    """The ``msks gui-shortcut`` command body (#1021, #1048):
+    darwin installs the application bundle — the desktop there
+    reads the name and icon from the bundle, not from a planted
+    file — Linux plants the desktop entry under the XDG data
+    home, and a desktop outside both hears it has no part in
+    this."""
+    if sys.platform == "darwin":
+        # allow-deferred-import — the bundle arm (#1048) reads
+        # this module's icon assets, so the import waits for
+        # the arm's own call instead of cycling at parse time.
+        from .appbundle import run as run_bundle
+
+        return run_bundle()
     if not sys.platform.startswith("linux"):
         print(NOT_LINUX, file=sys.stderr)
         return 1
+    return run_linux()
+
+
+def run_linux() -> int:
+    """The Linux arm (#1021): install the shortcut under the
+    XDG data home — the variable's own value when set, else
+    ``~/.local/share`` — and print the entry's path, the
+    client's one-line convention. A relative data home hears
+    the absolute-path rule, and a write the filesystem refuses
+    names itself and fails the same way."""
     try:
         home = data_home()
         if not home.is_absolute():

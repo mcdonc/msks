@@ -28,14 +28,20 @@ msks icon from the first launch after a fresh install, and the
 next launch after an upgrade refreshes the icon renders. When
 the install fails, msks prints one line on stderr and the
 window still opens. `msks gui-shortcut` does the same work by
-hand and prints the entry's path. On macOS nothing is planted.
-The dock reads the icon the window itself already carries.
+hand and prints the entry's path.
 
 Uninstalling the wheel leaves the entry and the icons in
 place, because they live in the XDG data home, outside the
 wheel's tree. Delete `~/.local/share/applications/msks.desktop`
 and the `msks.*` files under `~/.local/share/icons/hicolor` to
 remove them by hand.
+
+On macOS `msks gui-shortcut` installs the application bundle
+at `~/Applications/msks.app` (#1048): the Dock, Launchpad, and
+the menu bar's application menu name the client and show its
+icon from the bundle. A terminal-launched `msks gui` keeps the
+interpreter's name. That is macOS's own rule for terminal
+processes.
 
 The window opens 1280 by 720 the first time. Every later open
 takes back the place and size the last close left, as long as a

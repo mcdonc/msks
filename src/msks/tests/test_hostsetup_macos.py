@@ -23,6 +23,7 @@ from types import SimpleNamespace
 from urllib.error import HTTPError
 
 import pytest
+from msks.client.gui import appbundle
 from msks.server import hostsetup_macos as mac
 
 
@@ -177,6 +178,10 @@ def client_tree(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
         lambda command: str(brew_bin / command),
     )
     patch_phase(monkeypatch, "client_sibling", lambda command: str(sibling))
+    # The home pins under the tree too (#1048): the application
+    # bundle plants under the home's Applications, and a test
+    # run must never reach the operator's real one.
+    monkeypatch.setattr(mac.Path, "home", lambda: tmp_path)
     patch_phase(
         monkeypatch,
         "FALLBACK_BREW_BINS",
@@ -1881,6 +1886,79 @@ def test_the_client_link_lands_idempotently(
             f"{paths['msks-term-popup']} -> {sibling / 'msks-term-popup'}",
         ]
     )
+
+
+def test_the_app_bundle_lands_with_the_links(
+    monkeypatch: pytest.MonkeyPatch, client_tree: Path
+) -> None:
+    """#1048: the GUI's msks.app plants under the home's
+    Applications beside the client links — the bundle the
+    Dock, Launchpad, and the menu bar name the client by, with
+    the interpreter symlink pointing at the tool's own."""
+    import plistlib
+
+    note = mac.ensure_app_bundle()
+    bundle = client_tree / "Applications" / appbundle.BUNDLE_DIR
+    assert note == f"the application bundle is installed: {bundle}"
+    plist = plistlib.loads((bundle / "Contents" / "Info.plist").read_bytes())
+    assert plist["CFBundleName"] == "msks"
+    link = bundle / "Contents" / "MacOS" / appbundle.PY_NAME
+    assert link.is_symlink()
+    assert str(client_tree) in mac.ensure_app_bundle()  # idempotent re-run
+
+
+def test_the_app_bundle_stands_down_alone(
+    monkeypatch: pytest.MonkeyPatch, client_tree: Path
+) -> None:
+    """A deployment whose bin dir ships no msks beside the
+    tool (#1048) skips the bundle with the note — the links'
+    own stand-down shape."""
+    patch_phase(monkeypatch, "client_sibling", lambda command: None)
+    assert mac.ensure_app_bundle() == (
+        "the application bundle: skipped, no msks beside "
+        "the tool (the deployment's GUI lives elsewhere)"
+    )
+
+
+def test_the_app_bundle_refuses_naming_a_failed_write(
+    monkeypatch: pytest.MonkeyPatch, client_tree: Path
+) -> None:
+    """A write the filesystem refuses (#1048) names itself
+    through the tool's own refusal — the run's every-phase
+    rule."""
+
+    def refused(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(appbundle, "install_bundle", refused)
+    with pytest.raises(mac.MacSetupError, match="did not land"):
+        mac.ensure_app_bundle()
+
+
+def test_the_app_bundle_sweep_proves_the_bundle(
+    monkeypatch: pytest.MonkeyPatch, client_tree: Path
+) -> None:
+    """The uninstall's bundle arm (#1048): an absent bundle
+    says so, a foreign one an operator planted stays, and the
+    tool's own — proven by its identifier — goes."""
+    import plistlib
+
+    assert mac.remove_app_bundle() == (
+        "no application bundle of this tool's stands"
+    )
+    bundle = client_tree / "Applications" / appbundle.BUNDLE_DIR
+    contents = bundle / "Contents"
+    contents.mkdir(parents=True)
+    (contents / "Info.plist").write_bytes(
+        plistlib.dumps({"CFBundleIdentifier": "someone.elses.app"})
+    )
+    assert mac.remove_app_bundle() == (
+        f"the application bundle at {bundle} is not this tool's (left as-is)"
+    )
+    assert bundle.is_dir()
+    mac.ensure_app_bundle()
+    assert mac.remove_app_bundle() == "the application bundle is gone"
+    assert not bundle.exists()
 
 
 def test_a_foreign_thing_at_the_client_link_refuses(

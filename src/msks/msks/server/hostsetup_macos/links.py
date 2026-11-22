@@ -1,15 +1,23 @@
-"""Phase 6: the client links (#719, #734).
+"""Phase 6: the client links and the GUI's application
+bundle (#719, #734, #1048).
 
 ``msks`` and ``msks-term-popup`` linked into the brew prefix's
-bin, pointing at the sibling the install shipped.
+bin, pointing at the sibling the install shipped; on top of
+the links, the GUI's ``msks.app`` lands under the home's
+Applications — the bundle the Dock, Launchpad, and the menu
+bar name the client by (a bare console script cannot: the
+desktop reads the name from the launching bundle, #1043).
 """
 
 from __future__ import annotations
 
 import os
+import plistlib
+import shutil
 import sys
 from pathlib import Path
 
+from ...client.gui import appbundle
 from ..hostsetup import claim_link
 from .base import TOOL, MacSetupError, run
 
@@ -147,6 +155,56 @@ def remove_one_client_link(command: str) -> str | None:
             link.unlink()
             return str(path)
     return None
+
+
+# --- the GUI's application bundle (#1048) -------------------------------
+
+
+def ensure_app_bundle() -> str:
+    """Plant the GUI's ``msks.app`` under the home's
+    Applications (#1048): the bundle the desktop launches and
+    names the client by. A deployment whose bin dir ships no
+    ``msks`` beside the tool stands down with a note — the
+    links' own stand-down shape — and a write the filesystem
+    refuses names itself through the tool's own refusal."""
+    script = client_sibling(appbundle.EXEC_NAME)
+    if script is None or not sys.executable:
+        return (
+            "the application bundle: skipped, no msks beside "
+            "the tool (the deployment's GUI lives elsewhere)"
+        )
+    try:
+        bundle = appbundle.install_bundle(
+            Path.home() / "Applications",
+            Path(sys.executable),
+            Path(script),
+        )
+    except (OSError, RuntimeError) as exc:
+        raise MacSetupError(
+            f"the application bundle did not land under the "
+            f"home's Applications: {exc}"
+        ) from None
+    return f"the application bundle is installed: {bundle}"
+
+
+def remove_app_bundle() -> str:
+    """The bundle's sweep (#1048): the tool removes the bundle
+    its own identifier proves — a foreign ``msks.app`` an
+    operator planted by hand stays, the uninstall's own
+    no-clobber rule — and an absent bundle says so."""
+    bundle = Path.home() / "Applications" / appbundle.BUNDLE_DIR
+    plist = bundle / "Contents" / "Info.plist"
+    try:
+        planted = plistlib.loads(plist.read_bytes())
+    except OSError, plistlib.InvalidFileException:
+        return "no application bundle of this tool's stands"
+    if planted.get("CFBundleIdentifier") != appbundle.IDENTIFIER:
+        return (
+            "the application bundle at "
+            f"{bundle} is not this tool's (left as-is)"
+        )
+    shutil.rmtree(bundle, ignore_errors=True)
+    return "the application bundle is gone"
 
 
 # --- the entry --------------------------------------------------------

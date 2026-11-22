@@ -15,7 +15,12 @@ from .agent import ensure_agent, remove_agent
 from .base import PORT, SHAPE_FLOORS, TOOL, VM_NAME, MacSetupError, say
 from .bootstrap import bootstrap_vm, refuse_dev_build
 from .hostcheck import check_host
-from .links import link_client_mac, remove_client_link
+from .links import (
+    ensure_app_bundle,
+    link_client_mac,
+    remove_app_bundle,
+    remove_client_link,
+)
 from .skew import check_rows
 from .verify import client_preset, verify_daemon
 from .vm import adopted_port, delete_vm, ensure_vm
@@ -145,6 +150,7 @@ def run_setup(args: argparse.Namespace) -> str:
     preset = client_preset(port)
     ensure_agent()
     say(link_client_mac())
+    say(ensure_app_bundle())
     return preset
 
 
@@ -195,7 +201,10 @@ def main(argv: list[str] | None = None) -> int:
             say(f"removing the login agent and the {VM_NAME} VM")
             remove_agent()
             delete_vm(VM_NAME)
-            print(uninstall_closing_line(remove_client_link()))
+            print(
+                uninstall_closing_line(remove_client_link()),
+                remove_app_bundle() + ".",
+            )
             return 0
         if args.check:
             check_host(install=False)
