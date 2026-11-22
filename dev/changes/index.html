@@ -2641,6 +2641,14 @@ gui</code>. The nix package keeps the daemon's closure lean, so on
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>The secrets audit rows' time labels (#1064).</strong> The audit
+  rows in the GUI's Secrets tab and in the TUI's audit views
+  show the local clock for a row from the viewer's own day,
+  and carry the date beside the clock for a row from an
+  earlier day. The GUI's <code>!</code> column header carries a tooltip
+  naming the sighting marker and where the marker appears.</p>
+</li>
+<li>
 <p><strong>The GUI's menu bar on macOS names the client msks
   (#1043).</strong> The bold application menu read the process name —
   <code>python3.14</code> for the console script — until the application
