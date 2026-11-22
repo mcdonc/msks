@@ -34,7 +34,7 @@ from ...spec.failures import MicrovmError
 from ...spec.vm import VmStatus
 from ...storage import create_refusal, file_cost
 from .boot import mint_workspace_id
-from .deps import authed_caller
+from .deps import scoped_caller
 from .rows import (
     HOME_FREE_STATUSES,
     host_mismatch,
@@ -91,7 +91,7 @@ def router(app) -> APIRouter:
     async def clone_workspace(
         workspace_id: str,
         body: WorkspaceClone,
-        caller: int = Depends(authed_caller),
+        caller: int = Depends(scoped_caller),
     ) -> Response:
         source = await workspace_or_404(app, workspace_id, caller)
         source_id = source["id"]

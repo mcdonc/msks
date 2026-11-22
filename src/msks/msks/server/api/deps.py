@@ -6,14 +6,18 @@ credential never rides a URL (#8, #216). A request that arrived
 through the local unix listener (#555) answers instead by peer
 credential: the daemon's own uid or a member of the socket's
 group passes without a token, and every other caller — TCP or
-socket — takes the bearer path unchanged.
+socket — takes the bearer path unchanged. Beside them, the
+owner scope (#1084): the query parameter a bypass caller —
+root, or the daemon's own uid — re-scopes name resolution to
+one owner's rows with.
 """
 
 import asyncio
+import pwd
 
 from fastapi import HTTPException, Request, WebSocket
 
-from ...model.workspaces import daemon_uid
+from ...model.workspaces import daemon_uid, sees_all_rows
 from .. import localsocket
 
 
@@ -61,6 +65,59 @@ async def authed_caller(request: Request) -> int:
     owner-filtered workspace read resolves against."""
     await require_token(request)
     return caller_uid(request.scope)
+
+
+async def resolve_owner(name: str) -> int:
+    """The uid the account *name* names (#1084), or the 404.
+
+    The lookup runs in a worker thread: it is a libc NSS call,
+    and a directory backend that stalls would stall the event
+    loop with it — the same discipline :func:`local_peer_ok`'s
+    group walk keeps.
+    """
+
+    def lookup() -> int | None:
+        try:
+            return pwd.getpwnam(name).pw_uid
+        except KeyError:
+            return None
+
+    uid = await asyncio.to_thread(lookup)
+    if uid is None:
+        raise HTTPException(status_code=404, detail=f"no such user: {name}")
+    return uid
+
+
+async def scoped_caller(request: Request) -> int:
+    """FastAPI dependency: :func:`authed_caller`'s gate, answered
+    with the request's owner scope (#1084).
+
+    ``?owner=<account>`` re-scopes a bypass caller's ref
+    resolution to that one owner's rows: a bare name two owners
+    hold resolves to the named owner's, and a foreign id answers
+    the 404 — the same view that owner's own calls take, on a
+    request whose authority stays the caller's. The scope is a
+    bypass caller's tool alone (root, or the daemon's own uid —
+    the TCP surface's mapping): any other peer passing it is
+    refused with the named cause, for the scope would widen the
+    filtered view the owner filter holds. A request without the
+    parameter answers the caller's uid, exactly
+    :func:`authed_caller`.
+    """
+    await require_token(request)
+    caller = caller_uid(request.scope)
+    name = request.query_params.get("owner")
+    if name is None:
+        return caller
+    if not sees_all_rows(caller):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"the owner scope is for root; caller uid {caller} "
+                "addresses its own workspaces already"
+            ),
+        )
+    return await resolve_owner(name)
 
 
 def bearer_token(socket: WebSocket) -> str | None:

@@ -10,6 +10,7 @@ from fastapi import APIRouter, WebSocket
 from ...microvm.errors import MicrovmError
 from ...model.workspaces import AmbiguousRef
 from .deps import authed_accept, caller_uid
+from .rows import close_ambiguous
 from .streams import close_reason, pump_streams
 
 #: The forward.closed publishes detached by an endpoint the client
@@ -64,9 +65,9 @@ def router(app, hub) -> APIRouter:
                 workspace_id, viewer=caller_uid(socket.scope)
             )
         except AmbiguousRef as exc:
-            # A name more than one owner holds: name the ambiguity
-            # and the by-id remedy — never a pick.
-            await socket.close(code=4400, reason=close_reason(str(exc)))
+            # A name more than one owner holds: the ambiguity's
+            # own close (#1084) — never a pick.
+            await close_ambiguous(socket, exc)
             return
         if row is None:
             await socket.close(code=4404)

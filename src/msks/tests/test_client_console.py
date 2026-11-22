@@ -737,6 +737,22 @@ def test_report_close_4502_names_the_stall() -> None:
         console._report_close(_closed(4502))
 
 
+def test_report_close_names_the_ambiguity() -> None:
+    """A plural bare name's dial close (#1084): the ambiguity maps
+    to its own label with the daemon's reason — the owners and the
+    by-id remedy — never the silent exit 0 an unmapped code took."""
+    reason = (
+        "workspace name 'build' is held by more than one owner "
+        "(alice (4242), bob (4243)); address the workspace by its id"
+    )
+    with pytest.raises(SystemExit) as caught:
+        console._report_close(_closed(4405, reason))
+    line = str(caught.value)
+    assert "ambiguous workspace name" in line
+    assert "alice (4242)" in line
+    assert "address the workspace by its id" in line
+
+
 def test_report_close_clean_end_is_quiet() -> None:
 
     assert console._report_close(_closed(1000)) is None

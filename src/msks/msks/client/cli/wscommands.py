@@ -362,13 +362,21 @@ def start(
     workspace_id: str = typer.Argument(
         ..., help="the workspace to boot (name or id)"
     ),
+    user: str | None = typer.Option(
+        None,
+        "--user",
+        metavar="OWNER",
+        help="address the workspace as this owner (#1084): the name "
+        "resolves against the owner's rows alone — root only; a "
+        "non-root caller passing it is refused",
+    ),
     as_json: bool = typer.Option(
         False, "--json", help="print the settled row as one JSON document"
     ),
 ) -> int:
     """Boot a created workspace."""
     set_json_mode(as_json)
-    return cmd_start(workspace_id, as_json, transport=ctx.obj)
+    return cmd_start(workspace_id, as_json, transport=ctx.obj, owner=user)
 
 
 @app.command("stop")
@@ -378,13 +386,21 @@ def stop(
     workspace_id: str = typer.Argument(
         ..., help="the workspace to stop (name or id)"
     ),
+    user: str | None = typer.Option(
+        None,
+        "--user",
+        metavar="OWNER",
+        help="address the workspace as this owner (#1084): the name "
+        "resolves against the owner's rows alone — root only; a "
+        "non-root caller passing it is refused",
+    ),
     as_json: bool = typer.Option(
         False, "--json", help="print the settled row as one JSON document"
     ),
 ) -> int:
     """Power a workspace off."""
     set_json_mode(as_json)
-    return cmd_stop(workspace_id, as_json, transport=ctx.obj)
+    return cmd_stop(workspace_id, as_json, transport=ctx.obj, owner=user)
 
 
 @app.command("clone")
@@ -408,6 +424,14 @@ def clone(
         "allow anew, a static clone answers every name NXDOMAIN "
         "until its list is set",
     ),
+    user: str | None = typer.Option(
+        None,
+        "--user",
+        metavar="OWNER",
+        help="address the source workspace as this owner (#1084): "
+        "the name resolves against the owner's rows alone — root "
+        "only; a non-root caller passing it is refused",
+    ),
     as_json: bool = typer.Option(
         False, "--json", help="print the new row as one JSON document"
     ),
@@ -426,7 +450,7 @@ def clone(
     what matters before trusting the clone's identity.
     """
     set_json_mode(as_json)
-    return cmd_clone(source, name, copy_allowlist, as_json, ctx.obj)
+    return cmd_clone(source, name, copy_allowlist, as_json, ctx.obj, user)
 
 
 @app.command("resize")
@@ -452,6 +476,14 @@ def resize(
         "--mem-mib",
         help="new guest memory, MiB (applies at the next boot)",
     ),
+    user: str | None = typer.Option(
+        None,
+        "--user",
+        metavar="OWNER",
+        help="address the workspace as this owner (#1084): the name "
+        "resolves against the owner's rows alone — root only; a "
+        "non-root caller passing it is refused",
+    ),
     as_json: bool = typer.Option(
         False, "--json", help="print the resized row as one JSON document"
     ),
@@ -460,7 +492,7 @@ def resize(
     #277)."""
     set_json_mode(as_json)
     return run_resize(
-        workspace_id, home_mib, root_mib, cpus, mem_mib, ctx.obj, as_json
+        workspace_id, home_mib, root_mib, cpus, mem_mib, ctx.obj, as_json, user
     )
 
 
@@ -478,6 +510,14 @@ def mount(
         "absolute path it lands at in the guest, and ro or rw "
         "(rw when omitted)",
     ),
+    user: str | None = typer.Option(
+        None,
+        "--user",
+        metavar="OWNER",
+        help="address the workspace as this owner (#1084): the name "
+        "resolves against the owner's rows alone — root only; a "
+        "non-root caller passing it is refused",
+    ),
     as_json: bool = typer.Option(
         False, "--json", help="print the refreshed row as one JSON document"
     ),
@@ -490,7 +530,7 @@ def mount(
     it attached, and the next start attaches the new set.
     """
     set_json_mode(as_json)
-    return cmd_mount(workspace_id, spec, as_json, ctx.obj)
+    return cmd_mount(workspace_id, spec, as_json, ctx.obj, user)
 
 
 @app.command("umount")
@@ -504,6 +544,14 @@ def umount(
         ...,
         help="the host path (~ expands) whose mounts leave the workspace",
     ),
+    user: str | None = typer.Option(
+        None,
+        "--user",
+        metavar="OWNER",
+        help="address the workspace as this owner (#1084): the name "
+        "resolves against the owner's rows alone — root only; a "
+        "non-root caller passing it is refused",
+    ),
     as_json: bool = typer.Option(
         False, "--json", help="print the refreshed row as one JSON document"
     ),
@@ -514,7 +562,7 @@ def umount(
     keeps its attached devices until then.
     """
     set_json_mode(as_json)
-    return cmd_umount(workspace_id, share, as_json, ctx.obj)
+    return cmd_umount(workspace_id, share, as_json, ctx.obj, user)
 
 
 @app.command("rm")
@@ -524,6 +572,14 @@ def rm(
     workspace_ids: list[str] = typer.Argument(
         ..., help="the workspaces to delete, in order (name or id)"
     ),
+    user: str | None = typer.Option(
+        None,
+        "--user",
+        metavar="OWNER",
+        help="address the workspaces as this owner (#1084): each name "
+        "resolves against the owner's rows alone — root only; a "
+        "non-root caller passing it is refused",
+    ),
     as_json: bool = typer.Option(
         False,
         "--json",
@@ -532,7 +588,7 @@ def rm(
 ) -> int:
     """Delete workspaces and their data."""
     set_json_mode(as_json)
-    return cmd_rm(workspace_ids, as_json, transport=ctx.obj)
+    return cmd_rm(workspace_ids, as_json, transport=ctx.obj, owner=user)
 
 
 @app.command("console")
@@ -572,6 +628,14 @@ def key(
     workspace_id: str = typer.Argument(
         ..., help="the workspace whose identity to fetch (name or id)"
     ),
+    user: str | None = typer.Option(
+        None,
+        "--user",
+        metavar="OWNER",
+        help="address the workspace as this owner (#1084): the name "
+        "resolves against the owner's rows alone — root only; a "
+        "non-root caller passing it is refused",
+    ),
     as_json: bool = typer.Option(
         False, "--json", help="print the identity document as JSON"
     ),
@@ -580,7 +644,7 @@ def key(
     The private half is the operator's own key — it never crosses
     the API (#486, #497)."""
     set_json_mode(as_json)
-    return cmd_key(workspace_id, as_json, transport=ctx.obj)
+    return cmd_key(workspace_id, as_json, transport=ctx.obj, owner=user)
 
 
 @app.command(

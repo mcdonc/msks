@@ -27,6 +27,7 @@ from msks.app import build_app
 from msks.client import cli, create, images, rest, workspaces
 from msks.server.api import build_api
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
+from msks.spec.version import __version__ as client_version
 from test_api import TOKEN, StubMicrovm
 from testkeys import encrypted, mint
 
@@ -137,7 +138,7 @@ def test_version_skew_notice_names_the_pair(
     names its own client word: the tree's ambient word is a dev
     build between releases and the release's number at a cut,
     and neither may the test assume."""
-    mine = workspaces.__version__
+    mine = client_version
     assert workspaces.version_skew_notice({"version": mine}) is None
     assert workspaces.version_skew_notice(None) is None
     assert workspaces.version_skew_notice({"status": "ok"}) is None
@@ -147,7 +148,7 @@ def test_version_skew_notice_names_the_pair(
     assert f"this client is {mine}" in newer
     assert "update this client" in newer  # the daemon leads
     monkeypatch.setattr(
-        workspaces, "__version__", "0.7.0.dev0"
+        workspaces.listing, "__version__", "0.7.0.dev0"
     )  # a dev tree's own word
     older = workspaces.version_skew_notice({"version": "0.1.0"})
     assert "--wheel" in older  # so the older-daemon remedy names it
@@ -165,7 +166,7 @@ def test_a_release_clients_skew_notice_names_the_rerun(
     release, and the plain rerun lands the shipped release over
     the older dev build — an upgrade, not the downgrade the tree
     arm exists to prevent."""
-    monkeypatch.setattr(workspaces, "__version__", "0.6.0")
+    monkeypatch.setattr(workspaces.listing, "__version__", "0.6.0")
     notice = workspaces.version_skew_notice({"version": "0.1.0"})
     assert "rerun msks-setup-macos-host" in notice
     equal_base = workspaces.version_skew_notice({"version": "0.6.0.dev0"})
@@ -218,7 +219,7 @@ def test_notice_daemon_version_skew_prints_once(
     prints the pair exactly once, an equal daemon prints
     nothing."""
     client_env(monkeypatch)
-    mine = workspaces.__version__
+    mine = client_version
     skewed = mock(lambda req: httpx.Response(200, json={"version": "9.9.9"}))
     cli.notice_daemon_version_skew(transport=skewed)
     err = capsys.readouterr().err
@@ -262,7 +263,7 @@ def test_the_probe_swallows_a_dial_failure(
     async def refused(*args, **kwargs):
         raise RuntimeError("dial refused")
 
-    monkeypatch.setattr(workspaces, "fetch_health", refused)
+    monkeypatch.setattr(workspaces.listing, "fetch_health", refused)
     cli.notice_daemon_version_skew()
     assert capsys.readouterr().err == ""
 
@@ -280,7 +281,7 @@ def test_the_probe_answers_a_ctrl_c_with_the_interrupt_line(
     async def interrupted(*args, **kwargs):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(workspaces, "fetch_health", interrupted)
+    monkeypatch.setattr(workspaces.listing, "fetch_health", interrupted)
     with pytest.raises(SystemExit) as raised:
         cli.notice_daemon_version_skew()
     assert raised.value.code == 130
@@ -1178,6 +1179,127 @@ def test_cmd_stop_posts_and_prints(
     assert seen["path"] == "/api/v1/workspaces/ws1/stop"
     assert seen["auth"] == "Bearer tok"
     assert "ws1 stopped" in capsys.readouterr().out
+
+
+def test_cmd_start_carries_the_owner_scope(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The ``--user`` selector (#1084) rides the scoped verbs as
+    the ``owner`` query pair, and a scope-less invocation sends
+    none."""
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["params"] = dict(request.url.params)
+        return httpx.Response(200, json={"id": "ws1", "status": "running"})
+
+    rc = cli.main(
+        ["start", "build", "--user", "alice"], transport=mock(handler)
+    )
+    assert rc == 0
+    assert seen["params"] == {"owner": "alice"}
+    assert "build running" in capsys.readouterr().out
+
+    rc = cli.main(["start", "build"], transport=mock(handler))
+    assert rc == 0
+    assert seen["params"] == {}
+
+
+#: The structured ambiguity detail the daemon answers a plural
+#: bare name with (#1084) — the shape the client tests below feed
+#: and branch on.
+AMBIGUOUS_DETAIL = {
+    "error": "ambiguous_workspace",
+    "name": "build",
+    "owners": [
+        {"uid": 4242, "name": "alice"},
+        {"uid": 4243, "name": None},
+    ],
+}
+
+
+def test_the_ambiguity_409_is_its_own_exit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The ambiguity's own error kind (#1084): the human line
+    names the owners — the account word and the bare uid — and
+    the ``--user`` remedy; ``--json`` embeds the payload whole and
+    exits the table's sixth row."""
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail": AMBIGUOUS_DETAIL})
+
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["start", "build"], transport=mock(handler))
+    line = str(caught.value)
+    assert "alice (4242)" in line
+    assert "4243" in line
+    assert "--user" in line
+
+    rc = cli.main(["start", "build", "--json"], transport=mock(handler))
+    err = capsys.readouterr().err
+    assert json.loads(err) == {
+        "error": {"status": 409, "detail": AMBIGUOUS_DETAIL}
+    }
+    assert rc == 6
+
+
+def test_render_ls_carries_the_owner_column_across_owners(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1084: a listing that spans owners carries the owner column
+    beside the name — the account name when the host holds one,
+    the bare uid when it does not — and a one-owner listing keeps
+    the seven columns (every row is that owner's)."""
+    import pwd
+
+    named = {4242: "alice", 4243: "bob"}
+
+    def fake_getpwuid(uid):
+        if uid not in named:
+            raise KeyError(uid)
+        return SimpleNamespace(pw_name=named[uid])
+
+    monkeypatch.setattr(pwd, "getpwuid", fake_getpwuid)
+    plural = workspaces.render_ls(
+        [
+            {**ROWS[0], "owner_uid": 4242},
+            {**ROWS[1], "owner_uid": 4243},
+        ],
+        as_json=False,
+    )
+    header = plural.splitlines()[0].split()
+    assert header[:2] == ["name", "owner"]
+    assert "alice" in plural and "bob" in plural
+
+    dead = workspaces.render_ls(
+        [
+            {**ROWS[0], "owner_uid": 4242},
+            {**ROWS[1], "owner_uid": 65534},
+        ],
+        as_json=False,
+    )
+    assert "alice" in dead and "65534" in dead
+
+    single = workspaces.render_ls(
+        [
+            {**ROWS[0], "owner_uid": 4242},
+            {**ROWS[1], "owner_uid": 4242},
+        ],
+        as_json=False,
+    )
+    assert single.splitlines()[0].split()[:2] == ["name", "id"]
+
+    # A row with no owner word at all (the pre-#1082 shape) takes
+    # the dash, exactly like every other missing cell.
+    missing = workspaces.render_ls(
+        [{**ROWS[0], "owner_uid": None}, {**ROWS[1], "owner_uid": 4242}],
+        as_json=False,
+    )
+    assert missing.splitlines()[0].split()[1] == "owner"
+    assert " - " in missing
 
 
 def test_cmd_stop_missing_workspace_is_one_line(
@@ -4874,12 +4996,14 @@ def test_create_with_start_builds_one_tls_context(
         built.append(1)
         return ssl_mod.create_default_context()
 
-    async def fake_request(client, method: str, path: str, json_body=None):
+    async def fake_request(
+        client, method: str, path: str, json_body=None, params=None
+    ):
         if path.endswith("/start"):
             return {"id": "ws1", "status": "running"}
         return {"id": "ws1", "status": "created"}
 
-    monkeypatch.setattr(workspaces, "ssl_context", counting_context)
+    monkeypatch.setattr(workspaces.lifecycle, "ssl_context", counting_context)
     monkeypatch.setattr(rest, "request", fake_request)
     monkeypatch.setattr(create, "request", fake_request)
     rc = cli.cmd_create({"id": "ws1"}, start=True)
@@ -5941,10 +6065,14 @@ from msks.client.jsonio import (  # noqa: E402 — beside the section it serves
 def test_exit_code_table() -> None:
     """The documented table: 404 is not-found, the duplicate-name
     409 is a conflict, the other 409s and the start-again refusal
-    are wrong state, everything else the unnamed failure."""
+    are wrong state, the ambiguity kind is its own row (#1084),
+    everything else the unnamed failure."""
     assert exit_code(404, "no such workspace") == 3
     assert exit_code(409, "workspace exists") == 4
     assert exit_code(409, "workspace ws1 is running; stop it first") == 5
+    assert (
+        exit_code(409, "whatever the detail", kind="ambiguous_workspace") == 6
+    )
     assert (
         exit_code(503, "VM ws1 already exists; shutdown or cleanup first") == 5
     )

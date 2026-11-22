@@ -12,6 +12,8 @@ keeps its shape.
 import json
 import sys
 
+from ..spec.owners import AMBIGUOUS_WORKSPACE
+
 #: Success: the command's own exchange completed.
 EXIT_OK = 0
 #: A failure the table names no code for: an unreachable daemon,
@@ -31,6 +33,10 @@ EXIT_CONFLICT = 4
 #: row the name already names), and the start-again refusal (a
 #: start against a workspace whose VMM already runs).
 EXIT_WRONG_STATE = 5
+#: The daemon answered the ambiguity 409 (#1084): a bare name two
+#: or more owners hold, its own error shape — the remedy is the
+#: ``--user`` owner scope or the workspace's id.
+EXIT_AMBIGUOUS = 6
 #: A Ctrl-C.
 EXIT_INTERRUPT = 130
 
@@ -55,10 +61,17 @@ class ApiExit(SystemExit):
     the recovery re-wraps, the probe's silencer — keeps working
     unchanged."""
 
-    def __init__(self, message: str, status: int, detail: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        status: int,
+        detail: str | dict,
+        kind: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.api_status = status
         self.api_detail = detail
+        self.api_kind = kind
 
 
 def set_json_mode(on: bool) -> None:
@@ -110,33 +123,40 @@ def error_document(status: int | None, detail: str) -> None:
     )
 
 
-def conflict_code(detail: str) -> int:
-    """Which 409: the duplicate-name detail is the conflict, any
-    other 409 names a state or placement refusal."""
+def conflict_code(detail: str, kind: str | None = None) -> int:
+    """Which 409: the ambiguity kind is its own row (#1084), the
+    duplicate-name detail is the conflict, any other 409 names a
+    state or placement refusal."""
+    if kind == AMBIGUOUS_WORKSPACE:
+        return EXIT_AMBIGUOUS
     if detail == NAME_CONFLICT_DETAIL:
         return EXIT_CONFLICT
     return EXIT_WRONG_STATE
 
 
-def exit_code(status: int | None, detail: str) -> int:
+def exit_code(status: int | None, detail: str, kind: str | None = None) -> int:
     """The table a harness branches on (docs/cli.md carries it):
-    404 is not-found, the 409s split by their detail, the
-    start-again refusal is wrong state, and everything else is
-    the unnamed failure."""
+    404 is not-found, the 409s split by their detail and kind
+    (#1084 — the kind word the daemon's structured detail carries,
+    never message text), the start-again refusal is wrong state,
+    and everything else is the unnamed failure."""
     if status == 404:
         return EXIT_NOT_FOUND
     if status == 409:
-        return conflict_code(detail)
+        return conflict_code(detail, kind)
     if status == 503 and START_AGAIN_DETAIL in detail:
         return EXIT_WRONG_STATE
     return EXIT_FAILURE
 
 
-def api_failure(status: int, detail: str) -> int:
+def api_failure(
+    status: int, detail: str | dict, kind: str | None = None
+) -> int:
     """The JSON-mode exit for an API-status failure: the error
-    document on stderr, then the table's code."""
+    document on stderr, then the table's code. A structured detail
+    (#1084) embeds whole — the harness reads the owners it frames."""
     error_document(status, detail)
-    return exit_code(status, detail)
+    return exit_code(status, detail, kind)
 
 
 def plain_failure(exc: SystemExit) -> int:

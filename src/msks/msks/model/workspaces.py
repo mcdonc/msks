@@ -55,6 +55,12 @@ class AmbiguousRef(ValueError):
     client's ``--user`` disambiguator."""
 
     def __init__(self, ref: str, owners: list[int]) -> None:
+        #: The ref the caller addressed — the bare name two or
+        #: more owners hold.
+        self.ref = ref
+        #: The holding uids, sorted — the payload the ambiguity
+        #: surfaces answer with names account-side.
+        self.owners = owners
         listed = ", ".join(str(uid) for uid in owners)
         super().__init__(
             f"workspace name {ref!r} is held by more than one owner "

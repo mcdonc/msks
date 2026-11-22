@@ -80,6 +80,11 @@ facades = [
   # groupcommands, invoke); cliapp is the leaf the command groups
   # decorate onto and the jsonio seam the groups share.
   "msks.client.cli.cliapp",
+  # #1084: the workspace command module split into a package
+  # (listing, lifecycle) at the lines gate; the CLI layers, the
+  # GUI and TUI mounts editors, and the suites keep importing
+  # the names through msks.client.workspaces.
+  "msks.client.workspaces",
   # #874: the workspace page split into a package (lines, actions,
   # screen); the main screen and app keep importing the page's
   # surface through the package root.
@@ -200,7 +205,12 @@ identity = 2
 # module-edge-plus-name +2 the TUI's reads take.
 # #1007: the macOS menu bar's About box names the client's own
 # version word — the same module-edge-plus-name +2.
-spec = 15
+# #1084: the ambiguity vocabulary (spec.owners) — the kind word
+# the exit table branches on (jsonio), the owner phrase the error
+# line renders (rest), and the close code the console and forward
+# clients label (console, forward): four statements, the module
+# edge beside one name apiece.
+spec = 23
 
 [snapshot.config]
 configio = 3
@@ -358,7 +368,10 @@ microvm = 16
 # owner mask reads the bypass rule (views) and the probe seed
 # reads the daemon-uid spelling (probe), one statement each in
 # the split submodules.
-model = 23
+# #1084: the owner scope — deps' scope dependency reads the bypass
+# rule beside the daemon-uid mapping (one more name on the same
+# statement).
+model = 24
 # #808: the proxy routes read the two direction-shaped bind and
 # target defaults the create path applies (module edge + both
 # names).
@@ -417,7 +430,12 @@ secretcache = 4
 # #1083: the api secrets split into a package (routes, blobs,
 # probe, views); the probe vocabulary's statements spread across
 # the routes and probe submodules.
-spec = 48
+# #1084: the ambiguity vocabulary (spec.owners) — the 409's kind
+# word, the close code both dial routes take, and the owner
+# phrase, all on the rows statement (module edge beside the
+# three names); the console and forward dials reach it through
+# rows' close helper.
+spec = 52
 # #773: the clone route reads the state-disk floor (create_refusal
 # beside the artifacts' allocated-cost file_cost) before any byte
 # copies.

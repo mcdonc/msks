@@ -10,6 +10,7 @@ from ...microvm.errors import MicrovmError
 from ...microvm.local import close_console_stream
 from ...model.workspaces import AmbiguousRef
 from .deps import authed_accept, caller_uid
+from .rows import close_ambiguous
 from .streams import (
     DETACHED_DRAINS,  # noqa: F401 — re-exported for tests' discovery
     close_reason,
@@ -174,7 +175,7 @@ def router(app) -> APIRouter:
         # Authorization header (#216). Closing the websocket closes
         # exactly one guest shell session; the workspace keeps
         # running. Auth accepts or closes 4401: the client sees a
-        # specific close reason (4400/4401/4404/4501) instead of a
+        # specific close reason (4401/4404/4405/4501) instead of a
         # generic HTTP 403 rejection.
         if not await authed_accept(app, socket):
             return
@@ -185,9 +186,9 @@ def router(app) -> APIRouter:
                 workspace_id, viewer=caller_uid(socket.scope)
             )
         except AmbiguousRef as exc:
-            # A name more than one owner holds: name the ambiguity
-            # and the by-id remedy — never a pick.
-            await socket.close(code=4400, reason=close_reason(str(exc)))
+            # A name more than one owner holds: the ambiguity's
+            # own close (#1084) — never a pick.
+            await close_ambiguous(socket, exc)
             return
         if row is None:
             # A foreign row and an absent one answer the same

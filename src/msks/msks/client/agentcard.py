@@ -56,7 +56,16 @@ refuses the create. The `--image` ref is a `name:version` pair
 from `msks image ls`, a bare `name`, or the image's full hash.
 The pair must match a catalog row exactly. A bare name resolves to
 the newest version of that name. Workspace names are unique per
-daemon: a create over a held name is the exit-4 conflict.
+owner: a create over a held name is the exit-4 conflict, and
+root's namespace spans every owner.
+
+Two owners may hold the same workspace name. Root addressing a
+bare name two or more owners hold exits 6 with every owner named.
+`--user OWNER` on a workspace verb (`start`, `stop`, `rm`,
+`clone`, `key`, `resize`, `mount`, `umount`) resolves the name
+against that owner's rows alone. The selector is root only: a
+non-root caller passing it is refused. A listing that spans owners
+carries an `owner` column beside the name.
 
 A workspace's `status` is one of these values:
 
@@ -132,9 +141,10 @@ above, from the stream or from `requests`. `--duration` is one of
 | 3    | not found                                                       |
 | 4    | name conflict: a create or clone over a held name               |
 | 5    | wrong state: the row's state or placement refuses the action    |
+| 6    | ambiguous name: two or more owners hold it (--user or the id)   |
 | 130  | interrupted                                                     |
 
-Rows 3, 4, and 5 hold under `--json`. Without it, every API
+Rows 3, 4, 5, and 6 hold under `--json`. Without it, every API
 failure exits 1 and prints its detail on stderr: `msks: 409:
 workspace exists`. The codes 0, 2, and 130 hold either way. Code 2
 and a config the client cannot read keep text lines under `--json`

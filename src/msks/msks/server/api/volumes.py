@@ -29,7 +29,7 @@ from ...persist import (
     import_home_volume as import_home_volume_from_stream,
 )
 from ...storage import create_refusal
-from .deps import authed_caller
+from .deps import authed_caller, scoped_caller
 from .rows import (
     home_volume_guard,
     host_mismatch,
@@ -231,7 +231,7 @@ def router(app, hub) -> APIRouter:
     async def resize_workspace(
         workspace_id: str,
         body: WorkspaceResize,
-        caller: int = Depends(authed_caller),
+        caller: int = Depends(scoped_caller),
     ) -> dict:
         """Move a stopped workspace's sizes (#184) and topology
         (#277): the home volume grows or shrinks, the overlay grows,

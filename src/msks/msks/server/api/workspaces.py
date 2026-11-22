@@ -16,7 +16,7 @@ from ...model.secrets import SECRET_COVERAGES
 from ...spec.egress import EGRESS_MODES, parse_allowlist
 from ...storage import create_refusal
 from .boot import create_name, mint_workspace_id, resolve_boot
-from .deps import authed_caller
+from .deps import authed_caller, scoped_caller
 from .rows import (
     checked_mounts,
     host_mismatch,
@@ -270,7 +270,7 @@ def router(app) -> APIRouter:
 
     @api.get("/api/v1/workspaces/{workspace_id}")
     async def get_workspace(
-        workspace_id: str, caller: int = Depends(authed_caller)
+        workspace_id: str, caller: int = Depends(scoped_caller)
     ) -> dict:
         row = await workspace_or_404(app, workspace_id, caller)
         row["mount_issues"] = issue_payloads(await row_mount_issues(app, row))
@@ -278,7 +278,7 @@ def router(app) -> APIRouter:
 
     @api.get("/api/v1/workspaces/{workspace_id}/ssh-key")
     async def workspace_ssh_key(
-        workspace_id: str, caller: int = Depends(authed_caller)
+        workspace_id: str, caller: int = Depends(scoped_caller)
     ) -> dict:
         """The workspace's ssh identity row, token-gated (#486).
 
@@ -332,7 +332,7 @@ def router(app) -> APIRouter:
     @api.put("/api/v1/workspaces/{workspace_id}")
     @api.patch("/api/v1/workspaces/{workspace_id}")
     async def mutate_workspace(
-        workspace_id: str, caller: int = Depends(authed_caller)
+        workspace_id: str, caller: int = Depends(scoped_caller)
     ) -> dict:
         await workspace_or_404(app, workspace_id, caller)
         raise HTTPException(
@@ -349,7 +349,7 @@ def router(app) -> APIRouter:
     async def set_mounts(
         workspace_id: str,
         body: MountsSet,
-        caller: int = Depends(authed_caller),
+        caller: int = Depends(scoped_caller),
     ) -> dict:
         """Set the workspace's mounts (#620, part #624): the full
         replacement list — an empty list clears them. Next-start
@@ -391,7 +391,7 @@ def router(app) -> APIRouter:
 
     @api.post("/api/v1/workspaces/{workspace_id}/start")
     async def start_workspace(
-        workspace_id: str, caller: int = Depends(authed_caller)
+        workspace_id: str, caller: int = Depends(scoped_caller)
     ) -> dict:
         row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
@@ -486,7 +486,7 @@ def router(app) -> APIRouter:
 
     @api.post("/api/v1/workspaces/{workspace_id}/stop")
     async def stop_workspace(
-        workspace_id: str, caller: int = Depends(authed_caller)
+        workspace_id: str, caller: int = Depends(scoped_caller)
     ) -> dict:
         row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
@@ -527,7 +527,7 @@ def router(app) -> APIRouter:
 
     @api.post("/api/v1/workspaces/{workspace_id}/reset")
     async def reset_workspace(
-        workspace_id: str, caller: int = Depends(authed_caller)
+        workspace_id: str, caller: int = Depends(scoped_caller)
     ) -> dict:
         """Factory reset: a pristine root, the same /home (#14)."""
         row = await workspace_or_404(app, workspace_id, caller)
@@ -550,7 +550,7 @@ def router(app) -> APIRouter:
 
     @api.delete("/api/v1/workspaces/{workspace_id}")
     async def delete_workspace(
-        workspace_id: str, caller: int = Depends(authed_caller)
+        workspace_id: str, caller: int = Depends(scoped_caller)
     ) -> dict:
         row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
