@@ -100,6 +100,20 @@ def test_report_close_names_the_refusals() -> None:
         fwd.report_close(closed_with(4501, "workspace ws has no NIC"))
 
 
+def test_report_close_names_the_ambiguity() -> None:
+    """A plural bare name's dial close (#1084): its own label with
+    the daemon's reason — the owners and the by-id remedy — not
+    the bad-request wording a refused port takes."""
+    reason = (
+        "workspace name 'build' is held by more than one owner "
+        "(alice (4242), bob (4243)); address the workspace by its id"
+    )
+    with pytest.raises(SystemExit, match="ambiguous workspace name"):
+        fwd.report_close(closed_with(4405, reason))
+    with pytest.raises(SystemExit, match="alice"):
+        fwd.report_close(closed_with(4405, reason))
+
+
 def test_report_close_passes_clean_ends_through() -> None:
     # A guest service that closed the stream (1000/1005) is a clean
     # end: the client exits 0.

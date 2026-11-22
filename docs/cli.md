@@ -75,6 +75,7 @@ Every command exits with a code from this table:
 | 3    | Not found (the daemon answered 404)                                      |
 | 4    | Name conflict (a create or clone with a name another row holds)          |
 | 5    | Wrong state (a state, placement, or same-name row refuses the action)    |
+| 6    | Ambiguous name (two or more owners hold it; `--user` or the id fixes it) |
 | 130  | Interrupted (Ctrl-C)                                                     |
 
 `msksd doctor --json` prints its check rows as one JSON document (one
@@ -315,9 +316,9 @@ applies to the ssh surfaces above and leaves it untouched.
 
 A workspace carries two identity fields. The **name** is the
 label you choose at create, the positional argument of every
-command, unique among the daemon's workspaces. The **id** is
-minted by the daemon at create: 10 hex digits (5 random bytes,
-re-rolled until it collides with nothing on this daemon),
+command, unique among your own workspaces on the daemon. The
+**id** is minted by the daemon at create: 10 hex digits (5 random
+bytes, re-rolled until it collides with nothing on this daemon),
 immutable, and never reused while its workspace lives.
 
 Every host-side surface keys on the id: the artifact directories under the
@@ -329,6 +330,16 @@ the first try, with a fresh host-key cache of its own.
 Every command that takes a workspace accepts either reference: `msks console
 ws` and `msks console 1a2b3c4d5e` reach the same workspace. The name is the
 everyday reference. The id is the reference no other workspace shares.
+
+Two owners may hold the same name. When root addresses a bare name two or
+more owners hold, the command exits 6 and names every owner (`alice (4242)`,
+or the bare uid for an account the host no longer holds). The fix is the
+workspace's id, or the `--user OWNER` option on the workspace verbs (`start`,
+`stop`, `rm`, `clone`, `key`, `resize`, `mount`, `umount`): the name then
+resolves against that owner's rows alone. The option is root's; a non-root
+caller passing it is refused, because every non-root call already addresses
+the caller's own rows. `--user` takes the account name, or the bare uid the
+error printed for a dead owner.
 
 ## `msks ls`
 
@@ -343,6 +354,13 @@ my-workspace  1a2b3c4d5e  running                   interactive  2026-05-14  deb
 scratch       77eedd0199  created                   allow        2026-06-01  -                 hv-1
 refs-reader   9c1d2e3f4a  running, 1 mount skipped  allow        2026-06-18  9f2c41a…de1234ab  hv-1
 ```
+
+A listing that spans owners gains an eighth column, `owner`, right
+after the name: the account name each row's `owner_uid` resolves to
+(the bare uid for an account the host no longer holds). A listing
+whose rows all share one owner keeps the seven columns, since every
+row is already that owner's; that is the shape every non-root
+caller sees, and `--json` rows carry `owner_uid` either way.
 
 The status column speaks the daemon's lifecycle vocabulary:
 `created` (row exists, never booted), `starting`, `running`,

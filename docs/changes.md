@@ -8,6 +8,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Root addressing for shared names (#1084).** A bare workspace
+  name two or more owners hold is its own error kind: exit 6 under
+  `--json`, a line naming every owner otherwise. The workspace
+  verbs (`start`, `stop`, `rm`, `clone`, `key`, `resize`, `mount`,
+  `umount`) take `--user OWNER`, root only, to resolve the name
+  against that owner's rows alone. `msks ls` gains an `owner`
+  column when the listing spans owners, and the console and forward
+  dials name the ambiguity with their own close code.
 - **Owner-scoped secrets (#1083).** Placeholder rows record the
   uid of the peer that minted them, and the daemon-wide coverage
   (`[]`) became owner-wide: a mint with no workspace target

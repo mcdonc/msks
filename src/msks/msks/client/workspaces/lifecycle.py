@@ -1,259 +1,41 @@
-"""The workspace lifecycle commands (#21): ``msks ls``, ``create``,
-``start``, ``stop``, ``rm``, ``key``, and ``resize``
-— the group the CLI's typer layer (:mod:`msks.client.cli`)
-dispatches into. The create core (the identity modes and the
-POST's shared plumbing) lives in :mod:`msks.client.create`;
-this module owns the operator surface: the parsed flag surface,
-the identity-mode resolution, and the printed lines.
+"""The workspace lifecycle command bodies (#21): ``create``,
+``start``, ``stop``, ``clone``, ``rm``, ``key``, ``resize``, and
+the mount/umount exchange — the group the CLI's typer layer
+(:mod:`msks.client.cli`) dispatches into. The create core (the
+identity modes and the POST's shared plumbing) lives in
+:mod:`msks.client.create`; this module owns the operator surface:
+the parsed flag surface, the identity-mode resolution, and the
+printed lines. The listing surface lives in
+:mod:`msks.client.workspaces.listing`.
 """
 
 import asyncio
-import contextlib
-import json
 import os
 import posixpath
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..spec.version import __version__, ordering
-from .context import call
-from .create import (
+from ..context import (
+    call,
+    env_token,
+    env_url,
+    is_unix,
+    scope_params,
+    ssl_context,
+)
+from ..context import (
+    fetch_ssh_key as rest_fetch_ssh_key,
+)
+from ..create import (
     checked_login_name,
     create_workspace_core,
     invoking_user,
     operator_pubkey,
     read_pubkey,
 )
-from .env import env_token, env_url, is_unix, ssl_context
-from .jsonio import ApiExit, emit, json_line, outcome
-from .resize import display_name, resize_message
-from .rest import fetch_health
-from .rest import fetch_ssh_key as rest_fetch_ssh_key
-from .tabular import listing_text
-from .tui.rows import clip
-
-
-def created_date(raw: str | None) -> str:
-    """ISO timestamp to YYYY-MM-DD, or ``-``."""
-    return raw[:10] if raw else "-"
-
-
-#: The CLI listing's image column width (#523): the table's own
-#: budget — wider than the page's meta cell, the table has room
-#: a header line does not.
-IMAGE_COLUMN_W = 16
-
-
-def image_column(row: dict) -> str:
-    """The listing's image column (#523): the catalog reference —
-    ``name:version``, the words an operator can act on — with the
-    digest prefix as the fallback for a row the catalog cannot
-    resolve. The clip is the page's own middle cut (the version
-    tail is the half a head-only clip eats; a registry-prefixed
-    reference would lose its name AND version to one)."""
-    ref = row.get("image_ref") or row.get("image_hash") or "-"
-    return clip(ref, IMAGE_COLUMN_W)
-
-
-def workspace_cells(row: dict) -> list[str]:
-    """One listing row's cells."""
-    image = image_column(row)
-    host = row.get("host") or "-"
-    name = row.get("name") or "-"
-    egress_mode = row.get("egress_mode") or "-"
-    created = created_date(row.get("created_at"))
-    return [
-        name,
-        row["id"],
-        status_with_mounts(row),
-        egress_mode,
-        created,
-        image,
-        host,
-    ]
-
-
-def status_with_mounts(row: dict) -> str:
-    """The status cell with the mounts' standing marker (#620,
-    part #624): a row whose mounts skip carries the count beside
-    its status — ``running, 1 mount skipped`` — the marker an
-    unresolved mount leaves until the config and the row agree
-    again. The healthy row prints its status alone."""
-    status = row["status"]
-    issues = row.get("mount_issues") or []
-    if not issues:
-        return status
-    kinds = sorted({issue["kind"] for issue in issues})
-    label = (
-        "mounts " + "/".join(kinds)
-        if len(issues) > 1
-        else (f"mount {issues[0]['kind']}")
-    )
-    return f"{status}, {len(issues)} {label}"
-
-
-def render_ls(rows: list[dict], as_json: bool) -> str:
-    """The whole listing: the aligned table, or one JSON document."""
-    if as_json:
-        return json.dumps(rows, indent=2)
-    return listing_text(
-        ["name", "id", "status", "egress", "created", "image", "host"],
-        [workspace_cells(row) for row in rows],
-    )
-
-
-def health_image(health: object) -> str | None:
-    """The image a /health document names, or None.
-
-    Only a mapping with a string image counts: anything else a
-    wrong host or proxy might answer stays None (the drift probe is
-    best-effort and never tracebacks the listing).
-    """
-    if isinstance(health, dict) and isinstance(health.get("image"), str):
-        return health["image"]
-    return None
-
-
-def stale_image_notice(expected: str, health: object) -> str | None:
-    """The one-line drift notice for ``msks ls`` (#160), or None.
-
-    Both sides must be known: ``MSKSC_EXPECTED_IMAGE`` names the
-    image reference the operator sets (unset skips the check), and
-    the daemon's ``/health``
-    carries the image it booted (``None`` on a daemon predating the
-    ``msksd.image`` cmdline pair). An unknown side stays silent —
-    including a /health that answers something other than a mapping
-    with a string image (a wrong host, a proxy).
-    """
-    image = health_image(health)
-    if not expected or not image or image == expected:
-        return None
-    return (
-        f"msks: daemon serves a different image: {Path(image).name}; "
-        f"the expected reference is {Path(expected).name}; align "
-        "them by restarting the daemon on the expected image"
-    )
-
-
-def skew_remedy(theirs: str) -> str:
-    """The remedy arm for one skewed pair (#715): the notice's
-    old single line sent a newer-daemon operator to rerun the
-    setup tool — a tool old enough to be behind the daemon is
-    old enough to downgrade it, and the refusal that follows
-    leaves the VM wedged. The remedy follows the direction: a
-    daemon that leads names the client's own update (a dev-marked
-    leader names the tree no release matches — an equal-base or
-    older dev build is one the plain rerun upgrades), and a
-    client that leads names the daemon's (the wheel path when
-    the client's own word is a dev build the plain rerun
-    refuses)."""
-    if ".dev" in theirs and ordering(theirs) > ordering(__version__):
-        return (
-            "the daemon runs a development build no release matches — "
-            "update this client from the same tree or wait for the "
-            "release it becomes"
-        )
-    if ordering(theirs) > ordering(__version__):
-        return "update this client (pip install -U msks)"
-    if ".dev" in __version__:
-        return (
-            "build a wheel (uv build) and rerun msks-setup-macos-host --wheel"
-        )
-    return (
-        "rerun msks-setup-macos-host (on the Mac) to update the "
-        "daemon in the VM"
-    )
-
-
-def version_skew_notice(health: dict | None) -> str | None:
-    """The one-line version-skew notice (#706, #715), or None. The
-    daemon's ``/health`` carries its build's version; a client
-    and daemon that ship from one wheel drift when one side is
-    updated alone (a ``pip install -U msks`` on the Mac, a stale
-    release inside the VM), and the skew otherwise surfaces one
-    feature at a time. Warn, never refuse — the pair ships from
-    one build, so equality is the norm and a refusal would need
-    a compat-floor policy this notice does not add. An unknown
-    side stays silent (a None health, a document without a
-    version word — a wrong host, a proxy); a known skew names
-    both words and the remedy its direction asks for."""
-    theirs = health.get("version") if health else None
-    if not isinstance(theirs, str) or not theirs or theirs == __version__:
-        return None
-    return (
-        f"msks: the daemon runs {theirs}, this client is {__version__} — "
-        f"{skew_remedy(theirs)}"
-    )
-
-
-def dialed_health(transport) -> dict | None:
-    """The configured daemon's /health document, dialed on the
-    probe's budget — the raw dial whose every failure shape
-    :func:`probed_health` answers."""
-    url = env_url()
-    token = env_token()
-    ssl_ctx = None if is_unix(url) else ssl_context()
-    return asyncio.run(fetch_health(url, token, transport, ssl_ctx))
-
-
-def probed_health(transport) -> dict | None:
-    """One best-effort /health dial (#706): every failure answers
-    its own shape — no daemon configured is silence, a Ctrl-C is
-    the one-line interrupt the command bodies print (never
-    typer's silent 130 — the probe's connect window is exactly
-    when an impatient operator presses), and anything else the
-    probe touches (a broken MSKSC_CAFILE, a context that will
-    not build) is silence — the command body meets the same
-    break itself moments later."""
-    try:
-        return dialed_health(transport)
-    except SystemExit:
-        return None
-    except KeyboardInterrupt:
-        print("msks: interrupted", file=sys.stderr)
-        raise SystemExit(130) from None
-    except Exception:
-        # A best-effort probe keeps its raw catch: any failure the
-        # probe touches is the caller's silence (the docstring
-        # names the family), never its refusal.
-        return None
-
-
-def notice_daemon_version_skew(transport=None) -> None:
-    """Print the version-skew notice when the configured daemon
-    answers one (#706): one best-effort ``/health`` roundtrip per
-    invocation on a probe-sized budget, every failure silent.
-    ``transport`` is the tests' in-process seam."""
-    health = probed_health(transport)
-    if notice := version_skew_notice(health):
-        print(notice, file=sys.stderr)
-
-
-def cmd_ls(as_json: bool = False, transport=None) -> int:
-    """``msks ls``: every workspace the daemon knows."""
-
-    async def fetch() -> tuple[list, dict | None]:
-        rows = await call("GET", "/api/v1/workspaces", transport=transport)
-        health = None
-        if os.environ.get("MSKSC_EXPECTED_IMAGE"):
-            # Best-effort: an unreachable /health never hides the
-            # listing itself.
-            with contextlib.suppress(SystemExit, Exception):
-                health = await call(
-                    "GET", "/api/v1/health", transport=transport
-                )
-        return rows, health
-
-    rows, health = asyncio.run(fetch())
-    text = render_ls(rows, as_json)
-    if text:
-        print(text)
-    if notice := stale_image_notice(
-        os.environ.get("MSKSC_EXPECTED_IMAGE", ""), health
-    ):
-        print(notice, file=sys.stderr)
-    return 0
+from ..jsonio import ApiExit, emit, json_line, outcome
+from ..resize import display_name, resize_message
 
 
 def cmd_create(
@@ -378,8 +160,12 @@ async def boot_created(
         if isinstance(exc, ApiExit):
             # The structured error keeps its status and detail
             # through the hint (#841): the exit table maps the
-            # daemon's answer, not the recovery wording.
-            raise ApiExit(hint, exc.api_status, exc.api_detail) from exc
+            # daemon's answer, not the recovery wording — the
+            # structured kind rides along (#841's rule holds for
+            # any kind word a future detail carries).
+            raise ApiExit(
+                hint, exc.api_status, exc.api_detail, kind=exc.api_kind
+            ) from exc
         raise SystemExit(hint) from exc
     if not as_json:
         print(f"attach with: msks console {display_name(row)}")
@@ -404,7 +190,11 @@ def label_and_id(row: dict) -> str:
 
 
 async def start_stop_row(
-    action: str, workspace_id: str, as_json: bool, transport
+    action: str,
+    workspace_id: str,
+    as_json: bool,
+    transport,
+    owner: str | None = None,
 ) -> dict:
     """The row a start or stop answers, refreshed to the whole row
     in ``--json`` mode (#841): the POST's reply carries the id and
@@ -413,17 +203,22 @@ async def start_stop_row(
     blocked to the terminal state. A refresh that fails cannot
     unrun the verb: the thin row the POST answered is the
     document, and the failure stays visible in the daemon's own
-    next answer."""
+    next answer. *owner* is the scope a root invocation carries
+    (#1084); both exchanges take it."""
     row = await call(
         "POST",
         f"/api/v1/workspaces/{workspace_id}/{action}",
         transport=transport,
+        params=scope_params(owner),
     )
     if not as_json:
         return row
     try:
         return await call(
-            "GET", f"/api/v1/workspaces/{row['id']}", transport=transport
+            "GET",
+            f"/api/v1/workspaces/{row['id']}",
+            transport=transport,
+            params=scope_params(owner),
         )
     except SystemExit as exc:
         # The note is stderr (#841): stdout's document stays whole,
@@ -436,18 +231,26 @@ async def start_stop_row(
         return row
 
 
-def cmd_start(workspace_id: str, as_json: bool = False, transport=None) -> int:
-    """``msks start``: boot a created workspace."""
+def cmd_start(
+    workspace_id: str, as_json: bool = False, transport=None, owner=None
+) -> int:
+    """``msks start``: boot a created workspace. *owner* is the
+    ``--user`` scope (#1084): root addressing another owner's
+    workspace by its name."""
     row = asyncio.run(
-        start_stop_row("start", workspace_id, as_json, transport)
+        start_stop_row("start", workspace_id, as_json, transport, owner)
     )
     outcome(as_json, row, lambda: f"{workspace_id} {row['status']}")
     return 0
 
 
-def cmd_stop(workspace_id: str, as_json: bool = False, transport=None) -> int:
+def cmd_stop(
+    workspace_id: str, as_json: bool = False, transport=None, owner=None
+) -> int:
     """``msks stop``: power a workspace off, gracefully."""
-    row = asyncio.run(start_stop_row("stop", workspace_id, as_json, transport))
+    row = asyncio.run(
+        start_stop_row("stop", workspace_id, as_json, transport, owner)
+    )
     outcome(as_json, row, lambda: f"{workspace_id} {row['status']}")
     return 0
 
@@ -458,6 +261,7 @@ def cmd_clone(
     copy_allowlist: bool = False,
     as_json: bool = False,
     transport=None,
+    owner: str | None = None,
 ) -> int:
     """``msks clone`` (#773): copy a stopped workspace into a new
     one — both disks and the create-time config. The daemon owns
@@ -467,7 +271,8 @@ def cmd_clone(
 
     ``copy_allowlist`` (#773's one option) opts the clone into
     the source's egress allowlist; without it the clone starts
-    with an empty list under the copied mode.
+    with an empty list under the copied mode. *owner* is the
+    ``--user`` scope (#1084) the source resolve carries.
     """
     body = {"name": name}
     if copy_allowlist:
@@ -478,6 +283,7 @@ def cmd_clone(
             f"/api/v1/workspaces/{source}/clone",
             json_body=body,
             transport=transport,
+            params=scope_params(owner),
         )
     )
     outcome(as_json, row, lambda: f"cloned {source} into {label_and_id(row)}")
@@ -485,13 +291,17 @@ def cmd_clone(
 
 
 def cmd_rm(
-    workspace_ids: list[str], as_json: bool = False, transport=None
+    workspace_ids: list[str],
+    as_json: bool = False,
+    transport=None,
+    owner: str | None = None,
 ) -> int:
     """``msks rm``: delete workspaces and their persistent data.
 
     Ids are removed one at a time, in order; a failure stops the
     run with the API's one-line error (already-removed ids stay
-    removed — and stay confirmed on stdout).
+    removed — and stay confirmed on stdout). *owner* is the
+    ``--user`` scope (#1084) every removal's resolve carries.
     """
     for workspace_id in workspace_ids:
         reply = asyncio.run(
@@ -499,6 +309,7 @@ def cmd_rm(
                 "DELETE",
                 f"/api/v1/workspaces/{workspace_id}",
                 transport=transport,
+                params=scope_params(owner),
             )
         )
         if as_json:
@@ -510,23 +321,29 @@ def cmd_rm(
     return 0
 
 
-async def fetch_ssh_key(url, token, workspace_id, transport) -> dict:
+async def fetch_ssh_key(
+    url, token, workspace_id, transport, owner: str | None = None
+) -> dict:
     """GET the workspace's identity: the public half alone (#497 —
     the answer carries no private field), with the row's id, name,
-    instance stamp, and login user beside it.
+    instance stamp, and login user beside it. *owner* is the
+    ``--user`` scope (#1084) the resolve carries.
 
     A re-export of :func:`msks.client.rest.fetch_ssh_key` (the call
     moved to rest.py when ``msks ssh`` (#112) began sharing it);
     ``msks key`` prints it, and ``msks ssh`` resolves the session's
     signing key from it.
     """
-    return await rest_fetch_ssh_key(url, token, workspace_id, transport)
+    return await rest_fetch_ssh_key(
+        url, token, workspace_id, transport, owner=owner
+    )
 
 
 def cmd_key(
     workspace_id: str,
     as_json: bool = False,
     transport=None,
+    owner: str | None = None,
 ) -> int:
     """``msks key``: the workspace's ssh identity — the public
     half, safe to display anywhere. The private half is the
@@ -535,7 +352,7 @@ def cmd_key(
     serves nothing else.
     """
     key = asyncio.run(
-        fetch_ssh_key(env_url(), env_token(), workspace_id, transport)
+        fetch_ssh_key(env_url(), env_token(), workspace_id, transport, owner)
     )
     outcome(as_json, key, lambda: key["public_key"])
     return 0
@@ -546,15 +363,18 @@ def cmd_resize(
     body: dict,
     as_json: bool = False,
     transport=None,
+    owner: str | None = None,
 ) -> int:
     """``msks resize``: move a stopped workspace's sizes and
-    topology (#184, #277)."""
+    topology (#184, #277). *owner* is the ``--user`` scope (#1084)
+    the resolve carries."""
     row = asyncio.run(
         call(
             "POST",
             f"/api/v1/workspaces/{workspace_id}/resize",
             json_body=body,
             transport=transport,
+            params=scope_params(owner),
         )
     )
     if as_json:
@@ -633,6 +453,7 @@ def cmd_mount(
     spec: str,
     as_json: bool = False,
     transport=None,
+    owner: str | None = None,
 ) -> int:
     """``msks mount``: add one share to the workspace's mounts
     (#620, part #624) — the set replaces whole through the route,
@@ -640,7 +461,7 @@ def cmd_mount(
     list. Next-start semantics: a running VM keeps its devices;
     the next start attaches the new set."""
     return asyncio.run(
-        mounts_exchange(workspace_id, "add", spec, as_json, transport)
+        mounts_exchange(workspace_id, "add", spec, as_json, transport, owner)
     )
 
 
@@ -649,22 +470,34 @@ def cmd_umount(
     share: str,
     as_json: bool = False,
     transport=None,
+    owner: str | None = None,
 ) -> int:
     """``msks umount``: remove the workspace's mounts of one share
     (#620, part #624). The next start attaches the remainder."""
     return asyncio.run(
-        mounts_exchange(workspace_id, "remove", share, as_json, transport)
+        mounts_exchange(
+            workspace_id, "remove", share, as_json, transport, owner
+        )
     )
 
 
 async def mounts_exchange(
-    workspace_id: str, action: str, spec: str, as_json: bool, transport
+    workspace_id: str,
+    action: str,
+    spec: str,
+    as_json: bool,
+    transport,
+    owner: str | None = None,
 ) -> int:
     """The mount/umount exchange: read the row, apply the one
     edit, post the whole list — the daemon validates and answers
-    with the refreshed row, whose derived state prints."""
+    with the refreshed row, whose derived state prints. *owner*
+    is the ``--user`` scope (#1084) both resolves carry."""
     row = await call(
-        "GET", f"/api/v1/workspaces/{workspace_id}", transport=transport
+        "GET",
+        f"/api/v1/workspaces/{workspace_id}",
+        transport=transport,
+        params=scope_params(owner),
     )
     mounts = mounts_after(row, action, spec, workspace_id)
     fresh = await call(
@@ -672,6 +505,7 @@ async def mounts_exchange(
         f"/api/v1/workspaces/{workspace_id}/mounts",
         json_body={"mounts": mounts},
         transport=transport,
+        params=scope_params(owner),
     )
     outcome(as_json, fresh, lambda: mounts_line(fresh))
     return 0
@@ -773,6 +607,7 @@ def run_resize(
     mem_mib: int | None,
     transport,
     as_json: bool = False,
+    owner: str | None = None,
 ) -> int:
     """Compose the request body, refusing the empty one locally."""
     body = {
@@ -790,7 +625,7 @@ def run_resize(
             "msks: nothing to resize: pass --home-mib, --root-mib, "
             "--cpus, or --mem-mib"
         )
-    return cmd_resize(workspace_id, body, as_json, transport)
+    return cmd_resize(workspace_id, body, as_json, transport, owner)
 
 
 def read_user_data(path: str) -> str:

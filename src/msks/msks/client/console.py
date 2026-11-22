@@ -28,6 +28,7 @@ from urllib.parse import quote
 
 import websockets
 
+from ..spec.owners import AMBIGUOUS_CLOSE
 from . import stdio, wsauth, wsdial
 from .env import (
     env_token,
@@ -215,6 +216,9 @@ async def run_shell(
 CLOSE_CODE_REASONS = {
     4401: wsauth.AUTH_FAILED_MESSAGE,
     4404: "no such workspace",
+    # A plural bare name (#1084): the daemon's reason names the
+    # owners and the by-id remedy.
+    AMBIGUOUS_CLOSE: "ambiguous workspace name",
     # The daemon's own message names the real cause (a refused
     # user, a dead VMM, a wedged stream); the parenthetical hint
     # speaks only when it carried none.

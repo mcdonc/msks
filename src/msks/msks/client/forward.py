@@ -21,6 +21,7 @@ from urllib.parse import quote
 
 import websockets
 
+from ..spec.owners import AMBIGUOUS_CLOSE
 from . import stdio, wsauth, wsdial
 from .env import (
     env_token,
@@ -43,6 +44,10 @@ CLOSE_CODE_REASONS = {
     4401: wsauth.AUTH_FAILED_MESSAGE,
     4404: "no such workspace",
     4403: "forward not permitted for this token",
+    # A plural bare name (#1084): its own code, apart from the
+    # bad-request one — the daemon's reason names the owners and
+    # the by-id remedy.
+    AMBIGUOUS_CLOSE: "ambiguous workspace name",
     4501: (
         "forward unavailable (no NIC, not running, or service not listening?)"
     ),

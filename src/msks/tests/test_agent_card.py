@@ -105,13 +105,13 @@ def test_the_card_teaches_the_session_identity_and_json_only_exits() -> None:
     knows only this text must learn that a session needs the
     planted key's private half (the agent or
     ``MSKSC_IDENTITY_FILE``), that the status-mapped codes
-    3, 4, and 5 are the ``--json`` exits, and that a bare image
+    3, 4, 5, and 6 are the ``--json`` exits, and that a bare image
     name resolves even when the exact ``name:version`` pair a
     harness guesses does not."""
     card = agentcard.AGENT_CARD_MD
     flat = " ".join(card.split())
     assert "MSKSC_IDENTITY_FILE" in flat
-    assert "Rows 3, 4, and 5 hold under `--json`" in flat
+    assert "Rows 3, 4, 5, and 6 hold under `--json`" in flat
     assert "A bare name resolves to the newest version" in flat
     assert "login_user" in flat
 

@@ -1,10 +1,12 @@
 """Workspace-row helpers shared by the resource routers: the
 seam's VmSpec rebuilt from a row, the placement and lifecycle
 guards (with the row re-read under the move-lock), the
-create-serialization lock, and the 404 the ref-resolving routes
-answer."""
+create-serialization lock, the 404 the ref-resolving routes
+answer, and the ambiguity payload a plural name answers with
+(#1084)."""
 
 import asyncio
+import pwd
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -12,7 +14,9 @@ from fastapi import HTTPException
 from ...hostshares import check_host_share
 from ...model.workspaces import AmbiguousRef
 from ...spec.mounts import MountIssue, parse_mounts, validate_mounts
+from ...spec.owners import AMBIGUOUS_CLOSE, AMBIGUOUS_WORKSPACE, owners_word
 from ...spec.vm import VmSpec, VmStatus
+from .streams import close_reason
 
 
 def spec_for(row: dict, mounts: tuple | None = None) -> VmSpec:
@@ -110,6 +114,48 @@ async def serialize_create(app, key: str):
     return lock
 
 
+async def owner_frames(uids: list[int]) -> list[dict]:
+    """The owners the ambiguity answers name (#1084): one frame
+    per uid, the account name beside it when the host holds one
+    — the ``--user`` selector takes the name — and ``None`` for a
+    uid no account holds (a dead owner stays a number). The pwd
+    walk runs in a worker thread: it is a libc NSS call, and a
+    directory backend that stalls would stall the event loop
+    with it."""
+
+    def frames() -> list[dict]:
+        named = []
+        for uid in uids:
+            try:
+                named.append({"uid": uid, "name": pwd.getpwuid(uid).pw_name})
+            except KeyError:
+                named.append({"uid": uid, "name": None})
+        return named
+
+    return await asyncio.to_thread(frames)
+
+
+def ambiguity_reason(ref: str, frames: list[dict]) -> str:
+    """The close reason a plural name's dial answers with (#1084):
+    the name, the owners, and the by-id remedy — the websocket's
+    half of the payload the REST 409 carries."""
+    return (
+        f"workspace name {ref!r} is held by more than one owner "
+        f"({owners_word(frames)}); address the workspace by its id"
+    )
+
+
+async def close_ambiguous(socket, exc: AmbiguousRef) -> None:
+    """The plural-name close both dial routes answer with (#1084):
+    the ambiguity's own close code, the reason naming the owners
+    and the by-id remedy — never a pick."""
+    frames = await owner_frames(exc.owners)
+    await socket.close(
+        code=AMBIGUOUS_CLOSE,
+        reason=close_reason(ambiguity_reason(exc.ref, frames)),
+    )
+
+
 async def workspace_or_404(app, workspace_id: str, caller: int) -> dict:
     """The workspace a route's ref names — its immutable id or its
     name (#246) — or the 404.
@@ -119,13 +165,21 @@ async def workspace_or_404(app, workspace_id: str, caller: int) -> dict:
     an absent one — cross-owner access is indistinguishable from a
     miss end to end, and no verb leaks existence. A name more than
     one owner holds (legal since names became per-owner) refuses
-    to pick for a filter-bypassing caller: the 409 names the
-    owners and the by-id remedy.
+    to pick for a filter-bypassing caller: the 409 answers the
+    ambiguity's own error shape (#1084) — the kind word, the name,
+    and the owners as frames — never the not-found path.
     """
     try:
         row = await app.state.model.get_workspace(workspace_id, viewer=caller)
     except AmbiguousRef as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from None
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": AMBIGUOUS_WORKSPACE,
+                "name": exc.ref,
+                "owners": await owner_frames(exc.owners),
+            },
+        ) from None
     if row is None:
         raise HTTPException(status_code=404, detail="no such workspace")
     return row
