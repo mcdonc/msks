@@ -409,22 +409,25 @@ def test_the_listing_frame_families() -> None:
 
 
 def test_the_row_frame_families() -> None:
-    """Which frames move one workspace's row (#1019): the
-    lifecycle and volume families naming the workspace — under
-    either naming convention the stream uses — and the catalog
-    family, which names none and moves every row's image cell;
-    another workspace's frame and every other family move
-    nothing."""
+    """Which frames move one workspace's row (#1019, #1042):
+    the lifecycle and volume families naming the workspace —
+    under either naming convention the stream uses — a mode
+    switch's rules frame naming it (the row's posture word
+    follows the switch), and the catalog family, which names
+    none and moves every row's image cell; another workspace's
+    frame and every other family move nothing."""
     mine = [
         {"event": "workspace.status", "data": {"id": "ws-a"}},
         {"event": "home.imported", "data": {"workspace_id": "ws-a"}},
+        {"event": "egress.rules", "data": {"workspace_id": "ws-a"}},
         {"event": "image.changed", "data": {}},
     ]
     not_mine = [
         {"event": "workspace.status", "data": {"id": "ws-b"}},
         {"event": "home.imported", "data": {}},
         {"event": "proxy.listening", "data": {"id": "ws-a"}},
-        {"event": "egress.rules", "data": {"id": "ws-a"}},
+        {"event": "egress.rules", "data": {"workspace_id": "ws-b"}},
+        {"event": "egress.request", "data": {"workspace_id": "ws-a"}},
     ]
     assert [frames_mod.row_frame(frame, "ws-a") for frame in mine] == [
         True

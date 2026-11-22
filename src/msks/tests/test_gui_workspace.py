@@ -297,8 +297,8 @@ def test_the_page_carries_the_tab_strip(qt) -> None:
         "Shells",
         "Mounts",
         "Proxies",
-        "Events",
         "Egress",
+        "Events",
     ]
     assert page.bar.currentIndex() == 0  # Shells, the default
     # The active tab's mark (#1012): the strip wears the shared
@@ -307,8 +307,8 @@ def test_the_page_carries_the_tab_strip(qt) -> None:
     assert page.stack.currentIndex() == 0
     assert page.stack.widget(0) is page.shells_tab
     assert page.shells_tab.shells is page.shells
-    assert page.stack.widget(3) is page.events_tab  # the bar's own order
-    assert page.stack.widget(4) is page.egress_tab
+    assert page.stack.widget(3) is page.egress_tab  # the bar's own order
+    assert page.stack.widget(4) is page.events_tab
     assert page.stack.count() == 5
     show_tab(page, "Egress")
     assert page.stack.currentWidget() is page.egress_tab
@@ -444,8 +444,8 @@ def test_the_proxies_tab_rides_the_page(qt) -> None:
     repaints it without a manual action."""
     page, window, bridge = make_page(qt)
     assert bar_index(page, "Proxies") == 2
-    assert bar_index(page, "Events") == 3
-    assert bar_index(page, "Egress") == 4
+    assert bar_index(page, "Egress") == 3
+    assert bar_index(page, "Events") == 4
     land(qt, page, bridge)
     # The open's own refresh already poked a listing; answer it
     # so the next refresh's poke runs.
@@ -481,7 +481,11 @@ def test_the_proxies_tab_rides_the_page(qt) -> None:
     )
     assert [c[1] for c in bridge.calls if c[1] == "workspace_proxies"]
     # A pushed rules frame — a switch the CLI made elsewhere —
-    # repaints the tab without a read of its own.
+    # repaints the tab without a read of its own, and the row
+    # re-reads behind it (#1042): the footer's posture word
+    # follows the switch instead of standing on the stale row.
+    land(qt, page, bridge)  # the refresh's row and storage answers
+    bridge.calls.clear()
     page.push_frame(
         {
             "event": "egress.rules",
@@ -495,7 +499,12 @@ def test_the_proxies_tab_rides_the_page(qt) -> None:
         }
     )
     assert page.egress_tab.mode_line.text() == "current mode: static"
-    assert not [c for c in bridge.calls if c[1] == "egress_rules"]
+    assert (qt.page_mod.ROW_KEY, "workspaces", ()) in bridge.calls
+    bridge.succeeded.emit(
+        qt.page_mod.ROW_KEY,
+        [{**daemon_row(), "egress_mode": "static"}],
+    )
+    assert "egress static" in page.footer.text()
     window.close()
 
 

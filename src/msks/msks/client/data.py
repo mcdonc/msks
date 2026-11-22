@@ -228,11 +228,11 @@ class RestData:
         ``applied`` beside it."""
         body: dict = {"mode": mode}
         if confirm_empty:
-            # The wire key's spelling is the spec's CONFIRM_EMPTY
-            # token (#1042), pinned to it by the suite's marker
-            # test — the shared constant itself stays unimported
-            # here: every module that could carry it to the
-            # client sits at the import fan-in ceiling.
+            # The wire key's spelling is pinned where the wire
+            # itself is tested: the data-layer tests assert this
+            # body, and the route's refusal — whose detail names
+            # the flag — is copied verbatim into the Egress tab's
+            # tests (#1042).
             body["confirm_empty"] = True
         return await self.rest(
             "PUT",

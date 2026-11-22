@@ -1,7 +1,7 @@
 """The workspace detail screen (phase 4 of #924, #945): the
 page the workspace list opens on one row — the tab strip's
 surfaces (the shells, the editable mounts, the proxies, the
-events window, the egress posture) refreshed on the listing's
+eegress posture, the events window) refreshed on the listing's
 own cadence through the bridge: the row out of the workspaces
 listing, the footer's storage fact out of the capacity report.
 The Info
@@ -96,10 +96,10 @@ class WorkspaceDetail(QtWidgets.QWidget):
     """One workspace's page (#945, #954, #971, #974): the tab
     row beside the back arrow — Shells, the default (#974),
     with the workspace's terminal sessions as subtabs (#954),
-    Mounts (#987), Proxies (#988), and Events (#989), the Info
-    pane gone with its duplicated sections (#1017), and Egress
-    (#1042), the posture surface with its in-place mode
-    switch (#1049), over the
+    Mounts (#987), Proxies (#988), Egress (#1042, the posture
+    surface with its in-place mode switch, #1049), and Events
+    (#989), the Info pane gone with its duplicated sections
+    (#1017), over the
     footer strip, the same one-line read the listing's own
     bottom strip gives (#971). The page registers as the
     workspace's egress decider while it shows (#999): the
@@ -161,8 +161,8 @@ class WorkspaceDetail(QtWidgets.QWidget):
         # The tab row beside the back arrow (#974, #987): Shells
         # — the default, the workspace's terminal sessions as
         # subtabs — Mounts — the editable mounts surface —
-        # Proxies, Events, and Egress, the workspace's egress
-        # posture (#1042). The bar sits on the chrome's own
+        # Proxies, Egress — the workspace's egress posture
+        # (#1042) — and Events. The bar sits on the chrome's own
         # row after the arrow and drives the stack below it. The
         # strip re-hosts on every open, and the hub keeps the
         # sessions themselves alive across visits (#954).
@@ -183,14 +183,14 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.bar.addTab(SHELLS_LABEL)
         self.bar.addTab(MOUNTS_LABEL)
         self.bar.addTab(PROXIES_LABEL)
-        self.bar.addTab(EVENTS_LABEL)
         self.bar.addTab(EGRESS_LABEL)
+        self.bar.addTab(EVENTS_LABEL)
         self.stack = QtWidgets.QStackedWidget(self)
         self.stack.addWidget(self.shells_tab)
         self.stack.addWidget(self.mounts_tab)
         self.stack.addWidget(self.proxies_tab)
-        self.stack.addWidget(self.events_tab)
         self.stack.addWidget(self.egress_tab)
+        self.stack.addWidget(self.events_tab)
         self.bar.currentChanged.connect(self.stack.setCurrentIndex)
         self.chrome.insertWidget(1, self.bar)
         layout = QtWidgets.QVBoxLayout(self)

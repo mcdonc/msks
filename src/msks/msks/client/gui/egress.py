@@ -2,13 +2,13 @@
 page's egress posture surface — the workspace's current mode
 with its meaning, and the mode switch in place through the
 policy route the CLI's ``egress mode`` drives: a pick on the
-switcher commits at once, the picked mode's meaning beside the
-pick. The tab is
-the posture surface only: allow and deny of a live hold stay in
-the consent panel (#999, #1000), and the allowlist editor, the
-audit trail, and the decider presence indicator are #1042's
-later sub-issues. The nothing-effectively-allowed refusal to
-``static`` — the offline-workspace escape — reaches the operator
+switcher commits at once, the picked mode's meaning beside
+the pick. The tab is the posture surface only: allow and deny
+of a live hold stay in the consent panel (#999, #1000), and
+the allowlist editor, the audit trail, and the decider
+presence indicator are #1042's later sub-issues. The
+nothing-effectively-allowed refusal to ``static`` — the
+offline-workspace escape — reaches the operator
 as a question with an explicit confirm, never a silent failure
 or a raw error: the pick asks before it sends when the standing
 read shows the gate, and the route's own refusal (a read gone
