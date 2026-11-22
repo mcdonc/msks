@@ -241,7 +241,7 @@ def cmd_proxy_add(
         "-L",
         "--local",
         metavar="[BIND:]PORT:HOST:PORT",
-        help="forward: the daemon binds PORT (loopback, or BIND) and "
+        help="local: the daemon binds PORT (loopback, or BIND) and "
         "bridges to the workspace's port — HOST names the workspace "
         "itself (localhost)",
     ),
@@ -250,7 +250,7 @@ def cmd_proxy_add(
         "-R",
         "--remote",
         metavar="RPORT:HOST:TPORT",
-        help="reverse: the workspace's gateway binds RPORT and bridges "
+        help="remote: the workspace's gateway binds RPORT and bridges "
         "to the daemon-side service HOST:TPORT",
     ),
     label: str | None = typer.Option(

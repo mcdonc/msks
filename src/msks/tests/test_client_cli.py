@@ -6644,6 +6644,21 @@ def test_proxy_add_json_failure_reaches_the_chokepoint(
     assert rc == 3
 
 
+def test_proxy_add_help_reads_sshs_direction_pair(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#1032: the -L and -R help read ssh's local/remote pair,
+    named for the side that holds the listener. The help never
+    says "reverse" for the -R direction."""
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["proxy", "add", "--help"])
+    assert caught.value.code == 0
+    flat = help_flat(capsys.readouterr().out)
+    assert "local: the daemon binds PORT" in flat
+    assert "remote: the workspace's gateway binds RPORT" in flat
+    assert "reverse" not in flat
+
+
 def test_start_json_survives_a_failed_refresh(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

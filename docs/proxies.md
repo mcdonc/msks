@@ -18,7 +18,7 @@ Two directions exist, and both borrow ssh's letters and ssh's spec grammar.
 The spec reads `listen : target`, left to right. The flag letter says which
 side listens.
 
-A forward proxy (`-L`) binds a port on the daemon's host. Every connection
+A local proxy (`-L`) binds a port on the daemon's host. Every connection
 to that port bridges into the workspace, to the guest port the spec names.
 This is the ssh `-L` shape: a port on your side reaching a port on the far
 end.
@@ -36,7 +36,7 @@ want there more permanently.
 
 ### What each side connects to
 
-A forward proxy's target is the workspace itself. The spec's host field names
+A local proxy's target is the workspace itself. The spec's host field names
 the workspace, the way ssh's `-L` host names the far end, and it accepts
 exactly two spellings: `localhost` or `127.0.0.1`. Anything else refuses with
 a message that points at the `-R` direction, which is the one that reaches
@@ -107,7 +107,7 @@ The daemon binds `127.0.0.1:8080` on its own host. A browser there opens
 
 ### Reaching a guest service from other machines
 
-The same forward with a bind address:
+The same local proxy with a bind address:
 
 ```bash
 msks proxy add my-workspace -L 0.0.0.0:8080:localhost:8080
@@ -155,7 +155,7 @@ and live status. A removal closes the listener at once and drops the row.
 row. A different spec on the same bind is refused with the row that holds
 it.
 
-A forward proxy binds at once, on a stopped workspace too; each connection
+A local proxy binds at once, on a stopped workspace too. Each connection
 refuses until the guest runs. A remote proxy on a stopped workspace records
 the row, and the workspace's next start brings its listener up. A stop
 closes every listener the workspace owns. Each start binds them again. A
@@ -184,7 +184,7 @@ Press `p` (or Enter on the Proxies action row) for the workspace's proxies
 page. The page lists that workspace's rows with the spec in the CLI's
 grammar, the label, and the live status. Press `a` to add one.
 
-The form holds the direction (`forward (-L)` or `reverse (-R)`), the spec in
+The form holds the direction (`local (-L)` or `remote (-R)`), the spec in
 the same grammar `msks proxy add` reads, and a label. A spec the parser refuses
 keeps the form standing, with the rule on the note line. `e` or Enter opens the
 same form seeded with the focused row (its direction, its spec, and its label)

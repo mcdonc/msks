@@ -1146,7 +1146,7 @@ msks proxy add my-workspace -L 2201:localhost:22
 msks proxy add my-workspace -L 0.0.0.0:2201:localhost:22
 # same, listening on every interface of the daemon's host
 msks proxy add my-workspace -R 9200:localhost:9200
-# reverse: the workspace's gateway listens on 9200, and every guest
+# remote: the workspace's gateway listens on 9200, and every guest
 # connection bridges to port 9200 on the daemon's host
 msks proxy add my-workspace -R 5432:db.internal:5432 --label db
 # the gateway's 5432 bridges to db.internal:5432; the daemon makes the connection
@@ -1163,11 +1163,11 @@ msks: -L's host field names the workspace itself; only localhost or
 127.0.0.1 is allowed — to reach a daemon-side service, use -R
 ```
 
-The workspace cannot connect out on a forward's behalf (no agent runs inside it),
-so a forward always lands on the workspace itself. Reaching a daemon-side
-service is the `-R` direction.
+The workspace cannot connect out on a local proxy's behalf, because no
+agent runs inside it. A local proxy always lands on the workspace itself.
+Reaching a daemon-side service is the `-R` direction.
 
-A remote proxy is the reverse of a forward one. The guest connects to `host.msks`
+A remote proxy is the other direction. The guest connects to `host.msks`
 on the listen port. The workspace's resolver answers that name with its DHCP
 gateway address (`ip route show default` inside the workspace prints the same
 address). The daemon bridges the connection to the daemon-side service the
@@ -1181,7 +1181,7 @@ remote row therefore reaches its target without a verdict.
 
 `add` is declarative. Asking twice for the same spec returns the standing
 row. A different spec on the same bind is refused with the row that holds it.
-A forward proxy binds at once, on a stopped workspace too; each connection
+A local proxy binds at once, on a stopped workspace too. Each connection
 refuses until the guest runs. A remote proxy on a stopped workspace records
 the row, and the workspace's next start brings its listener up. A stop
 closes every listener the workspace owns. A proxy whose bind fails (the

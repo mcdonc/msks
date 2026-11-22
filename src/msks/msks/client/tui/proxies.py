@@ -363,8 +363,8 @@ class ProxyFormScreen(SeededForm):
                 yield Static("direction", classes="form-label")
                 yield FormSelect(
                     [
-                        ("forward (-L)", FORWARD_CHOICE),
-                        ("reverse (-R)", REMOTE_CHOICE),
+                        ("local (-L)", FORWARD_CHOICE),
+                        ("remote (-R)", REMOTE_CHOICE),
                     ],
                     value=seeded_direction(seeded),
                     allow_blank=False,

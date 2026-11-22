@@ -307,7 +307,7 @@ paints itself without a keypress. There is no polling timer: a
 daemon at rest sends the page nothing.
 
 `a` opens the add form: the workspace (the page's own, shown as its
-name), the direction (`forward (-L)` or `reverse (-R)`), the spec in
+name), the direction (`local (-L)` or `remote (-R)`), the spec in
 the same grammar `msks proxy add` reads, and a label. `e`, Enter, or
 a click on the focused row opens the same form seeded with the row
 (its direction, its spec, and its label) and saves the row
