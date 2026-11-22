@@ -18,11 +18,14 @@
 # image archives — guest-assets.yml already owns that budget,
 # and this break class does not need it.
 #
-# Path-filtered to the surfaces the build reads: the flake and
-# its lock, the nix expressions, and the dependency metadata
-# (pyproject/uv.lock) the wheel mirrors. src/ stays out — the
-# pytest suites cover it, and the wheel's runtime-deps check
-# reads pyproject, not source.
+# Path-filtered like guest-assets.yml: the flake and its lock, the
+# nix expressions, and the dependency metadata (pyproject/uv.lock)
+# the wheel mirrors. The devenv files ride along on the same
+# convention — a devenv pin move implies a flake pin move (the
+# locks-pin-same-rev test), so a move there builds here too.
+# nix/source.nix also reads src/ and README.md into the wheel
+# build, but a src-only change is the pytest suites' surface, and
+# the runtime-deps check reads pyproject, not source.
 name: Nix flake
 
 on:
