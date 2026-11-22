@@ -8,7 +8,8 @@ from fastapi import APIRouter, WebSocket
 
 from ...microvm.errors import MicrovmError
 from ...microvm.local import close_console_stream
-from .deps import authed_accept
+from ...model.workspaces import AmbiguousRef
+from .deps import authed_accept, caller_uid
 from .streams import (
     DETACHED_DRAINS,  # noqa: F401 — re-exported for tests' discovery
     close_reason,
@@ -173,12 +174,24 @@ def router(app) -> APIRouter:
         # Authorization header (#216). Closing the websocket closes
         # exactly one guest shell session; the workspace keeps
         # running. Auth accepts or closes 4401: the client sees a
-        # specific close reason (4401/4404/4501) instead of a
+        # specific close reason (4400/4401/4404/4501) instead of a
         # generic HTTP 403 rejection.
         if not await authed_accept(app, socket):
             return
-        row = await app.state.model.get_workspace(workspace_id)
+        # The owner filter (#1082) reads the handshake's peer
+        # credential — the same scope pair the auth above read.
+        try:
+            row = await app.state.model.get_workspace(
+                workspace_id, viewer=caller_uid(socket.scope)
+            )
+        except AmbiguousRef as exc:
+            # A name more than one owner holds: name the ambiguity
+            # and the by-id remedy — never a pick.
+            await socket.close(code=4400, reason=close_reason(str(exc)))
+            return
         if row is None:
+            # A foreign row and an absent one answer the same
+            # close (#1082): the mask, not a leak.
             await socket.close(code=4404)
             return
         # The ref (name or id, #246) resolved: the console dial and

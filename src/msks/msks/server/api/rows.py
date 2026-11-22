@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from ...hostshares import check_host_share
+from ...model.workspaces import AmbiguousRef
 from ...spec.mounts import MountIssue, parse_mounts, validate_mounts
 from ...spec.vm import VmSpec, VmStatus
 
@@ -109,10 +110,22 @@ async def serialize_create(app, key: str):
     return lock
 
 
-async def workspace_or_404(app, workspace_id: str) -> dict:
+async def workspace_or_404(app, workspace_id: str, caller: int) -> dict:
     """The workspace a route's ref names — its immutable id or its
-    unique name (#246) — or the 404."""
-    row = await app.state.model.get_workspace(workspace_id)
+    name (#246) — or the 404.
+
+    *caller* is the owner filter (#1082): it runs before the row
+    lookup, and a row another owner holds answers 404 exactly like
+    an absent one — cross-owner access is indistinguishable from a
+    miss end to end, and no verb leaks existence. A name more than
+    one owner holds (legal since names became per-owner) refuses
+    to pick for a filter-bypassing caller: the 409 names the
+    owners and the by-id remedy.
+    """
+    try:
+        row = await app.state.model.get_workspace(workspace_id, viewer=caller)
+    except AmbiguousRef as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     if row is None:
         raise HTTPException(status_code=404, detail="no such workspace")
     return row
@@ -210,15 +223,20 @@ def home_volume_guard(app, row: dict) -> tuple[int, str] | None:
     return None
 
 
-async def rechecked_row(app, workspace_id: str) -> dict:
+async def rechecked_row(app, workspace_id: str, caller: int) -> dict:
     """The row re-read under the move-lock, with both guards applied.
+
+    The owner filter (#1082) rides the re-read: the caller is the
+    one the route's first resolve proved, and the re-read answers
+    the same mask — a delete landing between the two reads cannot
+    widen the view.
 
     The row's status is the cheap guard; the live seam is the
     truth-guard: a watcher scan that probed a launch's spawn window
     can leave a live VM's row at ``stopped`` for one poll interval,
     and the seam's answer refuses where the row lies (#80 review).
     """
-    row = await app.state.model.get_workspace(workspace_id)
+    row = await app.state.model.get_workspace(workspace_id, viewer=caller)
     if row is None:
         raise HTTPException(status_code=404, detail="no such workspace")
     guard = home_volume_guard(app, row)

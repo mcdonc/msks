@@ -13,6 +13,7 @@ import asyncio
 
 from fastapi import HTTPException, Request, WebSocket
 
+from ...model.workspaces import daemon_uid
 from .. import localsocket
 
 
@@ -41,6 +42,25 @@ async def require_token(request: Request) -> None:
         raise HTTPException(status_code=401, detail="missing bearer token")
     if not await model.token_valid(plaintext):
         raise HTTPException(status_code=401, detail="invalid or revoked token")
+
+
+def caller_uid(scope: dict) -> int:
+    """The uid a request acts as (#1082): the local listener's peer
+    credential when the kernel vouched for one, else the daemon's
+    own uid — the mapping the TCP/token surface takes, which the
+    peer policy already treats as owner. Works for websocket
+    scopes too (the handshake's credential rides the same client
+    pair, #555)."""
+    uid = localsocket.is_unix_scope(scope)
+    return daemon_uid() if uid is None else uid
+
+
+async def authed_caller(request: Request) -> int:
+    """FastAPI dependency: :func:`require_token`'s gate, answered
+    with the caller's uid (#1082) — the identity every
+    owner-filtered workspace read resolves against."""
+    await require_token(request)
+    return caller_uid(request.scope)
 
 
 def bearer_token(socket: WebSocket) -> str | None:
