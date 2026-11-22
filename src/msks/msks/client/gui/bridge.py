@@ -129,6 +129,7 @@ class Bridge(QtCore.QObject):
         self._decider_factory = decider_factory
         self._feed_task: asyncio.Task | None = None
         self._decider_task: asyncio.Task | None = None
+        self._decider_link = None
         #: The standing registration's workspace (#999) — the
         #: idempotence key a re-ask for the page's own workspace
         #: reads.
@@ -287,6 +288,7 @@ class Bridge(QtCore.QObject):
         link.on_drop = lambda reason: self.decider_dropped.emit(
             workspace_id, reason
         )
+        self._decider_link = link
         self._decider_workspace = workspace_id
         self._decider_controller = controller
         task = loop.create_task(link.run())
@@ -321,15 +323,31 @@ class Bridge(QtCore.QObject):
         self._loop.call_soon_threadsafe(self.retire_decider)
 
     def retire_decider(self) -> None:
-        """The retire on the loop thread: the slot cleared, the
-        task cancelled and held in the retiring set until its
-        unwind lands — the loop's shutdown waits for it there."""
+        """The retire on the loop thread: the standing link's
+        own drop tell silenced before the cancel — the unwind
+        can outlast a whole re-registration (its close handshake
+        suspends up to the close bound), and a drop that lands
+        after the new link's serve would paint a healthy
+        registration down (#1052 review) — the retire's drop
+        told here instead, synchronously with the retire, its
+        workspace beside it: the indicator reads down while the
+        page is away, and the link that takes over tells the
+        rest. The slot cleared, the task cancelled and held in
+        the retiring set until its unwind lands — the loop's
+        shutdown waits for it there. A task that already ended
+        (the daemon's refusal) tells nothing: its own refusal
+        stands."""
         task = self._decider_task
+        link = self._decider_link
+        workspace = self._decider_workspace
         self._decider_task = None
+        self._decider_link = None
         self._decider_workspace = ""
         self._decider_controller = None
         if task is None or task.done():
             return
+        link.on_drop = None
+        self.decider_dropped.emit(workspace, "the registration was retired")
         task.cancel()
         self._retiring.add(task)
 

@@ -619,3 +619,38 @@ def test_the_retire_tells_its_drop() -> None:
         ]
 
     asyncio.run(scenario())
+
+
+def test_a_refused_close_leaves_the_ladder_where_it_stood(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The slow arm's counter (#1052 review): the token refusal's
+    close takes its fixed interval and leaves the ladder's
+    counter untouched — a failed dial before it climbed to the
+    second step, and the first failed dial after it parks on
+    that step instead of restarting the climb."""
+    monkeypatch.setattr(decider_mod, "REFUSED_RETRY_S", 0.001)
+
+    async def scenario() -> None:
+        refused_ws = FakeWS([refused_closed(4401)])
+        sockets: list = [BrokenDial(), refused_ws]
+
+        def dial():
+            return sockets.pop(0) if sockets else BrokenDial()
+
+        link = decider_mod.DeciderLink("ws-a", ws_factory=dial)
+        seen = Recorder()
+        seen.wire(link)
+        # The ladder's first step is fast, its second parks: the
+        # parked link tells exactly the three drops the sequence
+        # owes — dial failed, token refused, dial failed — and
+        # no fourth attempt runs inside the test's span.
+        task = drive(link, delays=(0.001, 3600.0))
+        await settle()
+        task.cancel()
+        dials = [d for d in seen.drops if d.startswith("the dial failed")]
+        assert seen.drops[0] == "the dial failed: connection refused"
+        assert seen.drops[1] == "the daemon refused the token"
+        assert len(dials) == 2  # the counter kept its second step
+
+    asyncio.run(scenario())

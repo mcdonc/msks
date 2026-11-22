@@ -138,10 +138,13 @@ class DeciderLink:
                 attempt = self.next_attempt(attempt, served)
                 await asyncio.sleep(backoff(self.reconnect_delays, attempt))
         except asyncio.CancelledError:
-            # The page's retire (#999): the cancel is the
-            # registration's own end, and the drop tells it
-            # (#1052) — the indicator reads down while the page
-            # is away, and the raise keeps the task's cancelled
+            # The cancel is the registration's own end (#999),
+            # and the drop tells it (#1052) for a link driven
+            # bare — the bridge's retire silences this tell and
+            # emits its own drop in the retire's ordering
+            # (#1052 review: an unwind that outlasts a whole
+            # re-registration must not paint the new one down)
+            # — and the raise keeps the task's cancelled
             # contract.
             self.note_drop("the page retired the registration")
             raise

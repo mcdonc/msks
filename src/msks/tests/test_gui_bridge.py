@@ -695,3 +695,86 @@ def test_the_controller_arms_of_the_idempotence_rule(qapp_setup) -> None:
     assert links[2].controller is fresh
     bridge.stop()
     assert not bridge.running
+
+
+def test_the_retire_tells_its_own_drop_and_silences_the_link(
+    qapp_setup,
+) -> None:
+    """The retire's ordering (#1052 review): the page's retire
+    tells its drop itself — synchronously with the retire, the
+    workspace beside it, so the indicator reads down before any
+    new registration can tell — and silences the retired link's
+    own cancel-unwind: a close handshake that outlasts a whole
+    re-registration of the same workspace must not land its
+    drop after the new link's serve and paint a healthy
+    registration down. A retire over a task that already ended
+    (the daemon's refusal) tells nothing: the refusal stands."""
+
+    class RetiringDropLink:
+        """A link whose cancel-unwind would tell a drop: the
+        retire's silencing is the assert."""
+
+        def __init__(self, workspace_id: str, controller=None) -> None:
+            self.workspace_id = workspace_id
+            self.controller = controller
+            self.on_frame = None
+            self.on_rejected = None
+            self.on_serve = None
+            self.on_drop = None
+            self.cancelled = False
+
+        async def run(self) -> None:
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                self.cancelled = True
+                if self.on_drop is not None:
+                    self.on_drop("the page retired the registration")
+                raise
+
+    qt = qapp_setup
+
+    class DropReceiver(qt.Receiver):
+        def __init__(self, bridge) -> None:
+            super().__init__(bridge)
+            self.drops: list[tuple[str, str]] = []
+            bridge.decider_dropped.connect(self.on_drop_told)
+
+        def on_drop_told(self, workspace: str, reason: str) -> None:
+            self.drops.append((workspace, reason))
+
+    links: list[RetiringDropLink] = []
+    bridge = qt.Bridge(
+        StubData(),
+        decider_factory=lambda workspace_id, controller=None: (
+            links.append(RetiringDropLink(workspace_id)) or links[-1]
+        ),
+    )
+    bridge.start()
+    receiver = DropReceiver(bridge)
+    bridge.start_decider("ws-1")
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        qt.app.processEvents()
+        if bridge._decider_task is not None:
+            time.sleep(TICK)
+            break
+        time.sleep(TICK)
+    bridge.stop_decider()
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        qt.app.processEvents()
+        if receiver.drops and links[0].cancelled:
+            break
+        time.sleep(TICK)
+    # The retire's one drop, its workspace beside it; the link's
+    # own unwind told nothing over it.
+    assert receiver.drops == [("ws-1", "the registration was retired")]
+    assert links[0].cancelled
+    assert links[0].on_drop is None
+    # A second retire with nothing standing is the plain no-op.
+    bridge.stop_decider()
+    time.sleep(0.05)
+    qt.app.processEvents()
+    assert receiver.drops == [("ws-1", "the registration was retired")]
+    bridge.stop()
