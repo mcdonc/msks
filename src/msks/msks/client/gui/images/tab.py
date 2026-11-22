@@ -1,14 +1,19 @@
-"""The images tab (phase 4.6 of #924, #964): the thin widget
+"""The images tab (phase 4.6 of #924, #964, #1060): the thin widget
 that renders the presenter's row models
 (:mod:`msks.client.gui.imagerows`) as the TUI's image page's
 counterpart — two labeled groups, *In the catalog* (the
 daemon's rows, the default marker, each import's date) and
 *Published* (the channel manifest's rows with their
 descriptions, sizes, build dates, and membership markers). The
-screen holds no business logic: the tab's one refresh walks the
+screen holds no business logic: the tab's reads walk the
 bridge to the gathered read (:meth:`msks.client.gui.data.
 GuiData.images_page`), and the answers rebuild the groups from
-the plain models. An import on a published row holds the wait
+the plain models. The reads run at every show and on every
+pushed catalog move (#1060): an ``image.changed`` frame the
+daemon publishes (import, rename, remove — any client's) takes
+the catalog-only read while the tab owns the window, and the
+feed's serve poke takes the gathered one, so the page holds no
+Refresh button. An import on a published row holds the wait
 behind a progress dialog — the daemon downloads, verifies, and
 floor-checks, and the catalog refreshes when the import lands;
 a catalog row opens its detail (the shared ``image info``
@@ -28,9 +33,11 @@ import time
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ...data import RestFailure
+from ...frames import images_frame
 from ...images import info_lines
 from ..bridge import Bridge
 from ..dialogs import Centered, center_on_parent
+from ..feedpage import FeedPage
 from ..forms import confirm
 from ..imagerows import (
     IMPORTED_MARKER,
@@ -60,8 +67,8 @@ from .cells import (
     size_rank,
 )
 
-#: The tab's gathered refresh key (#964): the open's first read
-#: and the manual refresh's — one flight, both groups.
+#: The tab's gathered refresh key (#964): the read every show
+#: takes and the serve poke's (#1060) — one flight, both groups.
 PAGE_KEY = "images-page"
 
 #: The catalog-only refresh key (#964): the read an action's
@@ -124,15 +131,16 @@ class ImageDetailDialog(Centered, QtWidgets.QDialog):
         layout.addLayout(buttons)
 
 
-class ImagesTab(QtWidgets.QWidget):
-    """The Images tab of the main window's strip (#964): the two
-    labeled groups the presenter's models fill, refreshed whole
-    when the tab opens and through the manual action — the
-    channel's rows do not move on their own, so no standing tick
-    runs. Every daemon exchange walks the bridge; the answers
-    arrive on the GUI thread through this widget's slots, and a
-    failure flashes the status line while the groups already on
-    screen stand.
+class ImagesTab(FeedPage, QtWidgets.QWidget):
+    """The Images tab of the main window's strip (#964, #1060):
+    the two labeled groups the presenter's models fill — at
+    every show, on the feed's serve poke, and behind every
+    pushed catalog move while the tab owns the window (the
+    channel's rows move only through a gathered read, so no
+    standing tick runs). Every daemon exchange walks the bridge;
+    the answers arrive on the GUI thread through this widget's
+    slots, and a failure flashes the status line while the
+    groups already on screen stand.
     """
 
     def __init__(self, bridge: Bridge, manifest_url: str) -> None:
@@ -162,8 +170,26 @@ class ImagesTab(QtWidgets.QWidget):
         self.read_seq = 0
         self.page_seq = 0
         self.catalog_seq = 0
+        # The gathered read a landing owes (#1060's review round): an
+        # ask the one-flight guard refused while a page flight stood
+        # out — its landing takes the read, so a serve poke or a
+        # show under a stalled flight still lands.
+        self.page_due = False
+        # The catalog read a landing owes (#1060): an ask the
+        # one-flight guard refused while a catalog read stood
+        # out — its landing takes the read, so a catalog move
+        # the standing flight predates still lands.
+        self.catalog_due = False
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
+        # The pushed frames and the feed's state (#1060): the
+        # catalog moves re-read the page while it owns the
+        # window, the serve poke re-reads it whole, and a drop
+        # flashes — the pushed frames are the page's freshness
+        # now that no button stands.
+        bridge.landed.connect(self.frame_landed)
+        bridge.feed_served.connect(self.feed_served)
+        bridge.feed_dropped.connect(self.feed_dropped)
         self.catalog_table = ListTable(0, len(CATALOG_COLUMNS), self)
         self.catalog_table.setHorizontalHeaderLabels(CATALOG_COLUMNS)
         self.build_table(self.catalog_table)
@@ -185,12 +211,6 @@ class ImagesTab(QtWidgets.QWidget):
             self.published_menu_requested
         )
         self.status = QtWidgets.QLabel("", self)
-        self.refresh_button = QtWidgets.QPushButton("Refresh", self)
-        self.refresh_button.clicked.connect(self.refresh)
-        # The button's arrow bridges (#962's rule, the page's
-        # own): Up from the page's bottom bar enters the groups
-        # above, Down hands the keyboard out of the page.
-        self.refresh_button.installEventFilter(self)
         self.import_timer = QtCore.QTimer(self)
         self.import_timer.setInterval(IMPORT_TICK_MS)
         self.import_timer.timeout.connect(self.import_tick)
@@ -208,17 +228,14 @@ class ImagesTab(QtWidgets.QWidget):
             QtWidgets.QSizePolicy.Policy.Ignored,
             QtWidgets.QSizePolicy.Policy.Preferred,
         )
-        # The refresh action leads the bar (#964, the operator's
-        # ask, the bar at the page's bottom since #1011 — the
-        # Mounts and Proxies pattern): the button on the left,
-        # the flash line taking the rest.
-        bar = QtWidgets.QHBoxLayout()
-        bar.addWidget(self.refresh_button)
-        bar.addWidget(self.status, stretch=1)
+        # The flash line at the page's bottom (#964, #1011 —
+        # the Mounts and Proxies pattern): the pushed frames
+        # re-read the page now (#1060), so no button stands
+        # beside it — the line takes the bar whole.
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.group(CATALOG_GROUP, self.catalog_table))
         layout.addWidget(self.group(PUBLISHED_GROUP, self.published_table))
-        layout.addLayout(bar)
+        layout.addWidget(self.status)
         layout.addWidget(self.counts)
         self.setLayout(layout)
 
@@ -276,12 +293,15 @@ class ImagesTab(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def refresh(self) -> None:
-        """The tab's whole refresh (#964): the open's first read
-        and the manual action's — both groups from one flight,
-        the status line saying the fetch is out. A refresh
-        already in flight is skipped, the listing's own guard
-        (#470)."""
+        """The tab's whole refresh (#964): the read every show
+        takes and the serve poke's (#1060) — both groups from
+        one flight, the status line saying the fetch is out. A
+        refresh already in flight carries the ask instead (#1060's
+        review round): its landing takes the read the guard refused,
+        so a serve poke or a show under a stalled flight still
+        lands — the secrets page's own rule."""
         if self.pending:
+            self.page_due = True
             return
         self.pending = True
         self.flash_seq += 1  # retire any pending flash timeout
@@ -291,15 +311,20 @@ class ImagesTab(QtWidgets.QWidget):
         self.bridge.call(PAGE_KEY, "images_page", self.url)
 
     def refresh_catalog(self) -> None:
-        """The catalog-only refresh (#964): the read an action's
-        landing takes — the channel's rows did not change, and
-        the published group's markers move against the new
-        catalog alone. The reader sequence moves here, so a page
-        flight already out — its catalog read possibly older
-        than this one's — cannot land its half over the fresher
-        rows, and this one's answer stands down before a later
-        page flight's."""
+        """The catalog-only refresh (#964, #1060): the read an
+        action's landing takes and a pushed catalog move's —
+        the channel's rows did not change, and the published
+        group's markers move against the new catalog alone. The
+        reader sequence moves here, so a page flight already out
+        — its catalog read possibly older than this one's —
+        cannot land its half over the fresher rows, and this
+        one's answer stands down before a later page flight's.
+        A read already out carries the ask instead (#1060): its
+        landing takes the flight the guard refused, so a move
+        the standing flight predates — a second import under
+        one read — still lands."""
         if self.catalog_pending:
+            self.catalog_due = True
             return
         self.read_seq += 1
         self.catalog_seq = self.read_seq
@@ -339,7 +364,10 @@ class ImagesTab(QtWidgets.QWidget):
         the presenter's models — the published half always, the
         catalog half only when no fresher catalog read landed
         under the flight — the raw rows cached for the detail
-        view and the after-action markers."""
+        view and the after-action markers. A carried ask
+        (#1060's review round) takes its read here: the guard
+        held it while this flight stood, and the move it names
+        may postdate this answer."""
         self.pending = False
         page = result or {}
         self.published_raw = list(page.get("published") or [])
@@ -347,21 +375,49 @@ class ImagesTab(QtWidgets.QWidget):
             self.catalog_raw = list(page.get("catalog") or [])
         self.rebuild()
         self.standing(counts_text(self.catalog_raw, self.published_raw))
+        self.carried_page()
+
+    def carried_page(self) -> None:
+        """The gathered flight's owed read (#1060's review round):
+        an ask the one-flight guard held while this flight stood
+        takes its read here — the move it names may postdate
+        this answer."""
+        if self.page_due:
+            self.page_due = False
+            self.refresh()
 
     def catalog_landed(self, result: object) -> None:
         """The catalog answer (#964): the catalog group and the
         published markers rebuild against the new rows, and the
         standing counts read the new state — unless a later
         reader went out after this flight, whose fresher rows
-        this one must not wipe."""
+        this one must not wipe. A carried ask (#1060) takes its
+        read here: the guard held it while this flight stood,
+        and the move it names may postdate this answer."""
         self.catalog_pending = False
         if self.catalog_seq == self.read_seq:
             self.catalog_raw = list(result or [])
-            self.rebuild()
-            self.standing(counts_text(self.catalog_raw, self.published_raw))
-            return
         self.rebuild()
         self.standing(counts_text(self.catalog_raw, self.published_raw))
+        if self.catalog_due:
+            self.catalog_due = False
+            self.refresh_catalog()
+
+    # -- the pushed frames and the feed (#1060) -----------------------------
+
+    @QtCore.Slot(object)
+    def frame_landed(self, frame: dict) -> None:
+        """One pushed frame (#1060): a catalog move — the
+        ``image.`` family the image routes publish on every
+        import, rename, and remove, whatever client made it —
+        takes the catalog-only read while the tab owns the
+        window; the channel's rows moved with it, their markers
+        rebuilding against the fresh catalog. A hidden tab
+        re-reads whole at its next show, and every other family
+        is another surface's own."""
+        if not images_frame(frame) or not self.isVisible():
+            return
+        self.refresh_catalog()
 
     def rebuild(self) -> None:
         """Both groups from the presenter (#964): the catalog in
@@ -492,9 +548,19 @@ class ImagesTab(QtWidgets.QWidget):
         key's failure is not this tab's to show."""
         if key == PAGE_KEY:
             self.pending = False
+            # The carried ask dies with the flight it waited on
+            # (#1060, the secrets page's own rule): the outage
+            # flash already names the retry, and a later landing
+            # must not fire a read nobody asked for.
+            self.page_due = False
             self.flash(str(failure), outage=failure.reach)
         elif key == CATALOG_KEY:
             self.catalog_pending = False
+            # The carried ask dies with the flight it waited on
+            # (#1060, the secrets page's own rule): the outage
+            # flash already names the retry, and a later landing
+            # must not fire a read nobody asked for.
+            self.catalog_due = False
             self.flash(str(failure), outage=failure.reach)
         elif key == IMPORT_KEY:
             self.land_import()
@@ -723,9 +789,11 @@ class ImagesTab(QtWidgets.QWidget):
         self.status.clear()
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
-        """The tab's first refresh at open (#964): the groups
-        fill when the tab is shown, not when the window builds
-        its strip — a background tab fetches nothing. A wrapper
+        """The tab's refresh at every show (#964, #1060): the
+        groups fill when the tab is shown, not when the window
+        builds its strip — a background tab fetches nothing, and
+        a return to the page re-reads whatever moved while it
+        stood hidden (a channel republish among it). A wrapper
         without its ``bridge`` (#959) fetches nothing either: Qt
         can deliver events to a widget whose construction never
         finished."""
@@ -747,12 +815,9 @@ class ImagesTab(QtWidgets.QWidget):
         self, watched: QtCore.QObject, event: QtCore.QEvent
     ) -> bool:
         """The tab's filtered gestures (#962's rule, #964's
-        own): the refresh button's arrows — Up handing the
-        keyboard to whatever stands above the tab, Down entering
-        the groups below — and a group header's press, the sort
-        the click means applied by the tab's own rule."""
-        if self.button_key(watched, event):
-            return True
+        own): a group header's press, the sort the click means
+        applied by the tab's own rule, beside a pane's own
+        resize re-flowing its columns."""
         if self.header_sorted(watched, event):
             return True
         self.pane_resized(watched, event)
@@ -772,26 +837,6 @@ class ImagesTab(QtWidgets.QWidget):
             is not None
         ):
             self.size_columns()
-
-    def button_key(self, watched: QtCore.QObject, event) -> bool:
-        """The refresh button's arrow bridges (#962's rule): Up
-        from the page's bottom bar enters the published group
-        above it, and Down hands the keyboard out of the page —
-        onward down the chain, the strip the wrap reaches — so
-        the arrows cross the page in reading order without a
-        Tab. The button's own chain walk, not the tab's: the
-        move starts from where the operator stands."""
-        if watched is not self.refresh_button or (
-            event.type() != QtCore.QEvent.Type.KeyPress
-        ):
-            return False
-        if event.key() == QtCore.Qt.Key.Key_Up:
-            QtWidgets.QWidget.focusNextPrevChild(self.refresh_button, False)
-            return True
-        if event.key() == QtCore.Qt.Key.Key_Down:
-            QtWidgets.QWidget.focusNextPrevChild(self.refresh_button, True)
-            return True
-        return False
 
     def header_sorted(self, watched: QtCore.QObject, event) -> bool:
         """A press on a group's header (#964): the sort the

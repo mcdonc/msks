@@ -1,11 +1,12 @@
-"""The GUI secrets tab (#966, #997): the presenter's models
-rendered as the placeholder listing with the audit group
-beneath, both tables' columns filling the pane's whole width
-— the TTL countdown repainted from the deadline epochs, the
-mint form, the renew picker, the revoke gate, every daemon
-exchange through the stub bridge's signal emits, the bridge's
-own tests holding the real worker's contract. The sentinel
-pane is gone (#997). The widget runs
+"""The GUI secrets tab (#966, #997, #1060): the presenter's
+models rendered as the placeholder listing with the audit
+group beneath, both tables' columns filling the pane's whole
+width — the TTL countdown repainted from the deadline epochs,
+the mint form, the renew picker, the revoke gate, the pushed
+secret family's frames coalesced into one re-read, every
+daemon exchange through the stub bridge's signal emits, the
+bridge's own tests holding the real worker's contract. The
+sentinel pane is gone (#997). The widget runs
 under the offscreen platform on every host (#939's fixture
 shape)."""
 
@@ -24,6 +25,7 @@ if importlib.util.find_spec("PySide6") is None:
 
 from msks.client import ages as ages_mod  # noqa: E402
 from msks.client.data import RestFailure  # noqa: E402
+from msks.client.frames import secrets_frame  # noqa: E402
 from msks.client.gui import secretrows as secretrows_mod  # noqa: E402
 from msks.client.gui.listtable import fill_columns  # noqa: E402
 from msks.client.gui.secrets import (  # noqa: E402
@@ -64,14 +66,18 @@ class FakeSignal:
 
 
 class StubBridge:
-    """The bridge's surface for the tab's tests: the two signals
-    the tab reads and the one verb it calls, every call recorded
-    — no worker, no network."""
+    """The bridge's surface for the tab's tests: the signals the
+    tab reads — the calls' answers, the pushed frames, the
+    feed's state (#1060) — and the one verb it calls, every
+    call recorded — no worker, no network."""
 
     def __init__(self) -> None:
         self.calls: list[tuple] = []
         self.succeeded = FakeSignal()
         self.failed = FakeSignal()
+        self.landed = FakeSignal()
+        self.feed_served = FakeSignal()
+        self.feed_dropped = FakeSignal()
 
     def call(self, key: str, method: str, *args: object) -> None:
         self.calls.append((key, method, args))
@@ -456,7 +462,7 @@ def test_the_ttl_column_counts_down_without_a_daemon_call(
     window.close()
 
 
-def test_the_manual_refresh_skips_a_flight_already_out(
+def test_a_refresh_under_a_flight_already_out_is_carried(
     qt, monkeypatch
 ) -> None:
     """The refresh guard (#966, the listing's own): a refresh
@@ -476,6 +482,158 @@ def test_the_manual_refresh_skips_a_flight_already_out(
     tab.refresh()
     assert len(bridge.calls) == 1
     window.close()
+
+
+def test_a_pushed_secret_frame_re_reads_behind_the_window(
+    qt, monkeypatch
+) -> None:
+    """#1060: the secret family's frames arm the coalescing
+    window — mint, revoke, unlock, expiry, swap, sighting —
+    and the window's fire takes one silent re-read (the flash
+    line untouched, the action landings' own rule)."""
+    tab, window, bridge = make_tab(qt, monkeypatch)
+    bridge.calls.clear()
+    bridge.landed.emit(
+        {"event": "secret.mint", "data": {"workspace_id": "ws-a"}}
+    )
+    assert bridge.calls == []  # the window holds the read back
+    assert tab.frame_timer.isActive()
+    tab.frame_due()
+    assert bridge.calls == [(secrets_mod.PAGE_KEY, "secrets_page", ())]
+    assert tab.status.text() == ""
+    window.close()
+
+
+def test_a_frame_burst_coalesces_into_one_read(qt, monkeypatch) -> None:
+    """#1060: an intercepted request burst — one ``secret.swap``
+    frame per request — produces one re-read, not one per
+    frame: frames landing inside the window absorb into the
+    single flight its fire takes."""
+    tab, window, bridge = make_tab(qt, monkeypatch)
+    bridge.calls.clear()
+    for host in ("api.example", "cdn.example", "auth.example"):
+        bridge.landed.emit({"event": "secret.swap", "data": {"host": host}})
+    tab.frame_due()
+    assert bridge.calls == [(secrets_mod.PAGE_KEY, "secrets_page", ())]
+    window.close()
+
+
+def test_a_sustained_burst_re_arms_the_window_flight_by_flight(
+    qt, monkeypatch
+) -> None:
+    """#1060: a burst that outlasts the window never chains
+    flights frame by frame: each fire takes one read, and the
+    frames that land under it arm the next window — one flight
+    per window, whatever the pace."""
+    tab, window, bridge = make_tab(qt, monkeypatch)
+    bridge.calls.clear()
+    bridge.landed.emit({"event": "secret.swap", "data": {}})
+    tab.frame_due()  # the window's first fire
+    tab.on_succeeded(secrets_mod.PAGE_KEY, page_answer())
+    assert len(bridge.calls) == 1
+    # The frames that land under the read arm the next window.
+    bridge.landed.emit({"event": "secret.swap", "data": {}})
+    bridge.landed.emit({"event": "secret.sighting", "data": {}})
+    assert len(bridge.calls) == 1
+    tab.frame_due()
+    tab.on_succeeded(secrets_mod.PAGE_KEY, page_answer())
+    assert len(bridge.calls) == 2
+    window.close()
+
+
+def test_the_frame_window_fires_on_the_real_timer(qt, monkeypatch) -> None:
+    """#1060's review round: the window is a real single-shot
+    timer — a frame arms it, the fire lands on the event loop's
+    own clock, and the coalesced read flies without any hand
+    calling the slot."""
+    tab, window, bridge = make_tab(qt, monkeypatch)
+    bridge.calls.clear()
+    bridge.landed.emit({"event": "secret.mint", "data": {}})
+    qt.QtTest.QTest.qWait(700)
+    assert bridge.calls == [(secrets_mod.PAGE_KEY, "secrets_page", ())]
+    window.close()
+
+
+def test_a_pushed_frame_on_a_hidden_tab_reads_nothing(qt, monkeypatch) -> None:
+    """#1060: a hidden tab re-reads whole at its next show, not
+    at every frame — and the hide stops a window the frames
+    armed, so nothing fires on a page the operator cannot
+    see."""
+    tab, window, bridge = make_tab(qt, monkeypatch)
+    bridge.calls.clear()
+    bridge.landed.emit({"event": "secret.expiry", "data": {}})
+    assert tab.frame_timer.isActive()  # the window armed while shown
+    window.hide()
+    qt.app.processEvents()
+    assert not tab.frame_timer.isActive()
+    qt.QtTest.QTest.qWait(700)
+    assert bridge.calls == []
+    window.close()
+
+
+def test_a_frame_outside_the_secret_family_reads_nothing(
+    qt, monkeypatch
+) -> None:
+    """#1060: another surface's family is not this page's to
+    read — a workspace or image frame lands and decides
+    nothing here."""
+    tab, window, bridge = make_tab(qt, monkeypatch)
+    bridge.calls.clear()
+    bridge.landed.emit({"event": "workspace.status", "data": {}})
+    bridge.landed.emit({"event": "image.changed", "data": {}})
+    assert bridge.calls == []
+    assert not tab.frame_timer.isActive()
+    window.close()
+
+
+def test_the_serve_poke_re_reads_whole(qt, monkeypatch) -> None:
+    """#1019's rule on the page (#1060): the feed's serve poke
+    re-reads whole while the tab owns the window — frames
+    published before the connection stood never landed — and a
+    hidden tab reads nothing."""
+    tab, window, bridge = make_tab(qt, monkeypatch)
+    bridge.calls.clear()
+    bridge.feed_served.emit()
+    assert bridge.calls == [(secrets_mod.PAGE_KEY, "secrets_page", ())]
+    bridge.calls.clear()
+    window.hide()
+    qt.app.processEvents()
+    bridge.feed_served.emit()
+    assert bridge.calls == []
+    window.close()
+
+
+def test_a_feed_drop_flashes_on_the_page_that_owns_the_window(
+    qt, monkeypatch
+) -> None:
+    """#946's outage tell on the page (#1060): the pushed frames
+    are the page's freshness now that no button stands, so the
+    drop flashes on the tab the operator sees and stays quiet
+    on a hidden one."""
+    tab, window, bridge = make_tab(qt, monkeypatch)
+    bridge.feed_dropped.emit("the socket broke")
+    assert tab.status.text() == ("the events feed dropped — the socket broke")
+    window.hide()
+    qt.app.processEvents()
+    tab.status.clear()
+    bridge.feed_dropped.emit("the socket broke again")
+    assert tab.status.text() == ""
+    window.close()
+
+
+def test_the_secrets_frame_classifier() -> None:
+    """#1060: the page's classifier — the whole secret family
+    reads (the routes' rare kinds and the interceptor's chatty
+    ones), every other family is another surface's own."""
+    assert secrets_frame({"event": "secret.mint", "data": {}})
+    assert secrets_frame({"event": "secret.revoke", "data": {}})
+    assert secrets_frame({"event": "secret.unlock", "data": {}})
+    assert secrets_frame({"event": "secret.expiry", "data": {}})
+    assert secrets_frame({"event": "secret.swap", "data": {}})
+    assert secrets_frame({"event": "secret.sighting", "data": {}})
+    assert not secrets_frame({"event": "workspace.status", "data": {}})
+    assert not secrets_frame({"event": "image.changed", "data": {}})
+    assert not secrets_frame({})
 
 
 def test_an_answer_for_another_key_answers_nothing(qt, monkeypatch) -> None:
@@ -575,18 +733,17 @@ def test_the_page_carries_no_sentinel_pane(qt, monkeypatch) -> None:
 
 
 def test_the_action_buttons_sit_at_the_bottom(qt, monkeypatch) -> None:
-    """The page's action row (#1011): Refresh and Mint sit in a
-    row at the bottom of the page — the detail pages' Mounts
-    and Proxies pattern — below the two groups and above the
+    """The page's action row (#1011, #1060): Mint alone on the
+    row at the bottom of the page — no Refresh button stands —
+    below the two groups and above the
     standing counts, the flash line taking the row's rest."""
     tab, window, _bridge = make_tab(qt, monkeypatch)
     layout = tab.layout()
     assert layout.itemAt(0).widget().title() == cells.LIST_GROUP
     assert layout.itemAt(1).widget().title() == cells.AUDIT_GROUP
     bar = layout.itemAt(2)  # the page's bottom row
-    assert bar.itemAt(0).widget() is tab.refresh_button
-    assert bar.itemAt(1).widget() is tab.mint_button
-    assert bar.itemAt(2).widget() is tab.status
+    assert bar.itemAt(0).widget() is tab.mint_button
+    assert bar.itemAt(1).widget() is tab.status
     assert layout.itemAt(3).widget() is tab.counts
     window.close()
 
@@ -945,10 +1102,10 @@ def test_the_mint_checks_match_the_tui_form() -> None:
 
 
 def test_the_bar_buttons_cross_by_arrows(qt, monkeypatch) -> None:
-    """The bar's arrow bridges (#962's rule, the tab's own): the
-    refresh and the Mint buttons answer Up and Down themselves —
-    handing the keyboard onward from where the operator stands —
-    and leave every other event to Qt's own handling."""
+    """The Mint button's arrow bridges (#962's rule, the tab's
+    own): Up and Down answer themselves — handing the keyboard
+    onward from where the operator stands — and leave every
+    other event to Qt's own handling."""
     tab, window, _bridge = make_tab(qt, monkeypatch)
     key = qt.QtCore.Qt.Key
     press = qt.QtCore.QEvent.Type.KeyPress
@@ -956,10 +1113,9 @@ def test_the_bar_buttons_cross_by_arrows(qt, monkeypatch) -> None:
     down = qt.QtGui.QKeyEvent(press, key.Key_Down, mods)
     up = qt.QtGui.QKeyEvent(press, key.Key_Up, mods)
     other = qt.QtGui.QKeyEvent(press, key.Key_Left, mods)
-    for button in (tab.refresh_button, tab.mint_button):
-        assert tab.eventFilter(button, down) is True
-        assert tab.eventFilter(button, up) is True
-        assert tab.eventFilter(button, other) is False
+    assert tab.eventFilter(tab.mint_button, down) is True
+    assert tab.eventFilter(tab.mint_button, up) is True
+    assert tab.eventFilter(tab.mint_button, other) is False
     assert tab.eventFilter(tab.table, down) is False
     window.close()
 

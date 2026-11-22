@@ -289,9 +289,21 @@ offers Import…, which runs behind a progress dialog while the
 daemon downloads, verifies, and floor-checks the archive. The
 catalog refreshes when the import lands.
 
-The counts line at the page's bottom tallies both sides, and
-**Refresh** re-reads them. The [images chapter](images.md)
-describes the catalog and the channel.
+The counts line at the page's bottom tallies both sides. The
+[images chapter](images.md) describes the catalog and the
+channel.
+
+The page re-reads itself. It re-reads at every show, and the
+daemon's pushed `image.changed` frame re-reads the catalog
+group while the tab is open: an import, rename, or removal from
+any attached client repaints the page. The published group is
+the channel's manifest, which the client fetches itself. The
+channel publishes no frame, so its rows move only through the
+page's re-reads.
+
+A dropped events feed flashes the page while it is open. The
+page re-reads whole when the feed serves again, so the gap
+between the drop and the recovery lands on screen.
 
 ## The Secrets tab
 
@@ -320,6 +332,18 @@ explains placeholders and sentinels.
 The **Audit** group beneath lists the daemon's recorded secret
 events, newest first: mint, revoke, expiry, and unlock rows. A
 renew changes a row's deadline without recording an audit row.
+
+The page re-reads itself. It re-reads at every show and behind
+every action, and the daemon's pushed secret frames re-read it
+while the tab is open: a mint, revoke, unlock, or expiry from
+any attached client repaints both groups. A workspace reading
+its placeholders pushes a frame per request, so the page
+batches frames behind half a second and takes one re-read per
+batch.
+
+A dropped events feed flashes the page while it is open. The
+page re-reads whole when the feed serves again, so the gap
+between the drop and the recovery lands on screen.
 
 ## The zoom keys
 

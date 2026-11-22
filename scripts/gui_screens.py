@@ -90,6 +90,7 @@ class StubBridge:
         self.succeeded = FakeSignal()
         self.failed = FakeSignal()
         self.landed = FakeSignal()
+        self.feed_served = FakeSignal()
         self.feed_dropped = FakeSignal()
         self.feed_reconnected = FakeSignal()
         self.decider_landed = FakeSignal()
