@@ -600,6 +600,29 @@ def test_a_cancelled_add_form_sends_nothing(qt, monkeypatch) -> None:
     assert bridge.calls == []
 
 
+def test_a_read_blank_under_the_form_decides_nothing(qt, monkeypatch) -> None:
+    """The change's own gate (#1050): a read that lands while
+    the form stands can blank the posture (a malformed answer);
+    the closed form's composition then decides nothing — no
+    snapshot, no write — the same ground the add's own gate
+    reads before the form opens."""
+    tab, bridge = make_tab(qt)
+
+    class BlankDialog:
+        def __init__(self, parent=None) -> None:
+            self.entry = "example.com"
+
+        def exec(self) -> int:
+            tab.take("not a frame")  # the read blanks under the form
+            return 1
+
+    monkeypatch.setattr(egress_mod, "EntryDialog", BlankDialog)
+    tab.add()
+    assert bridge.calls == []
+    assert tab.before is None
+    assert entry_rows(tab) == []
+
+
 def test_remove_posts_the_whole_list_and_lands(qt) -> None:
     """The Remove action (#1050): the selected row's entry leaves
     the list and the remaining list posts whole through the
