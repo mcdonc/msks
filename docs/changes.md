@@ -21,11 +21,11 @@ tagged `vX.Y.Z`.
 
 - **The GUI's application bundle on macOS (#1048).**
   `msks gui-shortcut` now installs `~/Applications/msks.app`, and
-  `msks-setup-macos-host` plants it beside the client links — the
+  `msks-setup-macos-host` plants it beside the client links. The
   Dock, Launchpad, and the menu bar's application menu read the
-  client's name and icon from the bundle (a terminal-launched
-  `msks gui` keeps the interpreter's name; that is macOS's rule
-  for terminal processes). The installer is idempotent, and
+  client's name and icon from the bundle. A terminal-launched
+  `msks gui` keeps the interpreter's name; macOS applies that rule
+  to every terminal process. The installer is idempotent, and
   `--uninstall` removes the bundle again.
 
 - **The GUI docs chapter (`docs/gui.md`) (#1008).** The

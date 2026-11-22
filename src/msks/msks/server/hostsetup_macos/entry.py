@@ -201,10 +201,8 @@ def main(argv: list[str] | None = None) -> int:
             say(f"removing the login agent and the {VM_NAME} VM")
             remove_agent()
             delete_vm(VM_NAME)
-            print(
-                uninstall_closing_line(remove_client_link()),
-                remove_app_bundle() + ".",
-            )
+            print(uninstall_closing_line(remove_client_link()))
+            print(remove_app_bundle())
             return 0
         if args.check:
             check_host(install=False)
