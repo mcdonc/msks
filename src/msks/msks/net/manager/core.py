@@ -601,8 +601,8 @@ class NetManager(ConsentMixin, SwitchMixin, ForwardMixin):
 
     def attached_workspaces(self) -> list[str]:
         """Every workspace with a live attachment, in attach order
-        (#339): the daemon-wide placeholder refresh reads this — a
-        row that covers the whole daemon arms and disarms with
-        every attached workspace, and its sentinel rides every
-        armed tap's entry table."""
+        (#339): the owner-wide placeholder refresh reads this — a
+        row that covers its owner's whole share of the daemon arms
+        and disarms with the owner's attached workspaces, and its
+        sentinel rides every armed tap's entry table."""
         return list(self._attachments)

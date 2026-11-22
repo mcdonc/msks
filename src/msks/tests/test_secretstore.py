@@ -61,30 +61,40 @@ def words_to_bytes(words: list[int]) -> bytes:
 def test_new_sentinel_shape() -> None:
     """The sentinel is the versioned prefix + 43 base64url chars —
     uniform fixed length, so the wire matcher can recognize it
-    without parsing. The daemon-wide row mints under its own
-    prefix (#339), so the string alone names its reach."""
+    without parsing. The owner-wide row mints under its own
+    prefix (#339, #1083), so the string alone names its reach."""
     sentinel = new_sentinel()
     assert sentinel.startswith("mskssec1_")
     assert len(sentinel) == len("mskssec1_") + 43
     assert new_sentinel() != sentinel
-    daemon = new_sentinel(daemon_wide=True)
-    assert daemon.startswith("mskssec2_")
-    assert len(daemon) == len("mskssec2_") + 43
+    owner_wide = new_sentinel(owner_wide=True)
+    assert owner_wide.startswith("mskssec2_")
+    assert len(owner_wide) == len("mskssec2_") + 43
 
 
 def test_backend_ref_sanitizes() -> None:
-    """Dots and dashes become underscores, uppercased, MSKSWS-prefixed;
-    a daemon-wide coverage carries its own ref family (#339)."""
-    assert backend_ref(["my-ws"], "github_api") == "MSKSWS_MY_WS_GITHUB_API"
-    assert backend_ref(["a.b"], "c.d") == "MSKSWS_A_B_C_D"
-    assert backend_ref([], "github_api") == "MSKSDAEMON_GITHUB_API"
+    """Dots and dashes become underscores, uppercased,
+    MSKSWS-prefixed; an owner-wide coverage carries its own ref
+    family (#339), and the owner rides every ref (#1083) — two
+    owners' same-named rows hold distinct cache keys."""
+    assert (
+        backend_ref(1001, ["my-ws"], "github_api")
+        == "MSKSWS_1001_MY_WS_GITHUB_API"
+    )
+    assert backend_ref(1001, ["a.b"], "c.d") == "MSKSWS_1001_A_B_C_D"
+    assert backend_ref(1001, [], "github_api") == "MSKSDAEMON_1001_GITHUB_API"
+    assert backend_ref(1002, [], "github_api") == "MSKSDAEMON_1002_GITHUB_API"
 
 
 def test_backend_ref_joins_a_scoped_coverage_in_sorted_order() -> None:
-    """A multi-workspace coverage is one ref: the sorted ids in
-    order, then the label (#339) — the same spelling the same set
-    mints anywhere, so the cache keys one entry per row."""
-    assert backend_ref(["b-ws", "a-ws"], "token") == "MSKSWS_A_WS_B_WS_TOKEN"
+    """A multi-workspace coverage is one ref: the owner, the
+    sorted ids in order, then the label (#339, #1083) — the same
+    spelling the same owner's same set mints anywhere, so the
+    cache keys one entry per row."""
+    assert (
+        backend_ref(1001, ["b-ws", "a-ws"], "token")
+        == "MSKSWS_1001_A_WS_B_WS_TOKEN"
+    )
 
 
 def test_valid_name() -> None:

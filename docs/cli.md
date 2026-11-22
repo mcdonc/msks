@@ -1014,13 +1014,13 @@ whole `/home` at once.
 
 ## `msks secret`
 
-Mint a secret placeholder (daemon-wide by default, scoped with `--workspace`)
+Mint a secret placeholder (owner-wide by default, scoped with `--workspace`)
 and the daemon keeps your value as per-recipient ciphertext blobs in its
 database. See also [docs/secrets.md](secrets.md).
 
 ```bash
-# from a password manager, nothing touches disk: daemon-wide,
-# one sentinel for every workspace on the daemon
+# from a password manager, nothing touches disk: owner-wide,
+# one sentinel for every workspace you own
 op read 'op://Vault/github/credential' \
   | msks secret mint --name github_api \
       --dest api.github.com --secret-file -
@@ -1036,9 +1036,9 @@ msks secret ls                           # placeholders + coverage + lock state
 msks secret unlock                      # decrypt the pending blobs the
                                          # configured identity key opens
 msks secret renew --workspace myws --name pypi --ttl 86400
-msks secret revoke --name github_api     # the daemon-wide row of the label
+msks secret revoke --name github_api     # the owner-wide row of the label
 msks secret revoke --workspace ci,deploy --name pypi
-msks secret coverage myws scoped         # exempt myws from daemon-wide rows
+msks secret coverage myws scoped         # exempt myws from owner-wide rows
 ```
 
 `--secret-file` takes a path or `-` for a pipe, and the value is

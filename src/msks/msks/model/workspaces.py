@@ -148,11 +148,12 @@ class Workspace(Base):
     egress_mode: Mapped[str] = mapped_column(
         String, default="allow", server_default="allow"
     )
-    # The daemon-wide placeholder posture (#339): ``all`` (the
-    # default — daemon-wide placeholders arm this workspace and
-    # their sentinels swap on its tap) or ``scoped`` (the workspace
-    # takes only placeholders minted directly at it; a daemon-wide
-    # sentinel used from it reads as an off-allowlist sighting).
+    # The owner-wide placeholder posture (#339, #1083): ``all``
+    # (the default — the owner's owner-wide placeholders arm this
+    # workspace and their sentinels swap on its tap) or ``scoped``
+    # (the workspace takes only placeholders minted directly at
+    # it; an owner-wide sentinel used from it reads as an
+    # off-allowlist sighting).
     # Set at create and changeable later; a change re-evaluates the
     # workspace's armed state.
     secret_coverage: Mapped[str] = mapped_column(

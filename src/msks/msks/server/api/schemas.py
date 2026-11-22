@@ -14,9 +14,10 @@ class TokenCreate(BaseModel):
 class SecretMint(BaseModel):
     """A mint request (#198, #339, #423): one placeholder row.
 
-    Coverage (#339): an empty or absent ``workspaces`` mints the
-    **daemon-wide** placeholder — one row, one sentinel, valid on
-    every accepting workspace's tap; a non-empty list scopes the
+    Coverage (#339, #1083): an empty or absent ``workspaces``
+    mints the **owner-wide** placeholder — one row, one sentinel,
+    valid on every accepting workspace the minting owner holds; a
+    non-empty list scopes the
     row to exactly those workspaces (each entry an id or name,
     #246). ``workspace_id`` is the pre-#339 single-workspace
     spelling and stays accepted; the two spellings cannot mix.
@@ -44,8 +45,9 @@ class SecretMint(BaseModel):
 
 
 class SecretCoverageSet(BaseModel):
-    """A coverage flip (#339): ``all`` accepts daemon-wide
-    placeholders, ``scoped`` exempts the workspace from them."""
+    """A coverage flip (#339): ``all`` accepts owner-wide
+    placeholders (#1083), ``scoped`` exempts the workspace from
+    them."""
 
     secret_coverage: str
 
@@ -240,11 +242,11 @@ class WorkspaceCreate(BaseModel):
     # per-VM chain.
     egress_mode: str | None = None
     egress_allowlist: list[str] | None = Field(default=None, max_length=256)
-    # The daemon-wide placeholder posture (#339): ``all`` (the
-    # default — daemon-wide placeholder coverage arms this
+    # The owner-wide placeholder posture (#339, #1083): ``all``
+    # (the default — owner-wide placeholder coverage arms this
     # workspace and its sentinel swaps on its tap) or ``scoped``
-    # (only placeholders minted directly at it arm it; a
-    # daemon-wide sentinel used from it reads as an off-allowlist
+    # (only placeholders minted directly at it arm it; an
+    # owner-wide sentinel used from it reads as an off-allowlist
     # sighting). Set at create and changeable later through
     # /secret-coverage.
     secret_coverage: str | None = None

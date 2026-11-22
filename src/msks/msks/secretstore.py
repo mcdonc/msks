@@ -39,12 +39,12 @@ from .secretcache import NotEncryptableError, PlaintextCache
 #: recognize it without parsing (#198).
 SENTINEL_PREFIX = "mskssec1_"
 
-#: The daemon-wide sentinel format (#339): the same body under a
-#: distinct prefix, so an operator who finds a sentinel in a log
-#: or a guest can tell its reach from the string alone —
+#: The owner-wide sentinel format (#339, #1083): the same body
+#: under a distinct prefix, so an operator who finds a sentinel in
+#: a log or a guest can tell its reach from the string alone —
 #: ``mskssec1_`` swaps on its row's workspaces, ``mskssec2_`` on
-#: every accepting workspace's tap.
-DAEMON_SENTINEL_PREFIX = "mskssec2_"
+#: every accepting workspace its owner holds.
+OWNER_WIDE_SENTINEL_PREFIX = "mskssec2_"
 
 #: The prefix every scoped backend ref carries. The ref is the
 #: row's identity in the plaintext cache and the blob rows' join
@@ -52,42 +52,47 @@ DAEMON_SENTINEL_PREFIX = "mskssec2_"
 #: coverage and label.
 REF_PREFIX = "MSKSWS_"
 
-#: The prefix a daemon-wide row's backend ref carries (#339): a
-#: ref family of its own, so the store's namespace names the
-#: row's reach the same way the sentinel prefix does.
-DAEMON_REF_PREFIX = "MSKSDAEMON_"
+#: The prefix an owner-wide row's backend ref carries (#339,
+#: #1083): a ref family of its own, so the store's namespace
+#: names the row's reach the same way the sentinel prefix does.
+OWNER_WIDE_REF_PREFIX = "MSKSDAEMON_"
 
 #: The audit/ref identifier rule the mint enforces on names:
 #: letters, numbers, and underscores, no leading digit.
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-def new_sentinel(daemon_wide: bool = False) -> str:
-    """A fresh placeholder sentinel (#198, #339): the
-    daemon-wide row mints under ``mskssec2_``, a scoped row under
+def new_sentinel(owner_wide: bool = False) -> str:
+    """A fresh placeholder sentinel (#198, #339): the owner-wide
+    row mints under ``mskssec2_``, a scoped row under
     ``mskssec1_``."""
-    prefix = DAEMON_SENTINEL_PREFIX if daemon_wide else SENTINEL_PREFIX
+    prefix = OWNER_WIDE_SENTINEL_PREFIX if owner_wide else SENTINEL_PREFIX
     return prefix + pysecrets.token_urlsafe(32)
 
 
-def backend_ref(workspaces: list[str], name: str) -> str:
+def backend_ref(owner_uid: int, workspaces: list[str], name: str) -> str:
     """The backend ref for one placeholder (#339: *workspaces* is
-    the row's coverage set).
+    the row's coverage set; #1083: *owner_uid* is the minting
+    owner — the ref spells the owner too, so two owners' rows of
+    one label and coverage hold distinct cache keys).
 
-    Scoped: ``MSKSWS_<WS...>_<NAME>`` — identifier-safe (dashes
-    and dots become underscores), uppercase, the coverage's sorted
-    ids in order. Daemon-wide (an empty coverage): a ref of its
-    own family, ``MSKSDAEMON_<NAME>``. Two coverage/name pairs
+    Scoped: ``MSKSWS_<OWNER>_<WS...>_<NAME>`` — identifier-safe
+    (dashes and dots become underscores), uppercase, the owner and
+    the coverage's sorted ids in order. Owner-wide (an empty
+    coverage): a ref of its own family,
+    ``MSKSDAEMON_<OWNER>_<NAME>``. Two owner/coverage/name triples
     that sanitize identically collide on the unique index — the
     mint answers 409 rather than silently sharing a ref.
     """
     parts = [
         re.sub(r"[^A-Za-z0-9_]", "_", part).upper()
         for part in (
-            [*sorted(set(workspaces)), name] if workspaces else [name]
+            [str(owner_uid), *sorted(set(workspaces)), name]
+            if workspaces
+            else [str(owner_uid), name]
         )
     ]
-    prefix = REF_PREFIX if workspaces else DAEMON_REF_PREFIX
+    prefix = REF_PREFIX if workspaces else OWNER_WIDE_REF_PREFIX
     return prefix + "_".join(parts)
 
 

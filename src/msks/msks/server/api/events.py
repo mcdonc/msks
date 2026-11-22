@@ -105,7 +105,7 @@ async def register_decider(app, socket, client_id: int, message: dict):
 def audit_frame(row: dict) -> dict:
     """One audit row as a ``secret.*`` frame's data (#305, #339):
     the coverage list and its legacy single-workspace spelling
-    (``*`` for the daemon-wide row) beside the identity, with the
+    (``*`` for the owner-wide row) beside the identity, with the
     mint kind alone naming its allowlist — the live shapes the
     replay matches."""
     data = {

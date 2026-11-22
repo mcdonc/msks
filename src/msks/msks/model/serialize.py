@@ -135,10 +135,12 @@ def placeholder_dict(row: Placeholder) -> dict:
     The sentinel is included — mint's response and the on-demand
     row fetch (#440) print it — but list views built from these
     dicts drop it. ``workspaces`` is the coverage set (#339):
-    ``[]`` is the daemon-wide row.
+    ``[]`` is the owner-wide row, and ``owner_uid`` (#1083) names
+    the minting owner.
     """
     return {
         "id": row.id,
+        "owner_uid": row.owner_uid,
         "workspaces": json.loads(row.workspaces),
         "name": row.name,
         "sentinel": row.sentinel,
@@ -153,10 +155,12 @@ def placeholder_dict(row: Placeholder) -> dict:
 
 def audit_dict(row: SecretAudit) -> dict:
     """The API-facing dict for an audit row; ``workspaces`` is the
-    placeholder's coverage at the event (#339)."""
+    placeholder's coverage at the event (#339) and ``owner_uid``
+    the minting owner it records (#1083)."""
     return {
         "id": row.id,
         "kind": row.kind,
+        "owner_uid": row.owner_uid,
         "workspaces": json.loads(row.workspaces),
         "name": row.name,
         "dests": json.loads(row.dests),

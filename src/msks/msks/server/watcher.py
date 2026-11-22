@@ -284,7 +284,7 @@ async def sweep_expired_placeholders(app, hub: EventHub) -> int:
 async def refresh_disarmed(app, expired: list[dict]) -> None:
     """Stand each expired row's redirects down (#199, #339): the
     rows are already gone, so every refresh reads the new state.
-    Every attached workspace re-evaluates — the daemon-wide row
+    Every attached workspace re-evaluates — the owner-wide row
     disarms the workspaces it armed, and every armed table drops
     the sentinel from its detection half. One workspace's failure
     defers only its own stand-down — the next watch interval

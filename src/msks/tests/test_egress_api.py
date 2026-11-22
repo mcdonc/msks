@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -637,13 +638,22 @@ async def test_register_decider_replays_the_recorded_lifecycle(
         )
     )
     model = app.state.model
+    from msks.model.workspaces import daemon_uid
+
+    owner = daemon_uid()
     await model.record_audit(
         "mint",
-        {"workspaces": ["ws-re"], "name": "api", "dests": ["api.example"]},
+        {
+            "owner_uid": owner,
+            "workspaces": ["ws-re"],
+            "name": "api",
+            "dests": ["api.example"],
+        },
     )
     await model.record_audit(
         "mint",
         {
+            "owner_uid": owner,
             "workspaces": [],
             "name": "daemon_wide",
             "dests": ["elsewhere.example"],
@@ -651,7 +661,12 @@ async def test_register_decider_replays_the_recorded_lifecycle(
     )
     await model.record_audit(
         "revoke",
-        {"workspaces": ["ws-re"], "name": "api", "dests": "[]"},
+        {
+            "owner_uid": owner,
+            "workspaces": ["ws-re"],
+            "name": "api",
+            "dests": "[]",
+        },
     )
 
     class RecordingSocket:
@@ -749,6 +764,7 @@ async def test_replay_logs_when_it_hits_its_row_limit(
         session.add_all(
             SecretAudit(
                 kind="mint",
+                owner_uid=os.geteuid(),
                 workspaces='["ws-many"]',
                 name=f"n{i}",
                 dests="[]",

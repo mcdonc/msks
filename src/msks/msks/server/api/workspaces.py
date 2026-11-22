@@ -137,8 +137,8 @@ def router(app) -> APIRouter:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         boot["egress_mode"] = mode
         boot["egress_allowlist"] = specs
-        # The daemon-wide placeholder posture (#339), fixed at
-        # create and changeable later: an unknown value is a named
+        # The owner-wide placeholder posture (#339, #1083), fixed
+        # at create and changeable later: an unknown value is a named
         # 400 here, like the consent posture above.
         coverage = body.secret_coverage or "all"
         if coverage not in SECRET_COVERAGES:

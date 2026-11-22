@@ -1,9 +1,8 @@
 """The placeholder-secret routes (#198, #339, #305): mint, list,
-check, renew, revoke, the audit trail, and a workspace's
-daemon-wide coverage flip."""
+renew, revoke, the audit trail, the pending and unlock exchange,
+the probe endpoint, and a workspace's owner-wide coverage flip."""
 
 import asyncio
-import base64
 import contextlib
 import json
 import logging
@@ -14,387 +13,36 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.exc import IntegrityError
 
-from ...model.secrets import SECRET_COVERAGES, coverage_label
-from ...secretcache import NotEncryptableError
-from ...secretstore import (
-    backend_ref,
-    blob_recipients,
-    eligible_recipients,
-    new_sentinel,
-    recipient_hashes,
-    valid_name,
-)
-from ...spec.probe import (
+from ....model.secrets import SECRET_COVERAGES, coverage_label
+from ....secretcache import NotEncryptableError
+from ....secretstore import backend_ref, new_sentinel, valid_name
+from ....spec.probe import (
     PROBE_HOST,
     PROBE_NAME,
     PROBE_PORT,
     PROBE_SECRET_B64,
     PROBE_USERNAME,
 )
-from .deps import authed_caller, require_token
-from .rows import workspace_or_404
-from .schemas import (
+from ..deps import authed_caller, require_token
+from ..rows import workspace_or_404
+from ..schemas import (
     DEST_PATTERN,
     SecretCoverageSet,
     SecretMint,
     SecretRenew,
     SecretUnlock,
 )
+from .blobs import accept_unlock, mint_blobs_for
+from .probe import arm_probe_row
+from .views import (
+    coverage_fields,
+    owned_or_404,
+    pending_row,
+    placeholder_view,
+    prior_deadline,
+)
 
 LOG = logging.getLogger(__name__)
-
-
-async def seed_probe_placeholder(app) -> None:
-    """Seed the probe placeholder at first-time startup (#424).
-
-    The daemon-wide row named ``probe``: allowlisting the probe
-    host, carrying the fixed credential blob as its secret, so the
-    probe works with zero operator minting — the sentinel is read
-    back over the authenticated API (``GET /api/v1/probe``).
-    Seeded exactly when the placeholder table is empty — a fresh
-    daemon's first startup; a daemon that already holds the row
-    re-arms it every boot instead (#514 review: the credential is
-    public, so the daemon keeps its own probe swapping across
-    restarts). The two halves fail differently: a seed whose row
-    cannot be created, valued, or audited rolls the row back and
-    the daemon stays up without it (loud, non-fatal — the
-    bootstrap default image's posture: the operator can mint the
-    row by hand with the fixed credential as the value), while a
-    failing re-arm only logs — the row keeps exactly what it had.
-
-    Runs before any workspace can be attached, so no arming step
-    belongs here: the placeholder-driven arm happens at each
-    attach as always.
-    """
-    model = app.state.model
-    ref = backend_ref([], PROBE_NAME)
-    existing = await model.placeholder_by_ref(ref)
-    if existing is not None:
-        try:
-            await arm_probe_row(app, existing)
-        except Exception:  # noqa: BLE001 - best-effort, never boot-fatal
-            # The row stands exactly as it was: locked until an
-            # operator unlocks it with the public value. A
-            # convenience re-arm of a public credential never
-            # gates daemon availability (#514 review, delta).
-            LOG.exception(
-                "probe placeholder re-arm failed; the row keeps its "
-                "previous blobs and cache state"
-            )
-        return
-    if await model.list_placeholders():
-        return
-    await mint_probe_row(app, ref)
-
-
-async def mint_probe_row(app, ref: str) -> None:
-    """The first boot's seed half (#424): create the row, value
-    it through the legacy store, arm it, and audit the mint. A
-    failure rolls the row back whole and the daemon stays up
-    without it."""
-    model = app.state.model
-    sentinel = new_sentinel(daemon_wide=True)
-    try:
-        row = await model.create_placeholder(
-            [], PROBE_NAME, sentinel, [PROBE_HOST], ref, None
-        )
-    except IntegrityError:
-        # A racing first boot won the unique index: its row stands,
-        # this one's work is done.
-        return
-    try:
-        await arm_probe_row(app, row)
-        await model.record_audit("mint", row)
-    except Exception:  # noqa: BLE001 - named below, non-fatal
-        # A seed whose row cannot be created, valued, or audited
-        # rolls back whole — a live daemon-wide row with no value
-        # behind its ref would answer every swap fail-closed — and
-        # the daemon stays up without the probe row (the mint
-        # route's own posture).
-        await model.delete_placeholder(row["id"])
-        LOG.exception("probe placeholder seed failed; rolled back")
-
-
-async def arm_probe_row(app, row: dict) -> None:
-    """The probe row's #514 half: cache the public credential for
-    the unlock window and refresh the row's blobs to the current
-    accepting workspaces. The credential is public and fixed, so
-    the daemon arming its own probe row grants nothing a token
-    holder cannot read from ``GET /api/v1/probe``. The blob write
-    is skipped when the row already holds exactly the current
-    recipients under the current key hashes — a read endpoint
-    should not rewrite the database per fetch when nothing
-    changed."""
-    app.state.secrets.plain.store({row["backend_ref"]: PROBE_SECRET_B64})
-    recipients = eligible_recipients(
-        await app.state.model.secret_recipient_keys(row["workspaces"])
-    )
-    if not recipients:
-        return
-    fresh = recipient_hashes(recipients)
-    standing = {
-        blob["recipient"]: blob["key_hash"]
-        for blob in await app.state.model.secret_blobs(row["id"])
-    }
-    if standing == fresh:
-        return
-    await app.state.model.write_secret_blobs(
-        row["id"], blob_recipients(PROBE_SECRET_B64.encode(), recipients)
-    )
-
-
-def prior_deadline(row: dict) -> datetime | None:
-    """The row's pre-renew deadline, as a datetime the model takes
-    back (None restores an unbounded lifetime). The stored value is
-    naive UTC on the sqlite round-trip; replace() normalizes."""
-    raw = row.get("expires_at")
-    if raw is None:
-        return None
-    return datetime.fromisoformat(raw).replace(tzinfo=UTC)
-
-
-def placeholder_view(row: dict, sentinel: bool = True) -> dict:
-    """The API-facing view of a placeholder row (#198).
-
-    The sentinel appears only when *sentinel* is set — mint's 201
-    and the on-demand row fetch (#440) carry it; every listing
-    view omits it. The value appears in no view at all (#423):
-    the operator supplied it at mint and it is never echoed.
-    ``workspaces`` is the row's coverage (#339): ``[]`` is the
-    daemon-wide row.
-    """
-    view = {
-        "id": row["id"],
-        "workspaces": row["workspaces"],
-        "name": row["name"],
-        "dests": row["dests"],
-        "created_at": row["created_at"],
-        "expires_at": row["expires_at"],
-    }
-    if sentinel:
-        view["sentinel"] = row["sentinel"]
-    return view
-
-
-async def pending_row(app, row: dict) -> dict:
-    """One row's pending view (#514): the row's identity and
-    coverage, one base64 ciphertext per recipient workspace, the
-    staleness map (#513's rule), and whether the daemon's cache
-    holds the plaintext — the lock the operator's client reads
-    before offering an unlock."""
-    blobs = await app.state.model.secret_blobs(row["id"])
-    staleness = await app.state.model.secret_blob_staleness(row["id"])
-    return {
-        "id": row["id"],
-        "workspaces": row["workspaces"],
-        "name": row["name"],
-        "dests": row["dests"],
-        "created_at": row["created_at"],
-        "expires_at": row["expires_at"],
-        "blobs": [
-            {
-                "recipient": blob["recipient"],
-                "ciphertext": base64.b64encode(blob["ciphertext"]).decode(),
-            }
-            for blob in blobs
-        ],
-        "staleness": staleness
-        if staleness is not None
-        else {"missing": [], "stale": []},
-        "unlocked": app.state.secrets.plain.knows(row["backend_ref"]),
-    }
-
-
-def coverage_fields(row: dict) -> dict:
-    """A lifecycle event's coverage members (#339): the full list,
-    plus the legacy ``workspace_id`` string every frame keeps —
-    ``*`` for the daemon-wide row, the first covered id scoped —
-    so an older client's parser still keys the row while the list
-    carries the truth."""
-    workspaces = row["workspaces"]
-    return {
-        "workspace_id": workspaces[0] if workspaces else "*",
-        "workspaces": workspaces,
-    }
-
-
-async def mint_blobs_for(
-    app, row: dict, coverage: list[str], value: str
-) -> None:
-    """Encrypt one mint's value to every covering workspace key
-    and store the blobs (#514), caching the plaintext for the
-    unlock window — the minting operator just supplied it, so the
-    swap path stands ready from the 201 on.
-
-    The named refusals: a scoped row's covered workspace without
-    an ssh public key, or with a key the crypto leaf cannot
-    encrypt to, and a daemon-wide row no accepting workspace can
-    receive — each names the workspace and the constraint
-    (:class:`NotEncryptableError`).
-    """
-    recipients = await app.state.model.secret_recipient_keys(coverage)
-    if coverage:
-        # A scoped row's every named workspace must receive a
-        # blob: the refusal names the one that cannot.
-        for workspace_id in coverage:
-            if workspace_id not in recipients:
-                raise NotEncryptableError(
-                    workspace_id,
-                    "it carries no ssh public key — mint the "
-                    "workspace's identity key first",
-                )
-    else:
-        # A daemon-wide row mints one blob per accepting workspace
-        # whose key can receive it; incapable acceptors are
-        # skipped (staleness names them), and a daemon with no
-        # capable acceptor at all takes the named refusal.
-        recipients = eligible_recipients(recipients)
-        if not recipients:
-            raise NotEncryptableError(
-                "*",
-                "no accepting workspace carries a key the secret "
-                "store can encrypt to (ssh-ed25519 or ssh-rsa "
-                "required)",
-            )
-    blobs = blob_recipients(value.encode(), recipients)
-    await app.state.model.write_secret_blobs(row["id"], blobs)
-    app.state.secrets.plain.store({row["backend_ref"]: value})
-
-
-async def validated_unlock_row(app, item) -> tuple[dict, str]:
-    """One unlock item's checks (#514): the row exists, its
-    ciphertext was served under the live session window, and the
-    value survives the same strip the mint applies. Returns the
-    row and its stripped value."""
-    row = await app.state.model.get_placeholder(item.placeholder_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="no such placeholder")
-    if not app.state.secrets.plain.served_alive(item.placeholder_id):
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"{row['name']}'s ciphertext was not served in "
-                "the live session window; GET "
-                "/api/v1/secrets/pending first"
-            ),
-        )
-    value = item.value.strip().lstrip("\ufeff").strip()
-    if not value:
-        raise HTTPException(status_code=422, detail="the value is empty")
-    return row, value
-
-
-async def refresh_blobs_for(app, row: dict, value: str) -> dict:
-    """Re-encrypt one unlocked row's value to its **current**
-    recipient set (#514's lazy rule): coverage edits and key
-    rotations heal at the unlock, because the fresh blobs replace
-    the whole set. Recipients whose keys cannot hold a blob are
-    skipped — they read back from staleness, and one incapable
-    key never blocks a row's others. A row whose eligible set is
-    EMPTY keeps its existing blobs untouched: they are the only
-    ciphertext copies of the value, and a replace-all write with
-    no recipients would drop them for good (the mint refuses this
-    same condition by name; the unlock answers it by keeping the
-    old set until coverage heals). Returns the fresh staleness.
-    """
-    recipients = eligible_recipients(
-        await app.state.model.secret_recipient_keys(row["workspaces"])
-    )
-    if not recipients:
-        # The skip is named in the reply: the operator sees the
-        # row kept its blobs and nothing healed this round.
-        return {
-            "staleness": await row_staleness(app, row),
-            "refreshed": False,
-        }
-    await app.state.model.write_secret_blobs(
-        row["id"], blob_recipients(value.encode(), recipients)
-    )
-    return {
-        "staleness": await row_staleness(app, row),
-        "refreshed": True,
-    }
-
-
-async def row_staleness(app, row: dict) -> dict:
-    """The row's staleness map, empty-shaped for an absent row."""
-    staleness = await app.state.model.secret_blob_staleness(row["id"])
-    return (
-        staleness
-        if staleness is not None
-        else {
-            "missing": [],
-            "stale": [],
-        }
-    )
-
-
-async def accept_unlock(app, hub, body) -> dict:
-    """One unlock POST's mutate half (#514), already under the
-    store lock: validate every row against the served window,
-    enter the plaintext into the cache (this POST is the session
-    the timer resets on), re-encrypt fresh blobs per row, and
-    record the audit + event trail. A re-encryption failure 503s
-    with the cache warm and the rows it reached named — the
-    operator's unlock stood; the row's staleness names what did
-    not heal."""
-    accepted = [
-        (row, value)
-        for item in body.values
-        for row, value in [await validated_unlock_row(app, item)]
-    ]
-    plain = app.state.secrets.plain
-    plain.store({row["backend_ref"]: value for row, value in accepted})
-    # The trail precedes the re-encryption: the unlock was accepted
-    # whatever the blob refresh then does, so a 503 from the write
-    # leaves the healed rows with their audit rows and events
-    # intact (#514 review, delta).
-    await publish_unlocks(app, hub, accepted)
-    refreshed = await reencrypt_rows(app, accepted)
-    return {
-        "unlocked": [row["id"] for row, _ in accepted],
-        "rows": refreshed,
-    }
-
-
-async def reencrypt_rows(app, accepted: list) -> list[dict]:
-    """Re-encrypt each unlocked row's blobs; a failure 503s with
-    the cache warm and the rows that healed named (#514 review).
-    """
-    refreshed: list[dict] = []
-    try:
-        for row, value in accepted:
-            refreshed.append(
-                {"id": row["id"], **await refresh_blobs_for(app, row, value)}
-            )
-    except OSError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "unlock accepted (the cache is warm) but re-encryption "
-                f"failed after {len(refreshed)} row(s) ({exc}); the "
-                "rows' staleness names what did not heal"
-            ),
-        ) from None
-    return refreshed
-
-
-async def publish_unlocks(app, hub, accepted: list) -> None:
-    """The same trail every row mutation leaves (#514 review): one
-    audit row and one event per unlocked row, the coverage named
-    like every lifecycle event's."""
-    for row, _value in accepted:
-        audit_id = await app.state.model.record_audit("unlock", row)
-        await hub.publish(
-            "secret.unlock",
-            {
-                "placeholder_id": row["id"],
-                "audit_id": audit_id,
-                **coverage_fields(row),
-                "name": row["name"],
-                "ts": time.time(),
-            },
-        )
 
 
 def router(app, hub) -> APIRouter:
@@ -425,26 +73,34 @@ def router(app, hub) -> APIRouter:
                 workspace_id,
             )
 
-    def arm_targets(coverage: list[str]) -> list[str]:
-        """The workspaces a placeholder's landing must arm (#339):
-        its covered set, or every attached workspace for the
-        daemon-wide row — a refresh with no attachment is a no-op,
-        so stopped workspaces ride along harmlessly."""
-        return coverage or app.state.net.attached_workspaces()
-
-    def detection_targets(coverage: list[str]) -> list[str]:
-        """Attached workspaces outside a row's coverage (#339): their
-        entry tables gain the row's sentinel for detection only, so
-        a foreign sentinel used from them publishes an
-        off-allowlist sighting. A daemon-wide row covers them all,
-        so it has none."""
-        if not coverage:
-            return []
-        covered = set(coverage)
+    async def arm_targets(row: dict) -> list[str]:
+        """The workspaces a placeholder's landing must arm (#339,
+        #1083): its covered set, or every attached workspace of
+        the row's owner for the owner-wide row — a refresh with no
+        attachment is a no-op, so stopped workspaces ride along
+        harmlessly."""
+        if row["workspaces"]:
+            return list(row["workspaces"])
+        owned = await app.state.model.owned_workspace_ids(row["owner_uid"])
         return [
             workspace_id
             for workspace_id in app.state.net.attached_workspaces()
-            if workspace_id not in covered
+            if workspace_id in owned
+        ]
+
+    def detection_targets(armed: list[str]) -> list[str]:
+        """Attached workspaces a placeholder's landing did not arm
+        (#339, #1083): their entry tables gain the row's sentinel
+        for detection only, so a foreign sentinel used from them
+        publishes an off-allowlist sighting. The owner-wide row
+        arms its own owner's attached workspaces; every other
+        attached workspace — another owner's, or the owner's own
+        scoped one — detects it."""
+        armed_set = set(armed)
+        return [
+            workspace_id
+            for workspace_id in app.state.net.attached_workspaces()
+            if workspace_id not in armed_set
         ]
 
     def validated_dests(dests: list[str]) -> list[str]:
@@ -490,8 +146,16 @@ def router(app, hub) -> APIRouter:
         # prefix no external service accepts.
         value = body.value.strip().lstrip("\ufeff").strip()
         dests = validated_dests(body.dests)
+        # The recording owner (#1083) is the caller verbatim:
+        # workspace rows record the creating peer the same way
+        # (#1082 — root creates as uid 0), so a row covers its
+        # minter's own workspaces under the same match. The TCP
+        # surface already maps every token caller onto the
+        # daemon's uid at the auth seam, so the single-user
+        # deployment's mints keep the reach they always had.
+        owner = caller
         # Coverage resolution (#339): the two spellings cannot mix;
-        # neither given mints the daemon-wide row (the default), a
+        # neither given mints the owner-wide row (the default), a
         # non-empty list scopes the row to exactly those ids (each
         # ref resolved name-or-id, #246, to the immutable id).
         if body.workspace_id is not None and body.workspaces is not None:
@@ -505,17 +169,12 @@ def router(app, hub) -> APIRouter:
         refs = list(body.workspaces or [])
         if body.workspace_id is not None:
             refs = [body.workspace_id]
-        coverage: list[str] = []
-        for ref in refs:
-            # The owner filter (#1082) rides the same seam every
-            # route-facing resolve takes: a foreign ref answers
-            # 404, a name more than one owner holds the 409.
-            workspace = await workspace_or_404(app, ref, caller)
-            coverage.append(workspace["id"])
-        coverage = sorted(set(coverage))
+        coverage = sorted(set(await owned_coverage(app, refs, caller, caller)))
         label = coverage_label(coverage)
         if (
-            await app.state.model.placeholder_for(coverage, body.name)
+            await app.state.model.placeholder_for(
+                coverage, body.name, owner_uid=owner
+            )
             is not None
         ):
             raise HTTPException(
@@ -524,7 +183,7 @@ def router(app, hub) -> APIRouter:
                     f"{label} already has a placeholder named {body.name}"
                 ),
             )
-        ref = backend_ref(coverage, body.name)
+        ref = backend_ref(owner, coverage, body.name)
         if await app.state.model.placeholder_by_ref(ref) is not None:
             # Distinct labels can sanitize to one ref; the collision
             # is answered before anything touches the shared store
@@ -542,7 +201,7 @@ def router(app, hub) -> APIRouter:
             if body.ttl_s is not None
             else None
         )
-        sentinel = new_sentinel(daemon_wide=not coverage)
+        sentinel = new_sentinel(owner_wide=not coverage)
         async with app.state.store_lock:
             # Row before value, all under the store lock: an
             # uncertified byte can never land behind a ref a winning
@@ -557,6 +216,7 @@ def router(app, hub) -> APIRouter:
                     dests,
                     ref,
                     expires,
+                    owner_uid=owner,
                 )
             except IntegrityError:
                 raise HTTPException(
@@ -585,14 +245,15 @@ def router(app, hub) -> APIRouter:
         # The sentinel rides this reply and the on-demand row fetch
         # (#440). Arming is placeholder-driven (#199): a scoped mint against
         # a running workspace redirects its web egress from here;
-        # a daemon-wide mint redirects every attached workspace's
-        # (#339). A mint that cannot arm stands or falls whole — a
-        # live placeholder leaking its raw sentinel toward the wire
-        # is the one outcome this feature exists to prevent — so the
-        # row and its value roll back and the refusal names the
-        # cause (#260 review).
+        # an owner-wide mint redirects every attached workspace of
+        # the minting owner (#339, #1083). A mint that cannot arm stands
+        # or falls whole — a live placeholder leaking its raw sentinel
+        # toward the wire is the one outcome this feature exists to
+        # prevent — so the row and its value roll back and the refusal
+        # names the cause (#260 review).
+        armed = await arm_targets(row)
         try:
-            for workspace_id in arm_targets(coverage):
+            for workspace_id in armed:
                 await app.state.interceptor.refresh(workspace_id)
         except Exception as exc:  # noqa: BLE001 - rolled back below
             async with app.state.store_lock:
@@ -604,7 +265,7 @@ def router(app, hub) -> APIRouter:
             # keeps its redirect over a row that no longer exists —
             # the covering set is empty now, so the quiet sweep
             # disarms it (#339 review).
-            for workspace_id in arm_targets(coverage):
+            for workspace_id in armed:
                 await refresh_quietly(workspace_id)
             raise HTTPException(
                 status_code=503,
@@ -617,7 +278,7 @@ def router(app, hub) -> APIRouter:
         # sentinel for detection (#339): a foreign sentinel used
         # from it reads as an off-allowlist sighting. Best-effort —
         # the row stands, and the next placeholder event retries.
-        for workspace_id in detection_targets(coverage):
+        for workspace_id in detection_targets(armed):
             await refresh_quietly(workspace_id)
         # The mint record and its event trail the arm: a rolled-back
         # mint never existed, so the audit table and the stream say
@@ -651,19 +312,23 @@ def router(app, hub) -> APIRouter:
             media_type="application/json",
         )
 
-    @api.get("/api/v1/secrets", dependencies=[Depends(require_token)])
-    async def list_secrets() -> list[dict]:
-        """Every live row (#390), each carrying the store's lock
-        state (#515): ``locked`` is True when the daemon's cache
-        holds no plaintext for the row — the flag the client's
-        listings surface so a cold row is seen, not discovered at
-        the swap's refusal."""
+    @api.get("/api/v1/secrets")
+    async def list_secrets(
+        caller: int = Depends(authed_caller),
+    ) -> list[dict]:
+        """Every live row the caller owns (#390, #1083), each
+        carrying the store's lock state (#515): ``locked`` is True
+        when the daemon's cache holds no plaintext for the row —
+        the flag the client's listings surface so a cold row is
+        seen, not discovered at the swap's refusal. A caller sees
+        its own mints alone; root and the daemon's own uid see
+        every owner's."""
         return [
             dict(
                 placeholder_view(row, sentinel=False),
                 locked=not app.state.secrets.plain.knows(row["backend_ref"]),
             )
-            for row in await app.state.model.list_placeholders()
+            for row in await app.state.model.list_placeholders(viewer=caller)
         ]
 
     @api.get("/api/v1/probe", dependencies=[Depends(require_token)])
@@ -716,14 +381,16 @@ def router(app, hub) -> APIRouter:
             "secret": PROBE_SECRET_B64,
         }
 
-    @api.post(
-        "/api/v1/secrets/{placeholder_id}/renew",
-        dependencies=[Depends(require_token)],
-    )
-    async def renew_secret(placeholder_id: int, body: SecretRenew) -> dict:
+    @api.post("/api/v1/secrets/{placeholder_id}/renew")
+    async def renew_secret(
+        placeholder_id: int,
+        body: SecretRenew,
+        caller: int = Depends(authed_caller),
+    ) -> dict:
         prior = await app.state.model.get_placeholder(placeholder_id)
         if prior is None:
             raise HTTPException(status_code=404, detail="no such placeholder")
+        owned_or_404(prior, caller)
         expires = datetime.now(UTC) + timedelta(seconds=body.ttl_s)
         await app.state.model.renew_placeholder(placeholder_id, expires)
         row = await app.state.model.get_placeholder(placeholder_id)
@@ -736,10 +403,11 @@ def router(app, hub) -> APIRouter:
         # (re)arm restores the deadline it extended: a live
         # placeholder without its redirect would leak the raw
         # sentinel toward the wire — the outcome the mint rollback
-        # exists to prevent (#260 review, round 5). A daemon-wide
-        # row's renew re-arms every attached workspace (#339).
+        # exists to prevent (#260 review, round 5). An owner-wide
+        # row's renew re-arms every attached workspace of its owner
+        # (#339, #1083).
         try:
-            for workspace_id in arm_targets(row["workspaces"]):
+            for workspace_id in await arm_targets(row):
                 await app.state.interceptor.refresh(workspace_id)
         except Exception as exc:  # noqa: BLE001 - rolled back below
             await app.state.model.renew_placeholder(
@@ -754,14 +422,15 @@ def router(app, hub) -> APIRouter:
             ) from exc
         return placeholder_view(row, sentinel=False)
 
-    @api.delete(
-        "/api/v1/secrets/{placeholder_id}",
-        dependencies=[Depends(require_token)],
-    )
-    async def revoke_secret(placeholder_id: int) -> dict:
+    @api.delete("/api/v1/secrets/{placeholder_id}")
+    async def revoke_secret(
+        placeholder_id: int,
+        caller: int = Depends(authed_caller),
+    ) -> dict:
         row = await app.state.model.get_placeholder(placeholder_id)
         if row is None:
             raise HTTPException(status_code=404, detail="no such placeholder")
+        owned_or_404(row, caller)
         async with app.state.store_lock:
             # Row first: revocation takes effect on the next request.
             # The row's blobs go in the same transaction and the
@@ -799,37 +468,50 @@ def router(app, hub) -> APIRouter:
             await refresh_quietly(workspace_id)
         return {"revoked": placeholder_id}
 
-    @api.get("/api/v1/secrets/audit", dependencies=[Depends(require_token)])
-    async def list_secret_audit() -> list[dict]:
-        return await app.state.model.list_audit()
+    @api.get("/api/v1/secrets/audit")
+    async def list_secret_audit(
+        caller: int = Depends(authed_caller),
+    ) -> list[dict]:
+        """The audit trail, newest first, the listing's owner rule
+        (#1083): a caller reads its own rows' events alone; the
+        bypass uids read every owner's."""
+        return await app.state.model.list_audit(viewer=caller)
 
-    @api.get("/api/v1/secrets/pending", dependencies=[Depends(require_token)])
-    async def pending_secrets() -> list[dict]:
-        """Every live row's ciphertext blobs, with staleness flags
-        and the cache's lock state (#514) — the fetch the client's
-        unlock flow starts from. The reply marks each row's blobs
-        with the workspace id that holds the decrypting key, so
-        the client decrypts only what its identities open; the
-        staleness map names the recipients the next unlock will
-        refresh. Serving the list opens the session window an
-        unlock requires (#508): only rows whose ciphertext went
-        out under the live window accept plaintext back.
+    @api.get("/api/v1/secrets/pending")
+    async def pending_secrets(
+        caller: int = Depends(authed_caller),
+    ) -> list[dict]:
+        """Every live row the caller owns (#1083), as ciphertext
+        blobs with staleness flags and the cache's lock state
+        (#514) — the fetch the client's unlock flow starts from;
+        the bypass uids read every owner's rows. The reply marks
+        each row's blobs with the workspace id that holds the
+        decrypting key, so the client decrypts only what its
+        identities open; the staleness map names the recipients
+        the next unlock will refresh. Serving the list opens the
+        session window an unlock requires (#508): only rows whose
+        ciphertext went out under the live window accept plaintext
+        back.
         """
         model = app.state.model
-        rows = await model.list_placeholders()
+        rows = await model.list_placeholders(viewer=caller)
         app.state.secrets.plain.served([row["id"] for row in rows])
         return [await pending_row(app, row) for row in rows]
 
-    @api.post("/api/v1/secrets/unlock", dependencies=[Depends(require_token)])
-    async def unlock_secrets(body: SecretUnlock) -> dict:
-        """Accept decrypted plaintext back into the daemon (#514):
-        the values enter the timeout-scoped cache — this POST is
-        the operator session the timer resets on — and each row
-        re-encrypts fresh blobs to its current recipient set at
-        the same time, so coverage edits and key rotations heal
-        here. A row whose ciphertext the pending list did not
-        serve under the live window is refused by name: the
-        operator fetches pending first.
+    @api.post("/api/v1/secrets/unlock")
+    async def unlock_secrets(
+        body: SecretUnlock,
+        caller: int = Depends(authed_caller),
+    ) -> dict:
+        """Accept decrypted plaintext back into the daemon (#514,
+        #1083): only the caller's own rows answer — the values
+        enter the timeout-scoped cache — this POST is the operator
+        session the timer resets on — and each row re-encrypts
+        fresh blobs to its current recipient set at the same time,
+        so coverage edits and key rotations heal here. A row whose
+        ciphertext the pending list did not serve under the live
+        window is refused by name: the operator fetches pending
+        first.
         """
         # The store lock covers the whole mutate half: a revoke or
         # expiry sweep running between the row check and the blob
@@ -837,13 +519,13 @@ def router(app, hub) -> APIRouter:
         # (#514 review) — the mint and the sweep hold the same
         # lock, so the sequence is one serial block.
         async with app.state.store_lock:
-            return await accept_unlock(app, hub, body)
+            return await accept_unlock(app, hub, body, caller)
 
-    @api.get(
-        "/api/v1/secrets/{placeholder_id}",
-        dependencies=[Depends(require_token)],
-    )
-    async def get_secret(placeholder_id: int) -> dict:
+    @api.get("/api/v1/secrets/{placeholder_id}")
+    async def get_secret(
+        placeholder_id: int,
+        caller: int = Depends(authed_caller),
+    ) -> dict:
         """One placeholder row with its sentinel (#440),
         token-gated — the fetch the TUI's Enter-on-a-row panel
         makes. The listing omits sentinels; this reply carries
@@ -863,6 +545,7 @@ def router(app, hub) -> APIRouter:
         row = await app.state.model.get_placeholder(placeholder_id)
         if row is None:
             raise HTTPException(status_code=404, detail="no such placeholder")
+        owned_or_404(row, caller)
         return {
             **placeholder_view(row),
             "locked": not app.state.secrets.plain.knows(row["backend_ref"]),
@@ -874,16 +557,17 @@ def router(app, hub) -> APIRouter:
         body: SecretCoverageSet,
         caller: int = Depends(authed_caller),
     ) -> dict:
-        """Flip a workspace's daemon-wide placeholder posture
-        (#339): ``all`` takes daemon-wide placeholder coverage — a
-        live daemon-wide row arms the workspace from the flip on —
-        and ``scoped`` exempts it (only placeholders minted directly
-        at it arm it; a daemon-wide sentinel used from it reads as
-        an off-allowlist sighting).
+        """Flip a workspace's owner-wide placeholder posture
+        (#339, #1083): ``all`` takes owner-wide placeholder
+        coverage — a live owner-wide row of the workspace's owner
+        arms the workspace from the flip on — and ``scoped``
+        exempts it (only placeholders minted directly at it arm it;
+        an owner-wide sentinel used from it reads as an
+        off-allowlist sighting).
 
         The armed state re-evaluates with the flip. A flip that
         cannot (re)arm restores the prior setting: a live
-        daemon-wide row without its redirect would leak the raw
+        owner-wide row without its redirect would leak the raw
         sentinel toward the wire — the outcome the mint rollback
         exists to prevent.
         """
@@ -922,3 +606,29 @@ def router(app, hub) -> APIRouter:
         }
 
     return api
+
+
+async def owned_coverage(
+    app, refs: list[str], caller: int, owner: int
+) -> list[str]:
+    """The mint's coverage resolution (#339, #1083): each ref
+    resolves name-or-id through the route-facing seam (#1082's
+    owner filter — a foreign ref answers 404, a plural name the
+    409), and a workspace another owner holds is refused by name
+    for the bypass callers that can still address it: a row this
+    caller mints would cover none of it."""
+    coverage: list[str] = []
+    for ref in refs:
+        workspace = await workspace_or_404(app, ref, caller)
+        if workspace["owner_uid"] != owner:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"workspace {ref} belongs to uid "
+                    f"{workspace['owner_uid']}; a placeholder minted "
+                    f"by uid {owner} covers none of its workspaces. "
+                    "Mint as the owner instead."
+                ),
+            )
+        coverage.append(workspace["id"])
+    return coverage

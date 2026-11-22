@@ -14,7 +14,7 @@ from .db import sessionmaker_for, utcnow
 from .keys import classify_blobs, coverage_key
 from .secrets import AUDIT_KINDS, Placeholder, SecretAudit, SecretBlob
 from .serialize import audit_dict, placeholder_dict
-from .workspaces import Workspace
+from .workspaces import Workspace, daemon_uid, sees_all_rows
 
 
 class SecretOpsMixin:
@@ -31,14 +31,18 @@ class SecretOpsMixin:
         dests: list[str],
         backend_ref: str,
         expires_at=None,
+        owner_uid: int | None = None,
     ) -> dict:
         """Insert a placeholder row (#339: *workspaces* is the
-        coverage set — ``[]`` mints the daemon-wide row); raises
-        IntegrityError on a (coverage, name) or backend-ref
-        collision."""
+        coverage set — ``[]`` mints the owner-wide row; #1083:
+        *owner_uid* is the minting owner — None records the
+        daemon's own uid, the TCP surface's mapping); raises
+        IntegrityError on an (owner, coverage, name) or
+        backend-ref collision."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
             row = Placeholder(
+                owner_uid=daemon_uid() if owner_uid is None else owner_uid,
                 workspaces=coverage_key(workspaces),
                 name=name,
                 sentinel=sentinel,
@@ -50,13 +54,18 @@ class SecretOpsMixin:
             await session.commit()
             return placeholder_dict(row)
 
-    async def list_placeholders(self) -> list[dict]:
-        """All placeholder rows, insertion order."""
+    async def list_placeholders(self, viewer: int | None = None) -> list[dict]:
+        """All placeholder rows, insertion order. ``viewer`` is the
+        owner filter (#1083): a uid the filter does not bypass is
+        served its own mints alone (the ``secret ls`` read);
+        ``None`` (the daemon's own reads — the interceptor's
+        resolution, the watcher's sweep) sees all."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
-            rows = await session.scalars(
-                select(Placeholder).order_by(Placeholder.id)
-            )
+            stmt = select(Placeholder).order_by(Placeholder.id)
+            if not sees_all_rows(viewer):
+                stmt = stmt.where(Placeholder.owner_uid == viewer)
+            rows = await session.scalars(stmt)
             return [placeholder_dict(row) for row in rows]
 
     async def get_placeholder(self, placeholder_id: int) -> dict | None:
@@ -67,16 +76,22 @@ class SecretOpsMixin:
             return None if row is None else placeholder_dict(row)
 
     async def placeholder_for(
-        self, workspaces: list[str], name: str
+        self, workspaces: list[str], name: str, owner_uid: int | None = None
     ) -> dict | None:
-        """The placeholder with this exact coverage set and label,
-        None when absent — the mint's collision read (#339: one row
-        per label per coverage set, so the same label can live on
-        the daemon-wide row and on a scoped row beside it)."""
+        """The placeholder with this exact owner, coverage set, and
+        label, None when absent — the mint's collision read (#339:
+        one row per label per coverage set, so the same label can
+        live on the owner-wide row and on a scoped row beside it;
+        #1083: the namespace is per owner — two owners may each
+        hold the same label on the same coverage shape). None for
+        *owner_uid* reads the daemon's own uid (the probe row's
+        reads)."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
             row = await session.scalar(
                 select(Placeholder).where(
+                    Placeholder.owner_uid
+                    == (daemon_uid() if owner_uid is None else owner_uid),
                     Placeholder.workspaces == coverage_key(workspaces),
                     Placeholder.name == name,
                 )
@@ -240,19 +255,21 @@ class SecretOpsMixin:
         or None for an absent placeholder.
 
         The expected set is the row's coverage — a scoped row's
-        workspaces, or every accepting workspace (``all``
-        coverage, #339) for a daemon-wide row — narrowed to the
-        workspaces that carry a public key: a keyless workspace
-        can hold no recipient, and #514's mint names that refusal
-        at write time. A covered workspace whose current key has
-        no blob is missing; one whose blob records a different
-        key hash is stale (the key rotated). Rows alone decide —
-        the rule survives a crash mid-write because each blob
-        carries the hash it was minted against."""
+        workspaces, or every accepting workspace the row's owner
+        holds (``all`` coverage, #339, #1083) for an owner-wide
+        row — narrowed to the workspaces that carry a public key:
+        a keyless workspace can hold no recipient, and #514's mint
+        names that refusal at write time. A covered workspace
+        whose current key has no blob is missing; one whose blob
+        records a different key hash is stale (the key rotated).
+        Rows alone decide — the rule survives a crash mid-write
+        because each blob carries the hash it was minted against."""
         row = await self.get_placeholder(placeholder_id)
         if row is None:
             return None
-        expected = await self.secret_recipient_keys(row["workspaces"])
+        expected = await self.secret_recipient_keys(
+            row["workspaces"], row["owner_uid"]
+        )
         blobs = {
             blob["recipient"]: blob["key_hash"]
             for blob in await self.secret_blobs(placeholder_id)
@@ -260,12 +277,14 @@ class SecretOpsMixin:
         return classify_blobs(expected, blobs)
 
     async def secret_recipient_keys(
-        self, coverage: list[str]
+        self, coverage: list[str], owner_uid: int | None = None
     ) -> dict[str, str]:
         """The workspaces a placeholder's blobs belong to, as an
         ``{id: ssh public key line}`` map: the explicit coverage
-        for a scoped row, every key-carrying workspace with ``all``
-        coverage for a daemon-wide one (#339). A covered workspace
+        for a scoped row, every key-carrying workspace the row's
+        owner holds with ``all`` coverage for an owner-wide one
+        (#339, #1083). None for *owner_uid* reads the daemon's own
+        uid — the seeded probe row's shape. A covered workspace
         without a key is absent from the map — the mint (#514)
         refuses a keyless recipient by name, so the staleness rule
         never meets one."""
@@ -277,7 +296,11 @@ class SecretOpsMixin:
                 )
             else:
                 rows = await session.scalars(
-                    select(Workspace).where(Workspace.secret_coverage == "all")
+                    select(Workspace).where(
+                        Workspace.secret_coverage == "all",
+                        Workspace.owner_uid
+                        == (daemon_uid() if owner_uid is None else owner_uid),
+                    )
                 )
             return {row.id: row.ssh_pubkey for row in rows if row.ssh_pubkey}
 
@@ -287,13 +310,15 @@ class SecretOpsMixin:
         """Append one lifecycle event for a placeholder row; the
         new row's id — the identity the live publish and the
         decider replay share, so a frame that already landed is
-        not sent or counted twice (#305)."""
+        not sent or counted twice (#305). #1083: the event records
+        the row's owner beside its coverage."""
         if kind not in AUDIT_KINDS:
             raise ValueError(f"unknown audit kind: {kind!r}")
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
             entry = SecretAudit(
                 kind=kind,
+                owner_uid=row["owner_uid"],
                 workspaces=coverage_key(row["workspaces"]),
                 name=row["name"],
                 dests=(
@@ -312,36 +337,45 @@ class SecretOpsMixin:
             await session.commit()
             return row_id
 
-    async def list_audit(self, limit: int = 100) -> list[dict]:
-        """The newest audit events first (operator view)."""
+    async def list_audit(
+        self, limit: int = 100, viewer: int | None = None
+    ) -> list[dict]:
+        """The newest audit events first (operator view). ``viewer``
+        is the owner filter (#1083): a uid the filter does not
+        bypass reads its own rows' events alone; ``None`` (the
+        daemon's own reads) sees all."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
-            rows = await session.scalars(
-                select(SecretAudit)
-                .order_by(SecretAudit.id.desc())
-                .limit(limit)
-            )
+            stmt = select(SecretAudit).order_by(SecretAudit.id.desc())
+            if not sees_all_rows(viewer):
+                stmt = stmt.where(SecretAudit.owner_uid == viewer)
+            rows = await session.scalars(stmt.limit(limit))
             return [audit_dict(row) for row in rows]
 
     async def list_workspace_audit(
         self, workspace_id: str, limit: int = 100
     ) -> list[dict]:
-        """The audit events whose coverage includes one workspace,
-        oldest first (#305, #339): the decider registration replays
-        them so the connection opens on the recorded lifecycle — a
-        daemon-wide row's events land on every workspace's
-        replay, a scoped row's on its members'. The newest
-        ``limit`` rows arrive in recording order — replay sends
-        oldest first, so the client log lands newest last."""
+        """The audit events whose coverage includes one workspace
+        AND whose owner owns it, oldest first (#305, #339, #1083):
+        the decider registration replays them so the connection
+        opens on the recorded lifecycle — an owner-wide row's
+        events land on its own owner's workspaces alone, a scoped
+        row's on its members'. The newest ``limit`` rows arrive in
+        recording order — replay sends oldest first, so the
+        client log lands newest last."""
+        workspace = await self.get_workspace(workspace_id)
+        if workspace is None:
+            return []
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
             rows = await session.scalars(
                 select(SecretAudit)
                 .where(
+                    SecretAudit.owner_uid == workspace["owner_uid"],
                     or_(
                         SecretAudit.workspaces == "[]",
                         SecretAudit.workspaces.like(f'%"{workspace_id}"%'),
-                    )
+                    ),
                 )
                 .order_by(SecretAudit.id.desc())
                 .limit(limit)

@@ -541,6 +541,7 @@ async def test_sweep_consent_quiet_when_nothing_pruned(tmp_path: Path) -> None:
 
 from datetime import UTC, datetime, timedelta  # noqa: E402
 
+from msks.model.workspaces import daemon_uid  # noqa: E402
 from msks.secretstore import backend_ref, new_sentinel  # noqa: E402
 from msks.server.watcher import sweep_expired_placeholders  # noqa: E402
 
@@ -558,7 +559,7 @@ async def seed_placeholder(
         name,
         new_sentinel(),
         ["api.example.com"],
-        backend_ref([workspace_id], name),
+        backend_ref(daemon_uid(), [workspace_id], name),
         expires_at,
     )
     return row
@@ -802,7 +803,7 @@ async def test_sweep_stands_down_through_live_attachments(
                 "expired2",
                 new_sentinel(),
                 ["api.example.com"],
-                backend_ref(["ws-a"], "expired2"),
+                backend_ref(daemon_uid(), ["ws-a"], "expired2"),
                 datetime.now(UTC) - timedelta(seconds=1),
             )
             await sweep_expired_placeholders(app, api.state.hub)

@@ -8,6 +8,19 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Owner-scoped secrets (#1083).** Placeholder rows record the
+  uid of the peer that minted them, and the daemon-wide coverage
+  (`[]`) became owner-wide: a mint with no workspace target
+  reaches every workspace the minting user owns and never
+  another user's. Every secret surface serves the caller's own
+  rows alone — the listing, the audit trail, the pending
+  ciphertext list, revoke, renew, the row fetch, and the unlock
+  — with root and the daemon's user seeing every owner's. A
+  bypass caller's scoped mint at another user's workspace is
+  refused by name instead of minting a row that covers nothing.
+  The audit trail names the owner on every lifecycle event.
+  Existing databases migrate with every row owned by the
+  daemon's own uid — behavior unchanged on a single-user host.
 - **Workspace ownership (#1082).** Every workspace row records
   the uid of the peer credential that created it, and workspace
   names are unique per owner instead of per daemon: two users on

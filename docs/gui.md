@@ -276,7 +276,7 @@ between the drop and the recovery lands on screen.
 
 The third top-level tab manages the daemon's secret
 placeholders. The **Placeholders** group lists every row with its
-coverage (the daemon-wide `*` or its workspace ids), name,
+coverage (the owner-wide `*` or its workspace ids), name,
 destinations, remaining lifetime, created label, and lock state.
 The lifetime cell is a live countdown, repainted every second.
 An unbounded row reads `never`.
@@ -287,7 +287,7 @@ pre-selected), and Revoke…, which asks first. A revoked row
 retires everywhere at once.
 
 **Mint** opens the mint form: name, comma-separated destinations,
-coverage (daemon-wide, or scoped to a workspace multi-select),
+coverage (owner-wide, or scoped to a workspace multi-select),
 the TTL choice, and the value. A landed mint closes the form and
 the listing refreshes. The GUI shows no sentinel panel: the flash
 reports the minted row, and the sentinel itself reads back

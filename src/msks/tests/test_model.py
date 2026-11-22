@@ -170,6 +170,9 @@ async def test_migration_moves_coverage_into_the_workspaces_column(
     finally:
         engine.dispose()
     app.state.model.migrate()
+    # The replay's read needs the workspace row (#1083): it keys
+    # on the workspace's owner to scope the audit match.
+    await app.state.model.create_workspace(spec("legacy"))
     row = await app.state.model.get_placeholder(1)
     assert row["workspaces"] == ["legacy"]
     assert (
@@ -978,6 +981,7 @@ async def test_placeholder_for_keys_on_the_exact_coverage(app_for) -> None:
     app = app_for()
     model = app.state.model
     model.migrate()
+    from msks.model.workspaces import daemon_uid
     from msks.secretstore import backend_ref, new_sentinel
 
     for coverage in ([], ["ws1"], ["ws1", "ws2"]):
@@ -986,7 +990,7 @@ async def test_placeholder_for_keys_on_the_exact_coverage(app_for) -> None:
             "api",
             new_sentinel(),
             ["api.example.com"],
-            backend_ref(coverage, "api"),
+            backend_ref(daemon_uid(), coverage, "api"),
             None,
         )
         assert row["workspaces"] == sorted(coverage)
@@ -999,20 +1003,50 @@ async def test_placeholder_for_keys_on_the_exact_coverage(app_for) -> None:
 
 
 async def test_workspace_audit_matches_coverage(app_for) -> None:
-    """The decider replay's read (#305/#339): rows whose coverage
-    includes the workspace — a daemon-wide event on every
-    workspace's screen, a scoped event on its members' alone."""
+    """The decider replay's read (#305/#339, #1083): rows whose
+    coverage includes the workspace AND whose owner owns it — an
+    owner-wide event on its own owner's workspaces alone, a scoped
+    event on its members', and another owner's events nowhere."""
+    from msks.model.workspaces import daemon_uid
+
     app = app_for()
     model = app.state.model
     model.migrate()
+    for wid in ("ws1", "ws2", "ws3"):
+        await model.create_workspace(spec(wid))
+    await model.create_workspace(spec("theirs"), owner_uid=4242)
+    owner = daemon_uid()
     await model.record_audit(
-        "mint", {"workspaces": [], "name": "a", "dests": []}
+        "mint",
+        {"owner_uid": owner, "workspaces": [], "name": "a", "dests": []},
     )
     await model.record_audit(
-        "mint", {"workspaces": ["ws1", "ws2"], "name": "b", "dests": []}
+        "mint",
+        {
+            "owner_uid": owner,
+            "workspaces": ["ws1", "ws2"],
+            "name": "b",
+            "dests": [],
+        },
     )
     await model.record_audit(
-        "mint", {"workspaces": ["ws3"], "name": "c", "dests": []}
+        "mint",
+        {"owner_uid": owner, "workspaces": ["ws3"], "name": "c", "dests": []},
+    )
+    # Another owner's events replay onto that owner's workspaces
+    # alone (#1083) — ws1 never sees them.
+    await model.record_audit(
+        "mint",
+        {"owner_uid": 4242, "workspaces": [], "name": "x", "dests": []},
+    )
+    await model.record_audit(
+        "mint",
+        {
+            "owner_uid": 4242,
+            "workspaces": ["theirs"],
+            "name": "y",
+            "dests": [],
+        },
     )
     names = [row["name"] for row in await model.list_workspace_audit("ws1")]
     assert names == ["a", "b"]
@@ -1022,6 +1056,12 @@ async def test_workspace_audit_matches_coverage(app_for) -> None:
     assert [
         row["name"] for row in await model.list_workspace_audit("ws3")
     ] == ["a", "c"]
+    assert [
+        row["name"] for row in await model.list_workspace_audit("theirs")
+    ] == ["x", "y"]
+    # A workspace with no row replays nothing: the owner the
+    # match keys on is unknowable (#1083).
+    assert await model.list_workspace_audit("ghost") == []
 
 
 async def test_set_egress_policy_updates_named_columns(app_for) -> None:
@@ -1060,6 +1100,7 @@ async def test_rename_placeholder_ref(app_for) -> None:
     app = app_for()
     model = app.state.model
     model.migrate()
+    from msks.model.workspaces import daemon_uid
     from msks.secretstore import backend_ref, new_sentinel
 
     row = await model.create_placeholder(
@@ -1067,7 +1108,7 @@ async def test_rename_placeholder_ref(app_for) -> None:
         "github_api",
         new_sentinel(),
         ["api.example.com"],
-        backend_ref(["ws1"], "github_api"),
+        backend_ref(daemon_uid(), ["ws1"], "github_api"),
         None,
     )
     assert (
@@ -1506,4 +1547,69 @@ async def test_migration_0024_owns_legacy_rows_and_swaps_the_constraint(
     with pytest.raises(IntegrityError):
         await app.state.model.create_workspace(
             spec("ws-new3"), name="build", owner_uid=os.geteuid()
+        )
+
+
+async def test_migration_0025_owns_legacy_secret_rows_and_swaps_the_constraint(
+    tmp_path: Path, app_for
+) -> None:
+    """A database stamped at 0024 upgrades with every placeholder
+    and audit row owned by the daemon's own uid (#1083), the
+    daemon-wide unique on (name, workspaces) gone, and the
+    (owner, name, workspaces) triple in its place: two owners may
+    hold one label on one coverage shape afterwards and one owner
+    may not hold it twice."""
+    import os
+
+    db_path = tmp_path / "own.db"
+    config = alembic_config(db_path)
+    command.upgrade(config, "0024")
+    engine = sa.create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO placeholders (workspaces, name,"
+                    " sentinel, dests, backend_ref, created_at)"
+                    " VALUES ('[]', 'api', 'mskssec2_old', '[]',"
+                    " 'MSKSDAEMON_OLD', '2026-01-01 00:00:00')"
+                )
+            )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO secret_audit (kind, workspaces, name,"
+                    " dests, created_at)"
+                    " VALUES ('mint', '[]', 'api', '[]',"
+                    " '2026-01-01 00:00:00')"
+                )
+            )
+    finally:
+        engine.dispose()
+    app = app_for(db_path=db_path)
+    app.state.model.migrate()
+    placeholders = await app.state.model.list_placeholders()
+    assert {row["owner_uid"] for row in placeholders} == {os.geteuid()}
+    (audit_row,) = await app.state.model.list_audit()
+    assert audit_row["owner_uid"] == os.geteuid()
+    # The triple constraint: the same label on the same coverage
+    # under a second owner inserts (the daemon-wide unique would
+    # have refused it), under the same owner does not.
+    await app.state.model.create_placeholder(
+        [],
+        "api",
+        "mskssec2_new",
+        [],
+        "MSKSDAEMON_4242_API",
+        None,
+        owner_uid=4242,
+    )
+    with pytest.raises(IntegrityError):
+        await app.state.model.create_placeholder(
+            [],
+            "api",
+            "mskssec2_dup",
+            [],
+            "MSKSDAEMON_DUP",
+            None,
+            owner_uid=os.geteuid(),
         )

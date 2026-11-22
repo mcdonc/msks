@@ -268,6 +268,19 @@ class Model(SecretOpsMixin):
             rows = await session.scalars(stmt)
             return [workspace_dict(row) for row in rows]
 
+    async def owned_workspace_ids(self, owner_uid: int) -> set[str]:
+        """The ids one owner holds, by exact match (#1083) — no
+        bypass: the owner-wide placeholder's arm set and recipient
+        set key on the owner itself, not the viewer filter, so a
+        row the daemon's uid owns reaches the daemon's own
+        workspaces alone even though that uid sees every row."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            rows = await session.scalars(
+                select(Workspace.id).where(Workspace.owner_uid == owner_uid)
+            )
+            return set(rows.all())
+
     async def create_ref_blocked(self, name: str, owner_uid: int) -> bool:
         """Whether a create of *name* is refused for this owner
         (#1082). Two refusals, both the 409 "workspace exists":
