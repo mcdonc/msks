@@ -7,8 +7,9 @@ its own tap address — a ``transparent@<tap ip>:<port>`` mode spec —
 and the addon dispatches by that listener. Arming is placeholder-
 driven: a workspace arms while at least one live placeholder
 (minted, unrevoked, unexpired) covers it — a scoped row listing
-it, or a daemon-wide row while the workspace's ``secret_coverage``
-accepts one (#339) — **and** it has a live egress attachment, and
+it, or an owner-wide row its owner holds while the workspace's
+``secret_coverage`` accepts one (#339, #1083) — **and** it has a
+live egress attachment, and
 disarms when either half goes away. The nft side is a
 whole-table swap on every arm/disarm, so the redirect and the
 listener always appear and disappear together.
@@ -77,12 +78,18 @@ class Armed:
         return f"transparent@{self.tap_ip}:{self.port}"
 
 
-def row_covers(row: dict, workspace_id: str, accepts_daemon: bool) -> bool:
-    """Whether a live row's coverage includes one workspace (#339):
-    a scoped row covers its members; the daemon-wide row covers
-    the workspace when the workspace's own posture accepts it."""
+def row_covers(row: dict, workspace: dict | None, accepts_wide: bool) -> bool:
+    """Whether a live row's coverage includes one workspace (#339,
+    #1083): the row's owner must own the workspace — an owner-wide
+    row reaches its own owner's workspaces alone, and a scoped row
+    keeps its workspace array under the same owner match — and a
+    scoped row covers its members while the owner-wide row covers
+    the workspace when the workspace's own posture accepts it. A
+    workspace with no row covers nothing."""
+    if workspace is None or row["owner_uid"] != workspace["owner_uid"]:
+        return False
     scoped = row["workspaces"]
-    return workspace_id in scoped if scoped else accepts_daemon
+    return workspace["id"] in scoped if scoped else accepts_wide
 
 
 def row_entry(row: dict, covers: bool) -> PlaceholderEntry:
@@ -356,33 +363,34 @@ class Interceptor:
     async def entry_tables(
         self, workspace_id: str
     ) -> tuple[dict[str, PlaceholderEntry], dict[str, PlaceholderEntry]]:
-        """The workspace's live entries as two tables (#339):
-        ``(covering, table)``.
+        """The workspace's live entries as two tables (#339,
+        #1083): ``(covering, table)``.
 
         ``covering`` holds the rows whose coverage includes this
-        workspace — scoped rows listing it, and daemon-wide rows
-        while the workspace's ``secret_coverage`` accepts them —
-        with their allowlists; these are the rows that arm and
-        swap. ``table`` adds every other live row's sentinel as a
-        detection-only entry (empty dests): a sentinel a workspace
-        holds no covering row for rides toward the wire as an
-        off-allowlist sighting, never a swap — a cross-workspace
-        leak is announced, not serviced. Covering rows order first,
-        so a request carrying both its own and a foreign sentinel
-        answers to its own. Minted, unrevoked (the row exists),
-        unexpired (the deadline is checked here — the watcher's
-        sweep is only the cleanup half).
+        workspace — rows its owner holds: scoped rows listing it,
+        and owner-wide rows while the workspace's
+        ``secret_coverage`` accepts them — with their allowlists;
+        these are the rows that arm and swap. ``table`` adds every
+        other live row's sentinel as a detection-only entry (empty
+        dests): a sentinel a workspace holds no covering row for
+        rides toward the wire as an off-allowlist sighting, never
+        a swap — a cross-workspace leak is announced, not
+        serviced, whatever owner's row leaked it. Covering rows
+        order first, so a request carrying both its own and a
+        foreign sentinel answers to its own. Minted, unrevoked
+        (the row exists), unexpired (the deadline is checked here
+        — the watcher's sweep is only the cleanup half).
         """
         rows = await self.app.state.model.list_placeholders()
         workspace = await self.app.state.model.get_workspace(workspace_id)
-        accepts_daemon = (workspace or {}).get("secret_coverage") != ("scoped")
+        accepts_wide = (workspace or {}).get("secret_coverage") != ("scoped")
         now = datetime.now(UTC)
         covering: dict[str, PlaceholderEntry] = {}
         detection: dict[str, PlaceholderEntry] = {}
         for row in rows:
             if deadline_passed(row["expires_at"], now):
                 continue
-            covers = row_covers(row, workspace_id, accepts_daemon)
+            covers = row_covers(row, workspace, accepts_wide)
             entry = row_entry(row, covers)
             (covering if covers else detection)[row["sentinel"]] = entry
         return covering, {**covering, **detection}

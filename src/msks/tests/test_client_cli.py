@@ -4271,6 +4271,67 @@ def test_cmd_secret_ls_lists_without_sentinels(
     assert "mskssec1_" not in out
 
 
+def test_cmd_secret_ls_shows_the_owner_column(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Two owners may hold one label (#1083): the listing tells its
+    rows apart by the owning uid the row carries."""
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/secrets"
+        return httpx.Response(
+            200,
+            json=[
+                {**secret_rows()[0], "owner_uid": 4242},
+                {
+                    **secret_rows()[0],
+                    "id": 4,
+                    "owner_uid": 4243,
+                },
+            ],
+        )
+
+    code = cli.main(["secret", "ls"], transport=mock(handler))
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "4242" in out and "4243" in out
+
+
+def test_cmd_secret_revoke_refuses_a_plural_owner_pair(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A (coverage, name) pair two owners hold (#1083) refuses to
+    pick — the exit names both uids, and no DELETE leaves the
+    client."""
+    client_env(monkeypatch)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path == "/api/v1/workspaces":
+            return httpx.Response(200, json=workspace_rows())
+        return httpx.Response(
+            200,
+            json=[
+                {**secret_rows()[0], "workspaces": [], "owner_uid": 4242},
+                {
+                    **secret_rows()[0],
+                    "id": 4,
+                    "workspaces": [],
+                    "owner_uid": 4243,
+                },
+            ],
+        )
+
+    with pytest.raises(SystemExit, match="more than one owner"):
+        cli.main(
+            ["secret", "revoke", "--name", "github_api"],
+            transport=mock(handler),
+        )
+    assert calls == ["/api/v1/workspaces", "/api/v1/secrets"]
+
+
 def test_cmd_secret_revoke_and_renew_resolve_the_label(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

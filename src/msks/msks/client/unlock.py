@@ -109,7 +109,7 @@ def decrypt_rows(rows: list[dict], identity) -> tuple[list, list, list]:
     addressed to this key whose file failed to open — corruption
     the operator remedies with a re-mint (#515 review: the two
     reads carry different remedies, so they name differently). A
-    row with several blobs (a daemon-wide row, #339) opens under
+    row with several blobs (an owner-wide row, #339) opens under
     the first blob this key unwraps."""
     unlocked: list = []
     left: list = []

@@ -129,7 +129,7 @@ curl -X POST "$MSKSC_URL/api/v1/workspaces" \
   the root overlay, grows or shrinks the home volume, and
   moves the cpu and memory sizes. `…/ssh-key` reads the
   workspace's planted public identity.
-  `…/secret-coverage` flips the daemon-wide placeholder
+  `…/secret-coverage` flips the owner-wide placeholder
   posture. `POST …/mounts` sets the workspace's [share
   mounts](mounts.md), the full replacement list, applied at
   the next start:
@@ -214,7 +214,7 @@ manifest, and the published channel.
 The placeholder store, per the [secrets chapter](secrets.md):
 
 ```bash
-# mint: daemon-wide with no workspaces target, the destinations
+# mint: owner-wide with no workspaces target, the destinations
 # the swap binds, the value itself
 curl -X POST "$MSKSC_URL/api/v1/secrets" \
   -H "Authorization: Bearer $MSKSC_TOKEN" \

@@ -2960,6 +2960,16 @@ async def seed_workspace(
     return pair
 
 
+def daemon_ref(workspaces: list[str], name: str) -> str:
+    """The ref a mint over the TCP surface lands under (#1083):
+    the caller with no peer credential records the daemon's own
+    uid, so the ref spells that owner."""
+    from msks.model.workspaces import daemon_uid
+    from msks.secretstore import backend_ref
+
+    return backend_ref(daemon_uid(), workspaces, name)
+
+
 def mint_body(**overrides) -> dict:
     body = {
         "workspace_id": "ws-sec",
@@ -3015,7 +3025,7 @@ async def test_mint_stores_the_value_and_answers_the_sentinel_once(
         == b"ghp-real-token"
     )
     assert (
-        app.state.secrets.plain.read("MSKSWS_WS_SEC_GITHUB_API")
+        app.state.secrets.plain.read(daemon_ref(["ws-sec"], "github_api"))
         == "ghp-real-token"
     )
     # Mint is the only view that ever carries the sentinel.
@@ -3110,7 +3120,7 @@ async def test_mint_strips_the_value_at_both_ends(client) -> None:
     )
     assert response.status_code == 201
     assert (
-        app.state.secrets.plain.read("MSKSWS_WS_SEC_GITHUB_API")
+        app.state.secrets.plain.read(daemon_ref(["ws-sec"], "github_api"))
         == "ghp-padded"
     )
     # The BOM drops at the same door, whatever surface sent it —
@@ -3122,7 +3132,10 @@ async def test_mint_strips_the_value_at_both_ends(client) -> None:
         headers=auth(),
     )
     assert bom.status_code == 201
-    assert app.state.secrets.plain.read("MSKSWS_WS_SEC_BOMMED") == "bom-token"
+    assert (
+        app.state.secrets.plain.read(daemon_ref(["ws-sec"], "bommed"))
+        == "bom-token"
+    )
 
 
 async def test_validation_refusals_never_echo_the_input(client) -> None:
@@ -3214,7 +3227,7 @@ async def test_mint_rolls_back_when_the_blob_write_is_refused(
     from msks.secretcache import SecretLockedError
 
     with pytest.raises(SecretLockedError):
-        app.state.secrets.plain.read("MSKSWS_WS_SEC_GITHUB_API")
+        app.state.secrets.plain.read(daemon_ref(["ws-sec"], "github_api"))
 
 
 async def test_a_stale_client_sending_a_secret_is_refused_by_name(
@@ -3304,8 +3317,12 @@ async def test_mint_survives_the_insert_race(client, monkeypatch) -> None:
     assert first.status_code == 201
     real = app.state.model.placeholder_for
 
-    async def blind(workspace_id, name):
-        return None if name == "github_api" else await real(workspace_id, name)
+    async def blind(workspaces, name, owner_uid=None):
+        return (
+            None
+            if name == "github_api"
+            else await real(workspaces, name, owner_uid=owner_uid)
+        )
 
     async def blind_by_ref(ref):
         # The race slips past both pre-checks; the unique index on
@@ -3324,7 +3341,7 @@ async def test_mint_survives_the_insert_race(client, monkeypatch) -> None:
     assert raced.status_code == 409
     assert "collision" in raced.json()["detail"]
     assert (
-        app.state.secrets.plain.read("MSKSWS_WS_SEC_GITHUB_API")
+        app.state.secrets.plain.read(daemon_ref(["ws-sec"], "github_api"))
         == "ghp-real-token"
     )
     listing = await http.get("/api/v1/secrets", headers=auth())
@@ -3364,7 +3381,8 @@ async def test_mint_answers_409_on_a_ref_collision(client) -> None:
     assert "collides" in second.json()["detail"]
     # The winner's value is intact.
     assert (
-        app.state.secrets.plain.read("MSKSWS_WS_SEC_FOO") == "ghp-real-token"
+        app.state.secrets.plain.read(daemon_ref(["ws-sec"], "FOO"))
+        == "ghp-real-token"
     )
 
 
@@ -3523,7 +3541,8 @@ async def test_daemon_wide_mint_covers_every_workspace(client) -> None:
     blobs = await app.state.model.secret_blobs(row["id"])
     assert [b["recipient"] for b in blobs] == ["ws-sec"]
     assert (
-        app.state.secrets.plain.read("MSKSDAEMON_GITHUB_API") == "ghp-shared"
+        app.state.secrets.plain.read(daemon_ref([], "github_api"))
+        == "ghp-shared"
     )
     # The audit row records the daemon-wide coverage.
     audit = await http.get("/api/v1/secrets/audit", headers=auth())
@@ -3576,7 +3595,7 @@ async def test_multi_workspace_mint_is_one_row(client) -> None:
     blobs = await app.state.model.secret_blobs(row["id"])
     assert [b["recipient"] for b in blobs] == ["ws-a", "ws-b"]
     assert (
-        app.state.secrets.plain.read("MSKSWS_WS_A_WS_B_PAIR_API")
+        app.state.secrets.plain.read(daemon_ref(["ws-a", "ws-b"], "pair_api"))
         == "pair-token"
     )
     # The legacy single-workspace spelling still mints, and the
@@ -3737,6 +3756,7 @@ async def test_daemon_wide_mint_arms_every_attached_workspace(client) -> None:
     attachment is the no-op half."""
     http, app, _stub = client
     await seed_workspace(app)
+    await seed_workspace(app, "ws-other")
     recorder = RefreshRecorder()
     real = app.state.interceptor
     app.state.interceptor = recorder
@@ -3780,6 +3800,7 @@ async def test_a_partial_daemon_wide_arm_disarms_on_rollback(client) -> None:
     the delete, so the quiet sweep stands the first target down."""
     http, app, _stub = client
     await seed_workspace(app)
+    await seed_workspace(app, "ws-other")
     refreshes: list[str] = []
 
     class HalfRefusingInterceptor:
@@ -4113,7 +4134,10 @@ async def test_first_startup_seeds_the_probe_placeholder(client) -> None:
 
     # The boot-time arm cached the public credential (#514): the
     # row swaps with zero operator minting, for the window.
-    assert app.state.secrets.plain.read("MSKSDAEMON_PROBE") == PROBE_SECRET_B64
+    assert (
+        app.state.secrets.plain.read(daemon_ref([], "probe"))
+        == PROBE_SECRET_B64
+    )
     # The read-back surface: the sentinel and the recipe, gated the
     # same as every secret route.
     probe = await http.get("/api/v1/probe", headers=auth())
@@ -4559,7 +4583,8 @@ async def test_unlock_strips_and_refuses_empty_values(client) -> None:
     )
     assert stripped.status_code == 200
     assert (
-        app.state.secrets.plain.read("MSKSWS_WS_SEC_GITHUB_API") == "ghp-fresh"
+        app.state.secrets.plain.read(daemon_ref(["ws-sec"], "github_api"))
+        == "ghp-fresh"
     )
     await http.get("/api/v1/secrets/pending", headers=auth())
     empty = await http.post(
@@ -4740,7 +4765,7 @@ async def test_an_empty_recipient_set_keeps_the_rows_blobs(client) -> None:
     assert reply.status_code == 200
     after = await app.state.model.secret_blobs(row_id)
     assert [b["recipient"] for b in after] == ["ws-sec"]  # kept whole
-    assert app.state.secrets.plain.read("MSKSDAEMON_SHARED") == "v"
+    assert app.state.secrets.plain.read(daemon_ref([], "shared")) == "v"
 
 
 async def test_a_reencryption_failure_answers_503_with_the_cache_warm(
@@ -4766,7 +4791,8 @@ async def test_a_reencryption_failure_answers_503_with_the_cache_warm(
     assert "re-encryption failed" in failed.json()["detail"]
     # The operator's unlock stood: the cache is warm.
     assert (
-        app.state.secrets.plain.read("MSKSWS_WS_SEC_GITHUB_API") == "ghp-fresh"
+        app.state.secrets.plain.read(daemon_ref(["ws-sec"], "github_api"))
+        == "ghp-fresh"
     )
 
 
@@ -4856,7 +4882,7 @@ async def test_the_probe_row_rearms_on_every_boot(client) -> None:
         # The second boot re-armed the probe row without an
         # operator: the credential is public and the probe needs
         # no session to keep working.
-        assert second.state.secrets.plain.knows("MSKSDAEMON_PROBE")
+        assert second.state.secrets.plain.knows(daemon_ref([], "probe"))
         # And the re-arm re-encrypted the row's blobs to the
         # workspace that exists by then.
         probe_row = await second.state.model.placeholder_for([], "probe")
@@ -4888,7 +4914,9 @@ async def test_a_failing_re_arm_never_kills_the_boot(
             db_path=db_path, bootstrap_token=TOKEN, event_poll_s=10.0
         ),
     )
-    monkeypatch.setattr("msks.server.api.secrets.arm_probe_row", refuse_write)
+    monkeypatch.setattr(
+        "msks.server.api.secrets.probe.arm_probe_row", refuse_write
+    )
     second = build_app(settings)
     second.state.microvm = StubMicrovm()
     api2 = build_api(second)

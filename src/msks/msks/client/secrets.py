@@ -65,7 +65,7 @@ def read_secret(path: str) -> str:
 def coverage_label(workspaces: list[str]) -> str:
     """The display name of a row's coverage (#339, duplicated from
     the daemon per the CLI-isolation rule): ``*`` is the
-    daemon-wide row, a comma-joined list is scoped."""
+    owner-wide row, a comma-joined list is scoped."""
     return ",".join(sorted(set(workspaces))) if workspaces else "*"
 
 
@@ -74,7 +74,7 @@ def resolve_coverage(
 ) -> list[str]:
     """The sorted id list a --workspace target names (#339), or the
     named exit when a ref answers to no workspace. No target is
-    the daemon-wide coverage: ``[]``. The refs take the same
+    the owner-wide coverage: ``[]``. The refs take the same
     repeatable, comma-splitting, whitespace-stripping form the
     mint's flag does, so a row minted with one command line is
     revoked with the same one."""
@@ -84,9 +84,35 @@ def resolve_coverage(
     if not expanded:
         raise SystemExit(
             "msks: --workspace names no workspace; omit the flag to "
-            "target the daemon-wide row"
+            "target the owner-wide row"
         )
     return sorted({resolved_workspace_id(workspaces, ref) for ref in expanded})
+
+
+def matching_rows(
+    rows: list[dict], coverage: list[str], name: str
+) -> list[dict]:
+    """The rows whose coverage is exactly the set and whose label
+    matches (#339)."""
+    return [
+        row
+        for row in rows
+        if sorted(set(row["workspaces"])) == coverage and row["name"] == name
+    ]
+
+
+def refuse_plural_owners(
+    matches: list[dict], coverage: list[str], name: str
+) -> None:
+    """The named exit a (coverage, name) pair two owners holds
+    (#1083): per-owner namespaces make the plural legal, and a
+    listing that spans both (root's) cannot pick between them."""
+    owners = ", ".join(str(row["owner_uid"]) for row in matches)
+    raise SystemExit(
+        f"msks: placeholder {name} covering {coverage_label(coverage)} "
+        f"is held by more than one owner (uids: {owners}); the "
+        "command cannot pick between them"
+    )
 
 
 async def find_placeholder(
@@ -95,7 +121,7 @@ async def find_placeholder(
     """The (coverage, name) pair's row, or a named exit (#339).
 
     ``refs`` carry the same targeting the mint took — absent names
-    the daemon-wide row, a list names the row whose coverage is
+    the owner-wide row, a list names the row whose coverage is
     exactly that set. Each ref names a workspace by id or name
     (#246); the listing's workspace rows carry both, and the
     placeholder row binds to the immutable ids, so the refs
@@ -104,12 +130,14 @@ async def find_placeholder(
     workspaces = await call("GET", "/api/v1/workspaces", transport=transport)
     coverage = resolve_coverage(workspaces, refs)
     rows = await call("GET", "/api/v1/secrets", transport=transport)
-    for row in rows:
-        if sorted(set(row["workspaces"])) == coverage and row["name"] == name:
-            return row
+    matches = matching_rows(rows, coverage, name)
+    if len(matches) > 1:
+        refuse_plural_owners(matches, coverage, name)
+    if matches:
+        return matches[0]
     label = coverage_label(coverage)
     hint = (
-        " (no --workspace targets the daemon-wide row; a target "
+        " (no --workspace targets the owner-wide row; a target "
         "names the row whose coverage is exactly that set)"
     )
     raise SystemExit(f"msks: no placeholder {name} covering {label}{hint}")
@@ -126,17 +154,17 @@ def resolved_workspace_id(workspaces: list[dict], ref: str) -> str:
 
 def mint_targets(workspace_refs: list[str] | None) -> list[str] | None:
     """The mint's coverage refs (#339): None (no --workspace) is
-    the daemon-wide mint; a flag whose every segment is empty
-    names no workspace — and an empty target list is the daemon-
-    wide mint, the broadest row there is, so the mismatch is
-    refused here, not minted."""
+    the owner-wide mint; a flag whose every segment is empty
+    names no workspace — and an empty target list would mint the
+    owner-wide row, so the mismatch is refused here, not
+    minted."""
     if workspace_refs is None:
         return None
     targets = expand_targets(workspace_refs)
     if not targets:
         raise SystemExit(
             "msks: --workspace names no workspace; omit the flag to "
-            "mint the daemon-wide placeholder"
+            "mint the owner-wide placeholder"
         )
     return targets
 
@@ -160,7 +188,7 @@ def cmd_secret_mint(
 ) -> int:
     """``msks secret mint`` (#339, #423): one step; the operator's
     value rides the request and is never echoed — the sentinel
-    prints once. No ``--workspace`` mints the daemon-wide row; a
+    prints once. No ``--workspace`` mints the owner-wide row; a
     target scopes it."""
     value = read_secret(secret_file)
     targets = mint_targets(workspace_refs)
@@ -188,11 +216,14 @@ def cmd_secret_mint(
 
 
 def secret_cells(row: dict) -> list[str]:
-    """One placeholder row's cells: id, coverage/name,
-    destinations, expiry, lock state (#515)."""
+    """One placeholder row's cells: id, coverage/name, the owning
+    uid (#1083 — two owners may hold one label, so a spanning
+    listing tells its rows apart by it), destinations, expiry,
+    lock state (#515)."""
     return [
         str(row["id"]),
         f"{coverage_label(row['workspaces'])}/{row['name']}",
+        str(row.get("owner_uid", "")),
         ", ".join(row["dests"]),
         row["expires_at"] or "never",
         "locked" if row.get("locked") else "open",
@@ -207,7 +238,7 @@ def cmd_secret_ls(as_json: bool = False, transport=None) -> int:
         print(json.dumps(rows, indent=2))
         return 0
     text = listing_text(
-        ["id", "coverage", "destinations", "expires", "state"],
+        ["id", "coverage", "owner", "destinations", "expires", "state"],
         [secret_cells(row) for row in rows],
     )
     if text:
@@ -409,8 +440,9 @@ def cmd_secret_coverage(
     transport=None,
 ) -> int:
     """``msks secret coverage`` (#339): flip a workspace's
-    daemon-wide placeholder posture — ``all`` takes daemon-wide
-    coverage, ``scoped`` exempts the workspace from it."""
+    owner-wide placeholder posture — ``all`` takes owner-wide
+    coverage (#1083), ``scoped`` exempts the workspace from
+    it."""
     result = asyncio.run(
         call(
             "PUT",

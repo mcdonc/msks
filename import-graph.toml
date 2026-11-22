@@ -354,7 +354,11 @@ microvm = 16
 # storage listings read the bypass rule for their row filters,
 # and the token routes gate on it (tokens); six statements, each
 # the module edge beside its name.
-model = 19
+# #1083: the secrets package records the minting owner — the
+# owner mask reads the bypass rule (views) and the probe seed
+# reads the daemon-uid spelling (probe), one statement each in
+# the split submodules.
+model = 23
 # #808: the proxy routes read the two direction-shaped bind and
 # target defaults the create path applies (module edge + both
 # names).
@@ -368,7 +372,11 @@ persist = 18
 # itself is gone with it). #514: the mint's blob helpers joined
 # the statement (blob_recipients, eligible_recipients), and the
 # probe re-arm's skip-unchanged check added recipient_hashes.
-secretstore = 7
+# #1083: the api secrets module split into a package (routes,
+# blobs, probe, views); each submodule carries its own statement
+# over the store's vocabulary, so the per-statement count grew
+# with the split.
+secretstore = 13
 # #464: doctor's Settings import (env-plus-defaults fallback when
 # a config will not load). #643: the host-setup probe resolves
 # virtiofsd through the shared resolver — the package installs
@@ -376,8 +384,10 @@ secretstore = 7
 # name).
 settings = 6
 # #514: the mint's named refusal and the lock indicators read
-# the cache leaf's error vocabulary (module + name).
-secretcache = 2
+# the cache leaf's error vocabulary (module + name). #1083: the
+# api secrets split into a package — the routes and the blobs
+# submodule each carry the refusal's statement.
+secretcache = 4
 # spec grew by one statement: the secret routes seed and serve the
 # probe placeholder (#424); #555 adds two more — the local
 # listener's path vocabulary (server.localsocket) and its
@@ -404,7 +414,10 @@ secretcache = 2
 # #874: the mac setup split into a package — the __version__ the
 # bootstrap script prints and the ordering the skew row's remedy
 # reads now import from their own submodules.
-spec = 44
+# #1083: the api secrets split into a package (routes, blobs,
+# probe, views); the probe vocabulary's statements spread across
+# the routes and probe submodules.
+spec = 48
 # #773: the clone route reads the state-disk floor (create_refusal
 # beside the artifacts' allocated-cost file_cost) before any byte
 # copies.
