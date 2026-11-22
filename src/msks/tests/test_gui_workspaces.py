@@ -1127,8 +1127,7 @@ def test_the_action_slots_stand_guard(qt) -> None:
     # A row the rebuild has not filled measures nothing; an
     # empty table sets no width at all. The sizing pass rides
     # the same half-filled rows the resize eventFilter can:
-    # the image cells stand as they are, the crash the None
-    # guard there answers (#1063) not raised.
+    # the guard the crash forced (#1063) holds.
     screen.table.setRowCount(4)  # rows without cells, mid-rebuild
     listlayout.size_action_column(screen.table)
     listlayout.size_columns(screen.table)
