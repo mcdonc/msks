@@ -364,4 +364,7 @@ class LlmRouter:
         """The configured logical model names (router mode)."""
         if self._router is None:
             return []
-        return list(self._router.get_model_names())
+        # The registry view, not litellm's deprecated get_model_names
+        # shortcut — 1.110 deprecates the shortcut with a warning
+        # per call.
+        return list(self._router.registry().names())

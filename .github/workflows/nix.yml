@@ -1,0 +1,81 @@
+# Nix surface gate (#1062).
+#
+# The pytest suites never evaluate the flake, so a nix-surface
+# break sits on main until a human runs `nix build`: #1062's
+# break class (the nixpkgs pin moving past a hand-pinned wheel's
+# dependency ranges — pythonRuntimeDepsCheckHook refuses the
+# litellm package) shipped for three weeks that way, green CI
+# notwithstanding.
+#
+# This workflow builds `.#server` with plain nix on the pinned
+# lock — the same store path its `devenv build outputs.server`
+# twin builds (#537) — which exercises every hand-built wheel
+# (msks, textual, litellm) against the pinned nixpkgs set at
+# package build time, exactly where the runtime-deps check
+# bites. The flake's own eval guard (checks.module, the two
+# egress branches of the NixOS module) rides along at eval cost.
+# A full `nix flake check` would additionally build the guest
+# image archives — guest-assets.yml already owns that budget,
+# and this break class does not need it.
+#
+# Path-filtered to the surfaces the build reads: the flake and
+# its lock, the nix expressions, and the dependency metadata
+# (pyproject/uv.lock) the wheel mirrors. src/ stays out — the
+# pytest suites cover it, and the wheel's runtime-deps check
+# reads pyproject, not source.
+name: Nix flake
+
+on:
+  push:
+    branches: [main, pyside-gui] # pyside-gui: GUI integration branch (#924); drop when it merges to main
+    paths:
+      - .github/workflows/nix.yml
+      - flake.nix
+      - flake.lock
+      - devenv.nix
+      - devenv.yaml
+      - devenv.lock
+      - nix/**
+      - pyproject.toml
+      - uv.lock
+  pull_request:
+    paths:
+      - .github/workflows/nix.yml
+      - flake.nix
+      - flake.lock
+      - devenv.nix
+      - devenv.yaml
+      - devenv.lock
+      - nix/**
+      - pyproject.toml
+      - uv.lock
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      # The daemon closure: pythonRuntimeDepsCheckHook over every
+      # hand-built wheel in it, against the pinned nixpkgs set.
+      # No devenv and no extra caches — the pinned rev's closure
+      # is cache.nixos.org's to serve.
+      - name: Build the server closure
+        run: nix build .#server
+
+      # The module eval guard (#231): both egress branches
+      # evaluate and the unit carries the right capabilities.
+      - name: Build the module eval check
+        run: nix build .#checks.x86_64-linux.module

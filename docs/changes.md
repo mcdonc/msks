@@ -483,6 +483,15 @@ gui`. The nix package keeps the daemon's closure lean, so on
 
 ### Fixed
 
+- **`nix build .#server` on the unstable nixpkgs pin (#1062).**
+  The build again completes: the pinned set's filelock, openai,
+  and huggingface-hub had moved outside litellm 1.106.2's
+  dependency ranges and the runtime check refused the litellm
+  package. The litellm pin moves to 1.110.2 (pyproject floor,
+  uv.lock, and the nix wheel together), whose widened ranges
+  cover the set. A new Nix flake workflow builds the server
+  closure on the nix surface, so this break class fails a check
+  run instead of waiting for a human's `nix build`.
 - **Tab completion inside a GUI terminal (#1066).** Tab and
   Shift+Tab in a terminal subtab now reach the program inside
   the terminal: Tab sends the tab byte the shell's completion

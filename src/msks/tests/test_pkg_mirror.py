@@ -260,15 +260,15 @@ def test_the_hand_pinned_certifi_floor_covers_pyproject() -> None:
 
 def test_the_hand_pinned_litellm_floor_covers_pyproject() -> None:
     """pyproject's litellm floor stays within what litellm-pkg.nix
-    pins (#607). litellm is built by hand for the same reason
-    textual and certifi are — the pinned channel sits below the
-    floor — and the miss fails only the msks package's runtime
-    check at nix build time; this test fails at pytest time
-    instead, naming the pin to bump."""
+    pins (#607). The hand pin ships the exact wheel uv.lock vets —
+    the pinned channel's own litellm sits below it — and the miss
+    fails only the msks package's runtime check at nix build time;
+    this test fails at pytest time instead, naming the pin to
+    bump."""
     assert_hand_pinned_floor_covers_pyproject(
         LITELLM_PKG,
         "litellm",
-        "the >=1.106.2 Router semantics llm.py was reviewed against",
+        "the >=1.110.2 Router semantics llm.py was reviewed against",
         "bump the pin per the file's bump-workflow header (wheel "
         "URL, hash, and propagatedBuildInputs from the new wheel's "
         "METADATA)",
