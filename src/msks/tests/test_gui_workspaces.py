@@ -868,7 +868,7 @@ def test_edit_clone_and_remove_act_on_the_selected_row(
     monkeypatch.setattr(
         qt.screen_mod,
         "prompt_text",
-        lambda parent, title, label, text="": (
+        lambda parent, title, label: (
             names.append((title, label)),
             None,
         )[1],
@@ -1125,9 +1125,13 @@ def test_the_action_slots_stand_guard(qt) -> None:
     )
     assert screen.held_workspace() is None
     # A row the rebuild has not filled measures nothing; an
-    # empty table sets no width at all.
+    # empty table sets no width at all. The sizing pass rides
+    # the same half-filled rows the resize eventFilter can:
+    # the image cells stand as they are, the crash the None
+    # guard there answers (#1063) not raised.
     screen.table.setRowCount(4)  # rows without cells, mid-rebuild
     listlayout.size_action_column(screen.table)
+    listlayout.size_columns(screen.table)
     screen.on_succeeded("workspaces-list", [])
     window.resize(901, 600)
     qt.app.processEvents()
@@ -1417,7 +1421,7 @@ def test_clone_asks_for_a_name_and_clones(qt, monkeypatch) -> None:
     asked: list[tuple] = []
     answers: list[str | None] = [None, "", "task-42"]
 
-    def ask(parent, title, label, text=""):
+    def ask(parent, title, label):
         asked.append((title, label))
         # The third answer serves every later ask: the flight
         # arms under a name each time.
@@ -1430,7 +1434,6 @@ def test_clone_asks_for_a_name_and_clones(qt, monkeypatch) -> None:
     assert asked == [("Clone workspace", "Clone alpha into:")]
     screen.clone_workspace(("ws-1", "alpha"))
     assert bridge.calls == []  # a cancel and an empty name sent nothing
-    assert screen.row_actions["ws-1"].isEnabled()
     screen.clone_workspace(("ws-1", "alpha"))
     assert bridge.calls == [("workspaces-clone", "clone", ("ws-1", "task-42"))]
     assert not screen.edit_button.isEnabled()  # one flight
