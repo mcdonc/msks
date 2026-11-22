@@ -24,6 +24,7 @@ its guards (#927), the reachability the gate counts.
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..data import RestFailure
+from ..frames import listing_frame, row_frame
 from .bridge import Bridge
 from .consent import ConsentPresenter
 from .create import CreateDialog
@@ -41,7 +42,7 @@ from .rows import (
 from .shells import ShellHub, ShellsTab
 from .tabstyle import mark_active
 from .termsession import shell_argv
-from .workspaces import FLASH_MS, REFRESH_MS, WorkspaceList
+from .workspaces import FLASH_MS, WorkspaceList
 
 #: The row read's key (#945): the page answers only its own
 #: key, whatever else shares the bridge.
@@ -129,11 +130,6 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.storage_costs: dict[str, int] = {}
         self.flash_seq = 0
         self.flash_outage = False
-        # The timer first, the chrome right behind it: see the
-        # note at build_chrome below for the mid-build events.
-        self.timer = QtCore.QTimer(self)
-        self.timer.setInterval(REFRESH_MS)
-        self.timer.timeout.connect(self.refresh)
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
         # The chrome before the rest (#945): a show or hide
@@ -411,18 +407,23 @@ class WorkspaceDetail(QtWidgets.QWidget):
 
     @QtCore.Slot(object)
     def push_frame(self, frame: dict) -> None:
-        """One pushed frame to the tabs that read it (#945's
-        seam, #946's feed): a frame reaches the page's tabs
-        only when it names this workspace — the feed is a
+        """One pushed frame to the page's surfaces (#945's
+        seam, #946's feed, #1019's refresh). A row-affecting
+        frame re-reads the row — the standing tick the frames
+        replace — under the listing's own match: the lifecycle
+        and volume families naming this workspace, or a
+        catalog move (``image.changed``), which names none and
+        moves every row's image cell. A frame that names this
+        workspace reaches the page's tabs — the feed is a
         daemon-wide subscriber, and a busy sibling's frames
-        would otherwise land on this page's tabs."""
+        would otherwise land on this page's tabs — where a
+        proxy transition repaints the Proxies tab (#988) and
+        the frame appends to the Events tab (#989)."""
+        if row_frame(frame, self.workspace_id):
+            self.refresh()
         data = frame.get("data") or {}
         if not frame_names(data, self.workspace_id):
             return
-        # A proxy transition repaints the Proxies tab (#988) —
-        # the feed's frame is the tab's own refresh trigger, the
-        # same path the page's tick drives — and every frame
-        # appends to the Events tab (#989).
         self.proxies_tab.frame(frame)
         self.events_tab.push(frame)
         self.rebuild()
@@ -488,24 +489,24 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.status.clear()
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
-        """The page's first refresh at open (#945), the tick's
-        resume while the page owns the window, and the
-        keyboard's anchor: the Back button takes the focus — a
-        key event needs a focused child to reach the page's
-        Escape shortcut. A wrapper without its Back button
-        does none of the three (#959): Qt can deliver events to
-        a page whose construction never finished, and to the
-        empty wrapper PySide6 raises at teardown for a C++
-        object that outlived its Python one. The decider
-        registration returns with the show (#999): the hide
-        retired it, and the workspace's holds wait for a
-        decider only while one watches — the page showing again
-        is the watch resuming, whatever hid it (Back's return,
-        a tab switch back to Workspaces)."""
+        """The page's first refresh at open (#945, #1019: the
+        standing tick is gone — the row re-reads on the
+        row-affecting frames the events feed pushes and on the
+        feed's serve poke) and the keyboard's anchor: the Back
+        button takes the focus — a key event needs a focused
+        child to reach the page's Escape shortcut. A wrapper
+        without its Back button does none of it (#959): Qt can
+        deliver events to a page whose construction never
+        finished, and to the empty wrapper PySide6 raises at
+        teardown for a C++ object that outlived its Python one.
+        The decider registration returns with the show (#999):
+        the hide retired it, and the workspace's holds wait for
+        a decider only while one watches — the page showing
+        again is the watch resuming, whatever hid it (Back's
+        return, a tab switch back to Workspaces)."""
         if getattr(self, "back_button", None) is not None:
             self.anchor_focus()
             self.refresh()
-            self.timer.start()
             if self.workspace_id and self.consent is not None:
                 self.bridge.start_decider(
                     self.workspace_id, self.consent.controller
@@ -513,20 +514,13 @@ class WorkspaceDetail(QtWidgets.QWidget):
         super().showEvent(event)
 
     def hideEvent(self, event: QtGui.QHideEvent) -> None:
-        """The tick stops with the page (#945), and the decider
-        registration retires with it (#999): the daemon holds
-        flows only while a decider watches, and a page nobody
-        sees must not hold them — the bridge's cancel closes
-        the link's socket, the daemon's own retire. A wrapper
-        without its ``timer`` (#959) has no tick to stop; its
-        bridge stands from the constructor's first line, so the
-        retire needs no guard of its own."""
-        timer = getattr(self, "timer", None)
-        if timer is not None:
-            timer.stop()
-        # The stack's own addWidget hides a page that never
-        # opened — no claim stands to retire — so the retire
-        # asks only while a workspace does.
+        """The decider registration retires with the page
+        (#999): the daemon holds flows only while a decider
+        watches, and a page nobody sees must not hold them —
+        the bridge's cancel closes the link's socket, the
+        daemon's own retire. The stack's own addWidget hides a
+        page that never opened — no claim stands to retire —
+        so the retire asks only while a workspace does."""
         if self.workspace_id:
             self.bridge.stop_decider()
         super().hideEvent(event)
@@ -535,10 +529,9 @@ class WorkspaceDetail(QtWidgets.QWidget):
 class WorkspaceShell(QtWidgets.QStackedWidget):
     """The window's two screens (#939, #945, #954): the list
     and the detail page over one bridge — the list's opened row
-    swaps to the page, the page's back returns — the stack's own
-    hide and show starting and stopping each screen's tick. The
-    shell hub (#954) lives here: the terminals outlive the
-    detail page, and the quit path closes every session."""
+    swaps to the page, the page's back returns. The shell hub
+    (#954) lives here: the terminals outlive the detail page,
+    and the quit path closes every session."""
 
     def __init__(
         self,
@@ -565,6 +558,7 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         bridge.landed.connect(self.frame_landed)
         bridge.feed_dropped.connect(self.feed_dropped)
         bridge.feed_reconnected.connect(self.feed_back)
+        bridge.feed_served.connect(self.feed_served)
         bridge.decider_rejected.connect(self.decider_refused)
         # The quit path closes every shell (#954): the window's
         # children never see a close event of their own, and a
@@ -668,14 +662,17 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
 
     @QtCore.Slot(object)
     def frame_landed(self, frame: dict) -> None:
-        """One pushed frame (#946): the page's tabs take it
-        whatever screen owns the window — its events tab is the
-        frame's own record — and the screen the operator sees
-        refreshes at once, through the same path its timer
-        drives; the hidden screen refreshes at its next show.
-        The tick stays the backstop the feed makes immediate."""
+        """One pushed frame (#946, #1019): the page takes it
+        whatever screen owns the window — its own row filter
+        decides the re-read, and its events tab is the frame's
+        own record — and a listing-affecting frame refreshes
+        the listing while it owns the window: the listing
+        re-reads on the frames the daemon publishes, not on a
+        standing tick, the TUI listing's own rule. A hidden
+        screen re-reads at its next show."""
         self.detail.push_frame(frame)
-        self.currentWidget().refresh()
+        if listing_frame(frame) and self.currentWidget() is self.listing:
+            self.listing.refresh()
 
     @QtCore.Slot(str)
     def feed_dropped(self, reason: str) -> None:
@@ -692,10 +689,25 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
     @QtCore.Slot()
     def feed_back(self) -> None:
         """The feed's recovery (#946): one flash says the frames
-        flow again; the refresh that follows is the feed's
-        own."""
+        flow again; the re-read is the serve poke's own — every
+        connection's first frame refreshes the screen the
+        operator sees, because frames published while no
+        connection stood never landed."""
         screen = self.currentWidget()
         screen.flash("the events feed reconnected")
+
+    @QtCore.Slot()
+    def feed_served(self) -> None:
+        """A feed connection serves (#1019): the screen the
+        operator sees re-reads — first connection included, not
+        only reconnects — because frames published before the
+        connection stood never landed. The screens' own opening
+        reads and this re-read bracket the startup race: a
+        frame published between a REST answer and the
+        server-side subscribe misses the socket but shows in
+        the re-read, whose REST answer postdates the
+        subscribe."""
+        self.currentWidget().refresh()
 
     @QtCore.Slot(str)
     def decider_refused(self, reason: str) -> None:

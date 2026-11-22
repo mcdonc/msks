@@ -34,8 +34,8 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Footer, Input, ListItem, ListView, Static
 
 from ..data import RestFailure
+from ..frames import decode_frame, listing_frame
 from ..sshsessions import count_sessions
-from .consent import decode_frame
 from .consent_ui import (
     ConfirmScreen,
     FailurePanel,
@@ -97,22 +97,6 @@ async def guarded_flash(app, label: str, work):
 #: session records on disk), so the timer keeps its cadence
 #: whatever the events socket does.
 LOCAL_WATCH_S = 1.0
-
-
-def listing_frame(msg: dict) -> bool:
-    """Whether one decoded frame moves the listing (#1019): a
-    lifecycle transition — the ``workspace.`` family the routes
-    and the watcher publish (created, removed, status, mounts,
-    resized) — a volume move the storage strip follows
-    (``home.imported``, ``home.exported``), a catalog move the
-    IMAGE column follows (``image.changed``), or a mode switch
-    (the ``egress.rules`` frame the switch lands). Every other
-    family — the proxies, the secrets, the holds — paints through
-    its own surface, and the listing re-reads nothing for it."""
-    event = str(msg.get("event") or "")
-    return event.startswith(("workspace.", "home.", "image.")) or (
-        event == "egress.rules"
-    )
 
 
 class ListingLink(AuditLink):

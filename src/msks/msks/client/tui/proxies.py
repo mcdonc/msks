@@ -37,8 +37,8 @@ from textual.widgets import (
     Static,
 )
 
+from ..frames import decode_frame
 from ..proxies import parse_local_spec, parse_remote_spec
-from .consent import decode_frame
 from .consent_ui import (
     ConfirmScreen,
     FlashLine,

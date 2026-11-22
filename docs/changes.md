@@ -342,15 +342,17 @@ tagged `vX.Y.Z`.
 
 - **The attached clients follow the daemon over the events
   websocket instead of polling (#1019).** The TUI's workspaces
-  list, workspace page, and proxies page re-read on the frames
+  list, workspace page, and proxies page, and the GUI's
+  workspaces list and workspace page, re-read on the frames
   the daemon publishes instead of on timers. The daemon now
   publishes `workspace.created`, `workspace.removed`,
   `workspace.mounts`, the request-path `workspace.status`
   transitions (start, stop, reset), and `image.changed` on
   catalog moves, beside the watcher's scans. A daemon at rest
   receives no periodic listing traffic from an attached idle
-  client. The shell counts stay on a local timer: they read
-  per-host session records, not daemon state. See `docs/tui.md`.
+  client. The TUI's shell counts stay on a local timer (they
+  read per-host session records, not daemon state). See
+  `docs/tui.md` and `docs/gui.md`.
 - **The GUI dependencies are base dependencies (#1023).** A
   plain `pip install msks` now installs the desktop GUI, and
   the `gui` extra is gone. Every install gains about 250 MB

@@ -17,13 +17,13 @@ import asyncio
 
 import websockets
 
+from ..frames import decode_frame, row_frame
 from ..wsauth import UnusableToken
 from .consent import REJECTED as FRAME_REJECTED
 from .consent import (
     SECRET_EVENT,
     ConsentController,
     SecretEvent,
-    decode_frame,
 )
 from .consent_ui import (
     RECONNECT_DELAYS,
@@ -49,36 +49,6 @@ def proxy_frame(msg: dict) -> bool:
     ``proxy.updated``, ``proxy.listening``, ``proxy.failed``,
     ``proxy.closed``, ``proxy.removed``."""
     return str(msg.get("event") or "").startswith("proxy.")
-
-
-def row_frame(msg: dict, workspace_id: str) -> bool:
-    """Whether one decoded frame moves this workspace's row
-    (#1019): a lifecycle transition — the ``workspace.`` family
-    the routes and the watcher publish (created, removed,
-    status, mounts, resized) — naming the workspace under the
-    naming conventions the stream's families use (``id``, and
-    the scalar ``workspace_id`` the consent family uses; no
-    lifecycle frame carries it today, the matcher keeps it so a
-    future frame that does admits unchanged); a volume move the
-    row's facts follow (``home.imported``, ``home.exported``);
-    or a catalog move (``image.changed``) — the frame names no
-    workspace because it moves every row's image cell. Frames
-    for other workspaces and frames the page's own surface
-    already answered (the egress family, whose rules frame the
-    controller lands directly) decide nothing."""
-    event = str(msg.get("event") or "")
-    if event.startswith("image."):
-        return True
-    return named_row_frame(msg, event, workspace_id)
-
-
-def named_row_frame(msg: dict, event: str, workspace_id: str) -> bool:
-    """The named half of :func:`row_frame`: the lifecycle and
-    volume families, matched against the workspace the frames
-    name."""
-    data = msg.get("data") or {}
-    named = (data.get("id"), data.get("workspace_id"))
-    return event.startswith(("workspace.", "home.")) and workspace_id in named
 
 
 class DeciderLink:

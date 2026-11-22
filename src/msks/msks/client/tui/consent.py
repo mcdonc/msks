@@ -19,10 +19,11 @@ The clock defaults to :func:`time.time` because the daemon stamps
 are only meaningful when both timestamps share that domain.
 """
 
-import json
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
+
+from ..frames import decode_frame
 
 # Frame-application outcomes (what apply_frame tells the view).
 ADDED = "added"  # a held request arrived; payload = ConsentRequest
@@ -570,13 +571,3 @@ class ConsentController:
         replay drops on a second delivery (#305)."""
         self.pending.clear()
         self.rules = None
-
-
-def decode_frame(raw: str) -> dict | None:
-    """One inbound frame as a dict, or None for non-JSON, non-dict,
-    or non-object input."""
-    try:
-        msg = json.loads(raw)
-    except ValueError, TypeError:
-        return None
-    return msg if isinstance(msg, dict) else None

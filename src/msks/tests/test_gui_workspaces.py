@@ -1,12 +1,14 @@
 """The workspace list screen (#939, #972): the thin widget over
 the presenter's row models — the TUI listing's five fields,
 NAME, STATUS with the unresolved-mounts marker, ID, IMAGE,
-CREATED, and the row-actions column beside them — refreshed on
-a timer through the bridge, with a failed refresh flashing the
-status line while the rows stand. The widget runs under the
-offscreen platform on every host (#939); the screen's slots are
-driven directly and through the stub bridge's signal emits, the
-bridge's own tests holding the real worker's contract.
+CREATED, and the row-actions column beside them — refreshed
+through the bridge on the screen's own open and on the
+listing-affecting frames the events feed pushes (#1019), with
+a failed refresh flashing the status line while the rows
+stand. The widget runs under the offscreen platform on every
+host (#939); the screen's slots are driven directly and
+through the stub bridge's signal emits, the bridge's own tests
+holding the real worker's contract.
 """
 
 import importlib.util
@@ -184,7 +186,7 @@ def qt(tmp_path: Path):
 def make_screen(qt) -> tuple:
     """The screen over the stub bridge, shown in a real window —
     the shape every test reads: open, first refresh issued (and
-    answered, so later refreshes run), tick running."""
+    answered, so later refreshes run)."""
     bridge = StubBridge()
     screen = qt.screen_mod.WorkspaceList(bridge)
     window = qt.QtWidgets.QMainWindow()
@@ -195,10 +197,11 @@ def make_screen(qt) -> tuple:
 
 
 def test_the_open_screen_issues_its_first_refresh(qt) -> None:
-    """The window opens on the list (#939): showing the screen
-    issues the first refresh through the bridge and starts the
-    standing tick at the listing's cadence — the TUI's own five
-    seconds (#470 L2)."""
+    """The window opens on the list (#939, #1019): showing the
+    screen issues the first refresh through the bridge. The
+    standing tick is gone — the listing re-reads on the frames
+    the events feed pushes, the shell's own filter deciding
+    which."""
     bridge = StubBridge()
     screen = qt.screen_mod.WorkspaceList(bridge)
     window = qt.QtWidgets.QMainWindow()
@@ -206,8 +209,7 @@ def test_the_open_screen_issues_its_first_refresh(qt) -> None:
     assert bridge.calls == []  # construction alone asks nothing
     window.show()
     assert bridge.calls == [("workspaces-list", "workspaces", ())]
-    assert screen.timer.isActive()
-    assert screen.timer.interval() == qt.screen_mod.REFRESH_MS
+    assert not hasattr(screen, "timer")  # no standing tick stands
     window.close()
 
 
@@ -395,8 +397,8 @@ def test_events_on_a_wrapper_past_construction_touch_nothing(
     deliver events to (#959): a screen whose construction
     never finished, and the empty wrapper PySide6 raises at
     teardown for a C++ object that outlived its Python one.
-    A wrapper without its ``table`` and ``timer``
-    answers nothing: no refresh, no tick, no filtering, and
+    A wrapper without its ``table`` and ``status``
+    answers nothing: no refresh, no filtering, and
     Qt's own handling runs, instead of an AttributeError
     tracing to whatever test is running."""
     screen, window, _bridge = make_screen(qt)
@@ -404,9 +406,8 @@ def test_events_on_a_wrapper_past_construction_touch_nothing(
     # The two teardown shapes leave a wrapper with no instance
     # attributes — the same state the guards answer.
     del screen.table
-    del screen.timer
+    del screen.status
     screen.showEvent(qt.QtGui.QShowEvent())
-    screen.hideEvent(qt.QtGui.QHideEvent())
     screen.resizeEvent(
         qt.QtGui.QResizeEvent(qt.QtCore.QSize(10, 10), qt.QtCore.QSize(5, 5))
     )
@@ -444,39 +445,45 @@ def test_another_keys_answer_is_not_the_screens(qt) -> None:
 
 
 def test_the_refresh_slot_refreshes_through_the_bridge(qt) -> None:
-    """The refresh verb (#939, #972): the open's call and the
-    timer's tick share it, both through the bridge — the
-    toolbar's button is gone, the rows hold the actions now."""
+    """The refresh verb (#939, #972): the open's call, a
+    listing-affecting frame, and the feed's serve poke share
+    it, all through the bridge — the toolbar's button is gone,
+    the rows hold the actions now."""
     screen, window, bridge = make_screen(qt)
     bridge.calls.clear()  # the open refresh is already answered
     screen.refresh()
     assert bridge.calls == [("workspaces-list", "workspaces", ())]
-    screen.on_succeeded("workspaces-list", [])  # retire the flight
+    window.close()
+
+
+def test_a_reshown_screen_refreshes(qt) -> None:
+    """A re-show refreshes (#939, #1019): the standing tick is
+    gone, so the show's own read is the screen's answer for the
+    frames that landed while it was hidden."""
+    screen, window, bridge = make_screen(qt)
+    screen.on_succeeded("workspaces-list", [])  # retire the open's flight
     bridge.calls.clear()
-    # A one-millisecond tick: the pump spins Qt's queue until
-    # the standing timer's refresh lands — the wiring the click
-    # alone cannot pin.
-    screen.timer.setInterval(1)
-    deadline = time.monotonic() + 10.0
-    while time.monotonic() < deadline and not bridge.calls:
+    window.close()
+    assert bridge.calls == []
+    window.show()
+    assert bridge.calls == [("workspaces-list", "workspaces", ())]
+    window.close()
+
+
+def test_the_closed_window_asks_nothing(qt) -> None:
+    """A closed window hides the screen and nothing asks the
+    daemon on its own after that (#939, #1019): the standing
+    tick is gone, so a hidden screen sends no periodic traffic
+    at all — a daemon at rest receives no listing reads from an
+    idle attached client, the TUI's own rule."""
+    screen, window, bridge = make_screen(qt)
+    screen.on_succeeded("workspaces-list", [])  # retire the open's flight
+    bridge.calls.clear()
+    window.close()
+    for _ in range(5):
         qt.app.processEvents()
         time.sleep(TICK)
-    assert bridge.calls == [("workspaces-list", "workspaces", ())]
-    window.close()
-
-
-def test_the_tick_stops_with_the_closed_window(qt) -> None:
-    """A timer tick must not touch widgets after close (#939):
-    closing the window hides the screen and its hide hook stops
-    the tick; re-showing resumes it with a fresh refresh."""
-    screen, window, bridge = make_screen(qt)
-    assert screen.timer.isActive()
-    window.close()
-    assert not screen.timer.isActive()
-    bridge.calls.clear()
-    window.show()
-    assert screen.timer.isActive()
-    assert bridge.calls == [("workspaces-list", "workspaces", ())]
+    assert bridge.calls == []
     window.close()
 
 

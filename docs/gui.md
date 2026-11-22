@@ -80,9 +80,12 @@ The **Workspaces** tab opens on the list: one row per workspace,
 newest first, in five columns. NAME, STATUS, ID, IMAGE, and
 CREATED. A start/stop toggle and a shell button close each row.
 
-The list re-reads the daemon every five seconds. A workspace
-changed from another surface (the CLI, another operator) appears
-without a click.
+The list re-reads the daemon when the daemon publishes a move:
+a workspace changed from another surface (the CLI, another
+operator) appears without a click, and a daemon at rest receives
+no periodic listing traffic from an open window. The events
+websocket carries the frames, and the window re-reads when the
+connection serves again after a drop.
 
 Click a column header to sort by it. CREATED sorts newest first
 by default. STATUS sorts in the lifecycle order (created,
@@ -232,11 +235,10 @@ own grammar, the label, and the live status word with its cause.
 the form standing with the rule on its note line. **Edit**
 reopens the form seeded with the row. **Remove** asks first.
 
-The listing refreshes on the page's five-second tick, after
-every mutation, and on every proxy transition the events feed
-pushes. A bind that fails while the tab stands paints itself
-without a click. The [proxies chapter](proxies.md) describes
-what a proxy is.
+The listing refreshes after every mutation and on every proxy
+transition the events feed pushes. A bind that fails while the
+tab stands paints itself without a click. The [proxies
+chapter](proxies.md) describes what a proxy is.
 
 ### The Events tab
 
