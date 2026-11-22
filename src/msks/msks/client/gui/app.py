@@ -66,12 +66,14 @@ NO_DISPLAY = (
 # so the window looks the same wherever it opens.
 FUSION_STYLE = "Fusion"
 
-#: The window's font scale (#939): the platform's default point
-#: size reads small beside a terminal's own face, so the window
-#: runs its fonts at one and a half times the default — one
-#: scale for the whole window, applied to the application font
-#: before the first widget reads it.
-FONT_SCALE = 1.5
+#: The window's font scale (#939, #1046): the multiplier the
+#: window's fonts take over the terminal face's own default —
+#: the anchor :func:`open_window` writes — so the tabs, the
+#: buttons, and the tables' headers frame the content at the
+#: size the content runs. One scale for the whole window,
+#: applied to the application font before the first widget
+#: reads it.
+FONT_SCALE = 1.0
 
 #: The window's opening size (#939), the shape no saved
 #: geometry answers: 1280 by 720 — a listing five columns wide
@@ -79,10 +81,10 @@ FONT_SCALE = 1.5
 DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 720
 
-#: The environment knob for the font scale (#939): an operator
-#: whose display or taste reads the default wrong sets it. The
-#: window's size needs no knob — it answers to the saved
-#: geometry or the fixed default above.
+#: The environment knob for the font scale (#939, #1046): an
+#: operator whose display or taste reads the anchored size
+#: wrong sets the multiplier. The window's size needs no knob —
+#: it answers to the saved geometry or the fixed default above.
 FONT_SCALE_ENV = "MSKSC_GUI_FONT_SCALE"
 
 #: The saved window geometry's file name, under the client
@@ -348,18 +350,27 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     )
     if mine:
         app.setStyle(FUSION_STYLE)
-    # The font scale sits on the application before the first
-    # widget builds (#939): every screen the window opens — the
-    # table, the button, the status line — inherits the scaled
-    # size without a per-widget hand-tune. A preset knob is the
-    # operator's own choice and wins over the default. The
-    # scale multiplies what the application already carries:
-    # one window per process is the entry's own contract, and a
-    # second open in one process would compound it (the
-    # offscreen suite unscales between its opens).
+    # allow-deferred-import — the terminal faces (#952) carry
+    # the screens' contract: PySide6 at module scope there; the
+    # chrome's anchor is the default those faces open at, read
+    # here on the window path after the guards.
+    from .terminal import fonts
+
+    # The chrome's anchor sits on the application before the
+    # first widget builds (#939, #1046): every screen the window
+    # opens — the table, the button, the status line — inherits
+    # the anchored size without a per-widget hand-tune. The
+    # anchor is the terminal face's own default, so the chrome
+    # frames the content at the size the content runs on every
+    # platform: the platform's own font default (13pt on macOS,
+    # 9–10pt on Linux) no longer decides the chrome's size. A
+    # preset knob is the operator's own choice and wins over the
+    # default. The write is absolute — a second open in one
+    # process writes the same size again, never a scale
+    # compounded onto the standing font.
     font = app.font()
     font.setPointSizeF(
-        font.pointSizeF() * scale_from_env(FONT_SCALE_ENV, FONT_SCALE)
+        fonts.DEFAULT_PT * scale_from_env(FONT_SCALE_ENV, FONT_SCALE)
     )
     app.setFont(font)
     apply_identity(app)

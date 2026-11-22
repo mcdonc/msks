@@ -348,6 +348,15 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **The GUI window's font scale is anchored to the terminal
+  size (#1046).** The window's chrome (tab titles, button
+  text, table headers) now opens at the terminal face's own
+  default, 15pt, on every platform. It previously ran at 1.5×
+  the platform's font default, which read 30% oversized on
+  macOS (19.5pt). `MSKSC_GUI_FONT_SCALE` now multiplies the
+  15pt anchor with a default of `1.0`; the old macOS size is
+  `1.3`.
+
 - **The attached clients follow the daemon over the events
   websocket instead of polling (#1019).** The TUI's workspaces
   list, workspace page, and proxies page, and the GUI's
