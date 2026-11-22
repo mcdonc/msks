@@ -1294,10 +1294,11 @@ remove them by hand.</p>
 <p>The window opens 1280 by 720 the first time. Every later open
 takes back the place and size the last close left, as long as a
 connected screen still shows some of that rect.</p>
-<p><code>MSKSC_GUI_FONT_SCALE</code> multiplies the window's fonts. The
-default is 1.5, one and a half times the platform's default
-point size. The <a href="#the-zoom-keys">zoom keys</a> change the size at
-runtime.</p>
+<p><code>MSKSC_GUI_FONT_SCALE</code> multiplies the window's base font size.
+The base is the terminal face's own default, 15pt, so the
+window's chrome and its terminal content open at one size on
+every platform. The default multiplier is 1.0. The <a href="#the-zoom-keys">zoom
+keys</a> change the size at runtime.</p>
 <h2 id="the-connection">The connection<a class="headerlink" href="#the-connection" title="Permanent link">&para;</a></h2>
 <p>The GUI reads the <a href="../cli/#client-environment">client
 environment</a> the TUI reads. Export
