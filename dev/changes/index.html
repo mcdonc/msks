@@ -2584,6 +2584,12 @@ gui</code>. The nix package keeps the daemon's closure lean, so on
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>The GUI's menu bar on macOS names the client msks
+  (#1043).</strong> The bold application menu read the process name —
+  <code>python3.14</code> for the console script — until the application
+  name was set; it now reads <code>msks</code>, matching the About dialog.</p>
+</li>
+<li>
 <p><strong><code>scripts/cut-release.sh</code> resolves <code>python3</code> explicitly
   (#1038).</strong> The script's two python reads (the tagged version
   and the release-notes gate) ran a bare <code>python</code>, which macOS
