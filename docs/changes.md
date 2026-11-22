@@ -349,15 +349,17 @@ tagged `vX.Y.Z`.
   created), refreshed on a five-second tick and a Refresh
   button. A refused refresh flashes a status line while the
   rows stand; an outage holds its message until the daemon
-  answers again. The window opens at 1280×720, runs its chrome
-  (tabs, buttons, table headers) at 15 logical pixels — the
-  size the terminal face's 15pt default rasterizes to on
-  macOS, converted through the screen's font dpi so the same
-  size opens on every platform (#1056) — with
-  `MSKSC_GUI_FONT_SCALE` multiplying that anchor (default
-  `1.0`; `1.3` restores the old macOS look), and reopens at
-  the geometry it last closed at — kept under the client state
-  root (see `docs/cli.md` → Client environment).
+  answers again. The window opens at 1280×720 and runs its
+  chrome (tabs, buttons, table headers) at 15 logical pixels,
+  the size the terminal face's 15pt default rasterizes to on
+  macOS. The window converts the anchor through the screen's
+  font dpi, so the chrome opens at the same size on every
+  platform (#1056). The terminal content keeps its own 15pt
+  default. `MSKSC_GUI_FONT_SCALE` multiplies the anchor
+  (default `1.0`; `1.3` restores the old macOS look). The
+  window reopens at the geometry it last closed at, kept under
+  the client state root (see `docs/cli.md` → Client
+  environment).
 
 ### Changed
 

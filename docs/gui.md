@@ -47,8 +47,10 @@ The base is 15 logical pixels, the size the terminal face's
 a point size larger (96 against 72 font dpi), so the window
 anchors its chrome in pixels and converts through the screen's
 own dpi: the chrome opens at the same size on every platform
-(#1056). The default multiplier is 1.0. The [zoom
-keys](#the-zoom-keys) change the size at runtime.
+(#1056). The terminal content keeps its own 15pt default, so
+it opens larger than the chrome on a 96-dpi session. The
+default multiplier is 1.0. The [zoom
+keys](#the-zoom-keys) change either size at runtime.
 
 ## The connection
 

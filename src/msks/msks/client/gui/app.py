@@ -81,10 +81,11 @@ FONT_SCALE = 1.0
 #: rasterizes to (``pixels = points * dpi / 72``).
 PT_PER_INCH = 72.0
 
-#: The dpi a session with no screen answers (#1056): the
-#: offscreen platform synthesizes a 96-dpi screen, so this
-#: floor names the dpi the headless suites already run — a
-#: desktop session always carries a real screen past it.
+#: The dpi a session with no screen answers (#1056): a
+#: defensive floor — Qt hands the window a screen on every
+#: platform the client runs (offscreen included, which
+#: synthesizes its own), so the branch names the dpi the
+#: common session would carry, not one a desktop reaches.
 NO_SCREEN_DPI = 96.0
 
 #: The window's opening size (#939), the shape no saved
@@ -157,8 +158,9 @@ def scale_from_env(name: str, default: float) -> float:
 
 def screen_dpi(app: object) -> float:
     """The primary screen's font dpi (#1056): the divisor the
-    chrome's pixel anchor converts through — the offscreen
-    floor when a session answers no screen at all."""
+    chrome's pixel anchor converts through. The floor answers
+    a session that carries no screen at all — defensive, for
+    Qt hands every platform the client runs a screen."""
     screen = app.primaryScreen()
     if screen is None:
         return NO_SCREEN_DPI
@@ -167,12 +169,12 @@ def screen_dpi(app: object) -> float:
 
 def chrome_pt(pixels: float, dpi: float) -> float:
     """The point size that rasterizes to the asked logical
-    pixels at the platform's font dpi (#1056): points are
-    physical — the same 15pt opens at 15 pixels where a session
-    answers 72 dpi (macOS) and a third larger at the 96 an X11
-    or Wayland session answers — so a size meant to read the
-    same everywhere names pixels and converts through the
-    screen's own dpi."""
+    pixels at the platform's font dpi (#1056): a point size
+    rasterizes through that dpi — the same 15pt opens at 15
+    pixels where a session answers 72 (macOS) and a third
+    larger at the 96 an X11 or Wayland session answers — so a
+    size meant to read the same everywhere names pixels and
+    converts through the screen's own dpi."""
     return pixels * PT_PER_INCH / dpi
 
 

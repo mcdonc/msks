@@ -442,14 +442,21 @@ def test_the_gui_window_opens_offscreen(
         app.chrome_pt(fonts.DEFAULT_PT * app.FONT_SCALE, dpi)
     )
     # The converted point size rasterizes back to the anchor's
-    # own pixels wherever the platform realizes the face: 15 at
-    # the default scale, on a 96-dpi host and a 72-dpi one
-    # alike (#1056).
+    # own pixels: 15 at the default scale, on a 96-dpi host and
+    # a 72-dpi one alike (#1056). The pin reads the size back
+    # off a face the database always holds — the bundled
+    # terminal face, registered for the empty database the
+    # offscreen platform can answer (an app font of Sans Serif
+    # resolves to nothing there, and the conversion is the
+    # dpi's, not the family's).
     from PySide6.QtGui import QFontInfo
 
-    realized = QFontInfo(qapp.font()).pixelSize()
-    if realized >= 0:
-        assert realized == round(fonts.DEFAULT_PT * app.FONT_SCALE)
+    fonts.register_faces()
+    face = fonts.make_font()
+    face.setPointSizeF(qapp.font().pointSizeF())
+    realized = QFontInfo(face).pixelSize()
+    assert realized >= 0
+    assert realized == round(fonts.DEFAULT_PT * app.FONT_SCALE)
     # The opening geometry, first open (#939): nothing saved
     # answers, so the fixed 1280x720 default does (the platform
     # places the frame, so the size is what is pinned).
