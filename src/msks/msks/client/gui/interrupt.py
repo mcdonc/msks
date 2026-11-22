@@ -78,11 +78,14 @@ def arm_sigint(qapp: object) -> Callable[[int], int]:
     def settle(code: int) -> int:
         """Unwind the wiring (#1037) and name the exit: the
         terminal's own status for a Ctrl-C quit, the loop's own
-        code for any other end. The fd comes off before the
-        socket closes — a byte written to a closed fd number
-        could land in whatever the kernel recycled it as."""
-        signal.set_wakeup_fd(was_wakeup)
+        code for any other end. The handler comes back first,
+        so a signal in the restore window takes the
+        interpreter's own answer rather than silence; the fd
+        comes off before the socket closes — a byte written to
+        a closed fd number could land in whatever the kernel
+        recycled it as."""
         signal.signal(signal.SIGINT, was_handler)
+        signal.set_wakeup_fd(was_wakeup)
         notifier.setEnabled(False)
         read.close()
         write.close()

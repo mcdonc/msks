@@ -490,12 +490,12 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     from .interrupt import arm_sigint
 
     # The starting terminal's Ctrl-C (#1037): the wiring arms
-    # before the loop and settles right after it, so a second
-    # Ctrl-C in the cleanup window takes the interpreter's own
-    # answer again.
+    # before the loop. The settle lands after the close path's
+    # own cleanup, the last step before the return, so a
+    # repeated Ctrl-C cannot cut the bridge's stop or the
+    # geometry save short of the end the first one asked for.
     settle = arm_sigint(app)
     code = app.exec()
-    code = settle(code)
     tree["bridge"].stop()
     save_geometry(window)
-    return code
+    return settle(code)

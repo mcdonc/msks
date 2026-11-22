@@ -51,13 +51,20 @@ def test_a_ctrl_c_quits_the_event_loop() -> None:
     guard.setSingleShot(True)
     guard.timeout.connect(qapp.quit)
     guard.start(30000)
-    assert qapp.exec() == 0  # the quit the wake slot took
+    try:
+        assert qapp.exec() == 0  # the quit the wake slot took
+        assert settle(0) == interrupt.INTERRUPT_EXIT == 130
+        # The unwind (#1037): the wakeup fd and the handler both
+        # handed back as the arming found them.
+        assert signal.set_wakeup_fd(-1) == -1
+        assert signal.getsignal(signal.SIGINT) is standing
+    finally:
+        # A failed assert must not leak the wiring into the
+        # worker's rest of the run: the fd off and the handler
+        # back, unconditionally.
+        signal.set_wakeup_fd(-1)
+        signal.signal(signal.SIGINT, standing)
     guard.stop()
-    assert settle(0) == interrupt.INTERRUPT_EXIT == 130
-    # The unwind (#1037): the wakeup fd and the handler both
-    # handed back as the arming found them.
-    assert signal.set_wakeup_fd(-1) == -1
-    assert signal.getsignal(signal.SIGINT) is standing
 
 
 def test_a_plain_end_keeps_the_loop_code() -> None:
@@ -77,6 +84,10 @@ def test_a_plain_end_keeps_the_loop_code() -> None:
     from msks.client.gui import interrupt
 
     settle = interrupt.arm_sigint(qapp)
-    assert settle(3) == 3
-    assert signal.set_wakeup_fd(-1) == -1
-    assert signal.getsignal(signal.SIGINT) is standing
+    try:
+        assert settle(3) == 3
+        assert signal.set_wakeup_fd(-1) == -1
+        assert signal.getsignal(signal.SIGINT) is standing
+    finally:
+        signal.set_wakeup_fd(-1)
+        signal.signal(signal.SIGINT, standing)
