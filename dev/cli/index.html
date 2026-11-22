@@ -358,6 +358,32 @@
   
   
     <li class="md-nav__item">
+      <a href="../gui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The GUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../mounts/" class="md-nav__link">
         
   
@@ -967,6 +993,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         <code>msks rsync</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#msks-gui-shortcut" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>msks gui-shortcut</code>
       </span>
     </span>
   </a>
@@ -1590,6 +1627,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#msks-gui-shortcut" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>msks gui-shortcut</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#errors-exit-codes-and-timeouts" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1811,6 +1859,21 @@ The key file itself is never copied into msks's state.</p>
 <code>ecdsa</code> P-256/P-384/P-521, or <code>rsa</code>). An encrypted key no agent holds is
 refused with a line giving the fixes in order: <code>ssh-add</code> the key, decrypt a
 copy, or pass <code>--pubkey</code> at create.</p>
+<p>One more variable carries the GUI window's font scale (#939):
+<code>MSKSC_GUI_FONT_SCALE</code> multiplies the platform's default font point size
+(default <code>1.5</code>). It has no config-file key, because it changes only how the
+window opens. A value that does not name a usable number (unparseable,
+<code>nan</code>, an infinity, zero, or negative) reads as the default.</p>
+<p>The window itself opens at 1280 by 720, and thereafter at the geometry it
+last closed at — place and size together, kept as <code>gui-window.json</code> under
+the client state root (<code>MSKSC_STATE_DIR</code>, else the XDG state home's msks
+subtree, the sessions' own root). A saved geometry no connected screen
+shows is ignored, so an unplugged monitor cannot strand the window off the
+desktop.</p>
+<p>A Ctrl-C in the terminal that started the window closes it (#1037). The
+close takes the window's own quit path: every open shell closes and the
+geometry saves, exactly as the close button ends it. The client exits
+with 130, the terminal's interrupted status.</p>
 <p><code>MSKSC_PUBKEY_FILE</code> points at your key's public half, a <code>.pub</code>
 file (<a href="../first-run/#the-key-files">the identity section</a>
 owns the agent requirement this form carries). A create with it
@@ -1917,8 +1980,8 @@ type after <code>--</code> on the <code>msks ssh</code> command line, the option
 themselves. A <code>--</code> token in the value is refused: msks adds the
 options to its own, and a remembered separator would turn
 msks's transport into the remote command:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">ssh_options</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-A -o ServerAliveInterval=30</span><span class="w">   </span><span class="c1"># string form (shell-split)</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nt">ssh_options</span><span class="p">:</span><span class="w">                                </span><span class="c1"># list form (tokens stay whole)</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">ssh_options</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-A -o ServerAliveInterval=30</span><span class="w"> </span><span class="c1"># string form (shell-split)</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nt">ssh_options</span><span class="p">:</span><span class="w"> </span><span class="c1"># list form (tokens stay whole)</span>
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-A</span>
 </span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-o</span>
 </span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ServerAliveInterval=30</span>
@@ -2956,6 +3019,23 @@ replaces msks's remote shell entirely (rsync takes the last <code>-e</code>, and
 empty-host fill keeps pointing at the workspace id your own transport must
 then reach), the same override shape ssh passthrough options have. The host
 prerequisites are <code>ssh</code> and <code>rsync</code>. The exit code is rsync's own.</p>
+<h2 id="msks-gui-shortcut"><code>msks gui-shortcut</code><a class="headerlink" href="#msks-gui-shortcut" title="Permanent link">&para;</a></h2>
+<p>The GUI window shows an msks icon once the desktop can resolve
+it (#1021). A Wayland taskbar reads the window's app id, looks up
+the desktop entry with that id, and shows the icon the entry points
+at.</p>
+<p><code>msks gui-shortcut</code> installs both under the XDG data home
+(<code>XDG_DATA_HOME</code>, else <code>~/.local/share</code>). The <code>msks.desktop</code> entry
+lands under <code>applications</code>, and the icon renders land under
+<code>icons/hicolor</code>, one PNG per size plus the scalable SVG. The entry's
+<code>Exec</code> line carries the absolute path of the <code>msks</code> command the
+installing shell resolved, so the desktop finds the client even when
+the venv's bin directory is not on the desktop's <code>PATH</code>. Run the
+command again after an upgrade to refresh the renders. It overwrites
+in place and is safe to re-run.</p>
+<p>The window itself also sets the icon directly, so on X11 and macOS the
+window carries it without the install. Linux is the only desktop the
+command serves. Elsewhere it prints one line and exits 1.</p>
 <h2 id="errors-exit-codes-and-timeouts">Errors, exit codes, and timeouts<a class="headerlink" href="#errors-exit-codes-and-timeouts" title="Permanent link">&para;</a></h2>
 <p>Every command fails with one readable line on stderr and exit
 code 1, never a traceback:</p>
