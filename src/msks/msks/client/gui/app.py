@@ -93,12 +93,15 @@ GEOMETRY_FILE = "gui-window.json"
 
 
 def apply_identity(app) -> None:
-    """Name the window for the desktop (#1021): the desktop
-    file name a compositor matches — the app id a Wayland
-    taskbar resolves the icon by, the class an X11 one — plus
-    the icon itself, which the surfaces that read the window
-    rather than the entry show (macOS's dock reads this one
-    alone). The entry and its icon land on the desktop through
+    """Name the application and window for the desktop (#1021,
+    #1043): the application name macOS's menu bar titles the
+    application menu after (a bare console script names the
+    interpreter there otherwise), the desktop file name a
+    compositor matches — the app id a Wayland taskbar resolves
+    the icon by, the class an X11 one — plus the icon itself,
+    which the surfaces that read the window rather than the
+    entry show (macOS's dock reads this one alone). The entry
+    and its icon land on the desktop through
     :func:`msks.client.gui.shortcut.run`."""
     # allow-deferred-import — the icon type comes from the
     # binding the window path already loaded (run's guards
@@ -107,6 +110,7 @@ def apply_identity(app) -> None:
     from PySide6 import QtGui
 
     app.setDesktopFileName(DESKTOP_ID)
+    app.setApplicationName(WINDOW_TITLE)
     app.setWindowIcon(QtGui.QIcon(str(icon_dir() / ICON_FILE)))
 
 

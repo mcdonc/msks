@@ -808,6 +808,9 @@ def test_open_window_reuses_an_existing_app(
         def setDesktopFileName(self, name: str) -> None:
             identities.append(name)
 
+        def setApplicationName(self, name: str) -> None:
+            identities.append(name)
+
         def setWindowIcon(self, icon: object) -> None:
             icons.append(icon)
 
@@ -881,10 +884,11 @@ def test_open_window_reuses_an_existing_app(
     # The font scale (#939): the default 9pt scales to 13.5 —
     # one write on the application font, before any widget.
     assert "font 13.5" in shown
-    # The window's desktop identity (#1021): the entry name the
-    # compositor matches the icon by, and the icon itself,
-    # loaded from the wheel's own master.
-    assert identities == ["msks"]
+    # The desktop identity (#1021, #1043): the entry name the
+    # compositor matches the icon by, and the application name
+    # macOS's menu bar titles its application menu after — both
+    # the client's own name, landing beside the icon itself.
+    assert identities == ["msks", "msks"]
     assert len(icons) == 1
     # The opening size (#939): nothing saved answers, so the
     # fixed 1280x720 default does.
@@ -1108,6 +1112,9 @@ def test_open_window_keeps_a_user_style_choice(
 
         def setDesktopFileName(self, name: str) -> None:
             pass  # the identity's own test pins the call
+
+        def setApplicationName(self, name: str) -> None:
+            pass
 
         def setWindowIcon(self, icon: object) -> None:
             pass
