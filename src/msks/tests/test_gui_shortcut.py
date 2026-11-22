@@ -1,6 +1,7 @@
 """The desktop shortcut's suite (#1021): the icon assets the
 wheel ships, the installer that plants them under the XDG data
-home, the ``msks gui-shortcut`` command over it, and the
+home, the ``msks gui-shortcut`` command over it, the launch
+plant that does the same work at GUI startup (#1045), and the
 window identity the compositor matches the installed entry
 by."""
 
@@ -235,6 +236,99 @@ def test_the_command_names_a_home_it_cannot_resolve(
     monkeypatch.setattr(Path, "home", staticmethod(unresolvable))
     assert shortcut.run() == 1
     assert "cannot install the desktop shortcut" in capsys.readouterr().err
+
+
+def test_the_launch_plant_is_quiet_and_plants(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A quiet success at launch (#1045): the plant lands the
+    same tree the command lands and prints nothing — the
+    opening window is its own feedback."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    shortcut.ensure_installed()
+    assert (tmp_path / "applications" / shortcut.DESKTOP_FILE).exists()
+    assert capsys.readouterr().err == ""
+
+
+def test_the_launch_plant_skips_off_linux_silently(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A launch off Linux (#1045) plants nothing and says
+    nothing: the dock there reads the window icon Qt already
+    carries, so a line every launch would be noise."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    shortcut.ensure_installed()
+    assert not (tmp_path / "applications").exists()
+    assert capsys.readouterr().err == ""
+
+
+def test_the_launch_plant_names_a_relative_data_home(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A relative ``XDG_DATA_HOME`` at launch (#1045): the
+    absolute-path rule on stderr, then the window opens — the
+    plant is best-effort, never a gate."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", "somewhere/relative")
+    shortcut.ensure_installed()
+    assert shortcut.NOT_ABSOLUTE in capsys.readouterr().err
+
+
+def test_the_launch_plant_survives_a_refused_write(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A write the filesystem refuses at launch (#1045): the
+    one-line failure the command answers with, then the window
+    still opens — the data home pointing at a file is the
+    rigged refusal."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    blocked = tmp_path / "not-a-directory"
+    blocked.write_text("occupied")
+    monkeypatch.setenv("XDG_DATA_HOME", str(blocked))
+    shortcut.ensure_installed()
+    assert "cannot install the desktop shortcut" in capsys.readouterr().err
+
+
+def test_the_gui_entry_plants_the_shortcut_before_the_window(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The wiring (#1045): past the guards, ``run`` plants the
+    shortcut and opens the window after it — the entry must
+    stand before the surface maps for the compositor's app-id
+    lookup to find it on the first launch."""
+    if importlib.util.find_spec("PySide6") is None:
+        pytest.skip("PySide6 is not installed on this host")
+    client_env(monkeypatch)
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    order: list[str] = []
+
+    def plant_and_record() -> None:
+        shortcut.ensure_installed()
+        order.append("plant")
+
+    monkeypatch.setattr(app_mod, "ensure_installed", plant_and_record)
+    monkeypatch.setattr(
+        app_mod,
+        "open_window",
+        lambda QtWidgets, conf=None: order.append("window") or 0,
+    )
+    assert app_mod.run() == 0
+    assert order == ["plant", "window"]
+    assert (
+        tmp_path / "data" / "applications" / shortcut.DESKTOP_FILE
+    ).exists()
 
 
 def test_the_window_names_the_entry_and_carries_the_icon() -> None:

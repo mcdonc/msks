@@ -22,7 +22,7 @@ from types import ModuleType
 from ..sshsessions import state_dir
 from .data import GuiData
 from .rows import WINDOW_TITLE
-from .shortcut import DESKTOP_ID, ICON_FILE, icon_dir
+from .shortcut import DESKTOP_ID, ICON_FILE, ensure_installed, icon_dir
 
 # What a stripped or partial install hears when it asks for
 # the window (#928) — and what a nix-built install hears by
@@ -279,6 +279,15 @@ def run(conf=None) -> int:
     if not display_present():
         print(NO_DISPLAY, file=sys.stderr)
         return 1
+    # The launch plants the desktop shortcut (#1045) before
+    # the window maps: the compositor resolves the taskbar
+    # icon from the desktop entry the window's app id names,
+    # so the plant lands ahead of the first surface on a
+    # fresh install — the wheel itself cannot run a step
+    # after pip installs it. Quiet on success; a refusal
+    # inside says one line on stderr and the window still
+    # opens.
+    ensure_installed()
     return open_window(QtWidgets, conf)
 
 

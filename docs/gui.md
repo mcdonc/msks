@@ -21,10 +21,16 @@ also works. A start that finds no display prints one line on
 stderr and exits. A macOS session needs a desktop login. The
 window opens fine over ssh while one stands.
 
-`msks gui-shortcut` installs the desktop entry and the taskbar
-icon on a Linux desktop. The entry goes under the XDG data home.
-On macOS the command prints one line and changes nothing. The
-dock reads the icon the window itself already carries.
+The window plants its own desktop entry and taskbar icon on a
+Linux desktop. Every `msks gui` launch installs both under the
+XDG data home before the window opens, so the taskbar shows
+the msks icon from the first launch after a fresh install.
+The install is idempotent: the next launch after an upgrade
+refreshes the icon renders. A plant the filesystem refuses
+names itself in one stderr line and the window still opens.
+`msks gui-shortcut` does the same work by hand and prints the
+entry's path. On macOS nothing is planted. The dock reads the
+icon the window itself already carries.
 
 The window opens 1280 by 720 the first time. Every later open
 takes back the place and size the last close left, as long as a

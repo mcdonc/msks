@@ -117,6 +117,45 @@ def install_shortcut(data_home: Path, exe: str | None) -> Path:
     return entry
 
 
+def data_home() -> Path:
+    """The XDG data home (#1021, #1045): the variable's own
+    value when set, else ``~/.local/share`` — the tree the
+    command and the launch plant both write under."""
+    return Path(
+        os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share"
+    )
+
+
+def ensure_installed() -> None:
+    """Plant the shortcut at GUI startup (#1045): the wheel
+    cannot run a step after pip installs it — pip runs console
+    scripts, not install hooks — so the launch performs the
+    install-time plant: every ``msks gui`` on a Linux desktop
+    plants the entry and the renders before the window maps,
+    the moment a compositor first resolves the taskbar icon,
+    and an upgrade's next launch refreshes the renders with
+    the same idempotent install the command performs. The
+    plant is best-effort: a desktop outside Linux hears
+    nothing (its dock reads the window icon Qt already
+    carries), and a refusal — a data home the filesystem will
+    not write, a relative ``XDG_DATA_HOME``, a home the
+    platform will not vouch for — says one line on stderr and
+    the window still opens."""
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        home = data_home()
+        if not home.is_absolute():
+            print(NOT_ABSOLUTE, file=sys.stderr)
+            return
+        install_shortcut(home, shutil.which(DESKTOP_ID))
+    except (OSError, RuntimeError) as exc:
+        print(
+            f"msks: cannot install the desktop shortcut: {exc}",
+            file=sys.stderr,
+        )
+
+
 def run() -> int:
     """The ``msks gui-shortcut`` command body (#1021): install
     the shortcut under the XDG data home — the variable's own
@@ -129,13 +168,11 @@ def run() -> int:
         print(NOT_LINUX, file=sys.stderr)
         return 1
     try:
-        data_home = Path(
-            os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share"
-        )
-        if not data_home.is_absolute():
+        home = data_home()
+        if not home.is_absolute():
             print(NOT_ABSOLUTE, file=sys.stderr)
             return 1
-        entry = install_shortcut(data_home, shutil.which(DESKTOP_ID))
+        entry = install_shortcut(home, shutil.which(DESKTOP_ID))
     except (OSError, RuntimeError) as exc:
         print(
             f"msks: cannot install the desktop shortcut: {exc}",

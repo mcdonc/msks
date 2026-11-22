@@ -309,6 +309,10 @@ def test_the_gui_window_opens_offscreen(
     # memory reads and writes only this temporary tree.
     state = tmp_path / "state"
     monkeypatch.setenv("MSKSC_STATE_DIR", str(state))
+    # The launch plant's target (#1045), isolated the same way:
+    # on a Linux host every run() plants the desktop shortcut
+    # under the data home before the window opens.
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     import PySide6.QtWidgets as QtWidgets
 
     # The app exists before the entry runs: run() reuses it, so
@@ -384,6 +388,15 @@ def test_the_gui_window_opens_offscreen(
 
     monkeypatch.setattr(QtWidgets.QApplication, "exec", record_and_exit)
     assert app.run() == 0
+    # The launch planted the desktop shortcut (#1045): a Linux
+    # host answers with the entry under the data home, macOS
+    # with nothing planted — its dock reads the window's own
+    # icon.
+    entry = tmp_path / "data" / "applications" / "msks.desktop"
+    if sys.platform.startswith("linux"):
+        assert entry.exists()
+    else:
+        assert not entry.exists()
     qapp = QtWidgets.QApplication.instance()
     assert qapp is not None
     assert qapp.platformName() == "offscreen"
