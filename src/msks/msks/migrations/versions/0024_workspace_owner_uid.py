@@ -58,7 +58,8 @@ def downgrade() -> None:
     # smallest id, deterministic — because the older schema's
     # daemon-wide uniqueness cannot hold a multi-owner database,
     # and a downgrade past this point is an operator act against
-    # one.
+    # one. The losers' disk artifacts (overlays, home volumes)
+    # stay on the state disk for the operator to remove by hand.
     op.execute(
         "DELETE FROM workspaces WHERE name IS NOT NULL AND id NOT IN "
         "(SELECT MIN(id) FROM workspaces GROUP BY name)"

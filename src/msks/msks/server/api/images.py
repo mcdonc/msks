@@ -30,7 +30,7 @@ from ...imagestore import (
     rename_image as rename_catalog_image,
 )
 from ...storage import MIB, floor_refusal, state_usage, storage_report
-from .deps import require_token
+from .deps import authed_caller, require_token
 from .schemas import ImageDefault, ImageImport, ImageRename
 
 
@@ -115,17 +115,20 @@ def router(app, catalog_lock) -> APIRouter:
     daemon-wide catalog lock (#258, #340)."""
     api = APIRouter()
 
-    @api.get("/api/v1/storage", dependencies=[Depends(require_token)])
-    async def get_storage() -> dict:
+    @api.get("/api/v1/storage")
+    async def get_storage(caller: int = Depends(authed_caller)) -> dict:
         """The capacity report (#184): the state-disk budget, each
         workspace's cost against its ceilings, and the catalog's.
+        The workspace rows ride the owner filter (#1082): a
+        caller reads its own costs; root and the daemon uid read
+        every row's.
 
         Computed on demand from one ``statvfs`` and a handful of
         ``lstat``s — the watcher's pressure probe, not this endpoint,
         is what watches the thresholds between requests.
         """
         vmm = app.state.settings.vmm
-        rows = await app.state.model.list_workspaces()
+        rows = await app.state.model.list_workspaces(viewer=caller)
         images = await asyncio.to_thread(list_catalog_images, vmm.state_dir)
         return await asyncio.to_thread(
             storage_report,

@@ -37,7 +37,11 @@ class PeerTransport(httpx.ASGITransport):
     """ASGITransport with the scope's client pair set to a unix
     peer credential — the marker the wrapped protocols set on a
     real local-listener connection (#555) — so the API reads the
-    caller the kernel would name."""
+    caller the kernel would name.
+
+    One transport per uid: the wrapper swaps ``self.app`` for each
+    request, so a shared instance would stamp the wrong uid under
+    interleaved requests. The fixture builds one per peer."""
 
     def __init__(self, app, uid: int) -> None:
         super().__init__(app=app)
@@ -306,3 +310,194 @@ async def test_the_proxies_listing_rides_the_filter(daemon) -> None:
     assert [row["workspace_id"] for row in alice_rows] == [mine["id"]]
     assert bob_rows == []
     assert [row["workspace_id"] for row in root_rows] == [mine["id"]]
+
+
+async def test_create_defaults_stays_token_gated(daemon) -> None:
+    """The review pin: the require_token → authed_caller conversion
+    must not drop an unauthenticated route — the defaults read
+    answers 401 with no credential and no token."""
+    _peer, _app, api = daemon
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=api),
+        base_url="https://test",
+    ) as http:
+        assert (await http.get("/api/v1/create-defaults")).status_code == 401
+
+
+async def test_the_ssh_key_route_takes_the_same_seam(daemon) -> None:
+    """The identity route rides workspace_or_404 (#1082): another
+    owner's row answers the 404, a name two owners hold answers
+    the 409 naming them — never a 500."""
+    peer, _app, _api = daemon
+    mine = (await create(peer(ALICE), "build")).json()
+    assert (
+        await peer(BOB).get(
+            f"/api/v1/workspaces/{mine['id']}/ssh-key", headers=auth()
+        )
+    ).status_code == 404
+    await create(peer(BOB), "build")
+    reply = await peer(ROOT).get(
+        "/api/v1/workspaces/build/ssh-key", headers=auth()
+    )
+    assert reply.status_code == 409
+    assert str(ALICE) in reply.json()["detail"]
+
+
+async def test_the_mint_coverage_takes_the_same_seam(daemon) -> None:
+    """The mint's coverage refs ride the seam too: a foreign ref
+    answers the 404, a plural name the 409."""
+    peer, _app, _api = daemon
+    mine = (await create(peer(ALICE), "build")).json()
+    refusal = await peer(BOB).post(
+        "/api/v1/secrets",
+        json={
+            "name": "tok",
+            "value": "x",
+            "dests": ["api.example.com"],
+            "workspace_id": mine["id"],
+        },
+        headers=auth(),
+    )
+    assert refusal.status_code == 404
+    await create(peer(BOB), "build")
+    ambiguous = await peer(ROOT).post(
+        "/api/v1/secrets",
+        json={
+            "name": "tok",
+            "value": "x",
+            "dests": ["api.example.com"],
+            "workspace_id": "build",
+        },
+        headers=auth(),
+    )
+    assert ambiguous.status_code == 409
+
+
+async def test_the_storage_report_rides_the_filter(daemon) -> None:
+    """The capacity report's workspace rows (#1082): a caller reads
+    its own costs alone, root reads every row's."""
+    peer, _app, _api = daemon
+    await create(peer(ALICE), "build")
+    alice = (await peer(ALICE).get("/api/v1/storage", headers=auth())).json()
+    bob = (await peer(BOB).get("/api/v1/storage", headers=auth())).json()
+    root = (await peer(ROOT).get("/api/v1/storage", headers=auth())).json()
+    assert [row["name"] for row in alice["workspaces"]] == ["build"]
+    assert bob["workspaces"] == []
+    assert [row["name"] for row in root["workspaces"]] == ["build"]
+
+
+async def test_tokens_are_the_operators_surface(daemon) -> None:
+    """The token routes gate on the bypass rule (#1082): a group
+    member cannot mint, list, or revoke (a bearer token read over
+    TCP maps onto the daemon uid and would bypass the filter);
+    the daemon's own uid keeps the surface."""
+    peer, _app, _api = daemon
+    assert (
+        await peer(BOB).post(
+            "/api/v1/tokens", json={"name": "esc"}, headers=auth()
+        )
+    ).status_code == 403
+    assert (
+        await peer(BOB).get("/api/v1/tokens", headers=auth())
+    ).status_code == 403
+    assert (
+        await peer(BOB).delete("/api/v1/tokens/1", headers=auth())
+    ).status_code == 403
+    assert (
+        await peer(os.geteuid()).post(
+            "/api/v1/tokens", json={"name": "ok"}, headers=auth()
+        )
+    ).status_code == 201
+
+
+async def test_the_console_dial_takes_the_mask(daemon) -> None:
+    """The console websocket's resolve (#1082): a foreign row and
+    an absent one answer the same 4404, and a name two owners
+    hold answers 4400 with the named reason — never a pick or a
+    crash."""
+    import pytest
+    from fastapi import WebSocketDisconnect
+    from fastapi.testclient import TestClient
+
+    peer, _app, api = daemon
+    mine = (await create(peer(ALICE), "build")).json()
+    await create(peer(BOB), "build")
+
+    def scoped(inner, uid):
+        async def wrapper(scope, receive, send):
+            if scope["type"] == "websocket":
+                scope["client"] = ("unix", uid)
+            await inner(scope, receive, send)
+
+        return wrapper
+
+    with TestClient(scoped(api, BOB)) as client:
+        for ref in (mine["id"], "never-made"):
+            with client.websocket_connect(
+                f"/api/v1/workspaces/{ref}/console", headers=auth()
+            ) as socket:
+                with pytest.raises(WebSocketDisconnect) as caught:
+                    socket.receive_text()
+            assert caught.value.code == 4404
+    with TestClient(scoped(api, ROOT)) as client:
+        with client.websocket_connect(
+            "/api/v1/workspaces/build/console", headers=auth()
+        ) as socket:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                socket.receive_text()
+        assert caught.value.code == 4400
+        assert "4242" in (caught.value.reason or "")
+
+
+async def test_the_forward_dial_takes_the_mask(daemon) -> None:
+    """The forward websocket's resolve carries the same contract
+    (#1082): foreign and absent answer 4404, a plural name 4400."""
+    import pytest
+    from fastapi import WebSocketDisconnect
+    from fastapi.testclient import TestClient
+
+    peer, _app, api = daemon
+    mine = (await create(peer(ALICE), "build")).json()
+    await create(peer(BOB), "build")
+
+    def scoped(inner, uid):
+        async def wrapper(scope, receive, send):
+            if scope["type"] == "websocket":
+                scope["client"] = ("unix", uid)
+            await inner(scope, receive, send)
+
+        return wrapper
+
+    with TestClient(scoped(api, BOB)) as client:
+        for ref in (mine["id"], "never-made"):
+            with client.websocket_connect(
+                f"/api/v1/workspaces/{ref}/forward/22", headers=auth()
+            ) as socket:
+                with pytest.raises(WebSocketDisconnect) as caught:
+                    socket.receive_text()
+            assert caught.value.code == 4404
+    with TestClient(scoped(api, ROOT)) as client:
+        with client.websocket_connect(
+            "/api/v1/workspaces/build/forward/22", headers=auth()
+        ) as socket:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                socket.receive_text()
+        assert caught.value.code == 4400
+
+
+async def test_ssh_key_names_a_vanished_row(daemon, monkeypatch) -> None:
+    """The resolve-then-read race (#1082): a delete landing between
+    the ssh-key route's seam resolve and its row read answers the
+    404, not a None crash."""
+    peer, app, _api = daemon
+    mine = (await create(peer(ALICE), "build")).json()
+
+    async def vanished(ref, viewer=None):
+        return None  # the delete won the race between the two reads
+
+    monkeypatch.setattr(app.state.model, "get_ssh_key", vanished)
+    reply = await peer(ALICE).get(
+        f"/api/v1/workspaces/{mine['id']}/ssh-key", headers=auth()
+    )
+    assert reply.status_code == 404
+    assert reply.json()["detail"] == "no such workspace"

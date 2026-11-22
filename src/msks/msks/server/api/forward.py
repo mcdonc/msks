@@ -8,6 +8,7 @@ import contextlib
 from fastapi import APIRouter, WebSocket
 
 from ...microvm.errors import MicrovmError
+from ...model.workspaces import AmbiguousRef
 from .deps import authed_accept, caller_uid
 from .streams import close_reason, pump_streams
 
@@ -58,9 +59,15 @@ def router(app, hub) -> APIRouter:
         # The owner filter (#1082): the handshake's credential is
         # the caller, and a foreign row answers the same 4404 as
         # an absent one — no leak.
-        row = await app.state.model.get_workspace(
-            workspace_id, viewer=caller_uid(socket.scope)
-        )
+        try:
+            row = await app.state.model.get_workspace(
+                workspace_id, viewer=caller_uid(socket.scope)
+            )
+        except AmbiguousRef as exc:
+            # A name more than one owner holds: name the ambiguity
+            # and the by-id remedy — never a pick.
+            await socket.close(code=4400, reason=close_reason(str(exc)))
+            return
         if row is None:
             await socket.close(code=4404)
             return

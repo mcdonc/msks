@@ -12,12 +12,14 @@ tagged `vX.Y.Z`.
   the uid of the peer credential that created it, and workspace
   names are unique per owner instead of per daemon: two users on
   one host may each hold a `build`. A listing serves the caller's
-  own rows alone; root and the daemon's own uid see every row.
-  Cross-owner access answers 404, the same as an absent
-  workspace. The TCP surface maps every caller onto the daemon's
-  own uid, so the dev daemon and single-user hosts keep exactly
-  their visibility. Existing databases migrate with every row
-  owned by the daemon's uid — behavior unchanged.
+  own rows alone, and cross-owner access answers 404, the same as
+  an absent workspace; root and the daemon's own uid see every
+  row, and token minting, listing, and revocation is the
+  operator's alone (403 for other group members). The TCP surface
+  maps every caller onto the daemon's own uid, so the dev daemon
+  and single-user hosts keep exactly their visibility. Existing
+  databases migrate with every row owned by the daemon's uid —
+  behavior unchanged.
 - **The GUI workspaces page's Clone action (#1063).** The
   page's bottom button row carries a Clone button beside Edit,
   and a right-click on a row carries a Clone entry. Both ask

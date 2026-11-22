@@ -507,13 +507,10 @@ def router(app, hub) -> APIRouter:
             refs = [body.workspace_id]
         coverage: list[str] = []
         for ref in refs:
-            # The owner filter (#1082): a ref another owner holds
-            # answers the same 404 as an absent one.
-            workspace = await app.state.model.get_workspace(ref, viewer=caller)
-            if workspace is None:
-                raise HTTPException(
-                    status_code=404, detail=f"no such workspace: {ref}"
-                )
+            # The owner filter (#1082) rides the same seam every
+            # route-facing resolve takes: a foreign ref answers
+            # 404, a name more than one owner holds the 409.
+            workspace = await workspace_or_404(app, ref, caller)
             coverage.append(workspace["id"])
         coverage = sorted(set(coverage))
         label = coverage_label(coverage)

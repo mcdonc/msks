@@ -56,9 +56,7 @@ async def resolve_by_name(
     than one of them holds refuses to pick), every other viewer
     resolves against its own rows alone."""
     stmt = select(Workspace).where(Workspace.name == ref)
-    if sees_all_rows(viewer):
-        stmt = stmt.order_by(Workspace.created_at, Workspace.id)
-    else:
+    if not sees_all_rows(viewer):
         stmt = stmt.where(Workspace.owner_uid == viewer)
     rows = (await session.scalars(stmt)).all()
     if len(rows) > 1:

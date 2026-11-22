@@ -238,7 +238,9 @@ def router(app) -> APIRouter:
         )
 
     @api.get("/api/v1/create-defaults")
-    async def create_defaults() -> dict:
+    async def create_defaults(
+        caller: int = Depends(authed_caller),
+    ) -> dict:
         """The sizes a create lands on when its body leaves them
         unset: the settings' root/home defaults, MiB — the TUI
         create form's size placeholders hint them."""
@@ -299,7 +301,12 @@ def router(app) -> APIRouter:
         module regenerates its host keys, so the client rotates
         its host-key cache on a change here.
         """
-        key = await app.state.model.get_ssh_key(workspace_id, viewer=caller)
+        # Resolve through the 404/ambiguity seam first (#1082): a
+        # foreign row answers 404 like an absent one, and a name
+        # more than one owner holds answers the 409 naming them —
+        # the id the resolve lands is never ambiguous.
+        row = await workspace_or_404(app, workspace_id, caller)
+        key = await app.state.model.get_ssh_key(row["id"], viewer=caller)
         if key is None:
             raise HTTPException(status_code=404, detail="no such workspace")
         if key["public_key"] is None:
