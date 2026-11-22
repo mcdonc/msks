@@ -484,7 +484,18 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     if not restore_geometry(window):
         window.resize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
     window.show()
+    # allow-deferred-import — the Ctrl-C wiring (#1037) carries
+    # PySide6 at module scope there; the window path loads it
+    # after the guards, the screens' own contract.
+    from .interrupt import arm_sigint
+
+    # The starting terminal's Ctrl-C (#1037): the wiring arms
+    # before the loop. The settle lands after the close path's
+    # own cleanup, the last step before the return, so a
+    # repeated Ctrl-C cannot cut the bridge's stop or the
+    # geometry save short of the end the first one asked for.
+    settle = arm_sigint(app)
     code = app.exec()
     tree["bridge"].stop()
     save_geometry(window)
-    return code
+    return settle(code)
