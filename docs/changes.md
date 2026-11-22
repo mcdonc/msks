@@ -19,6 +19,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The Egress tab's static allowlist editor (#1050).** The
+  GUI workspace page's Egress tab lists the workspace's static
+  allowlist entries and edits them in place: one entry added at
+  a time (a host, a scope, an address, a CIDR, or `host:port`)
+  and any entry removed, each write posting the whole new list
+  through the egress policy route. A rejected entry surfaces
+  the route's reason on the tab's note line and the list stands.
+  Removing the last entry under `static` mode asks the same
+  offline-workspace confirmation the mode switch asks.
 - **The GUI launch plants the desktop shortcut (#1045).** On
   a Linux desktop, every `msks gui` launch installs the
   desktop entry and the icon renders under the XDG data home

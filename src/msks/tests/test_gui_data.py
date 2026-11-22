@@ -113,6 +113,16 @@ CASES = [
         {"mode": "static", "confirm_empty": True},
     ),
     (
+        "set_egress_mode",
+        ("ws-1", "static", False, [".debian.org", "10.0.0.0/8"]),
+        "PUT",
+        "/api/v1/workspaces/ws-1/egress/policy",
+        {
+            "mode": "static",
+            "allow_list": [".debian.org", "10.0.0.0/8"],
+        },
+    ),
+    (
         "egress_rules",
         ("ws-1",),
         "GET",
