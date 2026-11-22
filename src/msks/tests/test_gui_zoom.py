@@ -185,10 +185,11 @@ def test_each_set_holds_its_own_clamp(qt, zoomed):
     for _ in range(fonts.MAX_PT - fonts.DEFAULT_PT):
         zoom.grow()  # the terminal to its ceiling
     assert zoom.term_pt == fonts.MAX_PT
-    # The offscreen default chrome (9pt scaled to 13.5) still
-    # has room at the terminal's ceiling — a host whose
-    # platform default already sits near the UI ceiling would
-    # clamp here instead.
+    # The fixture's chrome stands at the platform's own
+    # default (the anchor write lives in open_window, not
+    # here) and still has room at the terminal's ceiling — a
+    # host whose default already sits near the UI ceiling
+    # would clamp here instead.
     assert qt.app.font().pointSizeF() < qt.zoom.UI_MAX_PT
     for _ in range(64):
         zoom.grow()  # the chrome joins the ceiling; both hold

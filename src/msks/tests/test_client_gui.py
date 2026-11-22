@@ -400,10 +400,14 @@ def test_the_gui_window_opens_offscreen(
     qapp = QtWidgets.QApplication.instance()
     assert qapp is not None
     assert qapp.platformName() == "offscreen"
-    # The font scale (#939): the platform default scaled — one
-    # write on the application font before any widget built.
+    # The chrome's anchor (#1046): the terminal face's own
+    # default, whatever the platform's font carried — one
+    # absolute write on the application font before any widget
+    # built, the same size on every platform.
+    from msks.client.gui.terminal import fonts
+
     assert qapp.font().pointSizeF() == pytest.approx(
-        default_size * app.FONT_SCALE
+        fonts.DEFAULT_PT * app.FONT_SCALE
     )
     # The opening geometry, first open (#939): nothing saved
     # answers, so the fixed 1280x720 default does (the platform
@@ -451,13 +455,13 @@ def test_the_gui_window_opens_offscreen(
     # listing's own button row, the page's bottom bar.
     assert opened["plus"][0] is None
 
-    # Each run rescales the shared application's font (#939:
-    # one scale per open), so a second run in one process would
-    # compound it onto the first — the action row's buttons then
-    # grow past the default width and the window's own minimum
-    # wins over the pinned sizes below. Restore the platform's
-    # size after every run but the last (which the tail below
-    # restores once, with this same write).
+    # Each run anchors the shared application's font at the
+    # terminal's default (#1046), and later tests in this
+    # worker measure with the platform's own metrics — restore
+    # the platform's size after every run but the last (which
+    # the tail below restores once, with this same write). The
+    # write is absolute, so a second run rewrites the same size
+    # instead of compounding a scale onto the first.
     def unscale() -> None:
         font = qapp.font()
         font.setPointSizeF(default_size)
@@ -894,9 +898,10 @@ def test_open_window_reuses_an_existing_app(
         Bridge.start, Bridge.stop = real_start, real_stop  # type: ignore[method-assign]
     assert shown.count("created") == 1  # the pre-made one only
     assert styles == ["Fusion"]  # the session never picks the style
-    # The font scale (#939): the default 9pt scales to 13.5 —
-    # one write on the application font, before any widget.
-    assert "font 13.5" in shown
+    # The chrome's anchor (#1046): the terminal default's 15pt,
+    # whatever the existing app's 9pt font carried — one
+    # absolute write on the application font, before any widget.
+    assert "font 15.0" in shown
     # The desktop identity (#1021, #1043): the entry name the
     # compositor matches the icon by, and the application name
     # macOS's menu bar titles its application menu after — both
@@ -1166,5 +1171,24 @@ def test_open_window_keeps_a_user_style_choice(
         Bridge.start, Bridge.stop = real_start, real_stop  # type: ignore[method-assign]
     assert os.environ["QT_STYLE_OVERRIDE"] == "Chosen"
     # The style write never happened — the choice stands — but
-    # the font scale still applied (#939): 10pt at 1.5.
+    # the anchored font still applied (#1046): the terminal
+    # default's 15pt, whatever the stub's 10pt platform font
+    # carried.
     assert styles == ["font 15"]
+    # A preset knob multiplies the anchor itself (#1046): a
+    # fresh open writes the knob's size, not the platform
+    # default's — 15pt at 1.2 lands 18pt, where the stub's
+    # 10pt platform font at 1.2 would land 12. The geometry
+    # file the first open wrote is repointed away: the second
+    # open reads nothing the first saved.
+    os.environ["MSKSC_GUI_FONT_SCALE"] = "1.2"
+    monkeypatch.setattr(
+        app, "geometry_path", lambda: tmp_path / "gui-window-2.json"
+    )
+    Bridge.start = lambda self: None  # type: ignore[method-assign]
+    Bridge.stop = lambda self: None  # type: ignore[method-assign]
+    try:
+        assert app.open_window(stub) == 0
+    finally:
+        Bridge.start, Bridge.stop = real_start, real_stop  # type: ignore[method-assign]
+    assert styles == ["font 15", "font 18"]

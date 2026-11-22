@@ -41,10 +41,11 @@ The window opens 1280 by 720 the first time. Every later open
 takes back the place and size the last close left, as long as a
 connected screen still shows some of that rect.
 
-`MSKSC_GUI_FONT_SCALE` multiplies the window's fonts. The
-default is 1.5, one and a half times the platform's default
-point size. The [zoom keys](#the-zoom-keys) change the size at
-runtime.
+`MSKSC_GUI_FONT_SCALE` multiplies the window's base font size.
+The base is the terminal face's own default, 15pt, so the
+window's chrome and its terminal content open at one size on
+every platform. The default multiplier is 1.0. The [zoom
+keys](#the-zoom-keys) change the size at runtime.
 
 ## The connection
 
