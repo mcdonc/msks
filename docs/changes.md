@@ -26,6 +26,15 @@ tagged `vX.Y.Z`.
   from the first launch after a fresh install. The
   `msks gui-shortcut` command stays as the manual plant and
   prints the entry's path.
+- **The Egress tab on the GUI workspace page (#1049).** The
+  page's tab strip carries an Egress tab beside Events. The tab
+  shows the workspace's egress mode with its meaning and
+  switches the mode in place through the daemon's egress policy
+  route: a running workspace swaps its nft table in one
+  transaction, and a stopped workspace builds the new posture
+  at its next start. A switch to `static` with nothing
+  effectively allowed asks its confirmation as a question
+  popup before it takes effect.
 
 - **The GUI docs chapter (`docs/gui.md`) (#1008).** The
   operator docs for the desktop client: the install, the

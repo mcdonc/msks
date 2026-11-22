@@ -30,7 +30,7 @@ link's reconnect loop re-registers and re-sends the snapshot, and
 the surfaces name the state rather than implying silence.
 """
 
-from ..consent import fmt_duration
+from ..consent import EMPTY_STATIC_QUESTION, effective_allows, fmt_duration
 from . import events, flash, focus, lines, modes, page, screens, wire
 from .events import (
     event_dest,
@@ -76,9 +76,7 @@ from .lines import (
     rule_rows,
 )
 from .modes import (
-    EMPTY_STATIC_QUESTION,
     confirmed_static_switch,
-    effective_allows,
     switch_mode_path,
 )
 from .page import (

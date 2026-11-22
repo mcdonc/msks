@@ -285,11 +285,11 @@ def test_opening_a_row_shows_the_page(qt) -> None:
 
 
 def test_the_page_carries_the_tab_strip(qt) -> None:
-    """The tab row on the back arrow's own row (#974, #1017):
-    the arrow, then Shells — the default — Mounts, Proxies, and
-    Events, the status line filling the rest; the bar drives
-    the stack, and the Info pane is gone with its duplicated
-    sections."""
+    """The tab row on the back arrow's own row (#974, #1017,
+    #1042): the arrow, then Shells — the default — Mounts,
+    Proxies, Events, and Egress, the status line filling the
+    rest; the bar drives the stack, and the Info pane is gone
+    with its duplicated sections."""
     page, window, bridge = make_page(qt)
     assert page.chrome.itemAt(0).widget() is page.back_button
     assert page.chrome.itemAt(1).widget() is page.bar
@@ -298,6 +298,7 @@ def test_the_page_carries_the_tab_strip(qt) -> None:
         "Mounts",
         "Proxies",
         "Events",
+        "Egress",
     ]
     assert page.bar.currentIndex() == 0  # Shells, the default
     # The active tab's mark (#1012): the strip wears the shared
@@ -307,9 +308,10 @@ def test_the_page_carries_the_tab_strip(qt) -> None:
     assert page.stack.widget(0) is page.shells_tab
     assert page.shells_tab.shells is page.shells
     assert page.stack.widget(3) is page.events_tab  # the bar's own order
-    assert page.stack.count() == 4
-    show_tab(page, "Events")
-    assert page.stack.currentWidget() is page.events_tab
+    assert page.stack.widget(4) is page.egress_tab
+    assert page.stack.count() == 5
+    show_tab(page, "Egress")
+    assert page.stack.currentWidget() is page.egress_tab
 
 
 def test_open_hosts_consent_before_registration(qt) -> None:
@@ -435,23 +437,65 @@ def test_a_mounts_save_lands_on_the_page(qt) -> None:
 def test_the_proxies_tab_rides_the_page(qt) -> None:
     """The Proxies tab's page integration (#988): the bar carries
     it beside Mounts, the page's refresh pokes its listing, and a
-    pushed proxy frame refreshes it without a manual action."""
+    pushed proxy frame refreshes it without a manual action.
+
+    The Egress tab rides the same seams (#1042): its posture read
+    pokes on the page's refresh, and a pushed rules frame
+    repaints it without a manual action."""
     page, window, bridge = make_page(qt)
     assert bar_index(page, "Proxies") == 2
     assert bar_index(page, "Events") == 3
+    assert bar_index(page, "Egress") == 4
     land(qt, page, bridge)
     # The open's own refresh already poked a listing; answer it
     # so the next refresh's poke runs.
     bridge.succeeded.emit(page.proxies_tab.list_key, [])
+    bridge.succeeded.emit(
+        page.egress_tab.list_key,
+        {
+            "workspace_id": page.workspace_id,
+            "mode": "interactive",
+            "allow_list": [],
+            "allowed": [],
+            "denied": [],
+        },
+    )
     bridge.calls.clear()
     page.refresh()  # a row-affecting frame's path drives the listing
     assert [c for c in bridge.calls if c[1] == "workspace_proxies"]
+    assert [c for c in bridge.calls if c[1] == "egress_rules"]
     bridge.succeeded.emit(page.proxies_tab.list_key, [])
+    bridge.succeeded.emit(
+        page.egress_tab.list_key,
+        {
+            "workspace_id": page.workspace_id,
+            "mode": "interactive",
+            "allow_list": [],
+            "allowed": [],
+            "denied": [],
+        },
+    )
     bridge.calls.clear()
     page.push_frame(
         {"event": "proxy.listening", "data": {"id": page.workspace_id}}
     )
     assert [c[1] for c in bridge.calls if c[1] == "workspace_proxies"]
+    # A pushed rules frame — a switch the CLI made elsewhere —
+    # repaints the tab without a read of its own.
+    page.push_frame(
+        {
+            "event": "egress.rules",
+            "data": {
+                "workspace_id": page.workspace_id,
+                "mode": "static",
+                "allow_list": [".debian.org"],
+                "allowed": [],
+                "denied": [],
+            },
+        }
+    )
+    assert page.egress_tab.mode_line.text() == "current mode: static"
+    assert not [c for c in bridge.calls if c[1] == "egress_rules"]
     window.close()
 
 

@@ -1,33 +1,15 @@
 """Consent-mode switching.
 
-The static-ask path a mode switch takes, with its confirm and
-the effective-allows read the switch answers on.
+The static-ask path a mode switch takes, with its confirm — the
+question and the effective-allows read live in the shared
+controller module (:mod:`msks.client.tui.consent`), one text and
+one rule behind every client that asks them (#1042's GUI Egress
+tab included).
 """
 
 from __future__ import annotations
 
-from ..consent import EgressRules
-
-
-def effective_allows(rules: EgressRules | None) -> bool:
-    """Whether anything effectively allows egress under the
-    snapshot (#280): a non-empty allowlist or an in-effect allowed
-    verdict — the condition the static switch's confirmation
-    gates on."""
-    if rules is None:
-        return False
-    return bool(rules.allow_list) or bool(rules.allowed)
-
-
-#: The empty-static confirmation's question (#280) — one text for
-#: every surface that asks it: the decider app's picker, and the
-#: workspace page's (#344). It names the posture (every name
-#: answers NXDOMAIN — an offline workspace) and the escape
-#: (switching anyway).
-EMPTY_STATIC_QUESTION = (
-    "static with nothing allowed answers every name NXDOMAIN "
-    "— an offline workspace. Switch anyway?"
-)
+from ..consent import effective_allows
 
 
 async def switch_mode_path(mode, rules, confirm, send) -> None:
