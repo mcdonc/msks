@@ -142,25 +142,37 @@ def drain_until(widget, marker: bytes, timeout: float = 5.0) -> bytes:
     echo answers what the terminal writes), feeding the
     emulator as we go so the widget's state stays current.
 
-    This loop must stay the master's only reader between the
-    write under test and the marker's arrival. The widget's
-    socket notifier is armed on the same fd, and one event-loop
-    pump fires ``read_master``, whose ``session.drain()``
-    consumes the echo into the emulator where this loop cannot
-    see it — the macOS job's flake (#1074)."""
-    deadline = time.monotonic() + timeout
-    seen = b""
-    while time.monotonic() < deadline:
-        chunk = widget.session.read_available()
-        if chunk:
-            seen += chunk
-            widget.lib.vt_write(widget.terminal, chunk)
-            widget.refresh()
-            if marker in seen:
-                return seen
-        else:
-            time.sleep(0.02)
-    return seen
+    The loop is the master's only reader: it disarms the
+    widget's socket notifier for its duration, because one
+    event-loop pump fires ``read_master``, whose
+    ``session.drain()`` consumes the bytes into the emulator
+    where this loop cannot see them — the macOS job's flake
+    (#1074). A pump between the write under test and this
+    call can still steal the bytes before the loop starts, so
+    nothing may pump that gap either."""
+    armed = widget.notifier.isEnabled()
+    widget.notifier.setEnabled(False)
+    try:
+        deadline = time.monotonic() + timeout
+        seen = b""
+        while time.monotonic() < deadline:
+            chunk = widget.session.read_available()
+            if chunk:
+                seen += chunk
+                widget.lib.vt_write(widget.terminal, chunk)
+                widget.refresh()
+                if marker in seen:
+                    return seen
+            else:
+                time.sleep(0.02)
+        return seen
+    finally:
+        # A child that died mid-drain closed the master (the
+        # read path releases the fd); arming a notifier on it
+        # would be the dead-master hazard child_gone exists to
+        # prevent, so the notifier stays down with it.
+        if widget.session.master_fd is not None:
+            widget.notifier.setEnabled(armed)
 
 
 def vt(widget, data: bytes) -> None:
@@ -1225,9 +1237,13 @@ def test_a_fit_that_cannot_reach_lands_the_pixels_grid(screen, qt):
 
     widget = TerminalWidget([sys.executable, "-c", SLEEPER], parent=host)
     host.setCentralWidget(widget)
-    qt.app.processEvents()  # the central takes the window's pixels first
     try:
+        # The child's own startup line drained before the
+        # layout pump: a pump with the line already landed
+        # fires the notifier, which eats it into the emulator
+        # and stalls this drain its whole window (#1074).
         drain_until(widget, b"ready")
+        qt.app.processEvents()  # the central takes the window's pixels
         widget.setMaximumHeight(widget.height() // 2)  # the cap the
         # layout cannot lift: the fit's growth stops at it
         qt.app.processEvents()
