@@ -207,10 +207,10 @@ identity = 2
 # version word — the same module-edge-plus-name +2.
 # #1084: the ambiguity vocabulary (spec.owners) — the kind word
 # the exit table branches on (jsonio), the owner phrase the error
-# line renders (rest), and the close code the console and forward
-# clients label (console, forward): four statements, the module
-# edge beside one name apiece.
-spec = 23
+# line renders (rest, the kind word beside it on one statement
+# since the review round), and the close code the console and
+# forward clients label (console, forward): four statements.
+spec = 24
 
 [snapshot.config]
 configio = 3
@@ -369,9 +369,9 @@ microvm = 16
 # reads the daemon-uid spelling (probe), one statement each in
 # the split submodules.
 # #1084: the owner scope — deps' scope dependency reads the bypass
-# rule beside the daemon-uid mapping (one more name on the same
-# statement).
-model = 24
+# rule and builds the scope wrapper beside the daemon-uid mapping
+# (two more names on the same statement).
+model = 25
 # #808: the proxy routes read the two direction-shaped bind and
 # target defaults the create path applies (module edge + both
 # names).

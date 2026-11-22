@@ -135,7 +135,10 @@ shape and never the not-found path:
   "detail": {
     "error": "ambiguous_workspace",
     "name": "build",
-    "owners": [{ "uid": 4242, "name": "alice" }]
+    "owners": [
+      { "uid": 4242, "name": "alice" },
+      { "uid": 4243, "name": "bob" }
+    ]
   }
 }
 ```
@@ -150,10 +153,15 @@ the workspace-ref routes: `GET …/workspaces/{ref}`, `start`,
 and the 405 `PUT`/`PATCH` refusal. The value is an account name
 the daemon resolves to a uid, and the request's ref resolution
 runs against that owner's rows alone. The scope changes the view
-alone: the request still acts with the caller's own authority.
-The scope is a bypass caller's tool: any other caller passing it
-gets 403 with the named cause, and a name no account holds
-answers 404.
+alone: the request still acts with the caller's own authority —
+a clone through a scope creates the new row as the caller's. The
+scope always filters, even when the named owner is one the owner
+filter would bypass (root's own rows, the daemon account's): an
+explicit scope resolves as that one owner alone, which is the one
+path a plural name takes to them. A decimal-uid spelling reaches
+a dead owner the same way. The scope is a bypass caller's tool:
+any other caller passing it gets 403 with the named cause, and a
+name no account holds answers 404.
 
 - `GET /api/v1/workspaces`: every row, with its image paths,
   status, and recorded facts. `GET …/workspaces/{id}` is one

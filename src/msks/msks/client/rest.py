@@ -17,7 +17,7 @@ import time
 
 import httpx
 
-from ..spec.owners import owners_word
+from ..spec.owners import AMBIGUOUS_WORKSPACE, owners_word
 from .env import is_unix, ssl_context, unix_path
 from .jsonio import ApiExit
 
@@ -111,9 +111,11 @@ PREDATES_SHARES_DETAIL = "mounts entry has unknown keys: ['host']"
 def scope_params(owner: str | None) -> dict | None:
     """The query pairs a scoped call carries (#1084): the owner a
     root invocation addresses as — the daemon resolves the account
-    name and scopes the ref resolution to that owner's rows alone
-    — or None for the caller's own view."""
-    return {"owner": owner} if owner else None
+    name (or a decimal-uid spelling) and scopes the ref resolution
+    to that owner's rows alone. An explicitly passed empty value
+    travels too: the daemon's own 404 names it, rather than the
+    client silently running the call unscoped."""
+    return {"owner": owner} if owner is not None else None
 
 
 #: The upgrade line the skew rewrite answers with: names the
@@ -136,9 +138,11 @@ def status_message(exc: httpx.HTTPStatusError) -> str:
     with an unknown-key detail about the wire, and the operator
     needs the upgrade line, not the wire's. The ambiguity's
     structured detail renders to its own line (#1084): the name,
-    the owners, and the ``--user`` remedy."""
+    the owners, and the remedy."""
     detail = error_detail(exc.response)
-    if isinstance(detail, dict):
+    if isinstance(detail, dict) and detail.get("error") == (
+        AMBIGUOUS_WORKSPACE
+    ):
         detail = ambiguity_message(detail)
     if detail == PREDATES_SHARES_DETAIL:
         return PREDATES_SHARES_MESSAGE
@@ -306,12 +310,14 @@ def error_kind(response: httpx.Response) -> str | None:
 
 def ambiguity_message(detail: dict) -> str:
     """The ambiguity's one line (#1084): the name, the owners the
-    payload frames name, and the two remedies — the ``--user``
-    scope and the id."""
+    payload frames name, and the two remedies — the id (the one
+    every surface takes) and the ``--user`` scope (the workspace
+    verbs' own)."""
     owners = owners_word(detail.get("owners") or [])
     return (
         f"workspace name {detail.get('name')!r} is held by more than "
-        f"one owner ({owners}); pass --user <owner> or the workspace's id"
+        f"one owner ({owners}); pass the workspace's id, or "
+        "--user <owner> on the workspace verbs"
     )
 
 

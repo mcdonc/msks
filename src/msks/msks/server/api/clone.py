@@ -34,7 +34,7 @@ from ...spec.failures import MicrovmError
 from ...spec.vm import VmStatus
 from ...storage import create_refusal, file_cost
 from .boot import mint_workspace_id
-from .deps import scoped_caller
+from .deps import authed_caller, scoped_caller
 from .rows import (
     HOME_FREE_STATUSES,
     host_mismatch,
@@ -91,9 +91,16 @@ def router(app) -> APIRouter:
     async def clone_workspace(
         workspace_id: str,
         body: WorkspaceClone,
-        caller: int = Depends(scoped_caller),
+        caller: int = Depends(authed_caller),
+        viewer: int = Depends(scoped_caller),
     ) -> Response:
-        source = await workspace_or_404(app, workspace_id, caller)
+        # Two dependencies on purpose (#1084): the source resolves
+        # through the request's owner scope (a scoped "clone the
+        # build alice holds" addresses her row by the bare name),
+        # while the clone itself is the caller's own create — the
+        # new row's owner and the name pre-check stay on the raw
+        # caller, exactly the unscoped create's rule.
+        source = await workspace_or_404(app, workspace_id, viewer)
         source_id = source["id"]
         clone_guard(app, source)
         vmm = app.state.settings.vmm
@@ -114,7 +121,7 @@ def router(app) -> APIRouter:
             # every other exchange the source serves.
             async with move_lock(app, source_id):
                 source = await app.state.model.get_workspace(
-                    source_id, viewer=caller
+                    source_id, viewer=viewer
                 )
                 if source is None:
                     raise HTTPException(

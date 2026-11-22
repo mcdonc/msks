@@ -39,12 +39,30 @@ def daemon_uid() -> int:
     return os.geteuid()
 
 
-def sees_all_rows(viewer: int | None) -> bool:
+def sees_all_rows(viewer) -> bool:
     """The owner filter's bypass rule (#1082): the daemon's own
     internal reads (``None``), root (uid 0), and the daemon's own
     uid see every row; every other uid sees the rows it owns
-    alone."""
+    alone. An explicit :class:`OwnerScope` never bypasses (#1084)
+    — the scope's whole point is "resolve as this one owner's
+    rows", and an owner the rule would bypass (root's own rows,
+    the migrated daemon-uid rows) is exactly one an unscoped
+    plural name cannot address."""
+    if isinstance(viewer, OwnerScope):
+        return False
     return viewer is None or viewer == 0 or viewer == daemon_uid()
+
+
+class OwnerScope(int):
+    """An explicitly scoped viewer (#1084): numerically its uid —
+    every comparison and bind the owner filter already makes
+    (``row.owner_uid == viewer``, the SQLAlchemy ``where``) reads
+    it as the plain uid — but :func:`sees_all_rows` answers False
+    for it, so the scope always filters. The scope dependency
+    (:func:`msks.server.api.deps.scoped_caller`) is the only
+    thing that builds one."""
+
+    __slots__ = ()
 
 
 class AmbiguousRef(ValueError):

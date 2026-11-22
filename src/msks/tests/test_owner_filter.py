@@ -304,6 +304,59 @@ async def test_an_unknown_owner_scope_answers_404(daemon) -> None:
     assert "ghost" in reply.json()["detail"]
 
 
+async def test_a_scope_reaches_an_owner_the_filter_would_bypass(
+    daemon,
+) -> None:
+    """An explicit scope always filters (#1084 review): root's own
+    rows carry a bypass uid, and ``?owner=root`` is the one path a
+    plural name takes to them — the scope must not collapse back
+    into the unfiltered view. A decimal-uid spelling reaches a
+    dead owner the same way."""
+    peer, _app, _api = daemon
+    roots = (await create(peer(ROOT), "build")).json()
+    await create(peer(ALICE), "build")
+    scoped = await peer(ROOT).get(
+        "/api/v1/workspaces/build",
+        params={"owner": "root"},
+        headers=auth(),
+    )
+    assert scoped.status_code == 200
+    assert scoped.json()["id"] == roots["id"]
+    decimal = await peer(ROOT).get(
+        "/api/v1/workspaces/build",
+        params={"owner": str(ALICE)},
+        headers=auth(),
+    )
+    assert decimal.status_code == 200
+    assert decimal.json()["owner_uid"] == ALICE
+
+
+async def test_a_scoped_clone_creates_the_callers_row(daemon) -> None:
+    """The scope changes the view alone (#1084 review): root
+    cloning alice's workspace through the scope resolves her
+    source by the bare name, and the new row is the caller's own —
+    root's, not the scope's."""
+    from msks import persist
+
+    peer, app, _api = daemon
+    source = (await create(peer(ALICE), "build")).json()
+    state_dir = app.state.settings.vmm.state_dir
+    for path in (
+        persist.overlay_path(state_dir, source["id"]),
+        persist.home_volume_path(state_dir, source["id"]),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"clone-me")
+    reply = await peer(ROOT).post(
+        "/api/v1/workspaces/build/clone",
+        params={"owner": str(ALICE)},
+        json={"name": "fork"},
+        headers=auth(),
+    )
+    assert reply.status_code == 201, reply.text
+    assert reply.json()["owner_uid"] == ROOT
+
+
 async def test_the_daemon_uid_caller_may_scope(daemon, monkeypatch) -> None:
     """The daemon's own uid is a bypass caller (#1082): the scope
     serves it exactly as it serves root — the TCP surface's

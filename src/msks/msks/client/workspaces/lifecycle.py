@@ -160,8 +160,12 @@ async def boot_created(
         if isinstance(exc, ApiExit):
             # The structured error keeps its status and detail
             # through the hint (#841): the exit table maps the
-            # daemon's answer, not the recovery wording.
-            raise ApiExit(hint, exc.api_status, exc.api_detail) from exc
+            # daemon's answer, not the recovery wording — the
+            # structured kind rides along (#841's rule holds for
+            # any kind word a future detail carries).
+            raise ApiExit(
+                hint, exc.api_status, exc.api_detail, kind=exc.api_kind
+            ) from exc
         raise SystemExit(hint) from exc
     if not as_json:
         print(f"attach with: msks console {display_name(row)}")

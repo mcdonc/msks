@@ -17,7 +17,7 @@ import pwd
 
 from fastapi import HTTPException, Request, WebSocket
 
-from ...model.workspaces import daemon_uid, sees_all_rows
+from ...model.workspaces import OwnerScope, daemon_uid, sees_all_rows
 from .. import localsocket
 
 
@@ -68,19 +68,23 @@ async def authed_caller(request: Request) -> int:
 
 
 async def resolve_owner(name: str) -> int:
-    """The uid the account *name* names (#1084), or the 404.
+    """The uid *name* addresses (#1084), or the 404.
 
-    The lookup runs in a worker thread: it is a libc NSS call,
-    and a directory backend that stalls would stall the event
-    loop with it — the same discipline :func:`local_peer_ok`'s
-    group walk keeps.
+    The account name is the primary spelling — the word the
+    ambiguity payload and the listing's owner column print. A
+    decimal-uid spelling is the fallback: a dead owner (an uid no
+    account holds) stays addressable by scope, the same way the
+    payload names it. The lookup runs in a worker thread: it is a
+    libc NSS call, and a directory backend that stalls would
+    stall the event loop with it — the same discipline
+    :func:`local_peer_ok`'s group walk keeps.
     """
 
     def lookup() -> int | None:
         try:
             return pwd.getpwnam(name).pw_uid
         except KeyError:
-            return None
+            return int(name) if name.isdecimal() else None
 
     uid = await asyncio.to_thread(lookup)
     if uid is None:
@@ -96,13 +100,16 @@ async def scoped_caller(request: Request) -> int:
     resolution to that one owner's rows: a bare name two owners
     hold resolves to the named owner's, and a foreign id answers
     the 404 — the same view that owner's own calls take, on a
-    request whose authority stays the caller's. The scope is a
-    bypass caller's tool alone (root, or the daemon's own uid —
-    the TCP surface's mapping): any other peer passing it is
-    refused with the named cause, for the scope would widen the
-    filtered view the owner filter holds. A request without the
-    parameter answers the caller's uid, exactly
-    :func:`authed_caller`.
+    request whose authority stays the caller's. The answered
+    viewer is an :class:`msks.model.workspaces.OwnerScope`, so the
+    filter holds even when the named owner is one the bypass rule
+    would pass (root's own rows, the daemon account's) — an
+    explicit scope always filters. The scope is a bypass caller's
+    tool alone (root, or the daemon's own uid — the TCP surface's
+    mapping): any other peer passing it is refused with the named
+    cause, for the scope would widen the filtered view the owner
+    filter holds. A request without the parameter answers the
+    caller's uid, exactly :func:`authed_caller`.
     """
     await require_token(request)
     caller = caller_uid(request.scope)
@@ -117,7 +124,7 @@ async def scoped_caller(request: Request) -> int:
                 "addresses its own workspaces already"
             ),
         )
-    return await resolve_owner(name)
+    return OwnerScope(await resolve_owner(name))
 
 
 def bearer_token(socket: WebSocket) -> str | None:

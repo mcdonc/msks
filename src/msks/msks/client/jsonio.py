@@ -114,7 +114,7 @@ def json_line(doc) -> None:
     print(json.dumps(doc))
 
 
-def error_document(status: int | None, detail: str) -> None:
+def error_document(status: int | None, detail: str | dict) -> None:
     """The structured failure on stderr: the daemon's status
     (None for a failure that never reached one) and its detail."""
     print(
@@ -123,7 +123,7 @@ def error_document(status: int | None, detail: str) -> None:
     )
 
 
-def conflict_code(detail: str, kind: str | None = None) -> int:
+def conflict_code(detail: str | dict, kind: str | None = None) -> int:
     """Which 409: the ambiguity kind is its own row (#1084), the
     duplicate-name detail is the conflict, any other 409 names a
     state or placement refusal."""
@@ -134,7 +134,9 @@ def conflict_code(detail: str, kind: str | None = None) -> int:
     return EXIT_WRONG_STATE
 
 
-def exit_code(status: int | None, detail: str, kind: str | None = None) -> int:
+def exit_code(
+    status: int | None, detail: str | dict, kind: str | None = None
+) -> int:
     """The table a harness branches on (docs/cli.md carries it):
     404 is not-found, the 409s split by their detail and kind
     (#1084 — the kind word the daemon's structured detail carries,
