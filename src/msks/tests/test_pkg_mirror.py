@@ -153,6 +153,44 @@ def test_both_locks_pin_the_same_nixpkgs_revision() -> None:
     )
 
 
+COMPOSITIONS = {
+    "flake.nix": "./nix/",
+    "devenv.nix": "./nix/",
+    "nix/module.nix": "./",
+}
+
+
+def test_the_certifi_overlay_and_gate_stay_wired() -> None:
+    """flake.nix, devenv.nix, and nix/module.nix compose both halves
+    of the conditional certifi overlay (#785): the overlay itself,
+    the floor its condition reads, and the eval-time gate. Dropping
+    any of those lines while a supported pin sits below the floor
+    fails deep in the build's runtime-deps check — this test fails
+    at pytest time instead, naming the file. The greps run over
+    comment-stripped lines, so a commented-out line counts as
+    dropped."""
+    for path, prefix in COMPOSITIONS.items():
+        stripped = strip_comments((REPO_ROOT / path).read_text())
+        overlay = f"{prefix}certifi-overlay.nix"
+        gate = f"{prefix}certifi-gate.nix"
+        floor = f"{prefix}certifi-floor.nix"
+        assert overlay in stripped, (
+            f"{path} dropped the certifi overlay ({overlay}) — a pin "
+            f"below the pyproject floor fails the build's runtime "
+            f"deps check without it (#785)"
+        )
+        assert gate in stripped, (
+            f"{path} dropped the certifi gate ({gate}) — a composed "
+            f"set below the floor loses its named eval-time check "
+            f"(#785)"
+        )
+        assert floor in stripped, (
+            f"{path} dropped the floor read ({floor}) — the overlay "
+            f"condition and the gate lose the one pyproject floor "
+            f"definition (#785)"
+        )
+
+
 def assert_hand_pinned_floor_covers_pyproject(
     pkg_nix: Path, name: str, stake: str, bump_hint: str
 ) -> None:
@@ -205,8 +243,9 @@ def test_the_hand_pinned_textual_floor_covers_pyproject() -> None:
 
 def test_the_hand_pinned_certifi_floor_covers_pyproject() -> None:
     """pyproject's certifi floor stays within what certifi-pkg.nix
-    pins (#606). certifi is built by hand for the same reason
-    textual is — the pinned channel sits below the floor — and the
+    pins (#606). The overlay applies that wheel only while a set's
+    own certifi sits below the floor (#785) — the NixOS module's
+    composition still can, on a host nixpkgs below it — and the
     root-store refreshes the floor names (the emSign root removals)
     are exactly what a stale pin would silently drop: the nix-built
     daemon would keep verifying upstream TLS against roots the

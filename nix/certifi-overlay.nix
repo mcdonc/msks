@@ -1,10 +1,19 @@
 # The pkgs-level overlay that puts nix/certifi-pkg.nix's build under
 # the `certifi` name in the python 3.14 package set (#606) — the one
-# set the msksd wheel builds against. httpx, mitmproxy,
-# and every other dependent in that set resolve this one derivation
-# instead of nixpkgs' older one, so the closure carries a single
-# certifi and both the runtime deps check (the wheel's >=2026.10.23
-# floor) and catch-conflicts pass.
+# set the msksd wheel builds against. httpx, mitmproxy, and every
+# other dependent in that set resolve this one derivation instead of
+# nixpkgs' older one, so the closure carries a single certifi and
+# both the runtime deps check (the wheel's >=2026.10.23 floor) and
+# catch-conflicts pass.
+#
+# The composition decides whether to apply it (#785), reading the
+# floor pyproject.toml declares through nix/certifi-floor.nix: a
+# set whose own certifi already clears the floor skips this overlay
+# and every dependent comes from the binary cache instead of
+# rebuilding around the swapped wheel. The overlay itself stays
+# unconditional on purpose — reading the set's certifi version from
+# inside the overlay body recurses on the pkgs fixpoint, so the
+# condition cannot live here.
 #
 # Scoped to python314 through packageOverrides on purpose: the
 # set-wide pythonPackagesExtensions mechanism would replace certifi
@@ -19,7 +28,8 @@
 #
 # Applied by flake.nix (the nix build path), devenv.nix (the release
 # outputs' twin path), and module.nix (a consuming host's own
-# nixpkgs).
+# nixpkgs) — each only while its set's own certifi sits below the
+# floor.
 final: prev: {
   python314 = prev.python314.override (old: {
     packageOverrides =

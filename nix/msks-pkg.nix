@@ -16,8 +16,8 @@
   httpx,
   # The platform CA bundle (#424): the interceptor's upstream
   # verification loads the probe CA appended to certifi's platform
-  # roots. Resolved through nix/certifi-overlay.nix — the pinned
-  # channel's certifi sits below the pyproject floor (#606).
+  # roots. Resolved through nix/certifi-overlay.nix while a set's
+  # own certifi sits below the pyproject floor (#606, #785).
   certifi,
   pydantic,
   pyyaml,
