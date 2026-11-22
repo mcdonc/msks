@@ -35,6 +35,7 @@ on:
       - "src/msks/msks/server/hostsetup_macos/**"
       - "src/msks/msks/server/tls.py"
       - "src/msks/tests/test_hostsetup_macos*.py"
+      - "src/msks/tests/test_gui_terminal.py" # the pty suite runs on the mac too (#1074)
       - ".github/workflows/macos.yml"
       - "pyproject.toml"
   push:
@@ -45,6 +46,7 @@ on:
       - "src/msks/msks/server/hostsetup_macos/**"
       - "src/msks/msks/server/tls.py"
       - "src/msks/tests/test_hostsetup_macos*.py"
+      - "src/msks/tests/test_gui_terminal.py" # the pty suite runs on the mac too (#1074)
       - ".github/workflows/macos.yml"
       - "pyproject.toml"
   schedule:
