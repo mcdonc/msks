@@ -19,6 +19,11 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI workspaces page's Clone action (#1063).** The
+  page's bottom button row carries a Clone button beside Edit,
+  and a right-click on a row carries a Clone entry. Both ask
+  for the new workspace's name in a centered prompt and clone
+  through the same route `msks clone` uses.
 - **The Egress tab's static allowlist editor (#1050).** The
   GUI workspace page's Egress tab lists the workspace's static
   allowlist entries and edits them in place: one entry added at

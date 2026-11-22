@@ -9,10 +9,11 @@ holds no business logic: daemon rows arrive as row models
 refresh failure flashes the status line while the rows already
 on screen stand. The row's menu (#972) opens the editor
 (:mod:`msks.client.gui.edit`, #986) beside its other actions,
-and the page's bottom button row (#1011) — Add, Edit, Remove,
-the detail pages' Mounts and Proxies pattern — carries the
-create ask (the shell owns the dialog) and the selected row's
-edit and delete.
+and the page's bottom button row (#1011) — Add, Edit, Clone,
+Remove, the detail pages' Mounts and Proxies pattern — carries
+the create ask (the shell owns the dialog), the selected row's
+edit, clone (#1063, the name prompt the daemon's route needs),
+and delete.
 
 This module imports PySide6 at module scope. That is safe
 because nothing imports it at CLI parse time: the package init
@@ -28,7 +29,7 @@ from ..data import RestFailure
 from .bridge import Bridge
 from .connectionbar import ConnectionButton
 from .edit import EditDialog
-from .forms import confirm
+from .forms import confirm, prompt_text
 from .listcells import (
     ACTION_COLUMN,
     COLUMNS,
@@ -44,6 +45,7 @@ from .listcells import (
     ImageItem,
     StateItem,
     action_reply_text,
+    clone_reply_text,
     read_only_item,
     state_text,
 )
@@ -61,11 +63,12 @@ from .rows import (
 #: bridge.
 LIST_KEY = "workspaces-list"
 
-#: The action calls' keys (#940, #972): start, stop, and
-#: remove on a row, each its own flight.
+#: The action calls' keys (#940, #972, #1063): start, stop,
+#: remove, and clone on a row, each its own flight.
 START_KEY = "workspaces-start"
 STOP_KEY = "workspaces-stop"
 DELETE_KEY = "workspaces-delete"
+CLONE_KEY = "workspaces-clone"
 
 #: The capacity report's key (#849, the GUI's read): the detail
 #: strip's storage figure, fetched beside the rows and cached
@@ -85,10 +88,20 @@ FLASH_MS = 4000
 #: own sequence rather than the alphabet.
 
 
+def action_reply(key: str, label: str, reply: object) -> str:
+    """The action's flash text (#940, #1063): the clone names the
+    new row it made — a different workspace than the one the
+    operator clicked — while every other action names its own
+    workspace beside the status the daemon's answer carries."""
+    if key == CLONE_KEY:
+        return clone_reply_text(reply)
+    return action_reply_text(label, reply)
+
+
 class WorkspaceList(QtWidgets.QWidget):
     """The main window's central screen (#939): the table of row
-    models, the Add / Edit / Remove button row at the page's
-    bottom (#1011, the Mounts and Proxies pattern), and the
+    models, the Add / Edit / Clone / Remove button row at the
+    page's bottom (#1011, the Mounts and Proxies pattern), and the
     status line a failed refresh flashes. The status row carries the
     connection picker at its right end (#1009, phase 5): the
     standing daemon's name beside a menu of the client's
@@ -214,17 +227,21 @@ class WorkspaceList(QtWidgets.QWidget):
             QtWidgets.QSizePolicy.Policy.Ignored,
             QtWidgets.QSizePolicy.Policy.Preferred,
         )
-        # The page's action row (#1011): Add, Edit, and Remove
-        # at the bottom of the page, the detail pages' Mounts
-        # and Proxies pattern — the create ask crosses to the
-        # shell that owns the dialog, Edit and Remove acting on
-        # the selected row. Built before the first sync: the
-        # sync's slot reads the buttons.
+        # The page's action row (#1011): Add, Edit, Clone, and
+        # Remove at the bottom of the page, the detail pages'
+        # Mounts and Proxies pattern — the create ask crosses to
+        # the shell that owns the dialog, Edit and Remove acting
+        # on the selected row, Clone asking its name first
+        # (#1063). Built before the first sync: the sync's slot
+        # reads the buttons.
         self.add_button = QtWidgets.QPushButton("Add")
         self.add_button.clicked.connect(self.request_create)
         self.edit_button = QtWidgets.QPushButton("Edit")
         self.edit_button.clicked.connect(self.edit_held)
         self.edit_button.setEnabled(False)
+        self.clone_button = QtWidgets.QPushButton("Clone")
+        self.clone_button.clicked.connect(self.clone_held)
+        self.clone_button.setEnabled(False)
         self.remove_button = QtWidgets.QPushButton("Remove")
         self.remove_button.clicked.connect(self.remove_held)
         self.remove_button.setEnabled(False)
@@ -249,6 +266,7 @@ class WorkspaceList(QtWidgets.QWidget):
         actions = QtWidgets.QHBoxLayout()
         actions.addWidget(self.add_button)
         actions.addWidget(self.edit_button)
+        actions.addWidget(self.clone_button)
         actions.addWidget(self.remove_button)
         actions.addStretch(1)
         layout = QtWidgets.QVBoxLayout(self)
@@ -514,10 +532,10 @@ class WorkspaceList(QtWidgets.QWidget):
         resolved); an action's answer lands the flight and
         refreshes the listing, which shows what the action moved.
         Another key's answer is not this screen's to take."""
-        if key in (START_KEY, STOP_KEY, DELETE_KEY):
+        if key in (START_KEY, STOP_KEY, DELETE_KEY, CLONE_KEY):
             label = self.action_flight[1] if self.action_flight else ""
             self.action_landed()
-            self.flash(action_reply_text(label, result))
+            self.flash(action_reply(key, label, result))
             self.refresh()
             return
         if key == STORAGE_KEY:
@@ -554,7 +572,7 @@ class WorkspaceList(QtWidgets.QWidget):
         answer built, and a failed action takes nothing away
         either. Another key's failure is not this screen's to
         show."""
-        if key in (START_KEY, STOP_KEY, DELETE_KEY):
+        if key in (START_KEY, STOP_KEY, DELETE_KEY, CLONE_KEY):
             self.action_landed()
             self.flash(str(failure), outage=failure.reach)
             return
@@ -600,12 +618,13 @@ class WorkspaceList(QtWidgets.QWidget):
         time — every row's toggle stands disabled while one is
         out. The strip rides the same signal: the hold moved, the
         detail follows. The page's own row (#1011) rides it too:
-        Edit and Remove take a held row besides the flight's
-        gate."""
+        Edit, Clone, and Remove take a held row besides the
+        flight's gate."""
         for toggle in self.row_actions.values():
             toggle.setEnabled(not self.action_pending)
         held = self.held_workspace() is not None
         self.edit_button.setEnabled(held and not self.action_pending)
+        self.clone_button.setEnabled(held and not self.action_pending)
         self.remove_button.setEnabled(held and not self.action_pending)
         self.update_detail()
 
@@ -634,6 +653,15 @@ class WorkspaceList(QtWidgets.QWidget):
         held = self.held_workspace()
         if held is not None:
             self.delete_workspace(held)
+
+    @QtCore.Slot()
+    def clone_held(self) -> None:
+        """The page's Clone action (#1063): the held row opens the
+        name prompt — the same path the row's context menu takes
+        — with nothing held deciding nothing."""
+        held = self.held_workspace()
+        if held is not None:
+            self.clone_workspace(held)
 
     def update_detail(self) -> None:
         """The detail strip's content (#849, the GUI's read):
@@ -724,6 +752,25 @@ class WorkspaceList(QtWidgets.QWidget):
         self.sync_actions()
         self.bridge.call(DELETE_KEY, "remove", workspace[0])
 
+    def clone_workspace(self, workspace: tuple[str, str]) -> None:
+        """The Clone action (#1063, the daemon's #773 route): the
+        name prompt first — a clone needs a name the daemon's
+        grammar takes, and the daemon owns the stopped-source
+        rule — and a submitted name clones the workspace through
+        the bridge, one action flight out like the others. A
+        cancelled or empty prompt sends nothing."""
+        if self.action_pending:
+            return
+        name = prompt_text(
+            self, "Clone workspace", f"Clone {workspace[1]} into:"
+        )
+        if not name:
+            return
+        self.action_pending = True
+        self.action_flight = workspace
+        self.sync_actions()
+        self.bridge.call(CLONE_KEY, "clone", workspace[0], name)
+
     def edit_workspace(self, workspace: tuple[str, str]) -> None:
         """The Edit action (#986): the editor opens over the list
         seeded from the row's own facts — the create dialog's
@@ -763,18 +810,19 @@ class WorkspaceList(QtWidgets.QWidget):
     def menu_requested(self, pos: QtCore.QPoint) -> None:
         """A right-click on a row opens its menu (#972): the same
         actions the row's buttons carry — start or stop per the
-        model's own action, a shell — and Delete behind its own
+        model's own action, a shell — beside Clone behind its
+        name prompt (#1063) and Delete behind its own
         confirmation. A press on no row opens nothing."""
         menu = self.row_menu(self.table.rowAt(pos.y()))
         if menu is not None:
             menu.popup(self.table.viewport().mapToGlobal(pos))
 
     def row_menu(self, row: int) -> QtWidgets.QMenu | None:
-        """The row's menu (#972, #986) — ``None`` for a row the
-        table does not hold. Edit joins the row's own verb, the
-        shell, and Delete: the editor opens for the workspace's
-        sizes and topology, the rename field waiting on the
-        daemon's route."""
+        """The row's menu (#972, #986, #1063) — ``None`` for a row
+        the table does not hold. Edit joins the row's own verb,
+        the shell, Clone behind its name prompt, and Delete: the
+        editor opens for the workspace's sizes and topology, the
+        rename field waiting on the daemon's route."""
         name = self.table.item(row, NAME_COLUMN)
         if name is None:
             return None
@@ -791,6 +839,7 @@ class WorkspaceList(QtWidgets.QWidget):
             "Open a shell",
             lambda: self.shell_requested.emit(workspace[0]),
         )
+        menu.addAction("Clone", lambda: self.clone_workspace(workspace))
         menu.addAction("Delete", lambda: self.delete_workspace(workspace))
         return menu
 

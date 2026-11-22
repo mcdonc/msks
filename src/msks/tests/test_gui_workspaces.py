@@ -808,16 +808,17 @@ def test_the_hold_keeps_its_color_unfocused(qt) -> None:
 def test_the_page_carries_the_action_row_and_the_rows_hold_theirs(
     qt,
 ) -> None:
-    """The page's actions (#972, #1011): the bottom row carries
-    Add, Edit, and Remove — the detail pages' Mounts and
-    Proxies pattern — and each row's own cell keeps the toggle
-    and the shell button beside them; no other push button
-    lives on the page."""
+    """The page's actions (#972, #1011, #1063): the bottom row
+    carries Add, Edit, Clone, and Remove — the detail pages'
+    Mounts and Proxies pattern — and each row's own cell keeps
+    the toggle and the shell button beside them; no other push
+    button lives on the page."""
     screen, window, _bridge = make_screen(qt)
     buttons = screen.findChildren(qt.QtWidgets.QPushButton)
     assert [button.text() for button in buttons] == [
         "Add",
         "Edit",
+        "Clone",
         "Remove",
     ]
     # The row (#1011) sits at the page's bottom: the table
@@ -827,7 +828,8 @@ def test_the_page_carries_the_action_row_and_the_rows_hold_theirs(
     row = layout.itemAt(2)
     assert row.itemAt(0).widget() is screen.add_button
     assert row.itemAt(1).widget() is screen.edit_button
-    assert row.itemAt(2).widget() is screen.remove_button
+    assert row.itemAt(2).widget() is screen.clone_button
+    assert row.itemAt(3).widget() is screen.remove_button
     assert layout.itemAt(3).widget() is screen.detail
     for workspace in ("ws-1", "ws-2", "ws-3"):
         cell = screen.table.cellWidget(
@@ -851,44 +853,62 @@ def test_add_asks_the_shell_for_the_create_dialog(qt) -> None:
     window.close()
 
 
-def test_edit_and_remove_act_on_the_selected_row(qt, monkeypatch) -> None:
-    """The row's Edit and Remove (#1011): both act on the held
-    row — the editor opens over its own facts, Remove asks
-    first and a refusal sends nothing — and both stand disabled
-    until a row holds. The flight's gate holds them besides."""
+def test_edit_clone_and_remove_act_on_the_selected_row(
+    qt, monkeypatch
+) -> None:
+    """The row's Edit, Clone, and Remove (#1011, #1063): all
+    three act on the held row — the editor opens over its own
+    facts, Clone asks its name first, Remove asks first and a
+    refusal sends nothing — and all three stand disabled until
+    a row holds. The flight's gate holds them besides."""
     monkeypatch.setattr(qt.screen_mod, "confirm", lambda *args: False)
     screen, window, bridge = make_screen(qt)
     opened, _accepted, _parents = fake_editor(monkeypatch, qt)
+    names: list[tuple] = []
+    monkeypatch.setattr(
+        qt.screen_mod,
+        "prompt_text",
+        lambda parent, title, label: (
+            names.append((title, label)),
+            None,
+        )[1],
+    )
     # No hold: the row the open's first answer held clears, and
     # the buttons stand disabled until a row holds again.
     screen.table.clearSelection()
     screen.table.selectionModel().clearCurrentIndex()
     assert not screen.edit_button.isEnabled()
+    assert not screen.clone_button.isEnabled()
     assert not screen.remove_button.isEnabled()
     # The slots behind the buttons decide nothing with no hold:
     # a disabled button's click never reaches them, and a direct
     # call answers the same silence.
     bridge.calls.clear()
     screen.edit_held()
+    screen.clone_held()
     screen.remove_held()
     assert opened == []
+    assert names == []
     assert bridge.calls == []
     row = screen.row_ids()["ws-1"]
     screen.table.selectRow(row)
     assert screen.edit_button.isEnabled()
+    assert screen.clone_button.isEnabled()
     assert screen.remove_button.isEnabled()
     bridge.calls.clear()
     screen.edit_button.click()
     assert opened == [("ws-1",)]
+    screen.clone_button.click()
+    assert names == [("Clone workspace", "Clone alpha into:")]
     screen.remove_button.click()
-    assert bridge.calls == []  # the refusal sent nothing
+    assert bridge.calls == []  # the refused name and refusal sent nothing
     window.close()
 
 
 def test_the_action_row_follows_the_flight(qt, monkeypatch) -> None:
     """The row's gate (#1011): a start/stop/delete flight out
-    holds Edit and Remove beside the row toggles, and the
-    landing frees them again."""
+    holds Edit, Clone, and Remove beside the row toggles, and
+    the landing frees them again."""
     monkeypatch.setattr(qt.screen_mod, "confirm", lambda *args: True)
     screen, window, bridge = make_screen(qt)
     row = screen.row_ids()["ws-2"]
@@ -897,12 +917,14 @@ def test_the_action_row_follows_the_flight(qt, monkeypatch) -> None:
     screen.remove_button.click()
     assert bridge.calls == [("workspaces-delete", "remove", ("ws-2",))]
     assert not screen.edit_button.isEnabled()
+    assert not screen.clone_button.isEnabled()
     assert not screen.remove_button.isEnabled()
     # Add stands: the create dialog's flight is its own, not
     # the row actions'.
     assert screen.add_button.isEnabled()
     screen.on_succeeded("workspaces-delete", {"id": "ws-2", "status": "gone"})
     assert screen.edit_button.isEnabled()
+    assert screen.clone_button.isEnabled()
     assert screen.remove_button.isEnabled()
     window.close()
 
@@ -1103,9 +1125,12 @@ def test_the_action_slots_stand_guard(qt) -> None:
     )
     assert screen.held_workspace() is None
     # A row the rebuild has not filled measures nothing; an
-    # empty table sets no width at all.
+    # empty table sets no width at all. The sizing pass rides
+    # the same half-filled rows the resize eventFilter can:
+    # the guard the crash forced (#1063) holds.
     screen.table.setRowCount(4)  # rows without cells, mid-rebuild
     listlayout.size_action_column(screen.table)
+    listlayout.size_columns(screen.table)
     screen.on_succeeded("workspaces-list", [])
     window.resize(901, 600)
     qt.app.processEvents()
@@ -1216,13 +1241,14 @@ def test_the_row_shell_button_opens_the_workspace(qt) -> None:
 
 
 def test_the_context_menu_carries_the_rows_actions(qt, monkeypatch) -> None:
-    """A right-click on a row opens its menu (#972, #986):
-    Edit — the editor over the row's own facts — start or stop
-    per the row's own action, a shell, and Delete — the same
-    paths the row's buttons take. A right-click on no row opens
-    nothing."""
+    """A right-click on a row opens its menu (#972, #986,
+    #1063): Edit — the editor over the row's own facts — start
+    or stop per the row's own action, a shell, Clone behind its
+    name prompt, and Delete — the same paths the row's buttons
+    take. A right-click on no row opens nothing."""
     screen, window, bridge = make_screen(qt)
     monkeypatch.setattr(qt.screen_mod, "confirm", lambda *args: False)
+    monkeypatch.setattr(qt.screen_mod, "prompt_text", lambda *args: None)
     edits = fake_editor(monkeypatch, qt)[0]
     # The show is non-modal: the request itself pops the menu,
     # and a press below every row opens nothing.
@@ -1235,7 +1261,13 @@ def test_the_context_menu_carries_the_rows_actions(qt, monkeypatch) -> None:
     screen.menu_requested(pos)
     menu = screen.findChildren(qt.QtWidgets.QMenu)[-1]
     labels = [action.text() for action in menu.actions()]
-    assert labels == ["Edit", "Start", "Open a shell", "Delete"]
+    assert labels == [
+        "Edit",
+        "Start",
+        "Open a shell",
+        "Clone",
+        "Delete",
+    ]
     bridge.calls.clear()
     seen: list[str] = []
     screen.shell_requested.connect(seen.append)
@@ -1244,7 +1276,8 @@ def test_the_context_menu_carries_the_rows_actions(qt, monkeypatch) -> None:
     assert edits == [("ws-1",)]  # the editor opened this row
     assert bridge.calls == [("workspaces-start", "start", ("ws-1",))]
     assert seen == ["ws-1"]  # the shell entry ran its path
-    # Delete's entry runs behind its confirmation (below).
+    # Delete's entry runs behind its confirmation (below), and
+    # Clone's behind a name the prompt refused.
     window.close()
 
 
@@ -1373,6 +1406,59 @@ def test_delete_asks_and_removes(qt, monkeypatch) -> None:
     assert screen.status.text() == "beta gone"
     assert bridge.calls[-1] == ("workspaces-list", "workspaces", ())
     assert screen.row_actions["ws-1"].isEnabled()
+    window.close()
+
+
+def test_clone_asks_for_a_name_and_clones(qt, monkeypatch) -> None:
+    """The Clone action (#1063, the daemon's #773 route): the
+    name prompt names the workspace — a cancelled or empty
+    prompt sends nothing — and a submitted name clones it
+    through the bridge, the buttons locked while the flight is
+    out. A refusal flashes and frees the buttons; the answer
+    names the new row — the clone made a different workspace
+    than the one clicked — and the list refreshes."""
+    asked: list[tuple] = []
+    answers: list[str | None] = [None, "", "task-42"]
+
+    def ask(parent, title, label):
+        asked.append((title, label))
+        # The third answer serves every later ask: the flight
+        # arms under a name each time.
+        return answers[min(len(asked) - 1, len(answers) - 1)]
+
+    monkeypatch.setattr(qt.screen_mod, "prompt_text", ask)
+    screen, window, bridge = make_screen(qt)
+    bridge.calls.clear()
+    screen.clone_workspace(("ws-1", "alpha"))
+    assert asked == [("Clone workspace", "Clone alpha into:")]
+    screen.clone_workspace(("ws-1", "alpha"))
+    assert bridge.calls == []  # a cancel and an empty name sent nothing
+    screen.clone_workspace(("ws-1", "alpha"))
+    assert bridge.calls == [("workspaces-clone", "clone", ("ws-1", "task-42"))]
+    assert not screen.edit_button.isEnabled()  # one flight
+    assert not screen.clone_button.isEnabled()
+    assert not screen.remove_button.isEnabled()
+    # A refusal names itself and frees the buttons.
+    screen.on_failed(
+        "workspaces-clone",
+        clientdata.RestFailure("409: workspace is running", reach=False),
+    )
+    assert "409" in screen.status.text()
+    assert screen.clone_button.isEnabled()
+    # The answer names the new row, not the source, and the
+    # listing refreshes behind it.
+    screen.clone_workspace(("ws-1", "alpha"))
+    screen.on_succeeded(
+        "workspaces-clone",
+        {"id": "ws-9", "name": "task-42", "status": "created"},
+    )
+    assert screen.status.text() == "cloned into task-42 (id ws-9)"
+    assert bridge.calls[-1] == ("workspaces-list", "workspaces", ())
+    assert screen.clone_button.isEnabled()
+    # An answer without a readable row still names its word.
+    screen.clone_workspace(("ws-1", "alpha"))
+    screen.on_succeeded("workspaces-clone", None)
+    assert screen.status.text() == "cloned"
     window.close()
 
 

@@ -12,7 +12,12 @@ own contract: nothing imports it at CLI parse time (#927).
 
 from PySide6 import QtCore, QtWidgets
 
-from .rows import WorkspaceRow, pending_marker, restart_note
+from .rows import (
+    WorkspaceRow,
+    pending_marker,
+    restart_note,
+    workspace_label,
+)
 
 RANK_ROLE = QtCore.Qt.ItemDataRole.UserRole
 
@@ -77,6 +82,17 @@ def action_reply_text(label: str, reply: object) -> str:
     readable status still names its workspace."""
     status = reply.get("status") if isinstance(reply, dict) else None
     return f"{label} {status}" if status else label
+
+
+def clone_reply_text(reply: object) -> str:
+    """The clone's own flash (#1063, the TUI's #773 words): the
+    new row's label beside its id — the clone made a different
+    workspace than the one the operator clicked, so the source's
+    label would misname it. An answer without a readable row
+    still names its own word."""
+    if isinstance(reply, dict) and reply.get("id"):
+        return f"cloned into {workspace_label(reply)} (id {reply['id']})"
+    return "cloned"
 
 
 def state_text(model: WorkspaceRow) -> str:

@@ -120,13 +120,17 @@ A click selects the whole row. A double-click or Enter opens the
 workspace's page. The row's toggle starts a stopped workspace or
 stops a running one, and a stop asks first. The shell button
 opens the workspace's page with a shell in it. A right-click
-opens the row's menu: Edit, Start or Stop, Open a shell, and
-Delete. Delete asks for confirmation, and the workspace's data
-goes with it.
+opens the row's menu: Edit, Start or Stop, Open a shell, Clone,
+and Delete. Clone asks for the new workspace's name. Delete asks
+for confirmation, and the workspace's data goes with it.
 
-The page's bottom row carries **Add**, **Edit**, and **Remove**.
-Add opens the create dialog. Edit and Remove act on the
-selected row.
+The page's bottom row carries **Add**, **Edit**, **Clone**, and
+**Remove**. Add opens the create dialog. Edit, Clone, and Remove
+act on the selected row. Clone asks for the new workspace's name
+there too, and the clone takes the same route the `msks clone`
+command takes: both disks copy under the source's egress mode.
+A stopped workspace clones; a running one answers a refusal that
+flashes on the status line.
 
 A failed refresh flashes the status line at the top of the page.
 A refusal clears itself after four seconds. A daemon outage

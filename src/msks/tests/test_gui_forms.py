@@ -22,6 +22,7 @@ from msks.client.gui.forms import (  # noqa: E402
     confirm,
     confirm_box,
     pick_item,
+    prompt_text,
 )
 
 
@@ -163,3 +164,38 @@ def test_a_cancelled_picker_decides_nothing(qt, monkeypatch) -> None:
         pick_item(window, "Renew", "renew for", ["6h", "1d", "7d"], "1d")
         is None
     )
+
+
+def test_the_text_prompt_opens_seeded_and_centered(qt, monkeypatch) -> None:
+    """The text prompt (#1063, the clone's name ask): one line
+    of input over the asker's window, the seeded value the
+    opening one, the frame centered before the loop — a submit
+    answers the entered text, stripped."""
+    window = make_window(qt)
+    seen: list[object] = []
+
+    def fake_exec(self) -> int:
+        seen.append(self.geometry().center())
+        line = self.findChild(qt.QtWidgets.QLineEdit)
+        assert line is not None
+        assert line.text() == ""  # no seeded value
+        line.setText("  task-42  ")
+        return qt.QtWidgets.QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(qt.QtWidgets.QInputDialog, "exec", fake_exec)
+    assert prompt_text(window, "Clone workspace", "Clone alpha into:") == (
+        "task-42"
+    )
+    assert seen == [window.geometry().center()]
+
+
+def test_a_cancelled_text_prompt_decides_nothing(qt, monkeypatch) -> None:
+    """The cancelled text prompt (#1063): a rejected loop
+    answers None — the caller's clone flight decides nothing."""
+
+    def fake_exec(self) -> int:
+        return qt.QtWidgets.QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(qt.QtWidgets.QInputDialog, "exec", fake_exec)
+    window = make_window(qt)
+    assert prompt_text(window, "Clone workspace", "Clone alpha into:") is None
