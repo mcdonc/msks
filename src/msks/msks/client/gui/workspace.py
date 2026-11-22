@@ -209,8 +209,10 @@ class WorkspaceDetail(QtWidgets.QWidget):
         arrow, drawn large, its tooltip and accessible name
         carrying the word — then the tab strip, and the status
         line a failed refresh flashes filling the row's rest.
-        The page refreshes on its own timer (#971: no manual
-        button); its new-shell action is the tab strip's "+"
+        The page refreshes on its open and on the row-affecting
+        frames the events feed pushes (#971's manual button
+        stays gone; #1019 retired the standing tick); its
+        new-shell action is the tab strip's "+"
         (#969)."""
         back_button = QtWidgets.QPushButton(self)
         back_button.setIcon(
@@ -299,8 +301,9 @@ class WorkspaceDetail(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def refresh(self) -> None:
-        """One page refresh through the bridge (#945, #971) —
-        the tick and the page's own open share it. A flight
+        """One page refresh through the bridge (#945, #971,
+        #1019) — the row-affecting pushed frames and the page's
+        own open share it. A flight
         already out is not stacked, the listing's own guard
         (#470); the tabs stand until the answers replace
         them."""
@@ -310,10 +313,10 @@ class WorkspaceDetail(QtWidgets.QWidget):
         if not self.storage_pending:
             self.storage_pending = True
             self.bridge.call(STORAGE_KEY, "storage")
-        # The Proxies tab rides the page's own tick (#988): its
-        # listing is its own read, refreshed beside the row. The
-        # Egress tab rides it the same way (#1042): its posture
-        # read is its own.
+        # The Proxies tab rides the page's own refresh (#988):
+        # its listing is its own read, refreshed beside the row.
+        # The Egress tab rides it the same way (#1042): its
+        # posture read is its own.
         self.proxies_tab.poke()
         self.egress_tab.poke()
 

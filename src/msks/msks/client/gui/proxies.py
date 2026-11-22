@@ -107,8 +107,8 @@ class ProxyDialog(Centered, QtWidgets.QDialog):
 class ProxiesTab(QtWidgets.QWidget):
     """The page's proxy surface (#988): the table of rows with
     Add, Edit, and Remove under it, the note line a refusal
-    names itself on. The listing refreshes on the page's tick,
-    on every proxy transition the events feed pushes, and after
+    names itself on. The listing refreshes with the page, on
+    every proxy transition the events feed pushes, and after
     each mutation's answer; the mutations fly one at a time,
     each under its own key."""
 
@@ -175,9 +175,9 @@ class ProxiesTab(QtWidgets.QWidget):
 
     def poke(self) -> None:
         """One listing refresh through the bridge (#988) — the
-        page's tick and each pushed proxy transition share it. A
-        refresh already in flight is skipped, the listing's own
-        guard."""
+        page's refresh and each pushed proxy transition share
+        it. A refresh already in flight is skipped, the
+        listing's own guard."""
         if not self.workspace_id or self.list_pending:
             return
         self.list_pending = True

@@ -166,9 +166,9 @@ class MountsTab(QtWidgets.QWidget):
         workspace cancels a flight the old one still has out —
         its answer is not this workspace's to take — and the
         fresh facts stand. A flight already out for this
-        workspace keeps its ground: the answer repaints, and the
-        tick's older snapshot cannot roll the posted list back
-        out from under it."""
+        workspace keeps its ground: the answer repaints, and an
+        older refresh's snapshot cannot roll the posted list
+        back out from under it."""
         if workspace_id != self.workspace_id:
             if self.flight is not None and not self.flight.done():
                 self.flight.cancel()

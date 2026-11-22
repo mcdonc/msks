@@ -214,7 +214,7 @@ class EgressTab(QtWidgets.QWidget):
     left, the audit trail with its filter and its
     deny-to-allowlist action on the right, the note line under
     both. The note answers the switch, the writes, and the
-    revokes. The rules read refreshes on the page's tick and on
+    revokes. The rules read refreshes with the page and on
     every pushed ``egress.rules`` frame — a switch the CLI made
     elsewhere paints itself here — and the switch and the
     allowlist write each fly one flight at a time, the reply the
@@ -373,7 +373,7 @@ class EgressTab(QtWidgets.QWidget):
 
     def poke(self) -> None:
         """One rules read through the bridge (#1042) — the page's
-        tick and the open share it. A read already in flight is
+        refresh and the open share it. A read already in flight is
         skipped, the listing's own guard."""
         if not self.workspace_id or self.list_pending:
             return
@@ -430,9 +430,9 @@ class EgressTab(QtWidgets.QWidget):
         """The verdicts list from the rows (#1051): one row per
         verdict, the empty state's stand-in beneath while none
         stands. A rebuild the rows already show skips itself:
-        the page's ticks repaint every few seconds, and the
-        selection the Revoke action reads must survive the
-        ticks that change nothing — a frame that changes the
+        the page's refreshes come often, and
+        the selection the Revoke action reads must survive a
+        refresh that changes nothing — a frame that changes the
         rows rebuilds the list and the selection goes with
         it."""
         texts = [verdict_text(rule) for rule in rows]
@@ -487,9 +487,8 @@ class EgressTab(QtWidgets.QWidget):
         row per entry, the empty state's stand-in beneath while
         none stands, and the buttons following the ground and
         the selection. A rebuild the rows already show skips
-        itself: the page's tick repaints every few seconds, and
-        the selection the Remove action reads must survive the
-        ticks that change nothing — a frame that changes the
+        the selection the Remove action reads must survive a
+        refresh that changes nothing — a frame that changes the
         list rebuilds the rows and the selection goes with it."""
         shown = [
             self.entries.item(row).text()

@@ -1,69 +1,13 @@
 # The GUI
 
-The desktop GUI and the terminal UI are one program: `msks`. The
-GUI is a desktop window over the daemon's REST API. It reads the
-same environment variables, the same config file, and the same
-daemon aliases as the TUI and the CLI. It reads no daemon state
+The desktop GUI and the terminal UI are one program: `msks`. The GUI is a
+desktop window over the daemon's REST API. It reads the same environment
+variables and config file as the TUI and the CLI. It reads no daemon state
 directly: every page uses the API.
 
 `msks gui` opens the window.
 
-## Install and first open
-
-The GUI ships in the base install. `pip install msks` installs
-the Qt binding and the terminal library the window uses together
-with everything else. The GUI adds about 85 MB to the wheel
-download and about 250 MB installed, measured on Linux.
-
-The window needs a display. A Linux session provides one through
-`DISPLAY` or `WAYLAND_DISPLAY`, and `QT_QPA_PLATFORM=offscreen`
-also works. A start that finds no display prints one line on
-stderr and exits. A macOS session needs a desktop login. The
-window opens fine over ssh while one stands.
-
-The window plants its own desktop entry and taskbar icon on a
-Linux desktop. Every `msks gui` launch installs both under the
-XDG data home before the window opens. The taskbar shows the
-msks icon from the first launch after a fresh install, and the
-next launch after an upgrade refreshes the icon renders. When
-the install fails, msks prints one line on stderr and the
-window still opens. `msks gui-shortcut` does the same work by
-hand and prints the entry's path. On macOS nothing is planted.
-The dock reads the icon the window itself already carries.
-
-Uninstalling the wheel leaves the entry and the icons in
-place, because they live in the XDG data home, outside the
-wheel's tree. Delete `~/.local/share/applications/msks.desktop`
-and the `msks.*` files under `~/.local/share/icons/hicolor` to
-remove them by hand.
-
-The window opens 1280 by 720 the first time. Every later open
-takes back the place and size the last close left, as long as a
-connected screen still shows some of that rect.
-
-`MSKSC_GUI_FONT_SCALE` multiplies the window's base font size.
-The base is 15 logical pixels, the size the terminal face's
-15pt default rasterizes to on macOS. A Linux session rasterizes
-a point size larger (96 against 72 font dpi), so the window
-anchors its chrome in pixels and converts through the screen's
-own dpi: the chrome opens at the same size on every platform
-(#1056). The terminal content keeps its own 15pt default, so
-it opens larger than the chrome on a 96-dpi session. The
-default multiplier is 1.0. The [zoom
-keys](#the-zoom-keys) change both sizes at runtime.
-
-## The connection
-
-The GUI reads the [client
-environment](cli.md#client-environment) the TUI reads. Export
-`MSKSC_URL`, `MSKSC_TOKEN`, and `MSKSC_CAFILE` before `msks
-gui`, or write them into the config file, exactly as for any
-other command.
-
-A shell inside a devenv tree needs no exports. The connection
-picker reads the dev daemon's state dir and offers that
-connection as a preset. The default state dir is
-`.devenv/state/msksd`, and `MSKSD_STATE_DIR` moves it.
+## The connection picker
 
 ![The connection picker's menu: two aliases and the dev daemon, the standing one checked](screens/gui-connection.png)
 
@@ -71,23 +15,17 @@ The status row's right end carries the connection picker: the
 standing daemon's name beside a menu. The menu lists the config
 file's [daemon aliases](cli.md#daemon-aliases) in file order, the
 dev daemon's state dir, and the environment's own exports when
-they carry an address. The standing connection is checked.
+they carry an address.
 
 A pick switches the whole window to the picked daemon. The
 current screens close and fresh ones open over the new
 connection. Shell sessions open on the old connection close with
-it. A pick that cannot resolve (the config file changed under
-the menu) switches nothing: the status line carries the refusal
-and the menu re-reads the standing truth.
+it.
 
 ## The main window
 
 The window opens on three top-level tabs: **Workspaces**,
 **Images**, and **Secrets**.
-
-Left and Right move between the tabs. Down enters the page
-below. A click picks a tab and leaves the keyboard focus where
-it stood. Tab and Shift-Tab still work everywhere.
 
 ## The workspace list
 
@@ -97,12 +35,10 @@ The **Workspaces** tab opens on the list: one row per workspace,
 newest first, in five columns. NAME, STATUS, ID, IMAGE, and
 CREATED. A start/stop toggle and a shell button close each row.
 
-The list re-reads the daemon when the daemon publishes a move:
-a workspace changed from another surface (the CLI, another
+The list re-reads the daemon when the daemon publishes a websocket
+event: a workspace changed from another surface (the CLI, another
 operator) appears without a click, and a daemon at rest receives
-no periodic listing traffic from an open window. The events
-websocket carries the frames, and the window re-reads when the
-connection serves again after a drop.
+no periodic listing traffic from an open window.
 
 Click a column header to sort by it. CREATED sorts newest first
 by default. STATUS sorts in the lifecycle order (created,
@@ -163,11 +99,7 @@ create.
 
 **Edit** opens a dialog seeded with the workspace's sizes and
 topology: VCPUs, memory, and the root and home volumes. Apply
-posts to the same endpoint `msks resize` uses. The sizes move
-while the workspace stands stopped, and the GUI never stops it
-for you: stop it first. A running workspace's Apply comes back
-as a refusal on the note line. A change that waits for the
-next boot shows the row's `↻N` marker once the list refreshes.
+posts to the same endpoint `msks resize` uses.
 
 ## The workspace page
 
@@ -184,8 +116,9 @@ strip holds **Shells** (the default), **Mounts**, **Proxies**,
 **Egress**, and **Events**. The footer strip at the bottom repeats
 the list's quick-facts line for this workspace.
 
-The page re-reads the daemon every five seconds, and the events
-feed pushes changes at once. A proxy transition repaints the
+The page re-reads the daemon at its open, when the events
+connection serves, and on every move the events feed pushes.
+A proxy transition repaints the
 Proxies tab without a click, and every frame appends to the
 Events tab.
 
@@ -423,6 +356,45 @@ The terminal grids switch with the chrome. A program inside a
 terminal that sets its own colors keeps winning over the theme.
 A desktop that states no scheme keeps the palette the platform
 handed the window.
+
+## Environment, icons and scaling
+
+The window needs a display. A Linux session provides one through
+`DISPLAY` or `WAYLAND_DISPLAY`, and `QT_QPA_PLATFORM=offscreen`
+also works. A start that finds no display prints one line on
+stderr and exits. A macOS session needs a desktop login. The
+window opens fine over ssh while one stands.
+
+The window plants its own desktop entry and taskbar icon on a
+Linux desktop. Every `msks gui` launch installs both under the
+XDG data home before the window opens. The taskbar shows the
+msks icon from the first launch after a fresh install, and the
+next launch after an upgrade refreshes the icon renders. When
+the install fails, msks prints one line on stderr and the
+window still opens. `msks gui-shortcut` does the same work by
+hand and prints the entry's path. On macOS nothing is planted.
+The dock reads the icon the window itself already carries.
+
+Uninstalling the wheel leaves the entry and the icons in
+place, because they live in the XDG data home, outside the
+wheel's tree. Delete `~/.local/share/applications/msks.desktop`
+and the `msks.*` files under `~/.local/share/icons/hicolor` to
+remove them by hand.
+
+The window opens 1280 by 720 the first time. Every later open
+takes back the place and size the last close left, as long as a
+connected screen still shows some of that rect.
+
+`MSKSC_GUI_FONT_SCALE` multiplies the window's base font size.
+The base is 15 logical pixels, the size the terminal face's
+15pt default rasterizes to on macOS. A Linux session rasterizes
+a point size larger (96 against 72 font dpi), so the window
+anchors its chrome in pixels and converts through the screen's
+own dpi: the chrome opens at the same size on every platform
+(#1056). The terminal content keeps its own 15pt default, so
+it opens larger than the chrome on a 96-dpi session. The
+default multiplier is 1.0. The [zoom
+keys](#the-zoom-keys) change both sizes at runtime.
 
 ## The macOS menu bar
 
