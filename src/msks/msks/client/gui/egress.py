@@ -690,7 +690,7 @@ class EgressTab(QtWidgets.QWidget):
         arms. A name already listed answers itself on the note
         line, and ground the write cannot compose against — a
         posture the tab has not read, a policy flight already
-        out — answers itself the same way: the route is one."""
+        out — answers with its own note: the route is one."""
         if not self.editable():
             self.note.setText(
                 WRITE_HELD if self.rules is not None else NO_READ
