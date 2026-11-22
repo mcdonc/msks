@@ -2649,6 +2649,12 @@ gui</code>. The nix package keeps the daemon's closure lean, so on
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>Tab completion inside a GUI terminal (#1066).</strong> Tab and
+  Shift+Tab in a terminal subtab now reach the program inside
+  the terminal: Tab sends the tab byte the shell's completion
+  reads, and Shift+Tab sends the shifted tab (the
+  reverse-completion sequence). Before, both moved the
+  keyboard focus to the next widget in the window.</li>
 <li>
 <p><strong>The secrets audit rows' time labels (#1064).</strong> The audit
   rows in the GUI's Secrets tab and in the TUI's audit views
