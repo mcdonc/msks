@@ -176,7 +176,6 @@ class EgressTab(QtWidgets.QWidget):
         self.picked = ""
         self.write_flight = None
         self.pending_write = False
-        self.before: list[str] | None = None
         self.working: list[str] = []
         self.wrote_mode = ""
         self.seq = 0
@@ -253,7 +252,6 @@ class EgressTab(QtWidgets.QWidget):
         self.list_key = ""
         self.switch_key = ""
         self.write_key = ""
-        self.before = None
         self.wrote_mode = ""
         self.workspace_id = workspace_id
         self.frame = None
@@ -485,25 +483,21 @@ class EgressTab(QtWidgets.QWidget):
         return not effective_allows(composed)
 
     def change(self, entries: list[str]) -> None:
-        """One composed list to the daemon (#1050): the snapshot
-        stands for the rollback, and a composition that empties
-        a static posture asks the shared question first — a yes
-        sends the confirmed write, a no decides nothing. The
-        posture the composition writes beside is captured here:
-        a frame the modal ask lets land (a switch another
-        surface made) cannot repoint the write the operator
-        answers for."""
+        """One composed list to the daemon (#1050): a
+        composition that empties a static posture asks the
+        shared question first — a yes sends the confirmed write,
+        a no decides nothing. The posture the composition
+        writes beside is captured here: a frame the modal ask
+        lets land (a switch another surface made) cannot repoint
+        the write the operator answers for."""
         if not self.editable():
             return
-        self.before = self.working
         mode = self.current
         if not self.empties_static(entries):
             self.write(entries, mode)
             return
         if self.ask_empty_static():
             self.write(entries, mode, confirm_empty=True)
-            return
-        self.before = None  # the no decided nothing: no snapshot stands
 
     def write(
         self, entries: list[str], mode: str, *, confirm_empty: bool = False
@@ -565,15 +559,13 @@ class EgressTab(QtWidgets.QWidget):
 
     def write_landed(self, key: str, result: object) -> bool:
         """The write's answer (#1050): the reply is the fresh
-        rules frame — the list repaints from it, the snapshot
-        the rollback held goes — and the note names the write's
-        effect. False when the key names no flight of the
+        rules frame — the list repaints from it — and the note
+        names the write's effect. False when the key names no flight of the
         write's own."""
         if key != self.write_key or not self.write_key:
             return False
         self.pending_write = False
         self.write_flight = None
-        self.before = None
         self.take(result)
         reply = result if isinstance(result, dict) else {}
         self.effect_note("allowlist saved", reply)
@@ -694,8 +686,8 @@ class EgressTab(QtWidgets.QWidget):
 
     def restore_entries(self) -> None:
         """The refused write's restore (#1050): the standing
-        frame repaints the list — fresher than the snapshot the
-        change took whenever a frame landed under the question's
-        modal loop — and the snapshot the rollback held goes."""
-        self.before = None
+        frame repaints the list — the freshest the tab has, a
+        frame that landed under the question's modal loop
+        included — beside the daemon's own standing list, the
+        daemon having refused the write."""
         self.take(self.frame)

@@ -6,7 +6,7 @@ the same question again, and the pushed rules frame repainting
 a switch another surface made — and the static allowlist
 editor (#1050): the read painting the list, add and remove
 posting the whole new list through the policy route, the
-optimistic row and its rollback on a refusal, the route's
+optimistic row and its restore on a refusal, the route's
 reason for a rejected entry naming itself inline, and the
 empty-static gate's two arms over a write that empties the
 list. The widgets run under the offscreen platform on every
@@ -604,7 +604,7 @@ def test_a_read_blank_under_the_form_decides_nothing(qt, monkeypatch) -> None:
     """The change's own gate (#1050): a read that lands while
     the form stands can blank the posture (a malformed answer);
     the closed form's composition then decides nothing — no
-    snapshot, no write — the same ground the add's own gate
+    ground, no write — the same ground the add's own gate
     reads before the form opens."""
     tab, bridge = make_tab(qt)
 
@@ -619,7 +619,6 @@ def test_a_read_blank_under_the_form_decides_nothing(qt, monkeypatch) -> None:
     monkeypatch.setattr(egress_mod, "EntryDialog", BlankDialog)
     tab.add()
     assert bridge.calls == []
-    assert tab.before is None
     assert entry_rows(tab) == []
 
 
@@ -647,7 +646,7 @@ def test_remove_posts_the_whole_list_and_lands(qt) -> None:
 def test_an_invalid_entry_surfaces_the_routes_reason(qt, monkeypatch) -> None:
     """A rejected entry (#1050): the route's own reason — the 400
     ``parse_allowlist`` answers — lands whole on the note line and
-    the list rolls back to the snapshot the change took: the
+    the daemon restores the list from its standing frame: the
     daemon is the authority, and the refused entry rides no later
     write."""
     tab, bridge = make_tab(qt)
@@ -660,8 +659,7 @@ def test_an_invalid_entry_surfaces_the_routes_reason(qt, monkeypatch) -> None:
     assert tab.note.text() == (
         "refused: invalid egress allowlist entries: 'not a host!'"
     )
-    assert entry_rows(tab) == [".debian.org"]  # the rollback
-    assert tab.before is None
+    assert entry_rows(tab) == [".debian.org"]  # the restore
     fake_entry_dialog(monkeypatch, "example.com")  # the editor stands ready
     tab.add()
     assert len(bridge.calls) == 2
@@ -722,7 +720,7 @@ def test_the_routes_confirm_refusal_on_a_write_asks_and_resends(
     bridge.failed.emit(tab.write_key, EMPTY_REFUSAL)
     assert len(asks) == 1
     assert tab.note.text() == ""  # the No decided nothing
-    assert entry_rows(tab) == [".d.org"]  # the rollback
+    assert entry_rows(tab) == [".d.org"]  # the restore
 
 
 def test_one_policy_flight_gates_the_other_shape(qt, monkeypatch) -> None:
@@ -798,7 +796,6 @@ def test_a_workspace_switch_cancels_the_write_flight(qt, monkeypatch) -> None:
     stale = tab.write_key
     tab.host("ws-b")
     assert entry_rows(tab) == []
-    assert tab.before is None
     bridge.succeeded.emit(stale, rules_frame(mode="allow"))
     assert tab.mode_line.text() == "current mode: —"
     tab.poke()
