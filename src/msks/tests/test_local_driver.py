@@ -1731,16 +1731,27 @@ def test_log_tail_shapes() -> None:
         assert LocalCloudHypervisor._log_tail(p) == " (log unreadable)"
 
 
-def test_socket_stale_sweeps_a_dangling_symlink(tmp_path: Path) -> None:
+def test_socket_stale_sweeps_a_dangling_symlink() -> None:
     """lexists, not exists: a dangling symlink at the socket name is
     residue too -- it refuses the bind as surely as a file (#154
-    r3)."""
+    r3).
+
+    The link lives under a shallow mkdtemp in /tmp, the same
+    AF_UNIX-length rule the contract test below states: the
+    probe's own connect() carries the full path, and a deep
+    basetemp crossing darwin's 104-byte cap answers its own
+    OSError instead of the refusal the arm pins (#1038).
+    """
     from msks.microvm.local import socket_stale
 
-    target = tmp_path / "gone.sock"
-    link = tmp_path / "api.sock"
-    link.symlink_to(target)  # target never exists: the link dangles
-    assert socket_stale(link)
+    root = Path(tempfile.mkdtemp(prefix="msks-test-", dir="/tmp"))
+    try:
+        target = root / "gone.sock"
+        link = root / "api.sock"
+        link.symlink_to(target)  # target never exists: the link dangles
+        assert socket_stale(link)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def test_socket_stale_contract() -> None:

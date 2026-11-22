@@ -7,6 +7,7 @@ run against real short-lived children on real pseudo-terminals.
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import os
 import signal
@@ -209,6 +210,31 @@ def test_the_child_exit_is_visible() -> None:
         assert killed.exit_status == 128 + signal.SIGTERM
     finally:
         killed.close()
+
+
+def test_an_eio_read_marks_the_session_exited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Linux's kernel answers EIO, not a clean EOF, once the
+    slave side closes (#951): the OSError arm delivers the
+    finished word whatever the host's own kernel answers —
+    darwin's empty read is the arm beside it, and each host's
+    kernel reaches only one of the two. The fake makes the Linux
+    arm deterministic everywhere (#1038)."""
+    session = ts.PtySession([sys.executable, "-c", SLEEPER])
+    try:
+        out = drain_until(session, b"ready")
+        assert b"ready" in out
+
+        def eio(fd: int, count: int) -> bytes:
+            raise OSError(errno.EIO, "Input/output error")
+
+        monkeypatch.setattr(ts.os, "read", eio)
+        data, finished = session.read_once()
+        assert finished is True and data is None
+        assert session.exited
+    finally:
+        session.close()
 
 
 def test_a_hup_trapping_child_is_killed_after_grace() -> None:

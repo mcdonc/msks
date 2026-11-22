@@ -80,12 +80,14 @@ def test_the_gui_command_names_a_headless_session(
     without the binding hears HINT here, not a failure)."""
     client_env(monkeypatch)
     monkeypatch.setattr(app, "find_spec", lambda name: object())
-    # The launchd stand-in pins the darwin arm: the gate must
-    # answer from the probe the test names, not from the host's
-    # launchd — a CI runner's launchd answers for a gui domain
-    # even with no console attached, and the real event loop
-    # behind that answer never comes back (#934: it hung three
-    # runs running).
+    # The platform pin runs the env-var arm on every host —
+    # darwin's launchd arm is the test below — and the launchd
+    # stand-in keeps the gate answering from the probe the test
+    # names, not the host's launchd, wherever the pin moves: a
+    # CI runner's launchd answers for a gui domain even with no
+    # console attached, and the real event loop behind that
+    # answer never comes back (#934: it hung three runs running).
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(app, "gui_session_present", lambda: False)
     for var in ("DISPLAY", "WAYLAND_DISPLAY", "QT_QPA_PLATFORM"):
         monkeypatch.delenv(var, raising=False)

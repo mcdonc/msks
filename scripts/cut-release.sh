@@ -34,6 +34,18 @@ die() {
   exit 1
 }
 
+# Both python reads below need the project's python (tomllib, the
+# notes tool): resolve the interpreter once, die naming it when a
+# host offers none — macOS and minimal Linuxes ship no bare
+# ``python``, and the failure would otherwise read as a broken
+# tagged tree (#1038). The tomllib probe names an interpreter too
+# old for the gates instead of letting its ModuleNotFoundError
+# masquerade as an unreadable pyproject.
+python3=$(command -v python3) ||
+  die "python3 must be on PATH (run inside the devenv shell)"
+"$python3" -c 'import tomllib' 2>/dev/null ||
+  die "$python3 is older than 3.11 (no tomllib); run inside the devenv shell"
+
 tag=${1:-}
 [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
   die "usage: cut-release.sh vX.Y.Z (got: ${tag:-nothing})"
@@ -72,7 +84,7 @@ fi
 # marker names the in-progress release it belongs to, and a
 # disagreement names the four files the bump commit carries.
 tagged_version=$(
-  git show "$tag":pyproject.toml | python -c \
+  git show "$tag":pyproject.toml | "$python3" -c \
     'import sys, tomllib; print(tomllib.loads(sys.stdin.read())["project"]["version"])'
 ) || die "pyproject.toml at $tag does not read; check the tagged tree"
 [[ $tagged_version != *".dev"* ]] ||
@@ -87,7 +99,7 @@ tagged_version=$(
 notes=$(mktemp)
 trap 'rm -f "$notes"' EXIT
 git show "$tag":docs/changes.md >"$notes"
-python scripts/release_notes.py "$tag" "$notes" >/dev/null ||
+"$python3" scripts/release_notes.py "$tag" "$notes" >/dev/null ||
   die "docs/changes.md at $tag carries no release-notes section"
 
 if [[ -n $on_origin ]]; then

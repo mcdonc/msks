@@ -2,6 +2,9 @@
 
 import asyncio
 import json
+import shutil
+import tempfile
+from pathlib import Path
 
 import pytest
 from fastapi import WebSocketDisconnect
@@ -17,9 +20,15 @@ from test_api import TOKEN, StubMicrovm, auth
 class ConsoleStub(StubMicrovm):
     """A seam whose console() opens a real unix socket pair backend."""
 
-    def __init__(self, tmp_path) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self._tmp_path = tmp_path
+        # The echo servers bind under a shallow mkdtemp in /tmp, not
+        # the test's tmp_path: darwin caps a unix socket path at 104
+        # bytes, and a deep tmp tree under the host's real temp dir
+        # crosses it — the bind dies before the exchange the test
+        # pins ever runs (#1038; the suite's shallow-/tmp rule for
+        # every socket a test binds).
+        self.sock_dir = Path(tempfile.mkdtemp(prefix="msks-ws-", dir="/tmp"))
         self.refusals: set[str] = set()
         self.console_calls: list[str] = []
 
@@ -28,9 +37,9 @@ class ConsoleStub(StubMicrovm):
         if workspace_id in self.refusals:
             raise MicrovmError("no live console socket")
         # The socket name shortens the workspace id: the daemon-minted
-        # ids (#246) are 10 hex chars, and a deep xdist tmp dir plus
-        # that name can push the AF_UNIX path past its 108-byte limit.
-        path = self._tmp_path / f"{workspace_id[:8]}.sock"
+        # ids (#246) are 10 hex chars, and the shallow dir above is
+        # what keeps the whole path inside every host's AF_UNIX cap.
+        path = self.sock_dir / f"{workspace_id[:8]}.sock"
 
         async def echo(reader, writer):
             while True:
@@ -64,10 +73,13 @@ def console_api(tmp_path):
         ),
     )
     app = build_app(settings)
-    stub = ConsoleStub(tmp_path)
-    app.state.microvm = stub
-    api = build_api(app)
-    yield api, app, stub
+    stub = ConsoleStub()
+    try:
+        app.state.microvm = stub
+        api = build_api(app)
+        yield api, app, stub
+    finally:
+        shutil.rmtree(stub.sock_dir, ignore_errors=True)
 
 
 def _make_workspace(client) -> str:
