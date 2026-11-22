@@ -84,7 +84,7 @@ def python_path() -> str:
     the dependencies ride with either."""
     root = Path(__file__).resolve().parents[3]
     site = Path(sysconfig.get_paths()["purelib"])
-    if root == site:
+    if root == site.resolve():
         return str(site)
     return f"{root}{os.pathsep}{site}"
 

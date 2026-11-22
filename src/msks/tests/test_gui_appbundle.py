@@ -39,8 +39,6 @@ def test_the_python_path_carries_both_roots() -> None:
     hooks), the interpreter's site-packages second — and the
     two collapse to one word when a wheel install makes them
     the same directory."""
-    import sysconfig
-
     path = appbundle.python_path()
     site = sysconfig.get_paths()["purelib"]
     assert site in path
