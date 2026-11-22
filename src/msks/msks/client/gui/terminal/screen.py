@@ -469,6 +469,18 @@ class TerminalWidget(QWidget):
         action = input.key_action(event.isAutoRepeat())
         input.encode_key(self, event, action)
 
+    def focusNextPrevChild(self, forward: bool) -> bool:  # noqa: N802
+        """Tab and Shift+Tab belong to the program inside the
+        terminal (#1066): Qt's default reroutes both into focus
+        moves inside ``QWidget.event`` before the press reaches
+        the encoder, and the shell's completion loses the key.
+        Refuse the move while the terminal itself holds focus;
+        a child that holds it instead (the find bar's edit)
+        keeps the default traversal through ``super()``."""
+        if self.hasFocus():
+            return False
+        return super().focusNextPrevChild(forward)
+
     def handle_shortcut(self, event: QKeyEvent) -> bool:
         """The widget's own keys before the encoder: buffer
         paging, the clipboard, and the find bar. ``True`` when

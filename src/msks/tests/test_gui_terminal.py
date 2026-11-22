@@ -548,6 +548,158 @@ def test_plain_text_encodes_as_itself(screen, qt):
     assert b"a" in drain_until(screen, b"a")
 
 
+def test_tab_reaches_the_child_and_keeps_focus(qt):
+    """The bug's own path (#1066): Qt's ``QWidget.event``
+    reroutes a Tab into a focus move before the press reaches
+    the encoder, and the shell's completion loses the key. A
+    terminal in a window with a focusable sibling that follows
+    it in tab order keeps both the key and the focus — the pty
+    reads the tab byte, the refusal answers the move. The
+    other arm of the refusal — a child's Tab passed through
+    ``super()`` — is the find bar's own pin below."""
+    from msks.client.gui.terminal import TerminalWidget
+
+    host = qt.QtWidgets.QWidget()
+    host.show()
+    # The window must be the app's active one (#1066): on some
+    # platforms' offscreen runs a shown window never activates,
+    # its focus widget answers hasFocus False, and the refusal
+    # would hand the Tab to the traversal instead of the pty.
+    host.activateWindow()
+    widget = TerminalWidget([sys.executable, "-c", ECHOER], parent=host)
+    # A focusable after the terminal in tab order (creation
+    # order): a Tab from the terminal has somewhere to go, the
+    # swallow pre-fix.
+    button = qt.QtWidgets.QPushButton(host)
+    button.setFocusPolicy(qt.QtCore.Qt.FocusPolicy.StrongFocus)
+    try:
+        hush_echo(widget)
+        drain_until(widget, b"ready")
+        widget.show()
+        widget.setFocus()
+        qt.app.processEvents()
+        assert widget.hasFocus()  # the refusal answers from here
+        # The interception's own entry: the event through Qt's
+        # full delivery, not the key handler alone.
+        qt.app.sendEvent(widget, key_event(qt, qt.QtCore.Qt.Key.Key_Tab))
+        qt.app.processEvents()
+        assert b"\t" in drain_until(widget, b"\t")
+        assert widget.hasFocus()
+        assert widget.focusNextPrevChild(True) is False
+    finally:
+        shutdown(widget)
+        host.close()
+
+
+def test_shift_tab_encodes_as_the_shifted_tab(screen, qt):
+    """Shift+Tab arrives as Key_Backtab with empty text
+    (#1066): the table maps it to the TAB key and the shift
+    modifier stays in the mask, so the child reads a shifted
+    tab — the legacy backtab sequence reverse completion
+    binds, and the Kitty protocol's shifted tab."""
+    Qt = qt.QtCore.Qt
+    assert qt.input.qt_keys()[int(Qt.Key.Key_Backtab)] == gt.KEY["TAB"]
+    backtab = key_event(
+        qt, Qt.Key.Key_Backtab, "", Qt.KeyboardModifier.ShiftModifier
+    )
+    screen.keyPressEvent(backtab)
+    assert b"\x1b[Z" in drain_until(screen, b"\x1b[Z")
+    vt(screen, b"\x1b[>1u")  # disambiguate escape codes
+    screen.keyPressEvent(backtab)
+    assert b"\x1b[9;2u" in drain_until(screen, b"u")
+
+
+def test_tab_still_moves_focus_out_of_the_find_bar(qt):
+    """The refusal's other arm (#1066): Qt's default traversal
+    delegates ``focusNextPrevChild`` up the parent chain, so
+    the terminal answers for its children too — the find
+    bar's edit is one. The guard releases the question to the
+    base class there: focus walks out of the bar to the
+    widgets around, and the bar's Tab does not become the
+    terminal's tab byte."""
+    from msks.client.gui.terminal import TerminalWidget, find
+
+    host = qt.QtWidgets.QWidget()
+    host.show()
+    button = qt.QtWidgets.QPushButton(host)
+    button.setFocusPolicy(qt.QtCore.Qt.FocusPolicy.StrongFocus)
+    widget = TerminalWidget([sys.executable, "-c", SLEEPER], parent=host)
+    try:
+        drain_until(widget, b"ready")
+        widget.resize(600, 400)
+        widget.show()
+        widget.setFocus()
+        qt.app.processEvents()
+        find.open(widget)
+        qt.app.processEvents()
+        edit = widget.find_edit
+        assert edit.hasFocus()
+        qt.app.sendEvent(edit, key_event(qt, qt.QtCore.Qt.Key.Key_Tab))
+        qt.app.processEvents()
+        assert not edit.hasFocus()
+        time.sleep(0.1)  # a byte on the wire needs a moment
+        assert widget.session.read_available() in (None, b"")
+    finally:
+        if widget.search:
+            find.close(widget)
+        shutdown(widget)
+        host.close()
+
+
+def test_the_focus_refusal_answers_qts_own_tab_delivery(qt):
+    """The refusal's own pin (#1066): the offscreen platform
+    moves no focus for the terminal's Tab, so the base class
+    answers False here too and a bare call cannot tell the
+    override from it. The override itself can: it stands on
+    the class, Qt's Tab delivery reaches it while the
+    terminal holds focus and it refuses without the base, and
+    a child's Tab reaches it unfocused and passes through to
+    the base — the traversal the find bar's pin shows whole."""
+    from msks.client.gui.terminal import TerminalWidget, find
+
+    real = TerminalWidget.__dict__.get("focusNextPrevChild")
+    assert real is not None  # the override, not the base's
+    calls = []
+
+    def spy(self, forward):
+        focused = self.hasFocus()  # before the base may move it
+        result = real(self, forward)
+        calls.append((focused, forward, result))
+        return result
+
+    TerminalWidget.focusNextPrevChild = spy
+    host = qt.QtWidgets.QWidget()
+    host.show()
+    host.activateWindow()  # a real focus holder, every
+    # platform — the refusal's arm answers from hasFocus
+    widget = TerminalWidget([sys.executable, "-c", SLEEPER], parent=host)
+    button = qt.QtWidgets.QPushButton(host)
+    button.setFocusPolicy(qt.QtCore.Qt.FocusPolicy.StrongFocus)
+    try:
+        drain_until(widget, b"ready")
+        widget.resize(600, 400)  # the bar's overlay geometry
+        widget.show()
+        widget.setFocus()
+        qt.app.processEvents()
+        assert widget.hasFocus()
+        qt.app.sendEvent(widget, key_event(qt, qt.QtCore.Qt.Key.Key_Tab))
+        qt.app.processEvents()
+        assert (True, True, False) in calls
+        find.open(widget)
+        qt.app.processEvents()
+        qt.app.sendEvent(
+            widget.find_edit, key_event(qt, qt.QtCore.Qt.Key.Key_Tab)
+        )
+        qt.app.processEvents()
+        assert (False, True, True) in calls
+    finally:
+        TerminalWidget.focusNextPrevChild = real
+        if widget.search:
+            find.close(widget)
+        shutdown(widget)
+        host.close()
+
+
 def test_control_keys_encode_through_the_modifier_mask(qt):
     """Ctrl+C is the interrupt byte: the encoder spells it
     from the key and the mask, and the pty's line discipline
