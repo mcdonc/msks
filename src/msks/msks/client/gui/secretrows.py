@@ -267,7 +267,7 @@ def audit_stamp_epoch(iso: object) -> float:
     return moment.timestamp()
 
 
-def audit_time(ts: float, now: float | None = None) -> str:
+def audit_time(ts: float, now: datetime | None = None) -> str:
     """The audit row's local wall-clock label (#1064): the
     clock alone on a row from the viewer's own day, the date
     beside the clock on a row from an earlier day — the

@@ -336,10 +336,10 @@ The TIME cell shows the row's local clock. A row from an
 earlier day carries its date beside the clock. The `!` column
 marks a sighting: a placeholder token that reached a host its
 mint did not allow, the exfiltration signal. The daemon's
-recorded rows are the four lifecycle kinds, so the marker
-reaches the TUI's audit view, where sightings stream in live;
-this table's marker column stays blank. The column's header
-carries that meaning as its tooltip.
+recorded rows are the four lifecycle kinds, so this table's
+marker column stays blank. A sighting streams into the TUI's
+audit view live. The column's header carries that meaning as
+its tooltip.
 
 The page re-reads itself. It re-reads at every show and behind
 every action, and the daemon's pushed secret frames re-read it

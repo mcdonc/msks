@@ -190,8 +190,9 @@ def page_answer(
 def pin_clock(monkeypatch, when) -> None:
     """The presenter's clock pinned at both modules that read it
     (#966's fakes): the countdown reads the presenter's own
-    binding, the created label the shared leaf's — one pin for
-    both, so every label under test is deterministic."""
+    binding, the created and audit labels the shared leaf's —
+    one pin for all of them, so every label under test is
+    deterministic."""
     monkeypatch.setattr(secretrows_mod, "clock_now", lambda: when)
     monkeypatch.setattr(ages_mod, "clock_now", lambda: when)
 
