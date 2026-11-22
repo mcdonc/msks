@@ -24,6 +24,11 @@ beside that controller: no Qt, no client-side seam, so the
 module runs wherever the suite runs and the cycle gate stays
 green.
 
+The module is also the GUI's consent-vocabulary door (#1001,
+#1042): the panel and the Egress tab import the shared
+controller's words through it, keeping the TUI controller's
+fan-in at its standing count.
+
 The verdict rides the bridge's one verb
 (:meth:`msks.client.gui.bridge.Bridge.call`): the decide call
 is the same exchange ``msks egress decide`` makes over the
@@ -48,11 +53,16 @@ from ..tui.consent import (
 from ..tui.consent import (
     DURATIONS as DURATIONS,
 )
+from ..tui.consent import EGRESS_MODES as EGRESS_MODES
+from ..tui.consent import EMPTY_STATIC_QUESTION as EMPTY_STATIC_QUESTION
 from ..tui.consent import (
     ConsentController,
     ConsentRequest,
     fmt_duration,
 )
+from ..tui.consent import EgressRules as EgressRules
+from ..tui.consent import effective_allows as effective_allows
+from ..tui.consent import parse_rules as parse_rules
 
 #: The decide flights' key stem (#1000): the panel matches its
 #: flash against the stem's keys.

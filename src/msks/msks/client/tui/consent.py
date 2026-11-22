@@ -62,6 +62,16 @@ DURATION_DEFAULT = "tilrestart"
 #: the same CLI-isolation duplication as the durations.
 EGRESS_MODES = ("allow", "static", "interactive")
 
+#: The empty-static confirmation's question (#280) — one text
+#: for every surface that asks it: the decider app's picker, the
+#: TUI workspace page's switch (#344), and the GUI's Egress tab
+#: (#1042). It names the posture (every name answers NXDOMAIN —
+#: an offline workspace) and the escape (switching anyway).
+EMPTY_STATIC_QUESTION = (
+    "static with nothing allowed answers every name NXDOMAIN "
+    "— an offline workspace. Switch anyway?"
+)
+
 #: Timed durations in seconds (a mirror of the daemon's table);
 #: ``once`` is consumed by its connection and ``tilrestart`` /
 #: ``forever`` have no fixed expiry, so none of those countdown.
@@ -208,6 +218,16 @@ def parse_rule_rows(raw: object) -> tuple[ConsentRule, ...]:
         return ()
     rows = [rule for rule in (parse_rule(o) for o in raw) if rule]
     return tuple(rows)
+
+
+def effective_allows(rules: EgressRules | None) -> bool:
+    """Whether anything effectively allows egress under the
+    snapshot (#280): a non-empty allowlist or an in-effect allowed
+    verdict — the condition the static switch's confirmation
+    gates on, one rule behind every client that asks it."""
+    if rules is None:
+        return False
+    return bool(rules.allow_list) or bool(rules.allowed)
 
 
 def parse_rule(obj: object) -> ConsentRule | None:

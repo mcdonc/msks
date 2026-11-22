@@ -106,6 +106,20 @@ CASES = [
         {"mode": "filtered"},
     ),
     (
+        "set_egress_mode",
+        ("ws-1", "static", True),
+        "PUT",
+        "/api/v1/workspaces/ws-1/egress/policy",
+        {"mode": "static", "confirm_empty": True},
+    ),
+    (
+        "egress_rules",
+        ("ws-1",),
+        "GET",
+        "/api/v1/workspaces/ws-1/egress",
+        None,
+    ),
+    (
         "decide",
         ("ws-1", "req-9", "allow", "1h"),
         "POST",

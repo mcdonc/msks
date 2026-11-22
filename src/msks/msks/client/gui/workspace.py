@@ -1,9 +1,10 @@
 """The workspace detail screen (phase 4 of #924, #945): the
 page the workspace list opens on one row — the tab strip's
 surfaces (the shells, the editable mounts, the proxies, the
-events window) refreshed on the listing's own cadence through
-the bridge: the row out of the workspaces listing, the
-footer's storage fact out of the capacity report. The Info
+eegress posture, the events window) refreshed on the listing's
+own cadence through the bridge: the row out of the workspaces
+listing, the footer's storage fact out of the capacity report.
+The Info
 pane the page once carried beside the shells is gone (#1017):
 its mounts table read the same facts the Mounts tab edits
 (#987), its events window lives in the Events tab (#989), and
@@ -29,6 +30,7 @@ from .bridge import Bridge
 from .consent import ConsentPresenter
 from .create import CreateDialog
 from .detail import frame_names
+from .egress import EgressTab
 from .events import EventsTab
 from .mounts import MountsTab
 from .proxies import ProxiesTab
@@ -75,6 +77,10 @@ PROXIES_LABEL = "Proxies"
 #: window.
 EVENTS_LABEL = "Events"
 
+#: The Egress tab's label (#1042): the workspace's egress
+#: posture and the in-place mode switch (#1049).
+EGRESS_LABEL = "Egress"
+
 
 def find_row(rows: list[dict] | None, workspace_id: str) -> dict | None:
     """This workspace's row out of a listing (#945): the same
@@ -90,8 +96,10 @@ class WorkspaceDetail(QtWidgets.QWidget):
     """One workspace's page (#945, #954, #971, #974): the tab
     row beside the back arrow — Shells, the default (#974),
     with the workspace's terminal sessions as subtabs (#954),
-    Mounts (#987), Proxies (#988), and Events (#989), the Info
-    pane gone with its duplicated sections (#1017) — over the
+    Mounts (#987), Proxies (#988), Egress (#1042, the posture
+    surface with its in-place mode switch, #1049), and Events
+    (#989), the Info pane gone with its duplicated sections
+    (#1017), over the
     footer strip, the same one-line read the listing's own
     bottom strip gives (#971). The page registers as the
     workspace's egress decider while it shows (#999): the
@@ -153,7 +161,8 @@ class WorkspaceDetail(QtWidgets.QWidget):
         # The tab row beside the back arrow (#974, #987): Shells
         # — the default, the workspace's terminal sessions as
         # subtabs — Mounts — the editable mounts surface —
-        # Proxies, and Events. The bar sits on the chrome's own
+        # Proxies, Egress — the workspace's egress posture
+        # (#1042) — and Events. The bar sits on the chrome's own
         # row after the arrow and drives the stack below it. The
         # strip re-hosts on every open, and the hub keeps the
         # sessions themselves alive across visits (#954).
@@ -164,6 +173,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.mounts_tab.row_updated.connect(self.mounts_landed)
         self.proxies_tab = ProxiesTab(bridge)
         self.events_tab = EventsTab()
+        self.egress_tab = EgressTab(bridge)
         self.bar = QtWidgets.QTabBar(self)
         # The active tab's mark (#1012): the strip paints its
         # current tab with the accent tint the main strip
@@ -173,11 +183,13 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.bar.addTab(SHELLS_LABEL)
         self.bar.addTab(MOUNTS_LABEL)
         self.bar.addTab(PROXIES_LABEL)
+        self.bar.addTab(EGRESS_LABEL)
         self.bar.addTab(EVENTS_LABEL)
         self.stack = QtWidgets.QStackedWidget(self)
         self.stack.addWidget(self.shells_tab)
         self.stack.addWidget(self.mounts_tab)
         self.stack.addWidget(self.proxies_tab)
+        self.stack.addWidget(self.egress_tab)
         self.stack.addWidget(self.events_tab)
         self.bar.currentChanged.connect(self.stack.setCurrentIndex)
         self.chrome.insertWidget(1, self.bar)
@@ -281,6 +293,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         # takes the switch the same way (#988).
         self.mounts_tab.host(workspace_id, {})
         self.proxies_tab.host(workspace_id)
+        self.egress_tab.host(workspace_id)
         self.events_tab.clear()
         self.refresh()
 
@@ -298,8 +311,11 @@ class WorkspaceDetail(QtWidgets.QWidget):
             self.storage_pending = True
             self.bridge.call(STORAGE_KEY, "storage")
         # The Proxies tab rides the page's own tick (#988): its
-        # listing is its own read, refreshed beside the row.
+        # listing is its own read, refreshed beside the row. The
+        # Egress tab rides it the same way (#1042): its posture
+        # read is its own.
         self.proxies_tab.poke()
+        self.egress_tab.poke()
 
     @QtCore.Slot(str, object)
     def on_succeeded(self, key: str, result: object) -> None:
@@ -417,8 +433,9 @@ class WorkspaceDetail(QtWidgets.QWidget):
         workspace reaches the page's tabs — the feed is a
         daemon-wide subscriber, and a busy sibling's frames
         would otherwise land on this page's tabs — where a
-        proxy transition repaints the Proxies tab (#988) and
-        the frame appends to the Events tab (#989)."""
+        proxy transition repaints the Proxies tab (#988), the
+        frame appends to the Events tab (#989), and a rules
+        frame repaints the Egress tab (#1042)."""
         if row_frame(frame, self.workspace_id):
             self.refresh()
         data = frame.get("data") or {}
@@ -426,6 +443,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
             return
         self.proxies_tab.frame(frame)
         self.events_tab.push(frame)
+        self.egress_tab.push(frame)
         self.rebuild()
 
     @QtCore.Slot(object)

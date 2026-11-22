@@ -207,16 +207,32 @@ class RestData:
         rm`` for one row."""
         return await self.rest("DELETE", f"/api/v1/workspaces/{workspace_id}")
 
+    async def egress_rules(self, workspace_id: str) -> dict:
+        """GET the egress rules view — the GUI workspace page's
+        Egress tab (#1042): the mode, the static allowlist, and
+        the in-effect verdicts, the reply the daemon's
+        ``GET …/egress`` route serves."""
+        return await self.rest(
+            "GET", f"/api/v1/workspaces/{workspace_id}/egress"
+        )
+
     async def set_egress_mode(
-        self, workspace_id: str, mode: str, *, confirm_empty: bool = False
+        self, workspace_id: str, mode: str, confirm_empty: bool = False
     ) -> dict:
         """PUT the egress policy (#280) — the detail screen's mode
         switch (#344), the same exchange ``msks egress mode``
         makes. ``confirm_empty`` is sent only when set — the
-        daemon's refusal names it. Returns the reply: the fresh
-        rules frame with ``applied`` beside it."""
+        daemon's refusal names it — and stays positional: the
+        GUI bridge's one verb passes arguments by position
+        (#1042). Returns the reply: the fresh rules frame with
+        ``applied`` beside it."""
         body: dict = {"mode": mode}
         if confirm_empty:
+            # The wire key's spelling is pinned where the wire
+            # itself is tested: the data-layer tests assert this
+            # body, and the route's refusal — whose detail names
+            # the flag — is copied verbatim into the Egress tab's
+            # tests (#1042).
             body["confirm_empty"] = True
         return await self.rest(
             "PUT",
