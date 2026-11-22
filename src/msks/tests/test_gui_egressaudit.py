@@ -403,3 +403,46 @@ def test_a_workspace_switch_cancels_and_blanks(qt) -> None:
     assert table_cells(trail)[0][0] == "denied.example:443"
     trail.host("ws-c")  # the same workspace: the trail stands
     assert trail.table.rowCount() == 1
+
+
+def test_a_first_read_with_no_rows_shows_the_stand_in(qt) -> None:
+    """The empty stand-in on the first read (#1051 review): a
+    trail whose first landed read carries no rows builds nothing
+    — and the stand-in still says itself, the discovery state
+    the trail advertises. The hosted trail with nothing read
+    shows it too: the blanked table is the honest state."""
+    bridge = StubBridge()
+    trail = audit_mod.AuditTrail(bridge)
+    qt.keep.append(trail)
+    trail.host("ws-a")
+    assert trail.empty.isVisibleTo(trail)  # nothing read yet
+    trail.poke()
+    bridge.succeeded.emit(trail.key, [ROW_NEW])
+    assert not trail.empty.isVisibleTo(trail)
+    trail.poke()
+    bridge.succeeded.emit(trail.key, [])  # the rows left
+    assert trail.table.rowCount() == 0
+    assert trail.empty.isVisibleTo(trail)
+
+
+def test_a_recovered_read_clears_the_refusal_note(qt) -> None:
+    """The refusal note's clear (#1051 review): the read the
+    note named comes back, and the note leaves with it."""
+    trail, bridge = make_trail(qt)
+    trail.poke()
+    bridge.failed.emit(trail.key, "the daemon is gone")
+    assert trail.note.text() == "refused: the daemon is gone"
+    trail.poke()
+    bridge.succeeded.emit(trail.key, [ROW_NEW])
+    assert trail.note.text() == ""
+
+
+def test_the_decisions_match_the_daemons_tokens() -> None:
+    """The duplicated vocabulary's pin (#1051 review): the
+    filter's decisions are the daemon's own tokens in the same
+    order — a drifted token would surface only as a runtime
+    400 when its filter is picked, so the test holds the two
+    spellings together."""
+    from msks.spec.egress import DECISIONS as SPEC_DECISIONS
+
+    assert audit_mod.DECISIONS == tuple(SPEC_DECISIONS)

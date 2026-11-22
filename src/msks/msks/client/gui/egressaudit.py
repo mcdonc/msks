@@ -258,7 +258,11 @@ class AuditTrail(QtWidgets.QWidget):
                 for column, text in enumerate(cells_of_row):
                     cell = QtWidgets.QTableWidgetItem(text)
                     self.table.setItem(line, column, cell)
-            self.empty.setVisible(not self.rows)
+        # The stand-in follows the rows' emptiness outside the
+        # rebuild guard (#1051 review): a first read whose rows
+        # are empty builds nothing, and the stand-in must still
+        # say itself.
+        self.empty.setVisible(not self.rows)
         self.sync_buttons()
 
     def selected_row(self) -> dict | None:
@@ -293,12 +297,15 @@ class AuditTrail(QtWidgets.QWidget):
 
     @QtCore.Slot(str, object)
     def on_succeeded(self, key: str, result: object) -> None:
-        """The read's answer (#1051): the rows repaint. Another
-        key's answer is not this trail's to take."""
+        """The read's answer (#1051): the rows repaint and a
+        standing refusal note clears — the read the note named
+        came back. Another key's answer is not this trail's to
+        take."""
         if key != self.key or not self.key:
             return
         self.pending = False
         self.flight = None
+        self.note.setText("")
         self.take(result)
 
     @QtCore.Slot(str, object)

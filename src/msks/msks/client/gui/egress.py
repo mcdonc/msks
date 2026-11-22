@@ -131,6 +131,11 @@ REVOKE_LANDING = (
 #: holds the ask until it lands.
 WRITE_HELD = "a policy write is already in flight — try again"
 
+#: The unread-posture answer on a deny-to-allowlist ask (#1051):
+#: no read has landed, and a write composed against nothing
+#: carries no mode to write beside.
+NO_READ = "the posture has not been read yet"
+
 #: The already-listed answer on a deny-to-allowlist ask (#1051).
 ALREADY_LISTED = "already on the allowlist"
 
@@ -439,7 +444,11 @@ class EgressTab(QtWidgets.QWidget):
             self.verdicts.clear()
             for text in texts:
                 self.verdicts.addItem(text)
-            self.verdicts_empty.setVisible(not rows)
+        # The stand-in follows the rows' emptiness outside the
+        # rebuild guard (#1051 review): a first read whose rows
+        # are empty builds nothing, and the stand-in must still
+        # say itself.
+        self.verdicts_empty.setVisible(not rows)
         self.sync_buttons()
 
     def follow(self, mode: str) -> None:
@@ -490,7 +499,11 @@ class EgressTab(QtWidgets.QWidget):
             self.entries.clear()
             for entry in self.working:
                 self.entries.addItem(entry)
-            self.empty.setVisible(not self.working)
+        # The stand-in follows the list's emptiness outside the
+        # rebuild guard (#1051 review): a first read whose list
+        # is empty builds nothing, and the stand-in must still
+        # say itself.
+        self.empty.setVisible(not self.working)
         self.sync_buttons()
 
     def editable(self) -> bool:
@@ -675,10 +688,13 @@ class EgressTab(QtWidgets.QWidget):
         list posts through the policy route — the same write
         path the editor owns, the same offline gate among its
         arms. A name already listed answers itself on the note
-        line, and a standing policy flight holds the ask: the
-        route is one."""
+        line, and ground the write cannot compose against — a
+        posture the tab has not read, a policy flight already
+        out — answers itself the same way: the route is one."""
         if not self.editable():
-            self.note.setText(WRITE_HELD)
+            self.note.setText(
+                WRITE_HELD if self.rules is not None else NO_READ
+            )
             return
         if host in self.working:
             self.note.setText(f"{host} {ALREADY_LISTED}")
@@ -707,21 +723,23 @@ class EgressTab(QtWidgets.QWidget):
         self.seq += 1
         self.revoke_key = f"{REVOKE_STEM}-{self.seq}"
         self.note.setText("revoking …")
+        self.sync_buttons()
         self.revoke_flight = self.bridge.call(
             self.revoke_key, "revoke", self.workspace_id, rule.id
         )
 
     def revoke_landed(self, key: str) -> bool:
         """The revoke's answer (#1051): the note names the
-        consequence, and both reads fly again — the broadcast
-        rules frame repaints the verdicts, and the trail's row
-        flips to revoked. False when the key names no flight of
-        the revoke's own."""
+        consequence, and both reads fly where their guards let
+        them — the broadcast rules frame repaints the verdicts,
+        and the trail's row flips to revoked. False when the key
+        names no flight of the revoke's own."""
         if key != self.revoke_key or not self.revoke_key:
             return False
         self.pending_revoke = False
         self.revoke_flight = None
         self.note.setText(REVOKE_LANDING)
+        self.sync_buttons()
         self.poke()
         self.audit.poke()
         return True
@@ -736,6 +754,7 @@ class EgressTab(QtWidgets.QWidget):
         self.pending_revoke = False
         self.revoke_flight = None
         self.note.setText(f"refused: {failure}")
+        self.sync_buttons()
         return True
 
     @QtCore.Slot(str, object)

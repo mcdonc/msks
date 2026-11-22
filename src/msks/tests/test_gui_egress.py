@@ -1187,3 +1187,70 @@ def test_the_tab_forwards_the_cadence_and_the_frames(qt) -> None:
         }
     )
     assert [c[1] for c in bridge.calls if c[1] == "egress_requests"]
+
+
+def test_a_first_read_with_nothing_shows_the_stand_ins(qt) -> None:
+    """The empty stand-ins on the first read (#1051 review): a
+    tab whose first landed frame carries no verdicts and no
+    allowlist entries builds nothing — and both stand-ins still
+    say themselves."""
+    bridge = StubBridge()
+    tab = egress_mod.EgressTab(bridge)
+    window = qt.QtWidgets.QMainWindow()
+    window.setCentralWidget(tab)
+    window.show()
+    qt.keep.append(window)
+    tab.host("ws-a")
+    tab.poke()
+    bridge.succeeded.emit(tab.list_key, rules_frame(allowed=(), allow_list=()))
+    assert verdict_texts(tab) == []
+    assert tab.verdicts_empty.isVisibleTo(tab)
+    assert entry_rows(tab) == []
+    assert tab.empty.isVisibleTo(tab)
+
+
+def test_the_tabs_minimum_fits_the_windows_smallest_save(qt) -> None:
+    """The geometry contract (#1051 review): the window restores
+    a 620-tall saved rect, and the tab's minimum must stay under
+    it — the two columns and the lists' zero minimums are the
+    shape that keeps the restore whole."""
+    tab, _bridge = make_tab(qt)
+    assert tab.minimumSizeHint().height() <= 620
+
+
+def test_the_revoke_button_follows_the_flight(qt, monkeypatch) -> None:
+    """The Revoke button's affordance (#1051 review): the button
+    grays while the revoke flies — the editor buttons' own rule
+    over the policy route — and both landing arms give it back."""
+    tab, bridge = make_tab(qt)
+    fake_confirm(monkeypatch, True)
+    tab.verdicts.setCurrentRow(0)
+    assert tab.revoke_button.isEnabled()
+    tab.revoke()
+    assert not tab.revoke_button.isEnabled()  # the flight holds it
+    tab.verdicts.setCurrentRow(-1)  # no selection: the row guard alone
+    bridge.failed.emit(tab.revoke_key, "no in-effect verdict with that id")
+    assert not tab.revoke_button.isEnabled()
+    tab.verdicts.setCurrentRow(0)  # the refusal gave the button back
+    assert tab.revoke_button.isEnabled()
+    tab.revoke()
+    assert not tab.revoke_button.isEnabled()
+    bridge.succeeded.emit(tab.revoke_key, {"id": "req-1", "revoked": True})
+    tab.verdicts.setCurrentRow(0)  # the landing gave it back
+    assert tab.revoke_button.isEnabled()
+
+
+def test_deny_to_allowlist_under_an_unread_posture_answers_itself(
+    qt,
+) -> None:
+    """The ask under no landed read (#1051 review): the write
+    composes against nothing — no mode to write beside — and the
+    note names that ground instead of claiming a flight."""
+    bridge = StubBridge()
+    tab = egress_mod.EgressTab(bridge)
+    qt.keep.append(tab)
+    tab.host("ws-a")
+    tab.poke()  # the read flies, nothing lands
+    tab.audit.allow_wanted.emit("denied.example")
+    assert tab.note.text() == egress_mod.NO_READ
+    assert [c for c in bridge.calls if c[1] == "set_egress_mode"] == []
