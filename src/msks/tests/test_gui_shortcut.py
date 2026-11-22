@@ -396,6 +396,26 @@ def test_a_standing_entry_without_an_exec_line_plants_the_default(
     assert f"Exec={shortcut.DESKTOP_ID} gui" in entry.read_text()
 
 
+def test_an_unusable_path_lookup_keeps_the_standing_exec(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A ``PATH`` hit the spec cannot carry verbatim (#1045) —
+    a venv under a path with a space: the lookup reads as no
+    hit and the standing entry keeps its absolute ``Exec``;
+    the tier cannot starve the one below it."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    shortcut.install_shortcut(tmp_path, "/opt/venv/bin/msks")
+    monkeypatch.setattr(
+        shortcut.shutil, "which", lambda name: "/home/u/my apps/bin/msks"
+    )
+    monkeypatch.setattr(sys, "argv", ["msks", "gui"])
+    shortcut.ensure_installed()
+    entry = tmp_path / "applications" / shortcut.DESKTOP_FILE
+    assert "Exec=/opt/venv/bin/msks gui" in entry.read_text()
+
+
 def test_the_gui_entry_plants_the_shortcut_before_the_window(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -155,21 +155,34 @@ def standing_exe(entry: Path) -> str | None:
     return None
 
 
+def running_exe() -> str | None:
+    """The running command itself (#1045), when it names the
+    client and its path can carry verbatim: a launch from the
+    desktop entry passes the entry's absolute path, a terminal
+    launch passes the shell's resolved one — either way the
+    replant records the client actually running."""
+    if not sys.argv:
+        return None
+    running = sys.argv[0]
+    if Path(running).name == DESKTOP_ID and usable_exe(running):
+        return running
+    return None
+
+
 def launch_exe(entry: Path) -> str | None:
     """The executable the launch replants the entry's ``Exec``
     line with (#1045), in tiers: the running command itself
-    when the entry's own absolute launch answers for it — a
-    launch from the desktop runs the path the entry carries,
-    and the replant writes the same path back — else the
-    ``PATH`` lookup the command uses, else the executable the
-    standing entry already carries."""
-    if (
-        sys.argv
-        and Path(sys.argv[0]).name == DESKTOP_ID
-        and usable_exe(sys.argv[0])
-    ):
-        return sys.argv[0]
-    return shutil.which(DESKTOP_ID) or standing_exe(entry)
+    when it can carry verbatim, else the ``PATH`` lookup the
+    command uses (a hit the spec cannot carry verbatim reads
+    as no hit), else the executable the standing entry
+    already carries."""
+    running = running_exe()
+    if running is not None:
+        return running
+    resolved = shutil.which(DESKTOP_ID)
+    if resolved is not None and usable_exe(resolved):
+        return resolved
+    return standing_exe(entry)
 
 
 def ensure_installed() -> None:
