@@ -174,7 +174,7 @@ def router(app) -> APIRouter:
         # Authorization header (#216). Closing the websocket closes
         # exactly one guest shell session; the workspace keeps
         # running. Auth accepts or closes 4401: the client sees a
-        # specific close reason (4401/4404/4501) instead of a
+        # specific close reason (4400/4401/4404/4501) instead of a
         # generic HTTP 403 rejection.
         if not await authed_accept(app, socket):
             return
