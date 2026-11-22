@@ -1132,7 +1132,7 @@ starts, the daemon binds the row's listener again.</p>
 <p>Two directions exist, and both borrow ssh's letters and ssh's spec grammar.
 The spec reads <code>listen : target</code>, left to right. The flag letter says which
 side listens.</p>
-<p>A forward proxy (<code>-L</code>) binds a port on the daemon's host. Every connection
+<p>A local proxy (<code>-L</code>) binds a port on the daemon's host. Every connection
 to that port bridges into the workspace, to the guest port the spec names.
 This is the ssh <code>-L</code> shape: a port on your side reaching a port on the far
 end.</p>
@@ -1146,7 +1146,7 @@ the machine the command runs on. A proxy's listener lives in the daemon. Use
 a forward for a one-off pipe during a session. Use a proxy for a port you
 want there more permanently.</p>
 <h3 id="what-each-side-connects-to">What each side connects to<a class="headerlink" href="#what-each-side-connects-to" title="Permanent link">&para;</a></h3>
-<p>A forward proxy's target is the workspace itself. The spec's host field names
+<p>A local proxy's target is the workspace itself. The spec's host field names
 the workspace, the way ssh's <code>-L</code> host names the far end, and it accepts
 exactly two spellings: <code>localhost</code> or <code>127.0.0.1</code>. Anything else refuses with
 a message that points at the <code>-R</code> direction, which is the one that reaches
@@ -1196,7 +1196,7 @@ work.</p>
 <p>The daemon binds <code>127.0.0.1:8080</code> on its own host. A browser there opens
 <code>http://127.0.0.1:8080</code> and reaches the guest's server.</p>
 <h3 id="reaching-a-guest-service-from-other-machines">Reaching a guest service from other machines<a class="headerlink" href="#reaching-a-guest-service-from-other-machines" title="Permanent link">&para;</a></h3>
-<p>The same forward with a bind address:</p>
+<p>The same local proxy with a bind address:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>msks<span class="w"> </span>proxy<span class="w"> </span>add<span class="w"> </span>my-workspace<span class="w"> </span>-L<span class="w"> </span><span class="m">0</span>.0.0.0:8080:localhost:8080
 </span></code></pre></div>
 <p>The daemon listens on every interface of its host. Any machine that can
@@ -1226,7 +1226,7 @@ and live status. A removal closes the listener at once and drops the row.</p>
 <p><code>add</code> is declarative. Asking twice for the same spec returns the standing
 row. A different spec on the same bind is refused with the row that holds
 it.</p>
-<p>A forward proxy binds at once, on a stopped workspace too; each connection
+<p>A local proxy binds at once, on a stopped workspace too. Each connection
 refuses until the guest runs. A remote proxy on a stopped workspace records
 the row, and the workspace's next start brings its listener up. A stop
 closes every listener the workspace owns. Each start binds them again. A
@@ -1240,14 +1240,14 @@ row). The page carries a compact proxies line beside the consent and mounts
 lines:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>8888 -&gt; 8889, 9111 -&gt; 9115 | 8881 &lt;- 8882
 </span></code></pre></div>
-<p>The forwards sit before the bar, the remotes after it. Each pair reads
+<p>The local pairs sit before the bar, the remote pairs after it. Each pair reads
 <code>listen -&gt; target</code> (or <code>&lt;-</code> for a remote). A listening pair shows green. A
 pair whose bind refused shows red. The line moves on every proxy transition
 the daemon publishes, without a refresh.</p>
 <p>Press <code>p</code> (or Enter on the Proxies action row) for the workspace's proxies
 page. The page lists that workspace's rows with the spec in the CLI's
 grammar, the label, and the live status. Press <code>a</code> to add one.</p>
-<p>The form holds the direction (<code>forward (-L)</code> or <code>reverse (-R)</code>), the spec in
+<p>The form holds the direction (<code>local (-L)</code> or <code>remote (-R)</code>), the spec in
 the same grammar <code>msks proxy add</code> reads, and a label. A spec the parser refuses
 keeps the form standing, with the rule on the note line. <code>e</code> or Enter opens the
 same form seeded with the focused row (its direction, its spec, and its label)

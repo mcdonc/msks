@@ -2754,7 +2754,7 @@ right; the flag letter says which side listens:</p>
 </span><span id="__span-32-4"><a id="__codelineno-32-4" name="__codelineno-32-4" href="#__codelineno-32-4"></a>msks<span class="w"> </span>proxy<span class="w"> </span>add<span class="w"> </span>my-workspace<span class="w"> </span>-L<span class="w"> </span><span class="m">0</span>.0.0.0:2201:localhost:22
 </span><span id="__span-32-5"><a id="__codelineno-32-5" name="__codelineno-32-5" href="#__codelineno-32-5"></a><span class="c1"># same, listening on every interface of the daemon's host</span>
 </span><span id="__span-32-6"><a id="__codelineno-32-6" name="__codelineno-32-6" href="#__codelineno-32-6"></a>msks<span class="w"> </span>proxy<span class="w"> </span>add<span class="w"> </span>my-workspace<span class="w"> </span>-R<span class="w"> </span><span class="m">9200</span>:localhost:9200
-</span><span id="__span-32-7"><a id="__codelineno-32-7" name="__codelineno-32-7" href="#__codelineno-32-7"></a><span class="c1"># reverse: the workspace's gateway listens on 9200, and every guest</span>
+</span><span id="__span-32-7"><a id="__codelineno-32-7" name="__codelineno-32-7" href="#__codelineno-32-7"></a><span class="c1"># remote: the workspace's gateway listens on 9200, and every guest</span>
 </span><span id="__span-32-8"><a id="__codelineno-32-8" name="__codelineno-32-8" href="#__codelineno-32-8"></a><span class="c1"># connection bridges to port 9200 on the daemon's host</span>
 </span><span id="__span-32-9"><a id="__codelineno-32-9" name="__codelineno-32-9" href="#__codelineno-32-9"></a>msks<span class="w"> </span>proxy<span class="w"> </span>add<span class="w"> </span>my-workspace<span class="w"> </span>-R<span class="w"> </span><span class="m">5432</span>:db.internal:5432<span class="w"> </span>--label<span class="w"> </span>db
 </span><span id="__span-32-10"><a id="__codelineno-32-10" name="__codelineno-32-10" href="#__codelineno-32-10"></a><span class="c1"># the gateway's 5432 bridges to db.internal:5432; the daemon makes the connection</span>
@@ -2767,10 +2767,10 @@ spellings — <code>localhost</code> or <code>127.0.0.1</code> — and anything 
 <div class="language-text highlight"><pre><span></span><code><span id="__span-33-1"><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>msks: -L's host field names the workspace itself; only localhost or
 </span><span id="__span-33-2"><a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>127.0.0.1 is allowed — to reach a daemon-side service, use -R
 </span></code></pre></div>
-<p>The workspace cannot connect out on a forward's behalf (no agent runs inside it),
-so a forward always lands on the workspace itself. Reaching a daemon-side
-service is the <code>-R</code> direction.</p>
-<p>A remote proxy is the reverse of a forward one. The guest connects to <code>host.msks</code>
+<p>The workspace cannot connect out on a local proxy's behalf, because no
+agent runs inside it. A local proxy always lands on the workspace itself.
+Reaching a daemon-side service is the <code>-R</code> direction.</p>
+<p>A remote proxy is the other direction. The guest connects to <code>host.msks</code>
 on the listen port. The workspace's resolver answers that name with its DHCP
 gateway address (<code>ip route show default</code> inside the workspace prints the same
 address). The daemon bridges the connection to the daemon-side service the
@@ -2782,7 +2782,7 @@ the guest's traffic through the tap, not the daemon's own connections. A
 remote row therefore reaches its target without a verdict.</p>
 <p><code>add</code> is declarative. Asking twice for the same spec returns the standing
 row. A different spec on the same bind is refused with the row that holds it.
-A forward proxy binds at once, on a stopped workspace too; each connection
+A local proxy binds at once, on a stopped workspace too. Each connection
 refuses until the guest runs. A remote proxy on a stopped workspace records
 the row, and the workspace's next start brings its listener up. A stop
 closes every listener the workspace owns. A proxy whose bind fails (the
