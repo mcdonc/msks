@@ -1267,9 +1267,14 @@ overlay. The workspaces list answers it too.</p>
 <p>Some actions ask first, in a dialog that shows <code>y / n</code> beside
 the question. <code>y</code> (or Enter) takes the action. <code>n</code>, <code>q</code>, or
 Escape leaves everything as it was.</p>
-<p>The list re-reads the daemon every five seconds. A workspace changed
-from another surface (the CLI, another operator) appears without a
-keypress.</p>
+<p>The list follows the daemon over the events websocket. A
+workspace changed from another surface (the CLI, another
+operator) appears without a keypress: the daemon publishes every
+listing-affecting move — a create, a removal, a status change, a
+resize, a mounts edit, an image catalog move — and the list
+re-reads on the frame. A
+daemon at rest sends the list nothing; there is no polling
+timer.</p>
 <p>The listing's bottom holds a two-line strip with the focused
 workspace's quick facts, under the rows. The first line carries the
 workspace's name, its id, and the image. The second carries the cpu
@@ -1343,7 +1348,7 @@ worst case. A passthrough remote command (<code>msks ssh &lt;ws&gt; -- &lt;cmd&g
 and <code>msks rsync</code> write nothing: they are connections, not shells.</p>
 <p>The count is per-host. It names the shells open on the host the TUI
 runs on, whatever host the daemon runs on. The daemon is not
-involved: the TUI reads the records on its refresh cadence and sweeps
+involved: the TUI reads the records once a second and sweeps
 the stale ones away. A session whose record cannot be written (a
 read-only state directory, say) runs fine; the count simply does not
 see it.</p>
@@ -1409,7 +1414,7 @@ open on this host, the first line carries their count after the
 status (<code>alpha · ● running · 2 shells open</code>); the segment leaves
 with the last shell's close. The count comes from the
 <a href="#open-shells-and-the-session-records">session records</a> and
-follows the page's per-second row refresh.</p>
+follows the page's once-a-second local read of them.</p>
 <p>The page's header lines and status lines fill the terminal's
 width. The action panel sits centered in its own 64-column block
 beneath them. At 80 columns and under, the meta line's fields
@@ -1480,9 +1485,10 @@ persisted proxies (<a href="../proxies/">the proxies chapter</a> describes what 
 proxy is) and no other's. The rows carry the spec in the CLI's
 own grammar (<code>-L 2201:localhost:22</code>), the label, and the live status —
 a row the guest cannot reach names its reason beside the word.</p>
-<p>The page re-reads the listing every five seconds and on every proxy
-transition the daemon publishes, so a bind that fails while the page
-stands paints itself without a keypress.</p>
+<p>The page re-reads the listing on every proxy transition the
+daemon publishes, so a bind that fails while the page stands
+paints itself without a keypress. There is no polling timer: a
+daemon at rest sends the page nothing.</p>
 <p><code>a</code> opens the add form: the workspace (the page's own, shown as its
 name), the direction (<code>forward (-L)</code> or <code>reverse (-R)</code>), the spec in
 the same grammar <code>msks proxy add</code> reads, and a label. <code>e</code>, Enter, or
@@ -1515,9 +1521,10 @@ image rm</code> makes. <code>d</code> designates the highlighted catalog row the
 image, the same POST <code>msks image default</code> makes; the row that already
 holds the designation flashes so. Both groups show the build's hash
 prefix beside the ref, so a published row matches its catalog row by
-eye — the same prefix <code>msks image ls</code> prints. The page re-reads the
-workspace each second, so the
-dimming follows a start or stop made anywhere, not only on the page.</p>
+eye — the same prefix <code>msks image ls</code> prints. The page follows the
+workspace over the events websocket: a lifecycle frame published for
+it re-reads the row, so the dimming follows a start or stop made
+anywhere, not only on the page.</p>
 <h3 id="the-egress-consent-page">The egress consent page<a class="headerlink" href="#the-egress-consent-page" title="Permanent link">&para;</a></h3>
 <p><img alt="The egress consent page: a held request over the in-effect verdicts" src="../screens/consent-page.svg" /></p>
 <p>The page's <strong>Egress</strong> action and its <code>e</code> key open the egress consent

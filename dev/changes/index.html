@@ -2519,6 +2519,19 @@ tagged <code>vX.Y.Z</code>.</p>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>The attached clients follow the daemon over the events
+  websocket instead of polling (#1019).</strong> The TUI's workspaces
+  list, workspace page, and proxies page, and the GUI's
+  workspaces list and workspace page, re-read on the frames
+  the daemon publishes instead of on timers. The daemon now
+  publishes <code>workspace.created</code>, <code>workspace.removed</code>,
+  <code>workspace.mounts</code>, the request-path <code>workspace.status</code>
+  transitions (start, stop, reset), and <code>image.changed</code> on
+  catalog moves, beside the watcher's scans. A daemon at rest
+  receives no periodic listing traffic from an attached idle
+  client. The TUI's shell counts stay on a local timer (they
+  read per-host session records, not daemon state). See
+  <code>docs/tui.md</code> and <code>docs/gui.md</code>.</li>
 <li>
 <p><strong>The GUI dependencies are base dependencies (#1023).</strong> A
   plain <code>pip install msks</code> now installs the desktop GUI, and

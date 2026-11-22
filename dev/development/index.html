@@ -1663,8 +1663,11 @@ re-login), the smoke tests skip themselves.</p>
   inserted once when absent; it is visible in the process environment to
   the same user (acceptable for a single-user local daemon; unset it after
   minting real tokens). <code>--no-tls</code> serves plain HTTP for development.</li>
-<li><strong>Events</strong>: <code>wss://host/api/v1/events</code> streams workspace status
-  transitions. The websocket handshake authenticates with the same
+<li><strong>Events</strong>: <code>wss://host/api/v1/events</code> streams the daemon's
+  published frames: workspace lifecycle transitions (<code>workspace.created</code>,
+  <code>workspace.removed</code>, <code>workspace.status</code>, <code>workspace.mounts</code>,
+  <code>workspace.resized</code>), proxy transitions, secret and consent events. The
+  websocket handshake authenticates with the same
   <code>Authorization: Bearer</code> header the REST surface uses, so
   the token never appears in a URL. Uvicorn's access log prints
   request lines (method, path, query) and not headers, so turning
