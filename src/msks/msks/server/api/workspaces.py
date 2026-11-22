@@ -16,7 +16,7 @@ from ...model.secrets import SECRET_COVERAGES
 from ...spec.egress import EGRESS_MODES, parse_allowlist
 from ...storage import create_refusal
 from .boot import create_name, mint_workspace_id, resolve_boot
-from .deps import require_token
+from .deps import authed_caller
 from .rows import (
     checked_mounts,
     host_mismatch,
@@ -72,28 +72,32 @@ def router(app) -> APIRouter:
     """The workspace-lifecycle routes."""
     api = APIRouter()
 
-    @api.post("/api/v1/workspaces", dependencies=[Depends(require_token)])
-    async def create_workspace(body: WorkspaceCreate) -> Response:
+    @api.post("/api/v1/workspaces")
+    async def create_workspace(
+        body: WorkspaceCreate, caller: int = Depends(authed_caller)
+    ) -> Response:
         name = create_name(body)
         if name is None:
             # A nameless create shares nothing keyable with another
             # create (the id mint and the primary-key index are the
             # whole race story), so it takes no create lock.
-            return await create_workspace_locked(body, name)
+            return await create_workspace_locked(body, name, caller)
         async with await serialize_create(app, name):
-            return await create_workspace_locked(body, name)
+            return await create_workspace_locked(body, name, caller)
 
     async def create_workspace_locked(
-        body: WorkspaceCreate, name: str | None
+        body: WorkspaceCreate, name: str | None, caller: int
     ) -> Response:
         # The ref namespace is one namespace (#246): a name another
-        # workspace already owns, OR another workspace's id, is
-        # refused — ref resolution prefers the id, so a workspace
-        # named like a live id would be silently shadowed by it
-        # (every command with that name would aim at the other
-        # workspace). get_workspace answers for both spellings.
+        # workspace already owns in the caller's view, OR another
+        # workspace's id, is refused — ref resolution prefers the
+        # id, so a workspace named like a live id would be silently
+        # shadowed by it (every command with that name would aim at
+        # the other workspace). get_workspace answers for both
+        # spellings; since #1082 the view is the caller's own — a
+        # name another (non-bypassed) owner holds is free.
         if name is not None and (
-            await app.state.model.get_workspace(name) is not None
+            await app.state.model.create_ref_blocked(name, caller)
         ):
             raise HTTPException(status_code=409, detail="workspace exists")
         # The #246 instance id: minted by the daemon, immutable, and
@@ -193,7 +197,7 @@ def router(app) -> APIRouter:
             # the strict prepare — its artifacts are the "leftover",
             # and the honest answer is the 409, not a removal plea.
             if name is not None and (
-                await app.state.model.get_workspace(name) is not None
+                await app.state.model.create_ref_blocked(name, caller)
             ):
                 raise HTTPException(
                     status_code=409, detail="workspace exists"
@@ -205,6 +209,7 @@ def router(app) -> APIRouter:
                 image_hash=boot["image_hash"],
                 host=owner_host(app),
                 name=name,
+                owner_uid=caller,
             )
         except IntegrityError:
             # The insert lost the race. The winner's row owns whatever
@@ -232,7 +237,7 @@ def router(app) -> APIRouter:
             media_type="application/json",
         )
 
-    @api.get("/api/v1/create-defaults", dependencies=[Depends(require_token)])
+    @api.get("/api/v1/create-defaults")
     async def create_defaults() -> dict:
         """The sizes a create lands on when its body leaves them
         unset: the settings' root/home defaults, MiB — the TUI
@@ -240,13 +245,17 @@ def router(app) -> APIRouter:
         vmm = app.state.settings.vmm
         return {"root_mib": vmm.root_mib, "home_mib": vmm.home_mib}
 
-    @api.get("/api/v1/workspaces", dependencies=[Depends(require_token)])
-    async def list_workspaces() -> list[dict]:
+    @api.get("/api/v1/workspaces")
+    async def list_workspaces(
+        caller: int = Depends(authed_caller),
+    ) -> list[dict]:
         """The workspace rows with each image's catalog reference
         (#470 L3) — the listing's client prefers the reference and
         keeps the digest as its own fallback. One catalog walk
-        serves every row."""
-        rows = await app.state.model.list_workspaces()
+        serves every row. The rows are the caller's own (#1082):
+        root and the daemon's uid see every row, every other peer
+        sees the workspaces it created."""
+        rows = await app.state.model.list_workspaces(viewer=caller)
         images = list_catalog_images(app.state.settings.vmm.state_dir)
         # The derived mount state rides every row (#620, part
         # #624): one holders walk serves the listing, and the
@@ -257,20 +266,18 @@ def router(app) -> APIRouter:
             row["mount_issues"] = issue_payloads(issues_by_id[row["id"]])
         return rows
 
-    @api.get(
-        "/api/v1/workspaces/{workspace_id}",
-        dependencies=[Depends(require_token)],
-    )
-    async def get_workspace(workspace_id: str) -> dict:
-        row = await workspace_or_404(app, workspace_id)
+    @api.get("/api/v1/workspaces/{workspace_id}")
+    async def get_workspace(
+        workspace_id: str, caller: int = Depends(authed_caller)
+    ) -> dict:
+        row = await workspace_or_404(app, workspace_id, caller)
         row["mount_issues"] = issue_payloads(await row_mount_issues(app, row))
         return row
 
-    @api.get(
-        "/api/v1/workspaces/{workspace_id}/ssh-key",
-        dependencies=[Depends(require_token)],
-    )
-    async def workspace_ssh_key(workspace_id: str) -> dict:
+    @api.get("/api/v1/workspaces/{workspace_id}/ssh-key")
+    async def workspace_ssh_key(
+        workspace_id: str, caller: int = Depends(authed_caller)
+    ) -> dict:
         """The workspace's ssh identity row, token-gated (#486).
 
         The operator's public half alone (#497, #499): the daemon
@@ -292,7 +299,7 @@ def router(app) -> APIRouter:
         module regenerates its host keys, so the client rotates
         its host-key cache on a change here.
         """
-        key = await app.state.model.get_ssh_key(workspace_id)
+        key = await app.state.model.get_ssh_key(workspace_id, viewer=caller)
         if key is None:
             raise HTTPException(status_code=404, detail="no such workspace")
         if key["public_key"] is None:
@@ -315,16 +322,12 @@ def router(app) -> APIRouter:
     # gets a named error instead of a bare 405 from the router's
     # method table. Sizes are the one exception (#184): they move
     # through the resize route below.
-    @api.put(
-        "/api/v1/workspaces/{workspace_id}",
-        dependencies=[Depends(require_token)],
-    )
-    @api.patch(
-        "/api/v1/workspaces/{workspace_id}",
-        dependencies=[Depends(require_token)],
-    )
-    async def mutate_workspace(workspace_id: str) -> dict:
-        await workspace_or_404(app, workspace_id)
+    @api.put("/api/v1/workspaces/{workspace_id}")
+    @api.patch("/api/v1/workspaces/{workspace_id}")
+    async def mutate_workspace(
+        workspace_id: str, caller: int = Depends(authed_caller)
+    ) -> dict:
+        await workspace_or_404(app, workspace_id, caller)
         raise HTTPException(
             status_code=405,
             detail=(
@@ -335,11 +338,12 @@ def router(app) -> APIRouter:
             ),
         )
 
-    @api.post(
-        "/api/v1/workspaces/{workspace_id}/mounts",
-        dependencies=[Depends(require_token)],
-    )
-    async def set_mounts(workspace_id: str, body: MountsSet) -> dict:
+    @api.post("/api/v1/workspaces/{workspace_id}/mounts")
+    async def set_mounts(
+        workspace_id: str,
+        body: MountsSet,
+        caller: int = Depends(authed_caller),
+    ) -> dict:
         """Set the workspace's mounts (#620, part #624): the full
         replacement list — an empty list clears them. Next-start
         semantics, like resize: a running VM keeps the devices it
@@ -352,7 +356,7 @@ def router(app) -> APIRouter:
         (canonical absolute paths, mutual disjointness, a host
         path once). The reply is the refreshed row with its
         derived mount state."""
-        row = await workspace_or_404(app, workspace_id)
+        row = await workspace_or_404(app, workspace_id, caller)
         try:
             mounts = checked_mounts(
                 app, [mount.model_dump() for mount in body.mounts]
@@ -362,7 +366,7 @@ def router(app) -> APIRouter:
         await app.state.model.set_mounts(
             row["id"], [mount.as_dict() for mount in mounts]
         )
-        fresh = await app.state.model.get_workspace(row["id"])
+        fresh = await app.state.model.get_workspace(row["id"], viewer=caller)
         if fresh is None:
             # A delete landed between the set and this read; the
             # set wrote a row nobody owns. The honest answer for
@@ -378,12 +382,11 @@ def router(app) -> APIRouter:
         )
         return fresh
 
-    @api.post(
-        "/api/v1/workspaces/{workspace_id}/start",
-        dependencies=[Depends(require_token)],
-    )
-    async def start_workspace(workspace_id: str) -> dict:
-        row = await workspace_or_404(app, workspace_id)
+    @api.post("/api/v1/workspaces/{workspace_id}/start")
+    async def start_workspace(
+        workspace_id: str, caller: int = Depends(authed_caller)
+    ) -> dict:
+        row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
         mismatch = host_mismatch(app, row)
         if mismatch is not None:
@@ -402,7 +405,11 @@ def router(app) -> APIRouter:
             # boot under the posture the outer row named — the
             # permissive direction would leave the row and every
             # rules frame claiming a lockdown the VM does not run.
-            row = await app.state.model.get_workspace(workspace_id)
+            # The owner filter rides the re-read (#1082): the mask
+            # answers the caller the outer resolve proved.
+            row = await app.state.model.get_workspace(
+                workspace_id, viewer=caller
+            )
             if row is None:
                 raise HTTPException(
                     status_code=404, detail="no such workspace"
@@ -470,12 +477,11 @@ def router(app) -> APIRouter:
             await announce_status(app, workspace_id, "running")
         return {"id": workspace_id, "status": "running"}
 
-    @api.post(
-        "/api/v1/workspaces/{workspace_id}/stop",
-        dependencies=[Depends(require_token)],
-    )
-    async def stop_workspace(workspace_id: str) -> dict:
-        row = await workspace_or_404(app, workspace_id)
+    @api.post("/api/v1/workspaces/{workspace_id}/stop")
+    async def stop_workspace(
+        workspace_id: str, caller: int = Depends(authed_caller)
+    ) -> dict:
+        row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
         if mismatch := host_mismatch(app, row):
             # A stop from a non-owning host cannot reach the VMM; a
@@ -512,13 +518,12 @@ def router(app) -> APIRouter:
         await announce_status(app, workspace_id, "stopped")
         return {"id": workspace_id, "status": "stopped"}
 
-    @api.post(
-        "/api/v1/workspaces/{workspace_id}/reset",
-        dependencies=[Depends(require_token)],
-    )
-    async def reset_workspace(workspace_id: str) -> dict:
+    @api.post("/api/v1/workspaces/{workspace_id}/reset")
+    async def reset_workspace(
+        workspace_id: str, caller: int = Depends(authed_caller)
+    ) -> dict:
         """Factory reset: a pristine root, the same /home (#14)."""
-        row = await workspace_or_404(app, workspace_id)
+        row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
         if mismatch := host_mismatch(app, row):
             # The overlay lives on its owning host; resetting it from
@@ -536,12 +541,11 @@ def router(app) -> APIRouter:
         await announce_status(app, workspace_id, "created")
         return {"id": workspace_id, "status": "created"}
 
-    @api.delete(
-        "/api/v1/workspaces/{workspace_id}",
-        dependencies=[Depends(require_token)],
-    )
-    async def delete_workspace(workspace_id: str) -> dict:
-        row = await workspace_or_404(app, workspace_id)
+    @api.delete("/api/v1/workspaces/{workspace_id}")
+    async def delete_workspace(
+        workspace_id: str, caller: int = Depends(authed_caller)
+    ) -> dict:
+        row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
         if mismatch := host_mismatch(app, row):
             # Deleting the row from a non-owning host would orphan a

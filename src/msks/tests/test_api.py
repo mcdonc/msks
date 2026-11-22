@@ -1190,18 +1190,21 @@ async def test_create_race_after_prepare_answers_409(
     """A racer that won between the name pre-check and a
     strict-prepare refusal turns the 503 into the honest 409."""
     http, app, _stub = client
-    checks = 0
+    name_checks = 0
 
-    async def first_free_then_row(ref):
-        nonlocal checks
-        checks += 1
-        if checks <= 2:
-            # The pre-check (free), then the mint's candidate probe
-            # (free) — before the racer wins the name.
-            return None
-        return {"id": "racer"}  # the racer has since won it
+    async def free_then_taken(name, caller):
+        nonlocal name_checks
+        name_checks += 1
+        # The pre-check (free); the racer wins the name before the
+        # prepare fails. The mint's candidate probe between them
+        # reads get_workspace, kept unpatched-free below.
+        return name_checks > 1
 
-    monkeypatch.setattr(app.state.model, "get_workspace", first_free_then_row)
+    async def always_none(ref, viewer=None):
+        return None
+
+    monkeypatch.setattr(app.state.model, "create_ref_blocked", free_then_taken)
+    monkeypatch.setattr(app.state.model, "get_workspace", always_none)
     _stub.fail_prepare = True
     response = await http.post(
         "/api/v1/workspaces",
@@ -2420,13 +2423,13 @@ async def test_resize_names_a_vanished_row(client, monkeypatch) -> None:
     real_get = app.state.model.get_workspace
     calls = {"n": 0}
 
-    async def vanishing(workspace_id):
+    async def vanishing(workspace_id, viewer=None):
         # The guard calls see the row; the final read answers None —
         # the delete won the race between them.
         calls["n"] += 1
         if calls["n"] > 2:
             return None
-        return await real_get(workspace_id)
+        return await real_get(workspace_id, viewer=viewer)
 
     monkeypatch.setattr(app.state.model, "get_workspace", vanishing)
     resized = await http.post(

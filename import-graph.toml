@@ -347,7 +347,13 @@ imagestore = 26
 microvm = 16
 # #514 retirement: the routes dropped the manifest's
 # placeholder_refs read and the seed's ref probe.
-model = 5
+# #1082: the owner filter — the auth/caller seam reads the
+# daemon-uid vocabulary (deps), the 404/ambiguity mapping reads
+# the ownership policy's refusal class (rows, events), and the
+# proxies listing reads the bypass rule for its row filter
+# (proxies); four statements, each the module edge beside its
+# name.
+model = 13
 # #808: the proxy routes read the two direction-shaped bind and
 # target defaults the create path applies (module edge + both
 # names).

@@ -8,8 +8,9 @@ admission swap a remote proxy's live change drives."""
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ...model.workspaces import sees_all_rows
 from ...proxies import DEFAULT_LISTEN_HOST, DEFAULT_TARGET_HOST
-from .deps import require_token
+from .deps import authed_caller
 from .rows import workspace_or_404
 from .schemas import ProxyCreate
 
@@ -109,31 +110,40 @@ def router(app, hub) -> APIRouter:
     """The proxy routes."""
     api = APIRouter()
 
-    @api.get(
-        "/api/v1/workspaces/{workspace_id}/proxies",
-        dependencies=[Depends(require_token)],
-    )
-    async def list_workspace_proxies(workspace_id: str) -> list[dict]:
-        row = await workspace_or_404(app, workspace_id)
+    @api.get("/api/v1/workspaces/{workspace_id}/proxies")
+    async def list_workspace_proxies(
+        workspace_id: str, caller: int = Depends(authed_caller)
+    ) -> list[dict]:
+        row = await workspace_or_404(app, workspace_id, caller)
         rows = await app.state.model.list_proxies(row["id"])
         return [with_live_status(app.state.proxies, proxy) for proxy in rows]
 
-    @api.get(
-        "/api/v1/proxies",
-        dependencies=[Depends(require_token)],
-    )
-    async def list_proxies() -> list[dict]:
+    @api.get("/api/v1/proxies")
+    async def list_proxies(
+        caller: int = Depends(authed_caller),
+    ) -> list[dict]:
         """Every workspace's proxy rows with live status — the
-        daemon-wide read the TUI's proxies page (#809) serves."""
+        daemon-wide read the TUI's proxies page (#809) serves. The
+        owner filter (#1082) rides it: a caller sees the proxies
+        of its own workspaces alone, and no verb leaks another
+        owner's workspace existence; root and the daemon's uid
+        keep the whole table."""
         rows = await app.state.model.list_proxies()
+        if not sees_all_rows(caller):
+            mine = {
+                row["id"]
+                for row in await app.state.model.list_workspaces(viewer=caller)
+            }
+            rows = [proxy for proxy in rows if proxy["workspace_id"] in mine]
         return [with_live_status(app.state.proxies, proxy) for proxy in rows]
 
-    @api.post(
-        "/api/v1/workspaces/{workspace_id}/proxies",
-        dependencies=[Depends(require_token)],
-    )
-    async def create_proxy(workspace_id: str, body: ProxyCreate) -> dict:
-        row = await workspace_or_404(app, workspace_id)
+    @api.post("/api/v1/workspaces/{workspace_id}/proxies")
+    async def create_proxy(
+        workspace_id: str,
+        body: ProxyCreate,
+        caller: int = Depends(authed_caller),
+    ) -> dict:
+        row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
         if not row.get("egress"):
             # The same refusal the forward websocket carries: a
@@ -214,12 +224,12 @@ def router(app, hub) -> APIRouter:
             live = with_live_status(app.state.proxies, created)
         return live
 
-    @api.patch(
-        "/api/v1/workspaces/{workspace_id}/proxies/{proxy_id}",
-        dependencies=[Depends(require_token)],
-    )
+    @api.patch("/api/v1/workspaces/{workspace_id}/proxies/{proxy_id}")
     async def update_proxy(
-        workspace_id: str, proxy_id: int, body: ProxyCreate
+        workspace_id: str,
+        proxy_id: int,
+        body: ProxyCreate,
+        caller: int = Depends(authed_caller),
     ) -> dict:
         """Rewrite one proxy row (#890) — the create's own body,
         the create's own gates: the direction's host fields, and
@@ -228,7 +238,7 @@ def router(app, hub) -> APIRouter:
         and the create back to back: the old bind closes, its
         admission goes with it, the fresh row records, and a
         running workspace takes the new listener at once."""
-        row = await workspace_or_404(app, workspace_id)
+        row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
         if not row.get("egress"):
             raise HTTPException(
@@ -305,12 +315,13 @@ def router(app, hub) -> APIRouter:
             live = with_live_status(app.state.proxies, updated)
         return live
 
-    @api.delete(
-        "/api/v1/workspaces/{workspace_id}/proxies/{proxy_id}",
-        dependencies=[Depends(require_token)],
-    )
-    async def delete_proxy(workspace_id: str, proxy_id: int) -> dict:
-        row = await workspace_or_404(app, workspace_id)
+    @api.delete("/api/v1/workspaces/{workspace_id}/proxies/{proxy_id}")
+    async def delete_proxy(
+        workspace_id: str,
+        proxy_id: int,
+        caller: int = Depends(authed_caller),
+    ) -> dict:
+        row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
         proxy = await app.state.model.get_proxy(workspace_id, proxy_id)
         if proxy is None:

@@ -5,9 +5,17 @@ state the daemon last observed. They never name pods, nodes, sockets,
 or volumes — backend specifics live behind the microvm seam only.
 """
 
+import os
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base, utcnow
@@ -24,19 +32,50 @@ WORKSPACE_STATUSES = (
 )
 
 
+def daemon_uid() -> int:
+    """The uid the daemon process itself runs as (#1082) — the
+    owner the migration backfills existing rows with and the uid
+    the TCP surface maps every caller onto."""
+    return os.geteuid()
+
+
+def sees_all_rows(viewer: int | None) -> bool:
+    """The owner filter's bypass rule (#1082): the daemon's own
+    internal reads (``None``), root (uid 0), and the daemon's own
+    uid see every row; every other uid sees the rows it owns
+    alone."""
+    return viewer is None or viewer == 0 or viewer == daemon_uid()
+
+
+class AmbiguousRef(ValueError):
+    """A name a bypass viewer addressed that more than one owner
+    holds (#1082): per-owner uniqueness makes the plural legal, so
+    the resolution refuses to pick — the message names the owners
+    and the by-id remedy. #1084 formalizes the error kind and the
+    client's ``--user`` disambiguator."""
+
+    def __init__(self, ref: str, owners: list[int]) -> None:
+        listed = ", ".join(str(uid) for uid in owners)
+        super().__init__(
+            f"workspace name {ref!r} is held by more than one owner "
+            f"(uids: {listed}); address the workspace by its id"
+        )
+
+
 class Workspace(Base):
     """One workspace: identity + VM spec + observed lifecycle state.
 
-    Identity is two fields (#246): ``id`` is the daemon-minted,
+    Identity is three fields: ``id`` is the daemon-minted,
     immutable instance id (10 fresh random hex digits per create,
     never reused while the workspace lives — every artifact path,
-    cache, and keyed surface derives from it), and ``name`` is the
-    operator-chosen label the CLI addresses workspaces by. A row
-    minted before #246 keeps its operator-chosen id as the id and a
-    NULL name: its label is its id, so ref resolution addresses it
-    unchanged and no path or cache moves. ``name`` is unique per
-    daemon and may be NULL (a workspace created through the API
-    without a label, addressable by id only).
+    cache, and keyed surface derives from it), ``name`` is the
+    operator-chosen label the CLI addresses workspaces by, and
+    ``owner_uid`` (#1082) is the peer credential that created the
+    row. A row minted before #246 keeps its operator-chosen id as
+    the id and a NULL name: its label is its id, so ref resolution
+    addresses it unchanged and no path or cache moves. ``name`` is
+    unique per owner and may be NULL (a workspace created through
+    the API without a label, addressable by id only).
 
     Three #14 columns record the workspace's persistent half:
     ``image_hash`` binds it to the catalog image its overlay backs
@@ -47,11 +86,20 @@ class Workspace(Base):
     """
 
     __tablename__ = "workspaces"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    name: Mapped[str | None] = mapped_column(
-        String, nullable=True, unique=True
+    # Names are unique per owner (#1082): the daemon-wide unique
+    # constraint became this pair, so two owners may each hold a
+    # ``build`` and a nameless create (NULL) never collides —
+    # SQLite's unique index treats NULLs as distinct.
+    __table_args__ = (
+        UniqueConstraint("owner_uid", "name", name="uq_workspaces_owner_name"),
     )
+
+    # The owning uid (#1082): the peer credential that created the
+    # row. Root and the daemon's own uid bypass the owner filter;
+    # every other uid sees and addresses its own rows alone.
+    owner_uid: Mapped[int] = mapped_column(Integer)
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
     kernel: Mapped[str] = mapped_column(String)
     initrd: Mapped[str | None] = mapped_column(String, nullable=True)
     rootfs: Mapped[str] = mapped_column(String)

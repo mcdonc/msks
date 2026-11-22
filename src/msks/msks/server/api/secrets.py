@@ -31,7 +31,7 @@ from ...spec.probe import (
     PROBE_SECRET_B64,
     PROBE_USERNAME,
 )
-from .deps import require_token
+from .deps import authed_caller, require_token
 from .rows import workspace_or_404
 from .schemas import (
     DEST_PATTERN,
@@ -466,8 +466,10 @@ def router(app, hub) -> APIRouter:
         # on the request model rejects it at validation.
         return seen
 
-    @api.post("/api/v1/secrets", dependencies=[Depends(require_token)])
-    async def mint_secret(body: SecretMint) -> Response:
+    @api.post("/api/v1/secrets")
+    async def mint_secret(
+        body: SecretMint, caller: int = Depends(authed_caller)
+    ) -> Response:
         if not valid_name(body.name):
             raise HTTPException(
                 status_code=422,
@@ -505,7 +507,9 @@ def router(app, hub) -> APIRouter:
             refs = [body.workspace_id]
         coverage: list[str] = []
         for ref in refs:
-            workspace = await app.state.model.get_workspace(ref)
+            # The owner filter (#1082): a ref another owner holds
+            # answers the same 404 as an absent one.
+            workspace = await app.state.model.get_workspace(ref, viewer=caller)
             if workspace is None:
                 raise HTTPException(
                     status_code=404, detail=f"no such workspace: {ref}"
@@ -867,12 +871,11 @@ def router(app, hub) -> APIRouter:
             "locked": not app.state.secrets.plain.knows(row["backend_ref"]),
         }
 
-    @api.put(
-        "/api/v1/workspaces/{workspace_id}/secret-coverage",
-        dependencies=[Depends(require_token)],
-    )
+    @api.put("/api/v1/workspaces/{workspace_id}/secret-coverage")
     async def set_secret_coverage(
-        workspace_id: str, body: SecretCoverageSet
+        workspace_id: str,
+        body: SecretCoverageSet,
+        caller: int = Depends(authed_caller),
     ) -> dict:
         """Flip a workspace's daemon-wide placeholder posture
         (#339): ``all`` takes daemon-wide placeholder coverage — a
@@ -887,7 +890,7 @@ def router(app, hub) -> APIRouter:
         sentinel toward the wire — the outcome the mint rollback
         exists to prevent.
         """
-        row = await workspace_or_404(app, workspace_id)
+        row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
         if body.secret_coverage not in SECRET_COVERAGES:
             raise HTTPException(

@@ -12,7 +12,8 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ...events import relay
-from .deps import authed_accept
+from ...model.workspaces import AmbiguousRef
+from .deps import authed_accept, caller_uid
 
 LOG = logging.getLogger(__name__)
 
@@ -48,6 +49,32 @@ async def next_frame(socket: WebSocket) -> dict | None | bool:
 SECRET_REPLAY_LIMIT = 100
 
 
+async def decider_rejected(socket, reason: str) -> None:
+    """One refusal frame — the say-so shape both registration
+    refusals take: a decider whose frame the daemon cannot aim at
+    a workspace learns why instead of waiting on a silent,
+    promptless connection."""
+    await socket.send_json(
+        {"event": "egress.decider_rejected", "data": {"reason": reason}}
+    )
+
+
+async def resolve_decider_workspace(app, socket, ref: str):
+    """The decider's workspace resolve, owner-scoped (#1082): the
+    answer is the row, or the refusal reason that names it — a
+    typo'd or foreign ref reads unknown, a name more than one
+    owner holds reads the ambiguity remedy."""
+    try:
+        row = await app.state.model.get_workspace(
+            ref, viewer=caller_uid(socket.scope)
+        )
+    except AmbiguousRef as exc:
+        return None, str(exc)
+    if row is None:
+        return None, "unknown workspace"
+    return row, None
+
+
 async def register_decider(app, socket, client_id: int, message: dict):
     """One ``egress.decider`` frame: register the socket as this
     workspace's decider and land it the pending snapshot and rules
@@ -56,16 +83,9 @@ async def register_decider(app, socket, client_id: int, message: dict):
     workspace = message.get("workspace")
     if not isinstance(workspace, str):
         return
-    row = await app.state.model.get_workspace(workspace)
-    if row is None:
-        # Say so: a decider pointed at a typo'd workspace would
-        # otherwise wait on a silent, promptless connection.
-        await socket.send_json(
-            {
-                "event": "egress.decider_rejected",
-                "data": {"reason": "unknown workspace"},
-            }
-        )
+    row, refusal = await resolve_decider_workspace(app, socket, workspace)
+    if refusal is not None:
+        await decider_rejected(socket, refusal)
         return
     # The frame names the workspace by id or name (#246); consent
     # state keys on the row's immutable id.

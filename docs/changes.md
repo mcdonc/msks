@@ -6,19 +6,18 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
-### Removed
-
-- **The GUI workspace page's Info tab (#1017).** The page's
-  tab strip carries Shells, Mounts, Proxies, and Events. The
-  health facts the tab showed are gone with it. They are the
-  daemon's own facts rather than the workspace's: the machine
-  fact already reads through the images tab, and a refused
-  read's flash on the status line already tells the daemon's
-  reachability. The page no longer asks the daemon for a
-  health doc on its refresh tick.
-
 ### Added
 
+- **Workspace ownership (#1082).** Every workspace row records
+  the uid of the peer credential that created it, and workspace
+  names are unique per owner instead of per daemon: two users on
+  one host may each hold a `build`. A listing serves the caller's
+  own rows alone; root and the daemon's own uid see every row.
+  Cross-owner access answers 404, the same as an absent
+  workspace. The TCP surface maps every caller onto the daemon's
+  own uid, so the dev daemon and single-user hosts keep exactly
+  their visibility. Existing databases migrate with every row
+  owned by the daemon's uid — behavior unchanged.
 - **The GUI workspaces page's Clone action (#1063).** The
   page's bottom button row carries a Clone button beside Edit,
   and a right-click on a row carries a Clone entry. Both ask
@@ -385,6 +384,17 @@ tagged `vX.Y.Z`.
   window reopens at the geometry it last closed at, kept under
   the client state root (see `docs/cli.md` → Client
   environment).
+
+### Removed
+
+- **The GUI workspace page's Info tab (#1017).** The page's
+  tab strip carries Shells, Mounts, Proxies, and Events. The
+  health facts the tab showed are gone with it. They are the
+  daemon's own facts rather than the workspace's: the machine
+  fact already reads through the images tab, and a refused
+  read's flash on the status line already tells the daemon's
+  reachability. The page no longer asks the daemon for a
+  health doc on its refresh tick.
 
 ### Changed
 

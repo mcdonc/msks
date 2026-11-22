@@ -8,7 +8,7 @@ from fastapi import APIRouter, WebSocket
 
 from ...microvm.errors import MicrovmError
 from ...microvm.local import close_console_stream
-from .deps import authed_accept
+from .deps import authed_accept, caller_uid
 from .streams import (
     DETACHED_DRAINS,  # noqa: F401 — re-exported for tests' discovery
     close_reason,
@@ -177,8 +177,14 @@ def router(app) -> APIRouter:
         # generic HTTP 403 rejection.
         if not await authed_accept(app, socket):
             return
-        row = await app.state.model.get_workspace(workspace_id)
+        # The owner filter (#1082) reads the handshake's peer
+        # credential — the same scope pair the auth above read.
+        row = await app.state.model.get_workspace(
+            workspace_id, viewer=caller_uid(socket.scope)
+        )
         if row is None:
+            # A foreign row and an absent one answer the same
+            # close (#1082): the mask, not a leak.
             await socket.close(code=4404)
             return
         # The ref (name or id, #246) resolved: the console dial and

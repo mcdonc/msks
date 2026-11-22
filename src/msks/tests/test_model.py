@@ -1337,3 +1337,173 @@ def test_booted_sizes_of_reads_only_its_shape() -> None:
         "mem_mib": None,
         "root_mib": None,
     }
+
+
+# --- workspace ownership (#1082) -----------------------------------------
+
+
+async def test_workspaces_record_their_owner(app_for) -> None:
+    """The creating peer's uid lands on the row (#1082); a create
+    that names no owner records the daemon's own uid — the TCP
+    surface's mapping — and the row serialization carries it."""
+    import os
+
+    app = app_for()
+    model = app.state.model
+    model.migrate()
+    mine = await model.create_workspace(
+        spec("ws-own"), name="mine", owner_uid=4242
+    )
+    unowned = await model.create_workspace(spec("ws-tcp"), name="tcp")
+    assert mine["owner_uid"] == 4242
+    assert unowned["owner_uid"] == os.geteuid()
+    assert (await model.get_workspace("mine"))["owner_uid"] == 4242
+
+
+async def test_names_are_unique_per_owner(app_for) -> None:
+    """Two owners may each hold one ``build``; one owner may not
+    hold it twice (#1082) — the (owner_uid, name) pair."""
+    app = app_for()
+    model = app.state.model
+    model.migrate()
+    await model.create_workspace(spec("ws-a"), name="build", owner_uid=4242)
+    await model.create_workspace(spec("ws-b"), name="build", owner_uid=4243)
+    with pytest.raises(IntegrityError):
+        await model.create_workspace(
+            spec("ws-c"), name="build", owner_uid=4242
+        )
+
+
+async def test_the_owner_filter_masks_and_bypasses(app_for) -> None:
+    """The viewer rules (#1082): a peer sees its own row; another
+    owner's row answers None (the 404 mask); root, the daemon's
+    uid, and the daemon's own unfiltered reads see every row."""
+    import os
+
+    app = app_for()
+    model = app.state.model
+    model.migrate()
+    await model.create_workspace(spec("ws-m"), name="theirs", owner_uid=4242)
+    assert await model.get_workspace("theirs", viewer=4242) is not None
+    assert await model.get_workspace("ws-m", viewer=4243) is None
+    assert await model.get_workspace("theirs", viewer=0) is not None
+    assert await model.get_workspace("ws-m", viewer=os.geteuid()) is not None
+    assert await model.get_workspace("theirs") is not None
+
+
+async def test_a_plural_name_refuses_to_pick(app_for) -> None:
+    """A name two owners hold is legal (#1082); a bypassing viewer
+    addressing it gets the named ambiguity refusal, and a scoped
+    viewer gets its own row."""
+    from msks.model.workspaces import AmbiguousRef
+
+    app = app_for()
+    model = app.state.model
+    model.migrate()
+    await model.create_workspace(spec("ws-a"), name="build", owner_uid=4242)
+    await model.create_workspace(spec("ws-b"), name="build", owner_uid=4243)
+    for viewer in (None, 0):
+        with pytest.raises(AmbiguousRef) as raised:
+            await model.get_workspace("build", viewer=viewer)
+        assert "4242" in str(raised.value) and "4243" in str(raised.value)
+    mine = await model.get_workspace("build", viewer=4243)
+    assert mine["id"] == "ws-b"
+
+
+async def test_create_ref_blocked_branches(app_for) -> None:
+    """The create refusal rules (#1082): the caller's own name and
+    any live id block; another (non-bypassed) owner's name is free;
+    root's namespace spans every owner."""
+    app = app_for()
+    model = app.state.model
+    model.migrate()
+    await model.create_workspace(spec("ws-a"), name="build", owner_uid=4242)
+    # The peer's own held name blocks; another owner's does not.
+    assert await model.create_ref_blocked("build", 4242) is True
+    assert await model.create_ref_blocked("build", 4243) is False
+    # Root (and the daemon uid) see every row, so any held name
+    # blocks their creates.
+    assert await model.create_ref_blocked("build", 0) is True
+    # The one-namespace rule (#246) stays daemon-wide: a name equal
+    # to any live id blocks every create.
+    assert await model.create_ref_blocked("ws-a", 4243) is True
+    assert await model.create_ref_blocked("unheard-of", 4243) is False
+
+
+async def test_list_workspaces_filters_by_viewer(app_for) -> None:
+    """The listing serves the caller's own rows alone (#1082); the
+    bypass uids and the daemon's own reads keep the whole
+    table."""
+    import os
+
+    app = app_for()
+    model = app.state.model
+    model.migrate()
+    await model.create_workspace(spec("ws-a"), name="a", owner_uid=4242)
+    await model.create_workspace(spec("ws-b"), name="b", owner_uid=4243)
+    assert [r["id"] for r in await model.list_workspaces(viewer=4242)] == [
+        "ws-a"
+    ]
+    assert [r["id"] for r in await model.list_workspaces(viewer=4243)] == [
+        "ws-b"
+    ]
+    assert len(await model.list_workspaces(viewer=0)) == 2
+    assert len(await model.list_workspaces(viewer=os.geteuid())) == 2
+    assert len(await model.list_workspaces()) == 2
+
+
+async def test_migration_0024_owns_legacy_rows_and_swaps_the_constraint(
+    tmp_path: Path, app_for
+) -> None:
+    """A database stamped at 0023 upgrades with every row owned by
+    the daemon's own uid (#1082), the daemon-wide unique on names
+    gone, and the per-owner pair in its place: two owners may hold
+    one name afterwards and one owner may not hold it twice."""
+    import os
+
+    from sqlalchemy.exc import IntegrityError
+
+    db_path = tmp_path / "own.db"
+    config = alembic_config(db_path)
+    command.upgrade(config, "0023")
+    # The app reads the database the chain built: bound to
+    # own.db, not the fixture's default path.
+    app = app_for(db_path=db_path)
+    engine = sa.create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            workspaces = sa.Table(
+                "workspaces", sa.MetaData(), autoload_with=conn
+            )
+            assert "owner_uid" not in workspaces.columns
+            for wid, name in (("legacy", "build"), ("older", "other")):
+                conn.execute(
+                    workspaces.insert().values(
+                        id=wid,
+                        name=name,
+                        kernel="/k",
+                        initrd=None,
+                        rootfs="/r",
+                        cmdline="c",
+                        cpus=1,
+                        mem_mib=256,
+                        status="stopped",
+                        created_at=datetime(2026, 1, 1),
+                        updated_at=datetime(2026, 1, 1),
+                    )
+                )
+    finally:
+        engine.dispose()
+    app.state.model.migrate()
+    rows = await app.state.model.list_workspaces()
+    assert {row["owner_uid"] for row in rows} == {os.geteuid()}
+    # The pair constraint: the same name under a second owner
+    # inserts (the daemon-wide unique would have refused it),
+    # under the same owner does not.
+    await app.state.model.create_workspace(
+        spec("ws-new"), name="build", owner_uid=4242
+    )
+    with pytest.raises(IntegrityError):
+        await app.state.model.create_workspace(
+            spec("ws-new3"), name="build", owner_uid=os.geteuid()
+        )
