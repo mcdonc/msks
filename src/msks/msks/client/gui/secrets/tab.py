@@ -178,6 +178,7 @@ class SecretsTab(FeedPage, QtWidgets.QWidget):
         # cross, its Up bridge alone the edges it needs.
         self.audit_table = ListTable(0, len(cells.AUDIT_COLUMNS), self)
         self.audit_table.setHorizontalHeaderLabels(cells.AUDIT_COLUMNS)
+        cells.marker_tip(self.audit_table)  # the ! column's own words (#1064)
         self.build_table(self.audit_table, sortable=False)
         self.audit_empty = QtWidgets.QLabel(cells.audit_empty_text(), self)
         # The audit empty state wraps too (#966), for the same

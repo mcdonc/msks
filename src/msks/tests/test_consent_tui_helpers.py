@@ -6,6 +6,7 @@ live where the scheduler gives them a clean worker.
 """
 
 import json
+import time
 from datetime import UTC, datetime
 
 from msks.client.tui import consent as consent_mod
@@ -136,10 +137,19 @@ def event(kind: str = "swap", **kw) -> consent_mod.SecretEvent:
 
 
 def test_event_time_labels() -> None:
-    """A dated event renders its local clock; an undated one (an
-    older daemon) keeps a blank column."""
+    """A dated event renders its local clock, and an event from
+    an earlier day carries its date beside the clock (#1064) —
+    the replayed rows span days; an undated one (an older
+    daemon) keeps a blank column."""
     assert event_time(0.0) == ""
     assert event_time(1_700_000_000.0) != ""
+    stamp = 1_700_000_000.0
+    assert event_time(stamp, now=stamp) == time.strftime(
+        "%H:%M:%S", time.localtime(stamp)
+    )
+    assert event_time(stamp, now=stamp + 3 * 86400) == time.strftime(
+        "%Y-%m-%d %H:%M:%S", time.localtime(stamp)
+    )
 
 
 def test_event_dest_text() -> None:

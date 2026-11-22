@@ -64,6 +64,26 @@ AUDIT_COLUMNS = ("!", "TIME", "KIND", "PLACEHOLDER", "DEST")
 #: view colors.
 MARKER_COLUMN = 0
 
+#: The audit marker header's tooltip (#1064): the ``!``
+#: column's meaning in the TUI's own words — the note line the
+#: TUI draws above its rows, landed where the column itself
+#: stands.
+MARKER_TIP = (
+    "! marks a sighting: a placeholder token reached a host "
+    "its mint did not allow — the exfiltration signal."
+)
+
+
+def marker_tip(table: QtWidgets.QTableWidget) -> None:
+    """The ``!`` header's tooltip (#1064): the marker's meaning
+    on the column's own header, so a hover on the column
+    names its reading — the pane carries no standing note
+    line, the tooltip is the explanation."""
+    item = table.horizontalHeaderItem(MARKER_COLUMN)
+    if item is not None:
+        item.setToolTip(MARKER_TIP)
+
+
 #: The first group's label (#966).
 LIST_GROUP = "Placeholders"
 

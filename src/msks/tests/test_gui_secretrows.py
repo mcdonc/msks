@@ -322,7 +322,7 @@ def test_one_audit_row_carries_what_the_widget_renders() -> None:
         kind="mint",
         marker=" ",
         ts=NAIVE_EPOCH,
-        when=time.strftime("%H:%M:%S", time.localtime(NAIVE_EPOCH)),
+        when=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(NAIVE_EPOCH)),
         who="ws1/github_api",
         dest=" \u2192 api.github.com, .example.com",
         workspaces=("ws1",),
@@ -377,13 +377,21 @@ def test_the_recorded_stamp_reads_as_epoch() -> None:
 
 
 def test_the_audit_time_labels_the_epoch() -> None:
-    """The audit row's time label: the local wall-clock spelling
-    of the epoch, blank on an undated row."""
+    """The audit row's time label (#1064): the local clock
+    alone on a row from the viewer's own day, the date beside
+    the clock on a row from an earlier day; an undated row
+    keeps its blank column."""
     assert gui_secrets.audit_time(0.0) == ""
     assert gui_secrets.audit_time(-1.0) == ""
     assert gui_secrets.audit_time(NAIVE_EPOCH) == time.strftime(
-        "%H:%M:%S", time.localtime(NAIVE_EPOCH)
+        "%Y-%m-%d %H:%M:%S", time.localtime(NAIVE_EPOCH)
     )
+    assert gui_secrets.audit_time(NAIVE_EPOCH, now=NAIVE_EPOCH) == (
+        time.strftime("%H:%M:%S", time.localtime(NAIVE_EPOCH))
+    )
+    assert gui_secrets.audit_time(
+        NAIVE_EPOCH, now=NAIVE_EPOCH + 2 * 86400
+    ) == time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(NAIVE_EPOCH))
 
 
 def test_the_row_fields_read_their_tuples() -> None:

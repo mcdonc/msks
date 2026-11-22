@@ -6,20 +6,21 @@ the order it draws them.
 
 from __future__ import annotations
 
-import time
-
 from rich.markup import escape
 from textual.widgets import ListItem, Static
 
+from ...ages import clock_label
 from ..consent import SecretEvent
 
 
-def event_time(ts: float) -> str:
-    """The event's local wall-clock label; an undated frame (an
-    older daemon's event) keeps a blank column."""
-    if ts <= 0.0:
-        return ""
-    return time.strftime("%H:%M:%S", time.localtime(ts))
+def event_time(ts: float, now: float | None = None) -> str:
+    """The event's local wall-clock label (#1064): the clock
+    alone on a row from the viewer's own day, the date beside
+    the clock on a row from an earlier day — the shared leaf's
+    own spelling (:func:`msks.client.ages.clock_label`). An
+    undated frame (an older daemon's event) keeps a blank
+    column."""
+    return clock_label(ts, now)
 
 
 def event_dest(event: SecretEvent) -> str:

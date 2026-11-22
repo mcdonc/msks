@@ -109,7 +109,9 @@ the identity alone.
 The `msks tui` secrets page's audit view (`e` from the page) shows every
 workspace's events newest first, daemon-wide. The newest hundred recorded
 mints, revokes, expiries, and unlocks replay onto it when the view opens, and
-swaps and sightings stream in live. The off-allowlist sighting is highlighted
+swaps and sightings stream in live. Each row's time is its local clock. A row
+from an earlier day carries its date beside the clock. The off-allowlist
+sighting is highlighted
 as the exfil signal, with a header line stating the detection boundary above.
 Kind and workspace filters narrow the view; a daemon-wide row's events cover
 every workspace, a scoped row's its members.
