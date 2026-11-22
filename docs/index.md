@@ -25,29 +25,36 @@ _msks_ runs on:
 4. [**The TUI**](tui.md): the full-screen workspace tree: the
    workspace, secrets, and image pages, the consent decider, and
    terminal windows.
-5. [**The CLI client**](cli.md): every command line option: `msks` against
-   the daemon's HTTP API, ssh and rsync over a forward.
+5. [**The GUI**](gui.md): the desktop window: the
+   workspaces, secrets, and images pages, the consent decider, and
+   terminal windows.
 6. [**Host share mounts**](mounts.md): the host trees a
    workspace mounts into its guest.
-7. [**Cloning workspaces**](cloning.md): cloning workspaces --
-   what a clone carries, what stays behind.
-8. [**Guest networking**](networking.md): details about VM guest networking.
+7. [**Guest networking**](networking.md): details about VM guest networking.
+8. [**Workspace proxies**](proxies.md): the TCP ports a
+   workspace bridges in either direction, and how to manage them.
 9. [**Egress consent**](egress-consent.md): the consent
    postures, verdicts and durations, switching modes live.
 10. [**LLM Proxy**](llm.md): how to make use of msksd's built-in
     LLM proxy.
 11. [**Secrets**](secrets.md): creating secret placeholders, and how
     the swap of placeholders for secret values happens on the wire.
-12. [**Daemon Configuration**](config.md): the msksd daemon's settings: every
+12. [**Cloning workspaces**](cloning.md): cloning workspaces --
+    what a clone carries, what stays behind.
+13. [**The CLI client**](cli.md): every command line option: `msks` against
+    the daemon's HTTP API, ssh and rsync over a forward.
+14. [**The agent reference card**](agents.md): the command
+    reference a coding harness needs to operate msks from the host.
+15. [**Daemon Configuration**](config.md): the msksd daemon's settings: every
     key, its environment variable, and its default.
-13. [**Workspace images**](images.md): the image contract, the
+16. [**Workspace images**](images.md): the image contract, the
     shipped builder, and the published channel: import from a
     manifest URL.
-14. [**Storage**](storage.md): reports about the per-workspace
+17. [**Storage**](storage.md): reports about the per-workspace
     volumes (e.g. capacity).
-15. [**The HTTP API**](api.md): msksd HTTP API surface --
+18. [**The HTTP API**](api.md): msksd HTTP API surface --
     the endpoints the commands wrap and the authentication model.
-16. [**Development environment**](development.md): The Nix/devenv development
+19. [**Development environment**](development.md): The Nix/devenv development
     environment.
-17. [**Changelog**](changes.md): what changed, release by
+20. [**Changelog**](changes.md): what changed, release by
     release.
