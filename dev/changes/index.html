@@ -2543,7 +2543,19 @@ tagged <code>vX.Y.Z</code>.</p>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>The attached clients follow the daemon over the events
+<li>
+<p><strong>The conditional certifi overlay (#785).</strong> The nix builds
+  swap certifi in the python package set only while the pinned
+  nixpkgs sits below the <code>certifi&gt;=2026.10.23</code> floor pyproject
+  declares. The pinned nixpkgs (unstable, since #991) already
+  carries 2026.10.23, so <code>nix build .#server</code> serves the python
+  closure from the binary cache instead of rebuilding httpx,
+  mitmproxy, and every other dependent from source. An eval-time
+  gate (<code>nix/certifi-gate.nix</code>) names a composed set that misses
+  the floor, reading it from pyproject.toml.</p>
+</li>
+<li>
+<p><strong>The attached clients follow the daemon over the events
   websocket instead of polling (#1019).</strong> The TUI's workspaces
   list, workspace page, and proxies page, and the GUI's
   workspaces list and workspace page, re-read on the frames
@@ -2555,7 +2567,8 @@ tagged <code>vX.Y.Z</code>.</p>
   receives no periodic listing traffic from an attached idle
   client. The TUI's shell counts stay on a local timer (they
   read per-host session records, not daemon state). See
-  <code>docs/tui.md</code> and <code>docs/gui.md</code>.</li>
+  <code>docs/tui.md</code> and <code>docs/gui.md</code>.</p>
+</li>
 <li>
 <p><strong>The GUI dependencies are base dependencies (#1023).</strong> A
   plain <code>pip install msks</code> now installs the desktop GUI, and
