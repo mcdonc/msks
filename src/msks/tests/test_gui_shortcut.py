@@ -177,16 +177,31 @@ def test_the_command_installs_under_the_data_home(
     assert "Exec=/opt/venv/bin/msks gui" in entry.read_text()
 
 
-def test_the_command_refuses_off_linux(
+def test_the_command_refuses_off_the_two_desktops(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A desktop without the Linux conventions (#1021) hears
-    the one-line refusal instead of a planted file that could
-    only sit unused."""
-    monkeypatch.setattr(sys, "platform", "darwin")
+    """A desktop outside the two arms (#1021, #1048) hears the
+    one-line refusal instead of a planted file that could only
+    sit unused."""
+    monkeypatch.setattr(sys, "platform", "win32")
     assert shortcut.run() == 1
     assert shortcut.NOT_LINUX in capsys.readouterr().err
+
+
+def test_the_command_dispatches_to_the_bundle_on_macos(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The darwin arm (#1048): the command becomes the bundle
+    installer — the desktop there reads the name and icon from
+    a bundle, not from a planted desktop entry."""
+    from msks.client.gui import appbundle
+
+    seen: list[str] = []
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(appbundle, "run", lambda: seen.append("bundle"))
+    assert shortcut.run() is None  # the arm's own answer passes through
+    assert seen == ["bundle"]
 
 
 def test_the_command_refuses_a_relative_data_home(

@@ -315,6 +315,13 @@ Running `msks-setup-macos-host` runs the macOS installer, which is expected to
 work on M3+ Macs. It installs the Lima virtual machine system (via Brew), and
 runs msksd within a Lima VM. The msks client runs on the Mac itself.
 
+The run links the client's commands into the brew prefix's bin: `msks` and
+`msks-term-popup`. It also plants the GUI's application bundle at
+`~/Applications/msks.app` (#1048). The Dock, Launchpad, Spotlight, and the
+menu bar's application menu read the client's name and icon from that
+bundle. `msks-setup-macos-host --uninstall` removes the bundle again; a
+bundle at that path whose identifier is not the tool's own stays put.
+
 The msksd VM that `msks-setup-macos-host` creates from the shipped Lima
 template is the host that shares Mac folders into workspaces. The VM mounts
 them under its reserved prefix and forwards each attached share to the

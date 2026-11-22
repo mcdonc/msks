@@ -19,6 +19,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI's application bundle on macOS (#1048).**
+  `msks gui-shortcut` now installs `~/Applications/msks.app`, and
+  `msks-setup-macos-host` plants it beside the client links — the
+  Dock, Launchpad, and the menu bar's application menu read the
+  client's name and icon from the bundle (a terminal-launched
+  `msks gui` keeps the interpreter's name; that is macOS's rule
+  for terminal processes). The installer is idempotent, and
+  `--uninstall` removes the bundle again.
+
 - **The GUI docs chapter (`docs/gui.md`) (#1008).** The
   operator docs for the desktop client: the install, the
   connection with its picker, the workspace list and the detail

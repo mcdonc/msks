@@ -1465,7 +1465,7 @@ it (#1021). A Wayland taskbar reads the window's app id, looks up
 the desktop entry with that id, and shows the icon the entry points
 at.
 
-`msks gui-shortcut` installs both under the XDG data home
+On Linux, `msks gui-shortcut` installs both under the XDG data home
 (`XDG_DATA_HOME`, else `~/.local/share`). The `msks.desktop` entry
 lands under `applications`, and the icon renders land under
 `icons/hicolor`, one PNG per size plus the scalable SVG. The entry's
@@ -1475,9 +1475,19 @@ the venv's bin directory is not on the desktop's `PATH`. Run the
 command again after an upgrade to refresh the renders. It overwrites
 in place and is safe to re-run.
 
-The window itself also sets the icon directly, so on X11 and macOS the
-window carries it without the install. Linux is the only desktop the
-command serves. Elsewhere it prints one line and exits 1.
+On macOS the command installs the application bundle at
+`~/Applications/msks.app` instead (#1048). The bundle carries the
+client's name and icon, and the Dock, Launchpad, Spotlight, and the
+menu bar's application menu read them from the bundle. A launch from
+a terminal (`msks gui`) stays an unbundled process, and macOS names
+it after the interpreter — the platform's own rule for terminal
+processes; the bundle is the launch surface the desktop names. Run
+the command again after an upgrade: it re-points the bundle at the
+install that ran it.
+
+The window itself also sets the icon directly, so the window carries
+it without the install on every desktop. A desktop other than Linux
+and macOS hears one line and exit 1.
 
 ## Errors, exit codes, and timeouts
 

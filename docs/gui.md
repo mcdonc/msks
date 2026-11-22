@@ -22,9 +22,12 @@ stderr and exits. A macOS session needs a desktop login. The
 window opens fine over ssh while one stands.
 
 `msks gui-shortcut` installs the desktop entry and the taskbar
-icon on a Linux desktop. The entry goes under the XDG data home.
-On macOS the command prints one line and changes nothing. The
-dock reads the icon the window itself already carries.
+icon on a Linux desktop; the entry goes under the XDG data home.
+On macOS the command installs the application bundle at
+`~/Applications/msks.app` (#1048): the Dock, Launchpad, and the
+menu bar's application menu name the client and show its icon
+from the bundle. A terminal-launched `msks gui` keeps the
+interpreter's name — macOS's own rule for terminal processes.
 
 The window opens 1280 by 720 the first time. Every later open
 takes back the place and size the last close left, as long as a

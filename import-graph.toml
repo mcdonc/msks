@@ -200,7 +200,9 @@ identity = 2
 # module-edge-plus-name +2 the TUI's reads take.
 # #1007: the macOS menu bar's About box names the client's own
 # version word — the same module-edge-plus-name +2.
-spec = 15
+# #1048: the application bundle's plist carries the version
+# word beside the one the About dialog reads (+2 again).
+spec = 17
 
 [snapshot.config]
 configio = 3
@@ -313,7 +315,10 @@ app = 2
 # names across its clientconfig and verify submodules plus the
 # package root — the coupling is the same pair, four import
 # statements deeper.
-client = 7
+# #1048: the GUI's msks.app bundle lands with the client links
+# — hostsetup_macos.links imports client.gui.appbundle (the
+# installer both the tool and the gui-shortcut command share).
+client = 9
 # #672: the set-time (checked_mounts) and start-time
 # (mount_state) host-share gates — the module and the
 # check entry.
