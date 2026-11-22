@@ -1277,10 +1277,20 @@ download and about 250 MB installed, measured on Linux.</p>
 also works. A start that finds no display prints one line on
 stderr and exits. A macOS session needs a desktop login. The
 window opens fine over ssh while one stands.</p>
-<p><code>msks gui-shortcut</code> installs the desktop entry and the taskbar
-icon on a Linux desktop. The entry goes under the XDG data home.
-On macOS the command prints one line and changes nothing. The
-dock reads the icon the window itself already carries.</p>
+<p>The window plants its own desktop entry and taskbar icon on a
+Linux desktop. Every <code>msks gui</code> launch installs both under the
+XDG data home before the window opens. The taskbar shows the
+msks icon from the first launch after a fresh install, and the
+next launch after an upgrade refreshes the icon renders. When
+the install fails, msks prints one line on stderr and the
+window still opens. <code>msks gui-shortcut</code> does the same work by
+hand and prints the entry's path. On macOS nothing is planted.
+The dock reads the icon the window itself already carries.</p>
+<p>Uninstalling the wheel leaves the entry and the icons in
+place, because they live in the XDG data home, outside the
+wheel's tree. Delete <code>~/.local/share/applications/msks.desktop</code>
+and the <code>msks.*</code> files under <code>~/.local/share/icons/hicolor</code> to
+remove them by hand.</p>
 <p>The window opens 1280 by 720 the first time. Every later open
 takes back the place and size the last close left, as long as a
 connected screen still shows some of that rect.</p>
