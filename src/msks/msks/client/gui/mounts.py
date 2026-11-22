@@ -200,9 +200,9 @@ class MountsTab(QtWidgets.QWidget):
         self.landed = bool(row)
         self.working = list(row.get("mounts") or [])
         self.issues = list(row.get("mount_issues") or [])
-        self.repaint(row)
+        self.repaint_table(row)
 
-    def repaint(self, row: dict) -> None:
+    def repaint_table(self, row: dict) -> None:
         """The table from the working list (#987): one row per
         entry — the spec the operator wrote beside the state the
         daemon derived — with the standing next-start note while
@@ -303,7 +303,7 @@ class MountsTab(QtWidgets.QWidget):
         self.pending = True
         self.flight_seq += 1
         self.flight_key = f"{MOUNTS_KEY}-{self.flight_seq}"
-        self.repaint(self.pending_row or {})
+        self.repaint_table(self.pending_row or {})
         self.flight = self.bridge.call(
             self.flight_key, "set_mounts", self.workspace_id, mounts
         )
@@ -345,5 +345,5 @@ class MountsTab(QtWidgets.QWidget):
         if self.before is not None:
             self.working = self.before
             self.before = None
-        self.repaint(self.pending_row or {})
+        self.repaint_table(self.pending_row or {})
         self.note.setText(f"refused: {failure}")
