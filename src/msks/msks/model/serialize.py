@@ -196,5 +196,11 @@ def workspace_dict(row: Workspace) -> dict:
         "login_user": row.login_user,
         "timezone": row.timezone,
         "status": row.status,
+        # The seed's epoch (#803, #1069): the start path reads the
+        # row through this dict, so carrying it is what lets the
+        # renewal suffix bake an instance-id the guest has not
+        # consumed. Zero until the first boot-time bake; the
+        # create-time bake keeps the plain id.
+        "seed_epoch": row.seed_epoch,
         "created_at": row.created_at.isoformat(),
     }

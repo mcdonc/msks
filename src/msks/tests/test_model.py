@@ -71,6 +71,29 @@ async def test_create_and_get_workspace(app_for) -> None:
     assert fetched["cpus"] == 2
 
 
+async def test_the_row_carries_its_seed_epoch_to_the_spec(app_for) -> None:
+    """The seam #1069 rides: the start path reads the row through
+    get_workspace and hands it to spec_for, so the row dict must
+    carry the seed epoch — a suffix that hashed content alone
+    re-minted an instance-id the guest had already consumed, and
+    cloud-init's once-per-instance skip left a returned mount set
+    unmounted. The bumped row reaches the spec, and the epoch it
+    carries is what tells two bakes of one content apart."""
+    from msks.server.api.rows import spec_for
+
+    app = app_for()
+    await app.state.model.create_all()
+    await app.state.model.create_workspace(spec())
+    # The pre-bump read the launch's spec takes: zero until a
+    # boot-time bake bumps it.
+    assert spec_for(await app.state.model.get_workspace("ws1")).seed_epoch == 0
+    assert await app.state.model.bump_seed_epoch("ws1") is True
+    assert await app.state.model.bump_seed_epoch("ws1") is True
+    row = await app.state.model.get_workspace("ws1")
+    assert row["seed_epoch"] == 2
+    assert spec_for(row).seed_epoch == 2
+
+
 async def test_workspace_name_roundtrip_and_ref_resolution(app_for) -> None:
     """The #246 split: the name rides the row, and a lookup by name
     resolves the same row a lookup by id does — the id stays the

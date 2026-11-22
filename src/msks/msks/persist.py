@@ -329,9 +329,13 @@ def renewal_suffix(ca_pem: str | None, mounts_fp: str, seed_epoch: int) -> str:
     the root overlay) the guest still holds, and cloud-init
     answers "already ran" without re-provisioning — the share
     never mounts. The counter bumps once per bake ahead of the
-    renewal, and the spec reads it pre-bump, so every bake hashes
-    a value strictly larger than the last and no two bakes share
-    an id."""
+    renewal, and the spec reads it pre-bump, so every renewal
+    hashes a value strictly larger than the last and no two
+    renewals share an id. The launch-heal path — a seed lost and
+    rebuilt at boot (``create_seed`` with ``renewing`` False) —
+    still bakes the plain id; a healed seed whose content drifted
+    from what the guest provisioned under that id keeps the
+    pre-#1069 behavior."""
     digest = hashlib.sha256()
     digest.update((ca_pem or "").encode())
     digest.update(b"\x00")

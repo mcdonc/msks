@@ -479,8 +479,9 @@ gui`. The nix package keeps the daemon's closure lean, so on
   re-minted an instance-id the guest had already consumed, and
   cloud-init skipped the re-provision — the daemon reported the
   share attached while the guest path stayed an empty
-  directory. Every renewal now lands a fresh id, and the guest
-  installs the returned share's mount unit on its next start.
+  directory. Every renewal now bakes an id the guest has not
+  consumed, and the guest installs the returned share's mount
+  unit on its next start.
 
 - **`scripts/cut-release.sh` resolves `python3` explicitly
   (#1038).** The script's two python reads (the tagged version
