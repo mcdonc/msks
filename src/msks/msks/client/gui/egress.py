@@ -1,17 +1,18 @@
 """The workspace Egress tab (#1042's first sub-issue, #1049): the
-page's egress posture surface — the workspace's current mode with
-its meaning, and the mode switch in place through the policy
-route the CLI's ``egress mode`` drives, its consequences stated
-beside the switcher. The tab is the posture surface only: allow
-and deny of a live hold stay in the consent panel (#999, #1000),
-and the allowlist editor, the audit trail, and the decider
-presence indicator are #1042's later sub-issues. The
-nothing-effectively-allowed refusal to ``static`` — the
-offline-workspace escape — reaches the operator as a question
-with an explicit confirm, never a silent failure or a raw error:
-the switch asks before it sends when the standing read shows the
-gate, and the route's own refusal (a read gone stale between the
-two) asks the same question again.
+page's egress posture surface — the workspace's current mode
+with its meaning, and the mode switch in place through the
+policy route the CLI's ``egress mode`` drives: a pick on the
+switcher commits at once, the picked mode's meaning beside the
+pick. The tab is
+the posture surface only: allow and deny of a live hold stay in
+the consent panel (#999, #1000), and the allowlist editor, the
+audit trail, and the decider presence indicator are #1042's
+later sub-issues. The nothing-effectively-allowed refusal to
+``static`` — the offline-workspace escape — reaches the operator
+as a question with an explicit confirm, never a silent failure
+or a raw error: the pick asks before it sends when the standing
+read shows the gate, and the route's own refusal (a read gone
+stale between the two) asks the same question again.
 
 This module imports PySide6 at module scope — the screens' own
 contract: nothing imports it at CLI parse time, and the
@@ -20,7 +21,7 @@ workspace page (itself lazily imported) owns the import.
 
 from PySide6 import QtCore, QtWidgets
 
-from ..tui.consent import (
+from .consent import (
     EGRESS_MODES,
     EMPTY_STATIC_QUESTION,
     EgressRules,
@@ -38,10 +39,14 @@ RULES_STEM = "egress-rules"
 #: key its own.
 SWITCH_STEM = "egress-switch"
 
-#: The route's refusal marker (#280): the policy route's
+#: The route's refusal marker (#280, #1042): the policy route's
 #: nothing-effectively-allowed refusal is the one answer whose
-#: remedy is an explicit confirm — its message names
-#: ``confirm_empty``, and no other refusal does.
+#: remedy is an explicit confirm — its message names the
+#: ``confirm_empty`` request flag, and no other refusal does.
+#: The server's own refusal test pins the token into the
+#: message, and this tab's tests match the marker against the
+#: message's verbatim text — the spellings cannot drift apart
+#: quietly.
 CONFIRM_MARKER = "confirm_empty"
 
 #: Each mode's meaning in place (#1042): what the posture does,
@@ -62,15 +67,6 @@ MODE_WORDS = {
     ),
 }
 
-#: The switch's consequences (#1042), the policy route's own
-#: semantics stated in place beside the switcher.
-SWITCH_EFFECTS = (
-    "a running workspace swaps its nft table in one transaction "
-    "and established flows survive; a stopped workspace builds "
-    "the new posture at its next start; verdicts carry across "
-    "modes"
-)
-
 #: The landing note's effect words (#1042), the TUI switch's own:
 #: the reply's ``applied`` fact picks one.
 IN_EFFECT_NOW = "in effect now"
@@ -79,12 +75,13 @@ NEXT_START = "takes effect at next start"
 
 class EgressTab(QtWidgets.QWidget):
     """The page's egress posture surface (#1042): the current mode
-    with its meaning, the switcher under it, and the note line a
-    refusal names itself on. The rules read refreshes on the
-    page's tick and on every pushed ``egress.rules`` frame — a
-    switch the CLI made elsewhere paints itself here — and the
-    switch flies one flight at a time, its reply the fresh rules
-    frame with the ``applied`` fact beside it."""
+    with its meaning, the switcher under it — a pick commits at
+    once — and the note line a refusal names itself on. The rules
+    read refreshes on the page's tick and on every pushed
+    ``egress.rules`` frame — a switch the CLI made elsewhere
+    paints itself here — and the switch flies one flight at a
+    time, its reply the fresh rules frame with the ``applied``
+    fact beside it."""
 
     def __init__(self, bridge) -> None:
         super().__init__()
@@ -107,17 +104,15 @@ class EgressTab(QtWidgets.QWidget):
         self.pick = QtWidgets.QComboBox()
         self.pick.addItems(list(EGRESS_MODES))
         self.pick.currentIndexChanged.connect(self.sync)
-        self.switch_button = QtWidgets.QPushButton("Switch mode")
-        self.switch_button.setEnabled(False)
-        self.switch_button.clicked.connect(self.switch)
-        row = QtWidgets.QHBoxLayout()
-        row.addWidget(self.pick)
-        row.addWidget(self.switch_button)
-        row.addStretch(1)
+        # The pick is the commit (#1049 review): ``activated`` is
+        # the operator's own choice — a programmatic index change
+        # (the read's follow) decides nothing.
+        self.pick.activated.connect(self.switch)
         self.words = QtWidgets.QLabel("", self)
         self.words.setWordWrap(True)
-        self.effects = QtWidgets.QLabel(SWITCH_EFFECTS, self)
-        self.effects.setWordWrap(True)
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(self.pick)
+        row.addWidget(self.words, stretch=1)
         self.note = QtWidgets.QLabel("", self)
         self.note.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
@@ -125,8 +120,6 @@ class EgressTab(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.mode_line)
         layout.addLayout(row)
-        layout.addWidget(self.words)
-        layout.addWidget(self.effects)
         layout.addStretch(1)
         layout.addWidget(self.note)
         self.sync()
@@ -213,35 +206,40 @@ class EgressTab(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def sync(self) -> None:
-        """The switcher's state (#1042): the picked mode's meaning
-        beside it, and the switch itself gated on a landed read —
-        a posture the tab has not seen is not one it switches —
-        beside the one flight, and a pick that names the standing
-        mode decides nothing."""
-        picked = self.pick.currentText()
-        self.words.setText(MODE_WORDS.get(picked, ""))
-        self.switch_button.setEnabled(
-            self.rules is not None
-            and bool(self.workspace_id)
-            and not self.pending_switch
-            and picked != self.current
-        )
+        """The pick's meaning beside it (#1042): the picked mode's
+        own words, kept current with every pick — the read's
+        follow included."""
+        self.words.setText(MODE_WORDS.get(self.pick.currentText(), ""))
 
     @QtCore.Slot()
     def switch(self) -> None:
-        """The switch action (#1042): the picked mode goes through
-        the policy route, one flight at a time. A pick of
-        ``static`` over a read with nothing effectively allowed
-        asks first — the shared gate every surface's switch takes
-        (#280) — and the route's refusal arm (a read gone stale
-        between the gate and the send) asks its question there."""
+        """The pick's own action (#1042): the picked mode goes
+        through the policy route at once, one flight at a time.
+        A pick of ``static`` over a read with nothing effectively
+        allowed asks first — the shared gate every surface's
+        switch takes (#280) — and the route's refusal arm (a read
+        gone stale between the gate and the send) asks its
+        question there."""
         mode = self.pick.currentText()
-        if not self.workspace_id or mode == self.current:
+        if not self.switchable(mode):
             return
         if mode == "static" and not effective_allows(self.rules):
             self.asked_static()
             return
         self.send(mode)
+
+    def switchable(self, mode: str) -> bool:
+        """Whether the pick switches now (#1042): a landed read
+        stands (a posture the tab has not seen is not one it
+        switches), the workspace stands, the pick names a mode
+        the daemon is not already in, and no switch is out — the
+        gates the button the pick replaced once carried."""
+        return (
+            self.rules is not None
+            and bool(self.workspace_id)
+            and mode != self.current
+            and not self.pending_switch
+        )
 
     def asked_static(self) -> None:
         """The offline gate's arm (#280, #1042): the shared
@@ -259,10 +257,9 @@ class EgressTab(QtWidgets.QWidget):
     def send(self, mode: str, *, confirm_empty: bool = False) -> None:
         """One mode switch through the bridge (#1042): the policy
         route the CLI's ``egress mode`` drives, under its own key
-        — one at a time, the answer repainting the posture and
-        naming its effect."""
-        if self.pending_switch or not self.workspace_id:
-            return
+        — one at a time (the switchable gate holds the one
+        flight), the answer repainting the posture and naming
+        its effect."""
         self.pending_switch = True
         self.picked = mode
         self.seq += 1

@@ -157,8 +157,18 @@ def fake_confirm(monkeypatch, answer: bool) -> list:
 
 
 def pick_mode(tab, mode: str) -> None:
-    """The switcher's pick set to one mode by its label."""
+    """A programmatic index change — the read's own follow shape:
+    the words follow the pick, and no switch fires."""
     tab.pick.setCurrentIndex(egress_mod.EGRESS_MODES.index(mode))
+
+
+def choose(tab, mode: str) -> None:
+    """The operator's pick on the switcher (#1049 review): the
+    index moves and the combo's own ``activated`` signal fires —
+    the pick that commits at once."""
+    index = egress_mod.EGRESS_MODES.index(mode)
+    tab.pick.setCurrentIndex(index)
+    tab.pick.activated.emit(index)
 
 
 def test_effective_allows_reads_the_shared_rule() -> None:
@@ -173,43 +183,53 @@ def test_effective_allows_reads_the_shared_rule() -> None:
     assert effective_allows(parse_rules(rules_frame()))
 
 
+def test_the_refusal_marker_matches_the_routes_message() -> None:
+    """The marker's contract (#1042): the route's actual refusal
+    — copied verbatim from the policy route's detail — carries
+    the marker the tab matches on, and the server's own refusal
+    test pins the same token into the same message, so the
+    match cannot drift from the message it matches."""
+    assert egress_mod.CONFIRM_MARKER in EMPTY_REFUSAL
+
+
 def test_the_read_paints_the_mode(qt) -> None:
     """The tab's read (#1042): the landed frame names the current
-    mode, the switcher follows it, its meaning stands beside it,
-    and a pick that names the standing mode switches nothing."""
-    tab, _bridge = make_tab(qt)
+    mode, the switcher follows it, its meaning stands beside it —
+    and the follow decides nothing: a programmatic index change
+    sends no switch, and the operator's pick on the standing
+    mode sends none either."""
+    tab, bridge = make_tab(qt)
     assert tab.mode_line.text() == "current mode: interactive"
     assert tab.pick.currentText() == "interactive"
     assert tab.words.text() == egress_mod.MODE_WORDS["interactive"]
-    assert tab.effects.text() == egress_mod.SWITCH_EFFECTS
-    assert not tab.switch_button.isEnabled()  # the pick is the mode
-    pick_mode(tab, "allow")
+    pick_mode(tab, "allow")  # the read's own follow shape
     assert tab.words.text() == egress_mod.MODE_WORDS["allow"]
-    assert tab.switch_button.isEnabled()
+    assert bridge.calls == []  # a programmatic change decides nothing
+    choose(tab, "interactive")  # the standing mode: nothing to switch
+    assert bridge.calls == []
 
 
 def test_the_switch_posts_and_lands_with_its_effect(qt) -> None:
-    """The switch action (#1042): the picked mode posts through
-    the bridge, one flight gating the button, and the reply —
-    the fresh rules frame with ``applied`` beside it — repaints
-    the posture and names its effect with the reply's fact."""
+    """The pick's own action (#1042): the picked mode posts through
+    the bridge at once, one flight gating the next pick, and the
+    reply — the fresh rules frame with ``applied`` beside it —
+    repaints the posture and names its effect with the reply's
+    fact."""
     tab, bridge = make_tab(qt)
-    pick_mode(tab, "allow")
-    tab.switch_button.click()
+    choose(tab, "allow")
     assert bridge.calls == [
         (tab.switch_key, "set_egress_mode", ("ws-a", "allow", False))
     ]
     assert tab.note.text() == "switching …"
-    assert not tab.switch_button.isEnabled()  # one flight
+    choose(tab, "static")  # one flight: the pick gates
+    assert len(bridge.calls) == 1
     bridge.succeeded.emit(
         tab.switch_key, {**rules_frame(mode="allow"), "applied": True}
     )
     assert tab.mode_line.text() == "current mode: allow"
     assert tab.pick.currentText() == "allow"
     assert tab.note.text() == "mode allow — in effect now"
-    assert not tab.switch_button.isEnabled()  # the pick followed
-    pick_mode(tab, "static")
-    tab.switch()
+    choose(tab, "static")
     bridge.succeeded.emit(
         tab.switch_key, {**rules_frame(mode="static"), "applied": False}
     )
@@ -221,8 +241,7 @@ def test_a_reply_without_a_mode_names_the_sent_one(qt) -> None:
     no mode — no route shape, only the tab's own tolerance —
     names the mode the operator picked."""
     tab, bridge = make_tab(qt)
-    pick_mode(tab, "allow")
-    tab.switch()
+    choose(tab, "allow")
     bridge.succeeded.emit(tab.switch_key, {"applied": True})
     assert tab.note.text() == "mode allow — in effect now"
 
@@ -235,13 +254,12 @@ def test_the_empty_static_pick_asks_before_it_sends(qt, monkeypatch) -> None:
     frame = rules_frame(mode="allow", allow_list=(), allowed=())
     tab, bridge = make_tab(qt)
     bridge.succeeded.emit(tab.list_key, frame)
-    pick_mode(tab, "static")
     asks = fake_confirm(monkeypatch, False)
-    tab.switch()
+    choose(tab, "static")
     assert asks == [(tab, "Switch to static", EMPTY_STATIC_QUESTION)]
     assert bridge.calls == []  # the No decided nothing
     asks = fake_confirm(monkeypatch, True)
-    tab.switch()  # the pick still holds static
+    choose(tab, "static")  # the pick still holds static
     assert bridge.calls == [
         (tab.switch_key, "set_egress_mode", ("ws-a", "static", True))
     ]
@@ -258,8 +276,7 @@ def test_the_routes_refusal_asks_and_a_yes_resends_confirmed(
     No keeps the standing mode, and neither reads as a raw
     error."""
     tab, bridge = make_tab(qt)  # the read holds an allowed verdict
-    pick_mode(tab, "static")
-    tab.switch()
+    choose(tab, "static")
     assert bridge.calls[-1] == (
         tab.switch_key,
         "set_egress_mode",
@@ -285,13 +302,12 @@ def test_a_plain_refusal_names_itself(qt) -> None:
     the whole message lands on the note line, the pick returns to
     the standing mode, and the switcher stands ready."""
     tab, bridge = make_tab(qt)
-    pick_mode(tab, "allow")
-    tab.switch()
+    choose(tab, "allow")
     bridge.failed.emit(tab.switch_key, "egress_mode must be one of …")
     assert tab.note.text() == "refused: egress_mode must be one of …"
     assert tab.pick.currentText() == "interactive"
-    pick_mode(tab, "allow")  # the switcher stands ready
-    assert tab.switch_button.isEnabled()
+    choose(tab, "allow")  # the switcher stands ready
+    assert len(bridge.calls) == 2
 
 
 def test_a_pushed_rules_frame_repaints(qt) -> None:
@@ -323,11 +339,11 @@ def test_a_pushed_frame_under_a_pending_switch_keeps_the_pick(qt) -> None:
     holds the sent mode — the answer repaints, and a frame the
     page raced cannot un-pick the operator's send."""
     tab, bridge = make_tab(qt)
-    pick_mode(tab, "allow")
-    tab.switch()
+    choose(tab, "allow")
     tab.push({"event": "egress.rules", "data": rules_frame(mode="allow")})
     assert tab.pick.currentText() == "allow"
-    assert not tab.switch_button.isEnabled()  # the flight holds the gate
+    choose(tab, "interactive")  # the flight holds the gate
+    assert len(bridge.calls) == 1
     bridge.succeeded.emit(
         tab.switch_key, {**rules_frame(mode="allow"), "applied": True}
     )
@@ -353,15 +369,17 @@ def test_a_read_refusal_stands_the_posture_for_the_next_poke(
 def test_a_malformed_answer_blanks_the_posture(qt) -> None:
     """An answer that is not a frame (#1042): the posture blanks
     — the tab's own tolerance, the daemon's shape never sending
-    one — and the switcher stays gated until a real read lands."""
+    one — and the pick decides nothing until a real read lands."""
     tab, bridge = make_tab(qt)
     tab.poke()
     bridge.succeeded.emit(tab.list_key, "not a frame")
     assert tab.mode_line.text() == "current mode: —"
     assert tab.pick.currentText() == "allow"  # the blank reset
-    assert not tab.switch_button.isEnabled()  # no posture, no switch
+    choose(tab, "static")  # no posture: the pick decides nothing
+    assert not [c for c in bridge.calls if c[1] == "set_egress_mode"]
     bridge.succeeded.emit(tab.list_key, rules_frame())
-    assert not tab.switch_button.isEnabled()  # pick == mode again
+    choose(tab, "allow")  # a read stands: the pick switches
+    assert [c[1] for c in bridge.calls if c[1] == "set_egress_mode"]
 
 
 def test_a_workspace_switch_cancels_and_blanks(qt) -> None:
@@ -372,13 +390,13 @@ def test_a_workspace_switch_cancels_and_blanks(qt) -> None:
     tab, bridge = make_tab(qt)
     tab.poke()  # a read the switch cancels mid-flight
     stale_read = tab.list_key
-    pick_mode(tab, "allow")
-    tab.switch()
+    choose(tab, "allow")
     stale_switch = tab.switch_key
     tab.host("ws-b")
     assert tab.mode_line.text() == "current mode: —"
     assert tab.note.text() == ""
-    assert not tab.switch_button.isEnabled()  # nothing landed for ws-b
+    choose(tab, "static")  # nothing landed for ws-b: no switch
+    assert len(bridge.calls) == 2  # ws-a's stale read and switch only
     bridge.succeeded.emit(stale_read, rules_frame(mode="allow"))
     bridge.failed.emit(stale_switch, "refused")
     assert tab.mode_line.text() == "current mode: —"
@@ -414,14 +432,13 @@ def test_a_done_flight_and_a_rehosted_workspace(qt) -> None:
 
 def test_a_poke_before_a_host_flies_nothing(qt) -> None:
     """The unhosted tab (#1042): no workspace stands, and the
-    poke and the send both guard — the page hosts before it
-    pokes, and a direct call under no workspace sends nothing."""
+    poke and the pick both guard — the page hosts before it
+    pokes, and a pick under no workspace sends nothing."""
     bridge = StubBridge()
     tab = egress_mod.EgressTab(bridge)
     qt.keep.append(tab)
     tab.poke()
-    pick_mode(tab, "static")
-    tab.switch()
+    choose(tab, "static")
     assert bridge.calls == []
     tab.poke()  # the pending flag never stood: still nothing
     assert bridge.calls == []
@@ -429,17 +446,15 @@ def test_a_poke_before_a_host_flies_nothing(qt) -> None:
 
 def test_one_switch_at_a_time(qt) -> None:
     """One flight at a time (#1042): a switch already out gates
-    the next send — the listing's own rule, so a late reply
+    the next pick — the listing's own rule, so a late reply
     cannot answer a second send."""
     tab, bridge = make_tab(qt)
-    pick_mode(tab, "allow")
-    tab.switch()
+    choose(tab, "allow")
     key = tab.switch_key
-    pick_mode(tab, "static")
-    tab.switch()  # gated: nothing sent
+    choose(tab, "static")  # gated: nothing sent
     assert len(bridge.calls) == 1
     bridge.succeeded.emit(key, {**rules_frame(mode="allow"), "applied": True})
-    tab.switch()  # the pick names the standing mode now: nothing
+    choose(tab, "allow")  # the pick names the standing mode now: nothing
     assert len(bridge.calls) == 1
 
 
