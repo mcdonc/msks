@@ -13,7 +13,7 @@ shape)."""
 import importlib.util
 import os
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -289,26 +289,28 @@ def test_the_audit_rows_carry_their_dates_and_the_marker_tip(
     qt, monkeypatch
 ) -> None:
     """The audit group's own columns (#1064): a row from the
-    run's own day keeps the clock alone in its TIME cell, a row
-    from an earlier day carries its date beside the clock —
-    and the ``!`` header carries the sighting's tooltip, the
-    TUI note line's own words."""
-    today = datetime.now(UTC).isoformat()
+    pinned clock's own day keeps the clock alone in its TIME
+    cell, a row from an earlier day carries its date beside
+    the clock — and the ``!`` header carries the sighting's
+    tooltip, the marker's meaning and where it fires."""
+    pinned = NOW + timedelta(days=3)
     tab, window, _bridge = make_tab(qt, monkeypatch)
+    pin_clock(monkeypatch, pinned)
     tab.on_succeeded(
         secrets_mod.PAGE_KEY,
         page_answer(
             audit=[
                 recorded(3, "revoke"),
-                recorded(4, "mint", created_at=today),
+                recorded(4, "mint", created_at=pinned.isoformat()),
             ]
         ),
     )
-    cells_by_time = {row[2]: row[1] for row in rows_texts(tab.audit_table)}
-    assert cells_by_time["mint"] == time.strftime(
-        "%H:%M:%S", time.localtime(secretrows_mod.audit_stamp_epoch(today))
+    cells_by_kind = {row[2]: row[1] for row in rows_texts(tab.audit_table)}
+    assert cells_by_kind["mint"] == time.strftime(
+        "%H:%M:%S",
+        time.localtime(secretrows_mod.audit_stamp_epoch(pinned.isoformat())),
     )
-    assert cells_by_time["revoke"] == time.strftime(
+    assert cells_by_kind["revoke"] == time.strftime(
         "%Y-%m-%d %H:%M:%S",
         time.localtime(
             secretrows_mod.audit_stamp_epoch("2030-01-02T03:04:05")

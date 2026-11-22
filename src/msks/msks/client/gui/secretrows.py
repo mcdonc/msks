@@ -88,14 +88,13 @@ class SecretRow:
 class AuditRow:
     """One recorded audit row as the audit view renders it
     (#965, over #390): the marker (``!`` on a sighting — the
-    exfiltration signal, the row kind the view highlights), the
-    local wall-clock label beside its epoch (the sort key — a
-    row from an earlier day carries its date beside the clock
-    (#1064), an undated row keeps a blank column and sorts
-    undated), the
-    kind, the workspace/name identity, the destination text,
-    and the coverage the filters read. Plain data with nothing
-    Qt-bound in it."""
+    exfiltration signal, the row kind the view highlights),
+    the local wall-clock label beside its epoch (the sort
+    key; a row from an earlier day carries its date beside
+    the clock (#1064), and an undated row keeps a blank
+    column and sorts undated), the kind, the workspace/name
+    identity, the destination text, and the coverage the
+    filters read. Plain data with nothing Qt-bound in it."""
 
     audit_id: int | None
     kind: str

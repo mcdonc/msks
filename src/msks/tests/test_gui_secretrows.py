@@ -302,13 +302,19 @@ def test_the_audit_rows_build_newest_first() -> None:
     assert [model.audit_id for model in models] == [2, 3, 1, 4]
 
 
-def test_one_audit_row_carries_what_the_widget_renders() -> None:
+def test_one_audit_row_carries_what_the_widget_renders(
+    monkeypatch,
+) -> None:
     """One audit model's fields (#965): the sighting's ``!''
     marker beside every other kind's blank, the local wall-clock
     label (blank on a row that carries no parsable stamp), the
     workspace/name identity — ``*`` on the daemon-wide row, the
     first covered id on a scoped one — the mint's allowlist
-    after the arrow, and the coverage the filters read."""
+    after the arrow, and the coverage the filters read. The
+    clock is pinned three days past the stamp (#1064), so the
+    label's dated spelling lands deterministically on every
+    host."""
+    monkeypatch.setattr(ages_mod, "clock_now", lambda: NOW + timedelta(days=3))
     mint = gui_secrets.audit_row(
         recorded(
             5,
@@ -380,18 +386,19 @@ def test_the_audit_time_labels_the_epoch() -> None:
     """The audit row's time label (#1064): the local clock
     alone on a row from the viewer's own day, the date beside
     the clock on a row from an earlier day; an undated row
-    keeps its blank column."""
+    keeps its blank column. The pinned ``now`` values sit on
+    the stamp's own day and three days past it, so both
+    spellings land deterministically on every host."""
     assert gui_secrets.audit_time(0.0) == ""
     assert gui_secrets.audit_time(-1.0) == ""
-    assert gui_secrets.audit_time(NAIVE_EPOCH) == time.strftime(
-        "%Y-%m-%d %H:%M:%S", time.localtime(NAIVE_EPOCH)
-    )
-    assert gui_secrets.audit_time(NAIVE_EPOCH, now=NAIVE_EPOCH) == (
+    same_day = datetime.fromtimestamp(NAIVE_EPOCH).astimezone()
+    assert gui_secrets.audit_time(NAIVE_EPOCH, now=same_day) == (
         time.strftime("%H:%M:%S", time.localtime(NAIVE_EPOCH))
     )
-    assert gui_secrets.audit_time(
-        NAIVE_EPOCH, now=NAIVE_EPOCH + 2 * 86400
-    ) == time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(NAIVE_EPOCH))
+    later = same_day + timedelta(days=3)
+    assert gui_secrets.audit_time(NAIVE_EPOCH, now=later) == (
+        time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(NAIVE_EPOCH))
+    )
 
 
 def test_the_row_fields_read_their_tuples() -> None:
@@ -490,7 +497,7 @@ def test_the_audit_helpers_match_the_tui_page() -> None:
     for model, event in zip(models, display):
         assert event.kind == model.kind
         assert tui_events.event_line(event) == (
-            f"{model.marker} {model.when:>8}  {model.kind:<8}"
+            f"{model.marker} {model.when:>19}  {model.kind:<8}"
             f"  {escape(model.who)}{escape(model.dest)}"
         )
 

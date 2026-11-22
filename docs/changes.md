@@ -457,7 +457,7 @@ gui`. The nix package keeps the daemon's closure lean, so on
   show the local clock for a row from the viewer's own day,
   and carry the date beside the clock for a row from an
   earlier day. The GUI's `!` column header carries a tooltip
-  explaining the sighting marker, in the TUI's own words.
+  naming the sighting marker and where the marker appears.
 
 - **The GUI's menu bar on macOS names the client msks
   (#1043).** The bold application menu read the process name —

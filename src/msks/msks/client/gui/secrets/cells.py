@@ -65,12 +65,16 @@ AUDIT_COLUMNS = ("!", "TIME", "KIND", "PLACEHOLDER", "DEST")
 MARKER_COLUMN = 0
 
 #: The audit marker header's tooltip (#1064): the ``!``
-#: column's meaning in the TUI's own words — the note line the
-#: TUI draws above its rows, landed where the column itself
-#: stands.
+#: column's meaning in the TUI's own words, and where the
+#: marker fires — the daemon's recorded rows are the four
+#: lifecycle kinds, so this table's marker column stays blank
+#: and the sighting reaches the TUI's audit view live.
 MARKER_TIP = (
     "! marks a sighting: a placeholder token reached a host "
-    "its mint did not allow — the exfiltration signal."
+    "its mint did not allow — the exfiltration signal. "
+    "Sightings stream live to the TUI's audit view; the "
+    "recorded rows this table lists are mint, revoke, expiry, "
+    "and unlock only."
 )
 
 

@@ -140,15 +140,18 @@ def test_event_time_labels() -> None:
     """A dated event renders its local clock, and an event from
     an earlier day carries its date beside the clock (#1064) —
     the replayed rows span days; an undated one (an older
-    daemon) keeps a blank column."""
+    daemon) keeps a blank column. The pinned ``now`` is the
+    label's own seam, so both spellings land deterministically
+    on every host."""
     assert event_time(0.0) == ""
     assert event_time(1_700_000_000.0) != ""
-    stamp = 1_700_000_000.0
-    assert event_time(stamp, now=stamp) == time.strftime(
-        "%H:%M:%S", time.localtime(stamp)
+    pinned = datetime(2030, 1, 5, 12, 0, 0).astimezone()
+    assert event_time(1_700_000_000.0, now=pinned) == time.strftime(
+        "%Y-%m-%d %H:%M:%S", time.localtime(1_700_000_000.0)
     )
-    assert event_time(stamp, now=stamp + 3 * 86400) == time.strftime(
-        "%Y-%m-%d %H:%M:%S", time.localtime(stamp)
+    same_day = datetime.fromtimestamp(1_700_000_000.0).astimezone()
+    assert event_time(1_700_000_000.0, now=same_day) == time.strftime(
+        "%H:%M:%S", time.localtime(1_700_000_000.0)
     )
 
 

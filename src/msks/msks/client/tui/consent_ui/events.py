@@ -6,6 +6,8 @@ the order it draws them.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from rich.markup import escape
 from textual.widgets import ListItem, Static
 
@@ -13,7 +15,7 @@ from ...ages import clock_label
 from ..consent import SecretEvent
 
 
-def event_time(ts: float, now: float | None = None) -> str:
+def event_time(ts: float, now: datetime | None = None) -> str:
     """The event's local wall-clock label (#1064): the clock
     alone on a row from the viewer's own day, the date beside
     the clock on a row from an earlier day — the shared leaf's
@@ -39,10 +41,12 @@ def event_line(event: SecretEvent) -> str:
     the placeholder's row id (the durable handle for correlating
     the audit view once the row retires), and the destination.
     ``!`` marks the off-allowlist sighting — the exfil signal, the
-    one row kind the screen also highlights."""
+    one row kind the screen also highlights. The time cell pads
+    to the dated spelling's width (#1064), so a dated row and a
+    clock-only one keep the kind column aligned beside them."""
     marker = "!" if event.kind == "sighting" else " "
     return (
-        f"{marker} {event_time(event.ts):>8}  {event.kind:<8}"
+        f"{marker} {event_time(event.ts):>19}  {event.kind:<8}"
         f"  {escape(event.workspace_id)}/{escape(event.name)}"
         f"{event_id_suffix(event)}"
         f"{event_dest(event)}"

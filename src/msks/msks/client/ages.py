@@ -1,13 +1,15 @@
-"""The relative created labels over daemon stamps (#350, #939):
-the pinned bucketing ladder both clients' listings render — the
-TUI's CREATED column and the GUI's presenter — over whole
-calendar days between the stamp and the clock, with the clock
-seam the tests pin. Pure datetime arithmetic: no widgets, no
-daemon imports, nothing Qt- or Textual-bound, so either client
-imports it without loading the other's framework.
+"""The relative created labels and the audit clock labels over
+daemon stamps (#350, #939, #1064): the pinned bucketing
+ladder both clients' listings render — the TUI's CREATED
+column and the GUI's presenter — over whole calendar days
+between the stamp and the clock, and the audit rows'
+day-aware wall-clock spelling both audit views render. With
+the clock seam the tests pin. Pure datetime arithmetic: no
+widgets, no daemon imports, nothing Qt- or Textual-bound, so
+either client imports it without loading the other's
+framework.
 """
 
-import time
 from datetime import UTC, datetime
 
 
@@ -44,24 +46,22 @@ def age_label(days: int) -> str:
     return f"{days // 365}y ago"
 
 
-def clock_label(ts: float, now: float | None = None) -> str:
+def clock_label(ts: float, now: datetime | None = None) -> str:
     """The audit rows' local wall-clock label (#1064): the
     clock alone on a row from the viewer's own calendar day,
     the date beside the clock on a row from an earlier day —
     the replayed audit rows span days, and a same-hour label
     from a past day would read as today's. An undated row (a
     stamp that does not parse) keeps its blank column. The
-    caller's ``now`` is the tests' seam; the label itself is
-    pure."""
+    caller's ``now`` is the tests' seam (the created labels'
+    own :func:`clock_now`); the label itself is pure."""
     if ts <= 0.0:
         return ""
     moment = datetime.fromtimestamp(ts).astimezone()
-    current = datetime.fromtimestamp(
-        now if now is not None else time.time()
-    ).astimezone()
-    if moment.date() == current.date():
-        return moment.strftime("%H:%M:%S")
-    return moment.strftime("%Y-%m-%d %H:%M:%S")
+    current = clock_now() if now is None else now
+    if moment.date() != current.date():
+        return moment.strftime("%Y-%m-%d %H:%M:%S")
+    return moment.strftime("%H:%M:%S")
 
 
 def parse_stamp(created_at: str) -> datetime:
