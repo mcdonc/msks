@@ -9,6 +9,7 @@ import plistlib
 import stat
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,33 @@ class FakeRunner:
         return subprocess.CompletedProcess(command, self.returncode)
 
 
+def test_the_python_path_carries_both_roots() -> None:
+    """The wrapper's baked import path (#1053 review): the
+    package's own root first (an editable install keeps the
+    package there, and a PYTHONPATH entry runs no ``.pth``
+    hooks), the interpreter's site-packages second — and the
+    two collapse to one word when a wheel install makes them
+    the same directory."""
+    import sysconfig
+
+    path = appbundle.python_path()
+    site = sysconfig.get_paths()["purelib"]
+    assert site in path
+    root = str(Path(appbundle.__file__).resolve().parents[3])
+    assert path.startswith(root)
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(
+        appbundle.sysconfig,
+        "get_paths",
+        lambda *args, **kwargs: {"purelib": root},
+    )
+    try:
+        assert appbundle.python_path() == root
+    finally:
+        monkey.undo()
+
+
 def test_the_plist_names_the_client() -> None:
     """The bundle's own naming (#1048): the name pair the menu
     bar, Dock, and switcher read, the wrapper and icon the
@@ -49,17 +77,25 @@ def test_the_plist_names_the_client() -> None:
 
 def test_the_wrapper_quotes_whatever_the_path_holds() -> None:
     """The launch line (#1048): the interpreter beside the
-    wrapper carries the bundle's own path, and the script it
-    runs rides one single-quoted word — a path with spaces or
-    an apostrophe arrives whole, and ``gui`` rides with the
-    caller's own arguments."""
-    plain = appbundle.wrapper_text(Path("/venv/bin/msks"))
+    wrapper carries the bundle's own path, the install's
+    site-packages ride along as a baked PYTHONPATH (the
+    symlinked interpreter resolves its prefix from the base
+    build, so the venv never loads without it — #1053 review),
+    and the script it runs rides one single-quoted word: a
+    path with spaces or an apostrophe arrives whole, and
+    ``gui`` rides with the caller's own arguments."""
+    plain = appbundle.wrapper_text(
+        Path("/venv/bin/msks"), "/venv/lib/site-packages"
+    )
     assert plain == (
         "#!/bin/sh\n"
+        "export PYTHONPATH='/venv/lib/site-packages'\n"
         'exec "$(dirname "$0")/python" '
         "'/venv/bin/msks' gui \"$@\"\n"
     )
-    messy = appbundle.wrapper_text(Path("/My Ops/chrism's bin/msks"))
+    messy = appbundle.wrapper_text(
+        Path("/My Ops/chrism's bin/msks"), "/My Ops/site packages"
+    )
     assert "\\'" in messy  # the apostrophe closes, escapes, reopens
     assert 'gui "$@"' in messy
 
@@ -84,17 +120,18 @@ def test_the_icon_takes_the_icns_the_platform_builds(tmp_path: Path) -> None:
 
 
 def test_the_icon_falls_back_to_the_png_it_ships(
-    tmp_path: Path,
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """An iconutil that answers red, is missing, or dies
     (#1048) leaves the bundle iconful anyway: the largest
-    shipped render lands beside the wrapper, and the plist
-    points at that."""
+    shipped render lands beside the wrapper, the plist points
+    at that, and the downgrade names itself on stderr."""
     red = FakeRunner(1)
     assert appbundle.write_icon(tmp_path, red) == "msks.png"
     assert (tmp_path / "msks.png").is_file()
     assert not (tmp_path / "msks.icns").exists()
     assert red.calls[0][:3] == ["iconutil", "-c", "icns"]
+    assert "iconutil did not answer" in capsys.readouterr().err
 
     def absent(command, **kwargs):
         raise FileNotFoundError("no iconutil")
@@ -102,6 +139,7 @@ def test_the_icon_falls_back_to_the_png_it_ships(
     tmp_path.joinpath("msks.png").unlink()
     assert appbundle.write_icon(tmp_path, absent) == "msks.png"
     assert (tmp_path / "msks.png").is_file()
+    assert "iconutil is missing" in capsys.readouterr().err
 
 
 def test_the_bundle_lands_idempotently(tmp_path: Path) -> None:
@@ -121,18 +159,32 @@ def test_the_bundle_lands_idempotently(tmp_path: Path) -> None:
     )
     exe = bundle / "Contents" / "MacOS" / appbundle.EXEC_NAME
     assert exe.stat().st_mode & stat.S_IXUSR
-    assert str(script) in exe.read_text()
+    wrapper = exe.read_text()
+    assert str(script) in wrapper
+    # The import half rides baked: the interpreter's own
+    # site-packages, and the editable install's source root
+    # ahead of it when the two differ.
+    assert str(Path(sysconfig.get_paths()["purelib"])) in wrapper
     link = bundle / "Contents" / "MacOS" / appbundle.PY_NAME
     assert link.is_symlink() and link.resolve() == python.resolve()
     plist = plistlib.loads((bundle / "Contents" / "Info.plist").read_bytes())
     assert plist["CFBundleIdentifier"] == appbundle.IDENTIFIER
+    assert plist["CFBundleVersion"] == appbundle.numeric_version()
+    assert plist["CFBundleShortVersionString"]
     assert plist["CFBundleIconFile"] == "msks.icns"
 
     moved = tmp_path / "venv-b" / "bin" / "python3.14"
     moved.parent.mkdir(parents=True)
     moved.write_text("")
-    appbundle.install_bundle(apps, moved, script, runner=FakeRunner(0))
+    # The re-run falls to the PNG arm: the stale icns goes with
+    # it, and the plist points at the PNG the arm landed.
+    appbundle.install_bundle(apps, moved, script, runner=FakeRunner(1))
     assert link.resolve() == moved.resolve()
+    resources = bundle / "Contents" / "Resources"
+    assert not (resources / "msks.icns").exists()
+    assert (resources / "msks.png").is_file()
+    plist = plistlib.loads((bundle / "Contents" / "Info.plist").read_bytes())
+    assert plist["CFBundleIconFile"] == "msks.png"
 
 
 def test_the_run_installs_under_the_home(

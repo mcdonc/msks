@@ -1912,11 +1912,20 @@ def test_the_app_bundle_stands_down_alone(
 ) -> None:
     """A deployment whose bin dir ships no msks beside the
     tool (#1048) skips the bundle with the note — the links'
-    own stand-down shape."""
+    own stand-down shape — and a run with no interpreter path
+    to name says so with its own."""
     patch_phase(monkeypatch, "client_sibling", lambda command: None)
     assert mac.ensure_app_bundle() == (
         "the application bundle: skipped, no msks beside "
         "the tool (the deployment's GUI lives elsewhere)"
+    )
+    sibling = client_tree / "sibling"
+    sibling.write_text("#!/bin/sh\n")
+    patch_phase(monkeypatch, "client_sibling", lambda command: str(sibling))
+    monkeypatch.setattr(mac.sys, "executable", "")
+    assert mac.ensure_app_bundle() == (
+        "the application bundle: skipped, no interpreter "
+        "this tool runs on names itself"
     )
 
 
@@ -1939,16 +1948,29 @@ def test_the_app_bundle_sweep_proves_the_bundle(
     monkeypatch: pytest.MonkeyPatch, client_tree: Path
 ) -> None:
     """The uninstall's bundle arm (#1048): an absent bundle
-    says so, a foreign one an operator planted stays, and the
-    tool's own — proven by its identifier — goes."""
+    says so, a bundle whose plist will not read stays named,
+    a foreign one an operator planted stays, and the tool's
+    own — proven by its identifier — goes."""
     import plistlib
 
-    assert mac.remove_app_bundle() == (
-        "no application bundle of this tool's stands"
-    )
+    assert mac.remove_app_bundle() == "no application bundle stands"
     bundle = client_tree / "Applications" / appbundle.BUNDLE_DIR
     contents = bundle / "Contents"
     contents.mkdir(parents=True)
+    (contents / "Info.plist").write_bytes(b"\x00garbage")
+    assert mac.remove_app_bundle() == (
+        f"the application bundle at {bundle} stays: its Info.plist "
+        "will not read"
+    )
+    # A plist the filesystem itself will not serve (a
+    # directory squatting on the name) reads the same stay.
+    (contents / "Info.plist").unlink()
+    (contents / "Info.plist").mkdir()
+    assert mac.remove_app_bundle() == (
+        f"the application bundle at {bundle} stays: its Info.plist "
+        "will not read"
+    )
+    (contents / "Info.plist").rmdir()
     (contents / "Info.plist").write_bytes(
         plistlib.dumps({"CFBundleIdentifier": "someone.elses.app"})
     )
@@ -1959,6 +1981,24 @@ def test_the_app_bundle_sweep_proves_the_bundle(
     mac.ensure_app_bundle()
     assert mac.remove_app_bundle() == "the application bundle is gone"
     assert not bundle.exists()
+
+
+def test_the_app_bundle_sweep_names_a_refused_removal(
+    monkeypatch: pytest.MonkeyPatch, client_tree: Path
+) -> None:
+    """A removal the filesystem refuses (#1048) says so — the
+    sweep never claims a bundle gone that still stands."""
+    mac.ensure_app_bundle()
+
+    def refused(path, *args, **kwargs):
+        raise OSError("permission denied")
+
+    import types
+
+    patch_phase(monkeypatch, "shutil", types.SimpleNamespace(rmtree=refused))
+    assert mac.remove_app_bundle() == (
+        "the application bundle did not leave: permission denied"
+    )
 
 
 def test_a_foreign_thing_at_the_client_link_refuses(

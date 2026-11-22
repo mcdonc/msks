@@ -1487,15 +1487,15 @@ On macOS the command installs the application bundle at
 `~/Applications/msks.app` instead (#1048). The bundle carries the
 client's name and icon, and the Dock, Launchpad, Spotlight, and the
 menu bar's application menu read them from the bundle. A launch from
-a terminal (`msks gui`) stays an unbundled process, and macOS names
-it after the interpreter — the platform's own rule for terminal
-processes; the bundle is the launch surface the desktop names. Run
+a terminal (`msks gui`) stays an unbundled process. macOS names it
+after the interpreter, the platform's own rule for terminal
+processes. The bundle is the launch surface the desktop names. Run
 the command again after an upgrade: it re-points the bundle at the
 install that ran it.
 
 The window itself also sets the icon directly, so the window carries
 it without the install on every desktop. A desktop other than Linux
-and macOS hears one line and exit 1.
+and macOS hears one line and exits 1.
 
 ## Errors, exit codes, and timeouts
 

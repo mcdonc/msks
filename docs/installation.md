@@ -319,7 +319,7 @@ The run links the client's commands into the brew prefix's bin: `msks` and
 `msks-term-popup`. It also plants the GUI's application bundle at
 `~/Applications/msks.app` (#1048). The Dock, Launchpad, Spotlight, and the
 menu bar's application menu read the client's name and icon from that
-bundle. `msks-setup-macos-host --uninstall` removes the bundle again; a
+bundle. `msks-setup-macos-host --uninstall` removes the bundle again. A
 bundle at that path whose identifier is not the tool's own stays put.
 
 The msksd VM that `msks-setup-macos-host` creates from the shipped Lima

@@ -219,9 +219,10 @@ def run() -> int:
     home, and a desktop outside both hears it has no part in
     this."""
     if sys.platform == "darwin":
-        # allow-deferred-import — the bundle arm (#1048) reads
-        # this module's icon assets, so the import waits for
-        # the arm's own call instead of cycling at parse time.
+        # allow-deferred-import — the bundle arm is darwin's
+        # alone: keeping the import inside the arm leaves the
+        # module off every other platform's parse path, and no
+        # Linux call site pays for a module it cannot use.
         from .appbundle import run as run_bundle
 
         return run_bundle()

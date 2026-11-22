@@ -181,10 +181,10 @@ def gui() -> int:
 @app.command("gui-shortcut")
 @one_line_interrupts
 def gui_shortcut() -> int:
-    """Install the GUI's desktop shortcut (#1021): the window's
-    icon and launcher entry under the XDG data home, so the
-    taskbar shows the msks icon and the desktop's menus find
-    the client."""
+    """Install the GUI's desktop shortcut (#1021, #1048): the
+    desktop entry and taskbar icon under the XDG data home on
+    Linux, the msks.app bundle under ~/Applications on macOS —
+    the launch surface the Dock and menu bar name there."""
     return run_shortcut()
 
 

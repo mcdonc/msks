@@ -18,10 +18,12 @@ shipped icon assets, and installs idempotently: a re-run
 overwrites the wrapper, re-points the interpreter symlink at
 the install that ran it, and rebuilds the icon."""
 
+import os
 import plistlib
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tempfile
 from pathlib import Path
 
@@ -70,24 +72,54 @@ NOT_BESIDE = (
 )
 
 
+def python_path() -> str:
+    """The wrapper's baked PYTHONPATH (#1048 review): the
+    interpreter symlink the bundle execs resolves its prefix
+    from the base build it points at, so the install's own
+    modules ride along explicitly. The package's import root
+    goes first — an editable dev install keeps the package in
+    the source tree, and a PYTHONPATH entry runs no ``.pth``
+    hooks — and the interpreter's site-packages rides second:
+    a wheel install's two roots are the same directory, and
+    the dependencies ride with either."""
+    root = Path(__file__).resolve().parents[3]
+    site = Path(sysconfig.get_paths()["purelib"])
+    if root == site:
+        return str(site)
+    return f"{root}{os.pathsep}{site}"
+
+
 def shell_quote(value: str) -> str:
     """One POSIX single-quoted word: a path the wrapper's own
     double-quoted ``exec`` line can carry whatever it holds."""
     return "'" + value.replace("'", "'\\''") + "'"
 
 
-def wrapper_text(script: Path) -> str:
-    """The bundle's executable (#1048): a two-line shell wrapper
-    that runs the install's own ``msks gui`` under the
-    interpreter symlink beside it. The symlink is the whole
-    trick — exec'ing a path inside ``Contents/MacOS`` keeps the
+def wrapper_text(script: Path, pythonpath: str) -> str:
+    """The bundle's executable (#1048): a shell wrapper that
+    runs the install's own ``msks gui`` under the interpreter
+    symlink beside it. The symlink is the naming half —
+    exec'ing a path inside ``Contents/MacOS`` keeps the
     process AppKit resolves inside the bundle, so the name and
-    icon read from this bundle's ``Info.plist``."""
+    icon read from this bundle's ``Info.plist``. The baked
+    PYTHONPATH is the import half — the symlinked interpreter
+    resolves its prefix from the base build it points at, so
+    the site-packages the install carries ride along
+    explicitly."""
     return (
         "#!/bin/sh\n"
+        f"export PYTHONPATH={shell_quote(pythonpath)}\n"
         'exec "$(dirname "$0")/python" '
         f'{shell_quote(str(script))} gui "$@"\n'
     )
+
+
+def numeric_version() -> str:
+    """The version word's numeric prefix (#1048 review):
+    LaunchServices wants ``CFBundleVersion`` numeric, so the
+    dev markers between releases drop there; the full word
+    stays in the short-version string beside it."""
+    return ".".join(part for part in __version__.split(".") if part.isdigit())
 
 
 def info_plist(icon_file: str) -> dict:
@@ -99,7 +131,7 @@ def info_plist(icon_file: str) -> dict:
         "CFBundleName": "msks",
         "CFBundleDisplayName": "msks",
         "CFBundleIdentifier": IDENTIFIER,
-        "CFBundleVersion": __version__,
+        "CFBundleVersion": numeric_version(),
         "CFBundleShortVersionString": __version__,
         "CFBundlePackageType": "APPL",
         "CFBundleExecutable": EXEC_NAME,
@@ -110,10 +142,12 @@ def info_plist(icon_file: str) -> dict:
 
 def write_icon(resources: Path, runner) -> str:
     """The bundle's icon (#1048): an icns built from the
-    shipped renders through the platform's own iconutil, or the
-    largest PNG copied beside it when iconutil will not answer.
-    The answer names the file the plist points at."""
-    iconset = Path(tempfile.mkdtemp(prefix="msks-iconset-"))
+    shipped renders through the platform's own iconutil, or
+    the largest PNG copied beside it when iconutil will not
+    answer — the downgrade names itself on stderr, an
+    absorbed failure the operator hears. The answer names the
+    file the plist points at."""
+    iconset = Path(tempfile.mkdtemp(prefix="msks-", suffix=".iconset"))
     try:
         for name, size in ICONSET_SIZES:
             render = icon_dir() / "hicolor" / size / "apps" / "msks.png"
@@ -132,8 +166,19 @@ def write_icon(resources: Path, runner) -> str:
         )
         if done.returncode == 0 and (resources / "msks.icns").exists():
             return "msks.icns"
+        print(
+            "msks: iconutil did not answer; the bundle carries "
+            "the shipped PNG icon",
+            file=sys.stderr,
+        )
     except FileNotFoundError, subprocess.SubprocessError, OSError:
-        pass
+        print(
+            "msks: iconutil is missing; the bundle carries the "
+            "shipped PNG icon",
+            file=sys.stderr,
+        )
+    finally:
+        shutil.rmtree(iconset, ignore_errors=True)
     shutil.copyfile(
         icon_dir() / "hicolor" / FALLBACK_ICON_SIZE / "apps" / "msks.png",
         resources / "msks.png",
@@ -155,12 +200,20 @@ def install_bundle(
     macos.mkdir(parents=True, exist_ok=True)
     resources.mkdir(parents=True, exist_ok=True)
     exe = macos / EXEC_NAME
-    exe.write_text(wrapper_text(script))
+    exe.write_text(wrapper_text(script, python_path()))
     exe.chmod(0o755)
     py_link = macos / PY_NAME
     if py_link.is_symlink() or py_link.exists():
         py_link.unlink()
     py_link.symlink_to(python)
+    # The icon arms sweep each other (#1048 review): a re-run
+    # after an arm change leaves no stale icns beside the png
+    # the plist now points at, and a red iconutil's partial
+    # file never reads as the green arm's answer.
+    for stale in ("msks.icns", "msks.png"):
+        icon = resources / stale
+        if icon.exists():
+            icon.unlink()
     icon_file = write_icon(resources, runner)
     (contents / "Info.plist").write_bytes(
         plistlib.dumps(info_plist(icon_file))

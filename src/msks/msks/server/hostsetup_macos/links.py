@@ -168,10 +168,15 @@ def ensure_app_bundle() -> str:
     links' own stand-down shape — and a write the filesystem
     refuses names itself through the tool's own refusal."""
     script = client_sibling(appbundle.EXEC_NAME)
-    if script is None or not sys.executable:
+    if script is None:
         return (
             "the application bundle: skipped, no msks beside "
             "the tool (the deployment's GUI lives elsewhere)"
+        )
+    if not sys.executable:
+        return (
+            "the application bundle: skipped, no interpreter "
+            "this tool runs on names itself"
         )
     try:
         bundle = appbundle.install_bundle(
@@ -187,23 +192,44 @@ def ensure_app_bundle() -> str:
     return f"the application bundle is installed: {bundle}"
 
 
+def read_plist_identifier(bundle: Path) -> tuple[bool, str | None]:
+    """The standing bundle's identifier, with the read's own
+    verdict: ``(False, None)`` when the plist will not read,
+    ``(True, identifier)`` when it does (None when a foreign
+    hand wrote no identifier at all)."""
+    try:
+        planted = plistlib.loads(
+            (bundle / "Contents" / "Info.plist").read_bytes()
+        )
+    except OSError, plistlib.InvalidFileException:
+        return False, None
+    return True, planted.get("CFBundleIdentifier")
+
+
 def remove_app_bundle() -> str:
     """The bundle's sweep (#1048): the tool removes the bundle
-    its own identifier proves — a foreign ``msks.app`` an
+    its own identifier proves. A foreign ``msks.app`` an
     operator planted by hand stays, the uninstall's own
-    no-clobber rule — and an absent bundle says so."""
+    no-clobber rule, and a bundle whose plist will not read
+    says so instead of masquerading as absent."""
     bundle = Path.home() / "Applications" / appbundle.BUNDLE_DIR
-    plist = bundle / "Contents" / "Info.plist"
-    try:
-        planted = plistlib.loads(plist.read_bytes())
-    except OSError, plistlib.InvalidFileException:
-        return "no application bundle of this tool's stands"
-    if planted.get("CFBundleIdentifier") != appbundle.IDENTIFIER:
+    if not bundle.is_dir():
+        return "no application bundle stands"
+    read, planted = read_plist_identifier(bundle)
+    if not read:
         return (
-            "the application bundle at "
-            f"{bundle} is not this tool's (left as-is)"
+            f"the application bundle at {bundle} stays: its "
+            "Info.plist will not read"
         )
-    shutil.rmtree(bundle, ignore_errors=True)
+    if planted != appbundle.IDENTIFIER:
+        return (
+            f"the application bundle at {bundle} is not this "
+            "tool's (left as-is)"
+        )
+    try:
+        shutil.rmtree(bundle)
+    except OSError as exc:
+        return f"the application bundle did not leave: {exc}"
     return "the application bundle is gone"
 
 
