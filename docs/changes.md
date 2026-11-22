@@ -24,6 +24,17 @@ tagged `vX.Y.Z`.
   and a right-click on a row carries a Clone entry. Both ask
   for the new workspace's name in a centered prompt and clone
   through the same route `msks clone` uses.
+- **The Egress tab's audit trail, verdict revoke, and
+  deny-to-allowlist (#1051).** The GUI workspace page's Egress
+  tab lists the workspace's in-effect verdicts and revokes one
+  in place: a question first, then the destination gates again
+  on its next connection. The audit trail fills the tab's right
+  column with the recorded consent rows newest first,
+  filterable by decision. Under `static` mode the recorded
+  NXDOMAIN denials show what to allowlist next. A denial row's
+  Allowlist action adds the denied name to the static allowlist
+  through the egress policy route, the same write the allowlist
+  editor makes.
 - **The Egress tab's static allowlist editor (#1050).** The
   GUI workspace page's Egress tab lists the workspace's static
   allowlist entries and edits them in place: one entry added at

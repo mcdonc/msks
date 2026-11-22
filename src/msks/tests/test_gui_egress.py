@@ -9,8 +9,12 @@ posting the whole new list through the policy route, the
 optimistic row and its restore on a refusal, the route's
 reason for a rejected entry naming itself inline, and the
 empty-static gate's two arms over a write that empties the
-list. The widgets run under the offscreen platform on every
-host.
+list. The audit surface (#1051) beside them: the in-effect
+verdicts the frame carries with their question-gated revoke
+through the revoke route, the deny-to-allowlist ask composing
+through the editor's own write path, and the cadence forwarding
+to the trail. The widgets run under the offscreen platform on
+every host.
 """
 
 import importlib.util
@@ -944,3 +948,309 @@ def test_each_accepted_form_persists_through_the_route(
             {**rules_frame(allow_list=tuple(standing)), "applied": True},
         )
         assert entry_rows(tab) == standing
+
+
+def verdict_texts(tab) -> list[str]:
+    """The verdicts list as a plain list of strings — the rows
+    the operator reads."""
+    return [
+        tab.verdicts.item(row).text() for row in range(tab.verdicts.count())
+    ]
+
+
+def land_audit(tab, bridge, rows) -> None:
+    """The trail's standing read landed — the cadence-forwarding
+    tests' own arm, clearing the pending flag the first poke
+    left."""
+    bridge.succeeded.emit(tab.audit.key, rows)
+
+
+def test_the_read_paints_the_verdicts(qt) -> None:
+    """The verdicts' read (#1051): the frame's in-effect allowed
+    verdicts paint one row each — the destination label with the
+    duration beside it, port 0 reading as all ports and a
+    missing duration as the dash — the empty state's stand-in
+    under none, and a blanked read blanking the list."""
+    tab, _bridge = make_tab(qt)
+    assert verdict_texts(tab) == ["example.com:443 — forever"]
+    assert not tab.verdicts_empty.isVisibleTo(tab)
+    tab.push(
+        {
+            "event": "egress.rules",
+            "data": rules_frame(
+                allowed=(
+                    {
+                        "id": "req-0",
+                        "dest_host": "plain.example",
+                        "dest_port": 0,
+                        "decision": "allowed",
+                        "duration": None,
+                        "decided_at": 1.0,
+                        "decided_by": "token",
+                    },
+                )
+            ),
+        }
+    )
+    assert verdict_texts(tab) == ["plain.example (all ports) — -"]
+    tab.push(
+        {
+            "event": "egress.rules",
+            "data": rules_frame(allowed=()),
+        }
+    )
+    assert verdict_texts(tab) == []
+    assert tab.verdicts_empty.isVisibleTo(tab)
+    tab.take("not a frame")  # the blanked read
+    assert verdict_texts(tab) == []
+
+
+def test_a_verdicts_tick_that_changes_nothing_keeps_the_selection(
+    qt,
+) -> None:
+    """The verdicts' repaint guard (#1051): a frame whose rows
+    the list already shows rebuilds nothing — the selection the
+    Revoke action reads survives the page's ticks — and a frame
+    that changes the rows rebuilds the list, the selection going
+    with it."""
+    tab, _bridge = make_tab(qt)
+    tab.verdicts.setCurrentRow(0)
+    assert tab.revoke_button.isEnabled()
+    tab.take(rules_frame())  # the same rows: the list stands
+    assert tab.verdicts.currentRow() == 0
+    assert tab.revoke_button.isEnabled()
+    tab.take(rules_frame(allowed=()))
+    assert tab.verdicts.currentRow() == -1
+    assert not tab.revoke_button.isEnabled()
+
+
+def test_revoke_asks_then_flies_and_lands(qt, monkeypatch) -> None:
+    """The Revoke action (#1051): the selected verdict's question
+    first — No the default, a no deciding nothing — a yes sending
+    the revoke through its own route, and the landing naming the
+    consequence with both reads flying again — the fresh frame
+    repaints the verdicts and the trail's row flips."""
+    tab, bridge = make_tab(qt)
+    land_audit(tab, bridge, [])
+    bridge.calls.clear()
+    tab.verdicts.setCurrentRow(0)
+    asks = fake_confirm(monkeypatch, False)
+    tab.revoke()
+    question = egress_mod.revoke_question("example.com:443")
+    assert asks == [(tab, "Revoke the verdict", question)]
+    assert bridge.calls == []  # the no decided nothing
+    asks = fake_confirm(monkeypatch, True)
+    tab.revoke()
+    assert bridge.calls == [(tab.revoke_key, "revoke", ("ws-a", "req-1"))]
+    assert tab.note.text() == "revoking …"
+    bridge.succeeded.emit(tab.revoke_key, {"id": "req-1", "revoked": True})
+    assert tab.note.text() == egress_mod.REVOKE_LANDING
+    assert [c[1] for c in bridge.calls if c[1] != "revoke"] == [
+        "egress_rules",
+        "egress_requests",
+    ]
+    tab.push(
+        {
+            "event": "egress.rules",
+            "data": rules_frame(allowed=()),
+        }
+    )
+    assert verdict_texts(tab) == []
+
+
+def test_a_revoke_refusal_names_itself(qt, monkeypatch) -> None:
+    """A revoke the daemon refuses (#1051): the route's own words
+    land on the note line and the row stands — a verdict the
+    daemon no longer holds leaves with the next read."""
+    tab, bridge = make_tab(qt)
+    fake_confirm(monkeypatch, True)
+    tab.verdicts.setCurrentRow(0)
+    tab.revoke()
+    bridge.failed.emit(tab.revoke_key, "no in-effect verdict with that id")
+    assert tab.note.text() == ("refused: no in-effect verdict with that id")
+    assert verdict_texts(tab) == ["example.com:443 — forever"]
+    tab.revoke()  # the flight cleared: the ask flies again
+    assert len(bridge.calls) == 2
+
+
+def test_one_revoke_at_a_time(qt, monkeypatch) -> None:
+    """One revoke flight at a time (#1051): a revoke already out
+    holds the next ask — the question never opens over a flight
+    the operator cannot answer for."""
+    tab, bridge = make_tab(qt)
+    asks = fake_confirm(monkeypatch, True)
+    tab.verdicts.setCurrentRow(0)
+    tab.revoke()
+    tab.revoke()  # the flight gates before the question
+    assert len(asks) == 1
+    assert len(bridge.calls) == 1
+
+
+def test_a_revoke_without_a_selection_decides_nothing(qt) -> None:
+    """The Revoke action's own guard (#1051): no row selected, no
+    question, no flight."""
+    tab, bridge = make_tab(qt)
+    tab.revoke()
+    assert bridge.calls == []
+    assert tab.note.text() == ""
+
+
+def test_a_workspace_switch_cancels_the_revoke_flight(qt, monkeypatch) -> None:
+    """The open's reset over the revoke (#1051): a workspace
+    switch cancels a revoke the old workspace still had out —
+    its answer is not the new workspace's to take — and the
+    stale answer changes nothing."""
+    tab, bridge = make_tab(qt)
+    fake_confirm(monkeypatch, True)
+    tab.verdicts.setCurrentRow(0)
+    tab.revoke()
+    stale = tab.revoke_key
+    tab.host("ws-b")
+    assert tab.note.text() == ""
+    bridge.succeeded.emit(stale, {"id": "req-1", "revoked": True})
+    assert tab.note.text() == ""
+    assert not tab.pending_revoke
+
+
+def test_deny_to_allowlist_composes_the_write(qt) -> None:
+    """The deny-to-allowlist ask (#1051): the denied name joins
+    the working list and the whole new list posts through the
+    policy route with the standing mode — the editor's own write
+    path — the reply naming the write's effect."""
+    tab, bridge = make_tab(qt)
+    tab.audit.allow_wanted.emit("denied.example")
+    assert bridge.calls == [
+        (
+            tab.write_key,
+            "set_egress_mode",
+            ("ws-a", "interactive", False, [".debian.org", "denied.example"]),
+        )
+    ]
+    assert entry_rows(tab) == [".debian.org", "denied.example"]
+    bridge.succeeded.emit(
+        tab.write_key,
+        {
+            **rules_frame(allow_list=(".debian.org", "denied.example")),
+            "applied": True,
+        },
+    )
+    assert tab.note.text() == "allowlist saved — in effect now"
+
+
+def test_deny_to_allowlist_answers_a_duplicate(qt) -> None:
+    """A denied name already listed (#1051): the ask answers
+    itself on the note line — no write flies for a name the
+    list already carries."""
+    tab, bridge = make_tab(qt)
+    tab.audit.allow_wanted.emit(".debian.org")
+    assert tab.note.text() == ".debian.org already on the allowlist"
+    assert bridge.calls == []
+
+
+def test_deny_to_allowlist_under_a_standing_write(qt, monkeypatch) -> None:
+    """The ask under a standing policy flight (#1051): the route
+    is one — a switch or a write already out holds the ask, its
+    answer on the note line, and no second write races the
+    first."""
+    tab, bridge = make_tab(qt)
+    fake_entry_dialog(monkeypatch, "example.com")
+    tab.add()
+    tab.audit.allow_wanted.emit("denied.example")
+    assert tab.note.text() == egress_mod.WRITE_HELD
+    assert len(bridge.calls) == 1  # no second write races the first
+    bridge.succeeded.emit(
+        tab.write_key,
+        {
+            **rules_frame(allow_list=(".debian.org", "example.com")),
+            "applied": True,
+        },
+    )
+    tab.audit.allow_wanted.emit("denied.example")  # a read stands again
+    assert len(bridge.calls) == 2
+
+
+def test_the_tab_forwards_the_cadence_and_the_frames(qt) -> None:
+    """The trail's cadence (#1051): the page's poke flies the
+    trail's read beside the posture's, and a pushed resolved
+    frame — the trail's newest row — flies it again."""
+    tab, bridge = make_tab(qt)
+    land_audit(tab, bridge, [])
+    tab.poke()
+    assert [c[1] for c in bridge.calls if c[1] != "egress_rules"] == [
+        "egress_requests"
+    ]
+    land_audit(tab, bridge, [])
+    tab.push(
+        {
+            "event": "egress.resolved",
+            "data": {"workspace_id": "ws-a", "request_id": "req-2"},
+        }
+    )
+    assert [c[1] for c in bridge.calls if c[1] == "egress_requests"]
+
+
+def test_a_first_read_with_nothing_shows_the_stand_ins(qt) -> None:
+    """The empty stand-ins on the first read (#1051 review): a
+    tab whose first landed frame carries no verdicts and no
+    allowlist entries builds nothing — and both stand-ins still
+    say themselves."""
+    bridge = StubBridge()
+    tab = egress_mod.EgressTab(bridge)
+    window = qt.QtWidgets.QMainWindow()
+    window.setCentralWidget(tab)
+    window.show()
+    qt.keep.append(window)
+    tab.host("ws-a")
+    tab.poke()
+    bridge.succeeded.emit(tab.list_key, rules_frame(allowed=(), allow_list=()))
+    assert verdict_texts(tab) == []
+    assert tab.verdicts_empty.isVisibleTo(tab)
+    assert entry_rows(tab) == []
+    assert tab.empty.isVisibleTo(tab)
+
+
+def test_the_tabs_minimum_fits_the_windows_smallest_save(qt) -> None:
+    """The geometry contract (#1051 review): the window restores
+    a 620-tall saved rect, and the tab's minimum must stay under
+    it — the two columns and the lists' zero minimums are the
+    shape that keeps the restore whole."""
+    tab, _bridge = make_tab(qt)
+    assert tab.minimumSizeHint().height() <= 620
+
+
+def test_the_revoke_button_follows_the_flight(qt, monkeypatch) -> None:
+    """The Revoke button's affordance (#1051 review): the button
+    grays while the revoke flies — the editor buttons' own rule
+    over the policy route — and both landing arms give it back."""
+    tab, bridge = make_tab(qt)
+    fake_confirm(monkeypatch, True)
+    tab.verdicts.setCurrentRow(0)
+    assert tab.revoke_button.isEnabled()
+    tab.revoke()
+    assert not tab.revoke_button.isEnabled()  # the flight holds it
+    tab.verdicts.setCurrentRow(-1)  # no selection: the row guard alone
+    bridge.failed.emit(tab.revoke_key, "no in-effect verdict with that id")
+    assert not tab.revoke_button.isEnabled()
+    tab.verdicts.setCurrentRow(0)  # the refusal gave the button back
+    assert tab.revoke_button.isEnabled()
+    tab.revoke()
+    assert not tab.revoke_button.isEnabled()
+    bridge.succeeded.emit(tab.revoke_key, {"id": "req-1", "revoked": True})
+    tab.verdicts.setCurrentRow(0)  # the landing gave it back
+    assert tab.revoke_button.isEnabled()
+
+
+def test_deny_to_allowlist_under_an_unread_posture_answers_itself(
+    qt,
+) -> None:
+    """The ask under no landed read (#1051 review): the write
+    composes against nothing — no mode to write beside — and the
+    note names that ground instead of claiming a flight."""
+    bridge = StubBridge()
+    tab = egress_mod.EgressTab(bridge)
+    qt.keep.append(tab)
+    tab.host("ws-a")
+    tab.poke()  # the read flies, nothing lands
+    tab.audit.allow_wanted.emit("denied.example")
+    assert tab.note.text() == egress_mod.NO_READ
+    assert [c for c in bridge.calls if c[1] == "set_egress_mode"] == []
