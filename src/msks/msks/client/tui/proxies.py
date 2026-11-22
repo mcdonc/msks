@@ -196,8 +196,9 @@ def value_and_spans(rows: list[dict], base: int) -> tuple[str, list[Span]]:
 
 def proxies_line(rows: list[dict], theme_variables=None) -> Content:
     """The workspace page's compact proxies line (#807, #809): one
-    port pair per row — the forwards before the bar, the remotes
-    after it, ``8888 -> 8889, 9111 -> 9115 | 8881 <- 8882`` — each
+    port pair per row — the local pairs before the bar, the
+    remote pairs after it, ``8888 -> 8889, 9111 -> 9115 | 8881 <-
+    8882`` — each
     pair colored by its reachability, in the status lines' own
     grammar (the ``proxies`` label muted in the label column).
     Empty when the workspace holds no rows.

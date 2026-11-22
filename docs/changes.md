@@ -143,7 +143,7 @@ tagged `vX.Y.Z`.
 
 - **The GUI workspace proxies tab (#988).** The workspace page
   grows a Proxies tab beside Mounts. The tab lists the
-  workspace's forwards and remotes with their live status, and
+  workspace's local and remote proxies with their live status, and
   Add and Edit parse the spec with the CLI's own parsers before
   anything sends; Removal asks first. Every proxy transition the daemon
   publishes for the open workspace refreshes the tab through the

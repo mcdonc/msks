@@ -217,6 +217,10 @@ def test_ls_prints_table_and_json(
     rc = cli.main(["proxy", "ls"], transport=transport)
     assert rc == 0
     table = capsys.readouterr().out
+    # The DIR cell reads ssh's word (#1032), never the wire's
+    # own "forward" spelling.
+    assert " local " in table
+    assert "forward" not in table
     assert "guest:22" in table
     assert "listening" in table
     assert "failed (address in use)" in table
