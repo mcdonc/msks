@@ -690,6 +690,22 @@ def make_app(data: FakeData, follow: TuiFollow | None = None):
     return MsksTuiApp(follow, data=data, conf=conf), follow
 
 
+def scripted_listing(monkeypatch, frames: list[str]) -> FakeFactory:
+    """Patch the listing's link to a scripted connection (#1019:
+    the first connection carries the frames; later ones stay
+    quiet). The suite's quiet default (conftest's
+    ``quiet_listing_link``) sits beneath this patch."""
+    factory = FakeFactory([FakeWS(frames), FakeWS([])])
+    monkeypatch.setattr(
+        main_screen_mod.MainScreen,
+        "make_link",
+        lambda self: main_screen_mod.ListingLink(
+            self.refresh_rows, ws_factory=factory
+        ),
+    )
+    return factory
+
+
 def scripted_link(monkeypatch, frames: list[str]) -> FakeFactory:
     """Patch the page's link to a scripted connection (the first
     connection carries the frames; later ones stay quiet)."""
@@ -1118,14 +1134,36 @@ async def test_the_detail_strip_hides_on_an_empty_list() -> None:
         assert not app.query_one("#detail", Static).display
 
 
+async def startup_quiet(pilot, app) -> None:
+    """The listing's startup pokes settled (#1019): the mount's
+    deferred read and the link's connect poke have both run — a
+    pump cycle between two quiet reads surfaces any straggler
+    the first read raced (the deferred callback can land after
+    the first paint under a traced, loaded runner)."""
+    screen = app.screen
+
+    def quiet() -> bool:
+        return (
+            screen.link is not None
+            and screen.link.state == link_mod.CONNECTED
+            and not screen.rows_loading
+            and not screen.rows_pending
+        )
+
+    await wait_for(quiet)
+    await pilot.pause()
+    await pilot.pause()
+    await wait_for(quiet)
+
+
 async def test_the_listing_counts_open_shells() -> None:
-    """The listing's refresh lands the host's open shells on the
-    rows (#858): the session records a live `msks ssh` writes —
+    """The listing lands the host's open shells on the rows (#858
+    over #1019): the session records a live `msks ssh` writes —
     under the suite's isolated state root — paint the row's `»N`
-    marker and the strip's shells fact on the refresh cadence,
+    marker and the strip's shells fact on the listing's refresh,
     and a session's clean close takes the marker with it on the
-    next refresh (the record unlinks at once, the count follows
-    the cadence)."""
+    local watch alone — the client-side records repaint the row
+    with no daemon read behind them."""
     from msks.client import sshsessions
 
     record = sshsessions.record_path(WS, 4242)
@@ -1138,15 +1176,19 @@ async def test_the_listing_counts_open_shells() -> None:
         await wait_for(lambda: "»1" in row_text(app, 0))
         assert "»1 stopped" in row_text(app, 0)
         await wait_for(lambda: "shells »1" in detail_text(app))
+        # The startup pokes have settled before the close is
+        # watched.
+        await startup_quiet(pilot, app)
         # The session closes: the record unlinks at once, and the
-        # standing refresh repaints the row without its marker
-        # (an unchanged daemon row — the count alone moved it).
+        # local watch repaints the row without its marker — an
+        # unchanged daemon row, no refresh, no daemon read.
         sshsessions.remove_record(record)
-        await pilot.press("r")
+        fetches = data.fetches
         await wait_for(lambda: "»" not in row_text(app, 0))
+        await wait_for(lambda: "shells" not in detail_text(app))
         await pilot.pause()
+        assert data.fetches == fetches
         assert "stopped" in row_text(app, 0)
-        assert "shells" not in detail_text(app)
 
 
 async def test_a_refresh_with_standing_rows_updates_the_storage() -> None:
@@ -4301,20 +4343,122 @@ async def test_the_status_bar_counts_mixed_states(
         assert status.size.height == 1
 
 
-async def test_the_status_summary_follows_the_standing_refresh(
+async def test_the_status_summary_follows_the_pushed_frames(
     monkeypatch,
 ) -> None:
-    """#853: the summary derives from the rows the listing
-    refresh holds, so a fleet another surface moved reads its new
-    standing on the next standing refresh, without a keypress."""
-    scripted_link(monkeypatch, [])
-    monkeypatch.setattr(main_screen_mod, "LIST_REFRESH_S", 0.2)
+    """#853 over #1019: the summary derives from the rows the
+    listing refresh holds, and the refresh a listing-affecting
+    frame pokes serves it — a fleet another surface moved reads
+    its new standing on the pushed frame, without a keypress and
+    without a timer."""
+    factory = scripted_listing(monkeypatch, [])
     data = FakeData([row(), row(id="ws-b")])
     app, _ = make_app(data)
     async with app.run_test():
         await wait_for(lambda: "all stopped" in status_text(app))
         data.rows = [row(status="running"), row(id="ws-b", status="running")]
+        # The hub's frame through the scripted socket: a status
+        # transition pokes the listing's refresh.
+        factory.made[0].push(
+            '{"event": "workspace.status", '
+            '"data": {"id": "ws-a", "status": "running"}}'
+        )
         await wait_for(lambda: "all running" in status_text(app))
+
+
+def test_listing_frame_classifies() -> None:
+    """#1019: the listing's classifier — the frames that move the
+    listing (the workspace lifecycle family, the volume moves,
+    a mode switch) against the families that paint through their
+    own surfaces."""
+    assert main_screen_mod.listing_frame(
+        {"event": "workspace.created", "data": {"id": "ws-a"}}
+    )
+    assert main_screen_mod.listing_frame(
+        {"event": "home.exported", "data": {"id": "ws-a"}}
+    )
+    assert main_screen_mod.listing_frame(
+        {"event": "image.changed", "data": {"ref": "debian-13:2026.09"}}
+    )
+    assert main_screen_mod.listing_frame(
+        {"event": "egress.rules", "data": {"workspace_id": "ws-a"}}
+    )
+    assert not main_screen_mod.listing_frame(
+        {"event": "proxy.listening", "data": {"id": "ws-a"}}
+    )
+    assert not main_screen_mod.listing_frame(
+        {"event": "secret.sighting", "data": {}}
+    )
+    assert not main_screen_mod.listing_frame({})
+
+
+async def test_a_frame_that_moves_nothing_pokes_nothing(
+    monkeypatch,
+) -> None:
+    """#1019: a frame outside the listing's families lands on the
+    socket and decides nothing — no refresh, no daemon read."""
+    factory = scripted_listing(monkeypatch, [])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "1 workspace" in status_text(app))
+        # The startup pokes have settled before the frame is
+        # pushed.
+        await startup_quiet(pilot, app)
+        fetches = data.fetches
+        factory.made[0].push(
+            '{"event": "proxy.listening", '
+            '"data": {"id": "ws-a", "port": 2201}}'
+        )
+        await asyncio.sleep(0.2)
+        await pilot.pause()
+        assert data.fetches == fetches
+
+
+async def test_a_dropped_socket_pokes_one_refresh(monkeypatch) -> None:
+    """#904 over #1019: the socket's drop is the outage's earliest
+    signal — the local watch pokes one refresh on the transition,
+    and the probe's own reach outcome owns the down marker (the
+    same land the refresh answers always took)."""
+    scripted_listing(monkeypatch, [])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "1 workspace" in status_text(app))
+        screen = app.screen
+        assert screen.link is not None
+        # The scripted connection serves: the startup pokes settle
+        # and the watch records the connected state without a
+        # further poke.
+        await startup_quiet(pilot, app)
+        await wait_for(lambda: screen.link_state == link_mod.CONNECTED)
+        fetches = data.fetches
+        screen.link.state = link_mod.RECONNECTING
+        await wait_for(lambda: data.fetches > fetches)
+        # The state standing quiet: no further probes while the
+        # marker is the report.
+        fetches = data.fetches
+        await asyncio.sleep(1.3)
+        assert data.fetches == fetches
+
+
+def test_the_default_listing_link_wires_the_poke() -> None:
+    """The unpatched link factory wires the listing's refresh as
+    both the frame poke and the reconnect poke (#1019) — the
+    suite's quiet seam (conftest) replaces this one connection,
+    so the real factory is read beside the patch. A screen
+    without its link watches quietly, and a screen with it
+    unmounts it closed."""
+    screen = main_screen_mod.MainScreen()
+    screen.on_unmount()  # no link stands: the quiet no-op
+    screen.local_tick()  # the watch without its link decides nothing
+    link = screen.make_real_link()
+    assert isinstance(link, main_screen_mod.ListingLink)
+    assert link.on_event == screen.refresh_rows
+    assert link.on_connect == screen.refresh_rows
+    screen.link = link
+    screen.on_unmount()  # the subscriber closes with the screen
+    screen.on_unmount()  # a second close is the quiet no-op
 
 
 async def test_a_unix_daemon_url_shows_its_path_decoded(
@@ -5146,9 +5290,10 @@ async def test_a_proxy_read_that_will_not_come_keeps_the_line(
 
 
 async def test_the_headers_count_follows_the_shells(monkeypatch) -> None:
-    """#858 on the workspace page: the host's open shells ride the
-    header beside the status (the per-second row refresh lands
-    them), and the segment leaves with the last shell's close."""
+    """#858 on the workspace page, over #1019: the host's open
+    shells ride the header beside the status (the page's local
+    tick lands them — the records are client-side state), and the
+    segment leaves with the last shell's close."""
     scripted_link(monkeypatch, [rules_frame()])
     from msks.client import sshsessions
 
@@ -5458,22 +5603,176 @@ async def test_the_stop_row_dims_through_the_stop_window(monkeypatch) -> None:
 async def test_the_page_follows_a_status_moved_elsewhere(
     monkeypatch,
 ) -> None:
-    """The review round on #367: the page re-reads the workspace
-    each second, so a start made away from the page — the CLI in
-    another terminal — un-dims the stop row without a rebuild."""
-    scripted_link(monkeypatch, [])
+    """The review round on #367, over #1019: the page re-reads
+    the workspace when a lifecycle frame names it, so a start
+    made away from the page — the CLI in another terminal —
+    un-dims the stop row without a rebuild."""
+    factory = scripted_link(monkeypatch, [])
     data = FakeData([row(status="stopped")])
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 8)
         await wait_for(lambda: "workspace is stopped" in action_text(app, 7))
-        # Another surface boots it: a fresh row object, so only the
-        # page's per-second read can learn it.
+        # Another surface boots it: a fresh row object and the
+        # frame the daemon publishes for the move — only the
+        # page's row re-read can learn the pair.
         data.rows[0] = {**data.rows[0], "status": "running"}
+        factory.made[0].push(
+            '{"event": "workspace.status", '
+            '"data": {"id": "ws-a", "status": "running"}}'
+        )
         await wait_for(lambda: "workspace is running" in action_text(app, 6))
         assert action_text(app, 7).strip() == "Stop    power it off"
         assert "running" in header_text(app)
+
+
+def test_the_pages_default_link_wires_the_reconnect_poke() -> None:
+    """The unpatched link factory wires the page's row re-read as
+    the reconnect poke (#1019) — the tests' scripted seam replaces
+    the whole link. A bare page's poke is the quiet no-op (no
+    mount stands), and a bare page unmounts without its link."""
+    bare = WorkspaceScreen(row())
+    link = bare.make_link()
+    assert isinstance(link, DeciderLink)
+    assert link.on_connect == bare.link_reconnected
+    bare.link_reconnected()  # unmounted: decides nothing, raises nothing
+    bare.on_unmount()  # no link was started: nothing to stop
+
+
+async def test_a_deferred_close_without_its_link_decides_nothing(
+    monkeypatch,
+) -> None:
+    """The teardown race in the deferred close (#1019): the page
+    already lost its link (unmount stopped it) while a screen
+    stands above — the re-arm lands nothing, the close decides
+    nothing, and nothing raises."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 8)
+        page = app.screen
+        await press_until(pilot, "e", lambda: on_consent(app))
+        page.link = None
+        data.rows.clear()
+        page.close_removed()  # deferred, linkless: the quiet path
+        assert on_consent(app)
+
+
+async def test_the_pages_reconnect_poke_rereads_the_row(
+    monkeypatch,
+) -> None:
+    """#1019: a reconnected decider socket re-reads the row and
+    the compact proxies line — the frames published while no
+    connection stood never landed (lifecycle frames and proxy
+    transitions alike), so the poke serves them both."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row()])
+    data.proxy_rows = [
+        {
+            "id": 1,
+            "workspace_id": WS,
+            "direction": "forward",
+            "listen_port": 2201,
+            "target_port": 2202,
+            "status": "listening",
+        }
+    ]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 8)
+        page = app.screen
+        proxies_line = page.query_one("#proxy-line", Static)
+
+        def painted() -> str:
+            return "".join(seg.text for seg in proxies_line.render_line(0))
+
+        await wait_for(lambda: "2201" in painted())
+        # Another surface drops the proxy after the page's own
+        # start fetch: only the reconnect poke's fetch can
+        # repaint the line — its flight is the half of the fix
+        # under test, the row's fetch beside it.
+        data.proxy_rows = []
+        fetches = data.fetches
+        page.link_reconnected()
+        await wait_for(lambda: data.fetches > fetches)
+        await wait_for(lambda: "2201" not in painted())
+
+
+async def test_a_catalog_move_rereads_the_pages_row(
+    monkeypatch,
+) -> None:
+    """#1019: an ``image.changed`` frame names no workspace and
+    moves every row's image cell — the page re-reads its row on
+    it, so a rename made from another terminal repaints the meta
+    line."""
+    factory = scripted_link(monkeypatch, [])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 8)
+        fetches = data.fetches
+        factory.made[0].push(
+            '{"event": "image.changed", "data": {"ref": "debian-13:2026.09"}}'
+        )
+        await wait_for(lambda: data.fetches > fetches)
+
+
+async def test_a_sort_click_dropped_mid_flight_is_served(
+    monkeypatch,
+) -> None:
+    """#1019: a sort click landing while a refresh stands arms the
+    landing flight — the interval that once served a dropped
+    click is gone, so the armed read serves the order."""
+    import asyncio as _asyncio
+
+    gate = _asyncio.Event()
+    hold = [0]
+    fetches = 0
+
+    class GatedData(FakeData):
+        async def workspaces(self) -> list[dict]:
+            nonlocal fetches
+            fetches += 1
+            if fetches == hold[0]:
+                await gate.wait()
+            return self.rows
+
+    # NAME asc differs from the CREATED opening order: the armed
+    # read's repaint is the observable.
+    data = GatedData(
+        [
+            stamp(row(name="zeta"), "2026-02-01T00:00:00"),
+            stamp(row(id="ws-b", name="beta"), "2026-01-01T00:00:00"),
+        ]
+    )
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: list_children(app) == 2)
+        # The CREATED order paints the newest row first; the
+        # startup pokes settle before the gated flight opens.
+        await startup_quiet(pilot, app)
+        await wait_for(lambda: "zeta" in row_text(app, 0))
+        screen = app.screen
+        # The gated flight opens by hand — no startup straggler
+        # can arm beside the click.
+        hold[0] = fetches + 1
+        screen.refresh_rows()
+        await wait_for(lambda: fetches == hold[0])  # inside the fetch
+        # The click lands inside the gated flight: the sort state
+        # stands, the header carries it, and the armed poke serves
+        # the order once the flight lands.
+        screen.pick_column(0)  # NAME — its first pick ascends
+        assert screen.sort == ("NAME", False)
+        gate.set()
+        armed = fetches + 1
+        await wait_for(lambda: fetches >= armed)  # the armed read ran
+        await wait_for(lambda: "beta" in row_text(app, 0))
+        assert "zeta" in row_text(app, 1)
 
 
 async def test_enter_on_a_dimmed_row_flashes_and_runs_nothing(
@@ -5607,12 +5906,13 @@ def test_action_rows_paint_two_tones() -> None:
 async def test_a_row_that_leaves_the_listing_closes_the_page(
     monkeypatch,
 ) -> None:
-    """The review round on #367: a successful listing that cannot
-    see the workspace names its removal — deleted from another
-    surface — and the page closes behind a notice on the list's
-    status line, so no ghost page offers actions the daemon
-    would only refuse."""
-    scripted_link(monkeypatch, [rules_frame()])
+    """The review round on #367, over #1019: a successful listing
+    that cannot see the workspace names its removal — deleted
+    from another terminal, the frame the daemon publishes for it
+    on the page's link — and the page closes behind a notice on
+    the list's status line, so no ghost page offers actions the
+    daemon would only refuse."""
+    factory = scripted_link(monkeypatch, [rules_frame()])
     data = FakeData([row()])
     app, _ = make_app(data)
     async with app.run_test() as pilot:
@@ -5624,6 +5924,10 @@ async def test_a_row_that_leaves_the_listing_closes_the_page(
         await open_quietly(pilot, app)
         await wait_for(lambda: action_children(app) == 8)
         data.rows.clear()  # removed from another terminal
+        factory.made[0].push(
+            '{"event": "workspace.removed", '
+            '"data": {"id": "ws-a", "name": "alpha"}}'
+        )
         await wait_for(lambda: "removed" in status_text(app), timeout=15.0)
         assert on_main(app)
         assert app.follow.reopen is None  # no ghost page on restart
@@ -5635,7 +5939,7 @@ async def test_a_removal_under_an_open_consent_page_waits_for_it(
     """The consent page holds the close: a removal that lands while
     the egress consent page is up keeps the workspace page (and
     the consent page) standing until the operator returns — the
-    next per-second read then closes the page behind the same
+    page's own tick then retries the close behind the same
     notice."""
     ws = FakeWS([rules_frame()])
     factory = FakeFactory([ws, FakeWS([])])
@@ -5653,7 +5957,11 @@ async def test_a_removal_under_an_open_consent_page_waits_for_it(
         await wait_for(lambda: action_children(app) == 8)
         await press_until(pilot, "e", lambda: on_consent(app))
         data.rows.clear()  # removed while the consent page is up
-        await asyncio.sleep(1.2)  # a read (or two) lands under it
+        ws.push(
+            '{"event": "workspace.removed", '
+            '"data": {"id": "ws-a", "name": "alpha"}}'
+        )
+        await asyncio.sleep(1.2)  # a tick (or two) lands under it
         assert on_consent(app)  # the close waits
         # Return: one q at a time, each press given its own window
         # — the pop chain runs on (the page closes behind the same
@@ -6262,16 +6570,20 @@ async def test_a_click_during_a_rebuild_flight_is_dropped(
 
 
 async def test_the_listing_refreshes_while_it_stands(monkeypatch) -> None:
-    """#470 L2: the list reloads on its standing interval — a
-    workspace another surface created appears without a keypress,
-    newest-first on top."""
-    scripted_link(monkeypatch, [])
+    """#470 L2 over #1019: the list reloads on the frames the
+    daemon publishes — a workspace another surface created
+    appears without a keypress, newest-first on top."""
+    factory = scripted_listing(monkeypatch, [])
     data = FakeData([row()])
     app, _ = make_app(data)
     async with app.run_test():
         await wait_for(lambda: list_children(app) == 1)
         data.rows.append(
             stamp(row(id="ws-b", name="beta"), "2026-02-01T00:00:00")
+        )
+        factory.made[0].push(
+            '{"event": "workspace.created", '
+            '"data": {"id": "ws-b", "name": "beta"}}'
         )
         await wait_for(lambda: list_children(app) == 2, timeout=30.0)
         # The fresh row lands on top once its paint lands (the
@@ -9467,12 +9779,13 @@ async def test_d_off_a_catalog_row_and_a_refused_default(
 async def test_a_refresh_in_flight_skips_instead_of_cancelling(
     monkeypatch,
 ) -> None:
-    """#776's mac-lane diagnosis: an exclusive refresh worker
-    cancelled inside the swap strands the tree — the old list
-    removed, the fresh one never mounted — and the recorded rows
-    then skip every later refresh against a listing that never
-    painted. The in-flight mark skips a second refresh while one
-    runs; the next call after it lands serves the rows."""
+    """#776's mac-lane diagnosis, over #1019: an exclusive refresh
+    worker cancelled inside the swap strands the tree — the old
+    list removed, the fresh one never mounted — and the recorded
+    rows then skip every later refresh against a listing that
+    never painted. The in-flight mark skips a second refresh
+    while one runs, and the landing flight serves the armed poke
+    — the skip never loses a frame."""
     import asyncio as _asyncio
 
     gate = _asyncio.Event()
@@ -9492,7 +9805,7 @@ async def test_a_refresh_in_flight_skips_instead_of_cancelling(
         await wait_for(lambda: on_main(app))
         screen = app.screen
         # The first refresh still awaits its gate: a second
-        # refresh arrives (the interval's tick, a resume) and is
+        # refresh arrives (a frame's poke, a resume) and is
         # skipped, not queued, not cancelling the first.
         while not screen.rows_loading:
             await pilot.pause()
@@ -9506,8 +9819,7 @@ async def test_a_refresh_in_flight_skips_instead_of_cancelling(
         assert fetches == 1  # the gated flight alone
         gate.set()
         await wait_for(lambda: list_children(app) == 1)
-        # The flight that landed freed the mark: the next refresh
-        # runs for real.
-        screen.refresh_rows()
+        # The armed poke served: the landing flight re-reads — the
+        # skip never lost the frame, and the tree never stranded.
         await wait_for(lambda: fetches == 2)
         assert screen.rows_widget() is not None

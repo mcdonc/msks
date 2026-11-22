@@ -2323,17 +2323,23 @@ async def test_an_outage_the_re_run_hits_arms_the_next_answer(
     async with app.run_test() as pilot:
         await wait_for(lambda: app.unlock_retry)
         # The daemon arrives for the listing only: the re-run's
-        # fetch meets the outage again and re-arms.
+        # fetch meets the outage again and re-arms. The count is
+        # a floor, not an exact number: the listing's connect
+        # bracket (#1019) can answer a second refresh beside the
+        # action's own, and each answered refresh serves the
+        # armed re-run once — under load an extra re-run lands
+        # before the poll reads the intermediate count.
         data.fail.discard("workspaces")
         app.screen.action_refresh()
-        await wait_for(lambda: data.pending_fetches == 2)
+        await wait_for(lambda: data.pending_fetches >= 2)
         await wait_for(lambda: app.unlock_retry)
         # The daemon stays up now: the next answered refresh
         # serves the re-run, and the prompt lands.
+        before = data.pending_fetches
         data.fail.clear()
         app.screen.action_refresh()
         await wait_for(lambda: pass_field_up(app))
         app.screen.query_one("#pass-field", Input).value = "pw"
         await pilot.press("enter")
         await wait_for(lambda: data.unlock_calls)
-        assert data.pending_fetches == 3
+        assert data.pending_fetches >= before + 1

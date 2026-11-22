@@ -20,6 +20,7 @@ if importlib.util.find_spec("PySide6") is None:
     )
 
 from msks.client import egress as egress_mod  # noqa: E402
+from msks.client import frames as frames_mod  # noqa: E402
 from msks.client.gui import feed as feed_mod  # noqa: E402
 
 
@@ -79,20 +80,25 @@ def hang_socket() -> FakeWS:
 
 
 class Recorder:
-    """The feed's three callbacks, recorded for the asserts."""
+    """The feed's four callbacks, recorded for the asserts."""
 
     def __init__(self) -> None:
         self.frames: list[dict] = []
         self.drops: list[str] = []
         self.reconnects = 0
+        self.serves = 0
 
     def wire(self, feed: feed_mod.EventsFeed) -> None:
         feed.on_frame = self.frames.append
         feed.on_drop = self.drops.append
         feed.on_reconnect = self.note_reconnect
+        feed.on_serve = self.note_serve
 
     def note_reconnect(self) -> None:
         self.reconnects += 1
+
+    def note_serve(self) -> None:
+        self.serves += 1
 
 
 def drive(feed: feed_mod.EventsFeed) -> asyncio.Task:
@@ -137,6 +143,7 @@ def test_frames_deliver_and_junk_skips() -> None:
             "workspace.stopped",
         ]
         assert seen.reconnects == 0  # the first connection is no recovery
+        assert seen.serves == 1  # the first connection serves once (#1019)
 
     asyncio.run(scenario())
 
@@ -191,8 +198,13 @@ def test_a_drop_tells_and_a_frame_proves_the_recovery() -> None:
             "the dial failed: connection refused",
         ]
         # One recovery, proven by the second connection's frame;
-        # the parked tail delivered none.
+        # the parked tail delivered none. The serve pokes told
+        # twice (#1019): the first connection and the recovery
+        # both served — each is a re-read moment for the screens,
+        # frames published while no connection stood never
+        # landed.
         assert seen.reconnects == 1
+        assert seen.serves == 2
         task.cancel()
 
     asyncio.run(scenario())
@@ -357,10 +369,66 @@ def test_the_default_dial_addresses_the_daemon(
 
 
 def test_frame_decoding() -> None:
-    """The wire text as a frame, or junk (#946): an object
+    """The wire text as a frame, or junk (#946, #1019): an object
     decodes, anything else — unparseable, an array, a bare word
-    — reads as nothing."""
+    — reads as nothing. The decoder lives on the shared leaf
+    both clients read (:mod:`msks.client.frames`)."""
     assert feed_mod.decode_frame('{"event": "e"}') == {"event": "e"}
     assert feed_mod.decode_frame("[1]") is None
     assert feed_mod.decode_frame("words") is None
     assert feed_mod.decode_frame("12") is None
+    assert frames_mod.decode_frame is feed_mod.decode_frame  # the one decoder
+
+
+def test_the_listing_frame_families() -> None:
+    """Which frames move the listing (#1019): the lifecycle,
+    volume, and catalog families and the mode switch re-read
+    it; the proxies, secrets, and holds paint through their own
+    surfaces and the listing re-reads nothing for them."""
+    moved = [
+        {"event": "workspace.created"},
+        {"event": "workspace.status"},
+        {"event": "workspace.mounts"},
+        {"event": "home.imported"},
+        {"event": "image.changed"},
+        {"event": "egress.rules"},
+    ]
+    still = [
+        {"event": "proxy.listening"},
+        {"event": "secret.minted"},
+        {"event": "egress.request"},
+        {"event": "workspace"},  # a prefix, not a family member
+        {},
+    ]
+    assert [frames_mod.listing_frame(frame) for frame in moved] == [
+        True
+    ] * len(moved)
+    assert [frames_mod.listing_frame(frame) for frame in still] == [
+        False
+    ] * len(still)
+
+
+def test_the_row_frame_families() -> None:
+    """Which frames move one workspace's row (#1019): the
+    lifecycle and volume families naming the workspace — under
+    either naming convention the stream uses — and the catalog
+    family, which names none and moves every row's image cell;
+    another workspace's frame and every other family move
+    nothing."""
+    mine = [
+        {"event": "workspace.status", "data": {"id": "ws-a"}},
+        {"event": "home.imported", "data": {"workspace_id": "ws-a"}},
+        {"event": "image.changed", "data": {}},
+    ]
+    not_mine = [
+        {"event": "workspace.status", "data": {"id": "ws-b"}},
+        {"event": "home.imported", "data": {}},
+        {"event": "proxy.listening", "data": {"id": "ws-a"}},
+        {"event": "egress.rules", "data": {"id": "ws-a"}},
+    ]
+    assert [frames_mod.row_frame(frame, "ws-a") for frame in mine] == [
+        True
+    ] * len(mine)
+    assert [frames_mod.row_frame(frame, "ws-a") for frame in not_mine] == [
+        False
+    ] * len(not_mine)

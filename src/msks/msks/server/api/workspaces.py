@@ -35,6 +35,20 @@ from .schemas import MountsSet, WorkspaceCreate
 from .volumes import move_lock
 
 
+async def announce_status(app, workspace_id: str, status: str) -> None:
+    """Write one request-path status and publish it (#1019). The
+    watcher publishes the transitions its scan finds between the
+    row and the seam, but a status this request itself wrote
+    reads steady on the next scan — nothing would ever publish
+    it. Attached clients learn the move from the frame and re-read
+    the listing on it; the frame's shape is the watcher's own
+    (``workspace.status``, the id and the word)."""
+    await app.state.model.set_status(workspace_id, status)
+    await app.state.hub.publish(
+        "workspace.status", {"id": workspace_id, "status": status}
+    )
+
+
 def image_ref(images, image_hash: str | None) -> str | None:
     """The catalog reference for a workspace's image hash (#470
     L3) — ``name:version``, the words a listing's IMAGE column
@@ -207,6 +221,11 @@ def router(app) -> APIRouter:
         # every row the daemon serves (#620, part #624) — the set
         # just validated it healthy against the config it read.
         row["mount_issues"] = issue_payloads(await row_mount_issues(app, row))
+        # The listing's clients learn the row from the frame
+        # (#1019), not from a poll: the create announces itself.
+        await app.state.hub.publish(
+            "workspace.created", {"id": workspace_id, "name": name}
+        )
         return Response(
             status_code=201,
             content=json.dumps(row),
@@ -349,6 +368,11 @@ def router(app) -> APIRouter:
             # set wrote a row nobody owns. The honest answer for
             # a workspace that is no longer there.
             raise HTTPException(status_code=404, detail="no such workspace")
+        # The mounts move announces itself (#1019): the row's
+        # mounts, its derived issues, and the pending marker all
+        # moved, and the clients that paint them re-read on the
+        # frame.
+        await app.state.hub.publish("workspace.mounts", {"id": row["id"]})
         fresh["mount_issues"] = issue_payloads(
             await row_mount_issues(app, fresh)
         )
@@ -398,7 +422,7 @@ def router(app) -> APIRouter:
             in_flight = starting_workspaces(app)
             in_flight.add(workspace_id)
             try:
-                await app.state.model.set_status(workspace_id, "starting")
+                await announce_status(app, workspace_id, "starting")
                 # The mount skips publish before the launch (#620,
                 # part #621): a start proceeds without a mount the
                 # #667 gates refuse — every skip is state, an event
@@ -413,7 +437,7 @@ def router(app) -> APIRouter:
                     spec_for(row, mounts=attachable)
                 )
             except MicrovmError:
-                await app.state.model.set_status(workspace_id, prior_status)
+                await announce_status(app, workspace_id, prior_status)
                 raise
             finally:
                 # The whole marked region sits inside the finally's
@@ -443,7 +467,7 @@ def router(app) -> APIRouter:
                 row["mem_mib"],
                 row["root_mib"],
             )
-            await app.state.model.set_status(workspace_id, "running")
+            await announce_status(app, workspace_id, "running")
         return {"id": workspace_id, "status": "running"}
 
     @api.post(
@@ -475,17 +499,17 @@ def router(app) -> APIRouter:
         in_flight = stopping_workspaces(app)
         in_flight.add(workspace_id)
         try:
-            await app.state.model.set_status(workspace_id, "stopping")
+            await announce_status(app, workspace_id, "stopping")
             await app.state.microvm.shutdown(workspace_id)
         except MicrovmError:
-            await app.state.model.set_status(workspace_id, prior_status)
+            await announce_status(app, workspace_id, prior_status)
             raise
         finally:
             # The marker dies with the request on every path: a
             # marker left behind would wedge the row at
             # ``stopping`` against every scan forever.
             in_flight.discard(workspace_id)
-        await app.state.model.set_status(workspace_id, "stopped")
+        await announce_status(app, workspace_id, "stopped")
         return {"id": workspace_id, "status": "stopped"}
 
     @api.post(
@@ -509,7 +533,7 @@ def router(app) -> APIRouter:
         except MicrovmError:
             await app.state.microvm.kill(workspace_id)
         await app.state.microvm.reset(workspace_id)
-        await app.state.model.set_status(workspace_id, "created")
+        await announce_status(app, workspace_id, "created")
         return {"id": workspace_id, "status": "created"}
 
     @api.delete(
@@ -537,6 +561,13 @@ def router(app) -> APIRouter:
                 await app.state.microvm.kill(workspace_id)
             await app.state.microvm.cleanup(workspace_id)
             await app.state.model.delete_workspace(workspace_id)
+        # The removal announces itself (#1019): the clients that
+        # hold the row close its page and drop it from their
+        # listings on the frame.
+        await app.state.hub.publish(
+            "workspace.removed",
+            {"id": workspace_id, "name": row.get("name")},
+        )
         return {"deleted": workspace_id}
 
     return api

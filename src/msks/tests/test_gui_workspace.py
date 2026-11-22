@@ -76,6 +76,7 @@ class StubBridge:
         self.landed = FakeSignal()
         self.feed_dropped = FakeSignal()
         self.feed_reconnected = FakeSignal()
+        self.feed_served = FakeSignal()
         self.decider_landed = FakeSignal()
         self.decider_rejected = FakeSignal()
         #: The decider registration's bracket (#999): the page's
@@ -281,7 +282,6 @@ def test_opening_a_row_shows_the_page(qt) -> None:
     # daemon's facts are not the workspace's, and the page asks
     # for no doc it renders nowhere.
     assert not [call for call in bridge.calls if call[1] == "health"]
-    assert shell.detail.timer.interval() == 5000
 
 
 def test_the_page_carries_the_tab_strip(qt) -> None:
@@ -434,19 +434,19 @@ def test_a_mounts_save_lands_on_the_page(qt) -> None:
 
 def test_the_proxies_tab_rides_the_page(qt) -> None:
     """The Proxies tab's page integration (#988): the bar carries
-    it beside Mounts, the page's tick pokes its listing, and a
+    it beside Mounts, the page's refresh pokes its listing, and a
     pushed proxy frame refreshes it without a manual action."""
     page, window, bridge = make_page(qt)
     assert bar_index(page, "Proxies") == 2
     assert bar_index(page, "Events") == 3
     land(qt, page, bridge)
     # The open's own refresh already poked a listing; answer it
-    # so the next tick's poke runs.
+    # so the next refresh's poke runs.
     bridge.succeeded.emit(page.proxies_tab.list_key, [])
     bridge.calls.clear()
-    page.refresh()  # the page's own tick drives the tab's listing
+    page.refresh()  # a row-affecting frame's path drives the listing
     assert [c for c in bridge.calls if c[1] == "workspace_proxies"]
-    bridge.succeeded.emit(page.proxies_tab.list_key, [])  # the tick's listing
+    bridge.succeeded.emit(page.proxies_tab.list_key, [])
     bridge.calls.clear()
     page.push_frame(
         {"event": "proxy.listening", "data": {"id": page.workspace_id}}
@@ -827,15 +827,14 @@ def test_events_on_a_wrapper_past_construction_touch_nothing(
     Qt can deliver events to (#959): a page whose construction
     never finished, and the empty wrapper PySide6 raises at
     teardown for a C++ object that outlived its Python one.
-    A wrapper without its Back button and ``timer`` answers
-    nothing: no focus, no refresh, no tick, instead of an
+    A wrapper without its Back button answers nothing: no
+    focus, no refresh, no decider ask, instead of an
     AttributeError tracing to whatever test is running."""
     page, window, _bridge = make_page(qt)
     window.close()
     # The two teardown shapes leave a wrapper with no instance
     # attributes — the same state the guards answer.
     del page.back_button
-    del page.timer
     page.showEvent(qt.QtGui.QShowEvent())
     page.hideEvent(qt.QtGui.QHideEvent())
 
@@ -1019,10 +1018,10 @@ def test_a_late_removed_answer_needs_the_page_current(qt) -> None:
 
 
 def test_a_pushed_frame_refreshes_the_current_screen(qt) -> None:
-    """One pushed frame (#946): the page takes it whatever
-    screen owns the window, and the screen the operator sees
-    refreshes at once through the same path its timer drives —
-    the feed is the immediacy, the tick the backstop."""
+    """One pushed frame (#946, #1019): the listing re-reads
+    only on a listing-affecting frame — the standing tick the
+    frames replace — and the page's own row filter decides its
+    re-read whatever screen owns the window."""
     shell, window, bridge = make_shell(qt)
     bridge.calls.clear()
     shell.frame_landed({"event": "workspace.status", "data": {"id": "ws-a"}})
@@ -1032,6 +1031,13 @@ def test_a_pushed_frame_refreshes_the_current_screen(qt) -> None:
     # No workspace is open on the page: the frame names none it
     # holds, so nothing lands on its tabs.
     assert shell.detail.events_tab.rows.count() == 0
+    # A frame no listing reads is not the listing's read
+    # (#1019): the secret and hold families paint through their
+    # own surfaces.
+    bridge.succeeded.emit("workspaces-list", [])
+    bridge.calls.clear()
+    shell.frame_landed({"event": "secret.minted", "data": {}})
+    assert bridge.calls == []
     shell.listing.opened.emit("ws-a")
     land(qt, shell.detail, bridge)  # the open's own flights answered
     bridge.calls.clear()
@@ -1047,6 +1053,39 @@ def test_a_pushed_frame_refreshes_the_current_screen(qt) -> None:
             {"event": "workspace.status", "data": {"id": "ws-b"}}
         )
     assert shell.detail.events_tab.rows.count() == 1
+
+
+def test_a_catalog_move_re_reads_the_open_row(qt) -> None:
+    """A catalog move (#1019): ``image.changed`` names no
+    workspace, but it moves every row's image cell — the open
+    page re-reads its row, the listing stays quiet while the
+    page owns the window."""
+    shell, window, bridge = make_shell(qt)
+    shell.listing.opened.emit("ws-a")
+    land(qt, shell.detail, bridge)  # the open's own flights answered
+    bridge.calls.clear()
+    shell.frame_landed({"event": "image.changed", "data": {}})
+    assert ("detail-row", "workspaces", ()) in bridge.calls
+    assert ("workspaces-list", "workspaces", ()) not in bridge.calls
+
+
+def test_a_serving_feed_re_reads_the_current_screen(qt) -> None:
+    """The feed's serve poke (#1019): every connection's first
+    frame refreshes the screen the operator sees — first
+    connection included — because frames published while no
+    connection stood never landed. The listing answers while it
+    owns the window; the page answers once Back swapped it."""
+    shell, window, bridge = make_shell(qt)
+    bridge.succeeded.emit("workspaces-list", [])
+    bridge.calls.clear()
+    bridge.feed_served.emit()
+    assert bridge.calls == [("workspaces-list", "workspaces", ())]
+    bridge.succeeded.emit("workspaces-list", [])
+    shell.listing.opened.emit("ws-a")
+    land(qt, shell.detail, bridge)
+    bridge.calls.clear()
+    bridge.feed_served.emit()
+    assert ("detail-row", "workspaces", ()) in bridge.calls
 
 
 def test_the_feed_outage_flashes_the_current_screen(qt) -> None:

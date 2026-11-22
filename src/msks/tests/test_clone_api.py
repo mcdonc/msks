@@ -157,6 +157,33 @@ async def test_clone_copies_both_disks_and_row(clone_api):
     assert fresh["user_data"] == "#!/bin/sh\necho seeded"
 
 
+async def test_a_clone_announces_itself_like_a_create(clone_api) -> None:
+    """#1019: the clone is a create — the listing's clients learn
+    its row from the same ``workspace.created`` frame the create
+    route publishes, the fresh id and the name aboard."""
+    import json as json_mod
+
+    row = await make_source(clone_api)
+    queue = clone_api.app.state.hub.subscribe()
+    try:
+        made = await clone(clone_api, row["id"], "task-43")
+    finally:
+        frames = []
+        while not queue.empty():
+            frames.append(json_mod.loads(await queue.get()))
+    assert made.status_code == 201, made.text
+    fresh = made.json()
+    created = [
+        frame for frame in frames if frame["event"] == "workspace.created"
+    ]
+    assert created == [
+        {
+            "event": "workspace.created",
+            "data": {"id": fresh["id"], "name": "task-43"},
+        }
+    ]
+
+
 async def test_clone_mints_its_own_address_slice(clone_api):
     """The egress slice is per-instance pool state: the clone's is
     empty until its own first attach, never the source's."""

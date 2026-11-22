@@ -233,14 +233,20 @@ async def test_moves_publish_events(home_api) -> None:
         await home_api.http.put(
             "/api/v1/workspaces/ws-ev/home", content=IMAGE, headers=auth()
         )
-        events = [json.loads(queue.get_nowait()) for _ in range(2)]
+        events = [json.loads(queue.get_nowait()) for _ in range(3)]
     finally:
         hub.unsubscribe(queue)
+    # The create announces its row first (#1019); the volume
+    # moves follow.
     assert events[0] == {
+        "event": "workspace.created",
+        "data": {"id": wid_ws_ev["id"], "name": "ws-ev"},
+    }
+    assert events[1] == {
         "event": "home.exported",
         "data": {"id": wid_ws_ev["id"], "bytes": len(IMAGE)},
     }
-    assert events[1] == {
+    assert events[2] == {
         "event": "home.imported",
         "data": {"id": wid_ws_ev["id"], "bytes": len(IMAGE)},
     }

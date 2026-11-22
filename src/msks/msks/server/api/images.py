@@ -250,6 +250,10 @@ def router(app, catalog_lock) -> APIRouter:
         finally:
             if staged is not None:
                 staged.unlink(missing_ok=True)
+        # The catalog move announces itself (#1019): the listing's
+        # IMAGE column resolves refs against the catalog, and an
+        # import makes rows resolvable that read as bare hashes.
+        await app.state.hub.publish("image.changed", {"ref": record.ref})
         return Response(
             status_code=201,
             content=json.dumps(
@@ -351,6 +355,10 @@ def router(app, catalog_lock) -> APIRouter:
             raise HTTPException(
                 status_code=404, detail=f"no such image: {digest}"
             )
+        # The rename moves every listing row that boots the image
+        # (#1019): the IMAGE column resolves refs against the
+        # catalog.
+        await app.state.hub.publish("image.changed", {"ref": record.ref})
         return {
             "hash": record.hash,
             "name": record.name,
@@ -387,6 +395,10 @@ def router(app, catalog_lock) -> APIRouter:
                     detail=f"workspace {row['id']} boots this image",
                 )
         remove(digest, state_dir)
+        # The removal moves every listing row that boots the image
+        # (#1019): the IMAGE column falls back to the bare digest
+        # the row already carries.
+        await app.state.hub.publish("image.changed", {"ref": digest})
         return {"removed": digest}
 
     return api

@@ -258,6 +258,7 @@ def test_the_feed_rides_the_loop_and_its_frames_cross(
             self.on_frame = None
             self.on_drop = None
             self.on_reconnect = None
+            self.on_serve = None
             self.cancelled = False
 
         async def run(self) -> None:
@@ -269,6 +270,8 @@ def test_the_feed_rides_the_loop_and_its_frames_cross(
                 self.on_drop("the socket broke")
             if self.on_reconnect is not None:
                 self.on_reconnect()
+            if self.on_serve is not None:
+                self.on_serve()
             try:
                 await asyncio.sleep(3600)
             except asyncio.CancelledError:
@@ -286,9 +289,11 @@ def test_the_feed_rides_the_loop_and_its_frames_cross(
             self.frames: list[dict] = []
             self.drops: list[str] = []
             self.backs = 0
+            self.serves = 0
             bridge.landed.connect(self.on_frame)
             bridge.feed_dropped.connect(self.on_drop)
             bridge.feed_reconnected.connect(self.on_back)
+            bridge.feed_served.connect(self.on_serve)
 
         @QtCore.Slot(object)
         def on_frame(self, frame: dict) -> None:
@@ -301,6 +306,10 @@ def test_the_feed_rides_the_loop_and_its_frames_cross(
         @QtCore.Slot()
         def on_back(self) -> None:
             self.backs += 1
+
+        @QtCore.Slot()
+        def on_serve(self) -> None:
+            self.serves += 1
 
     feed = StubFeed()
     bridge = qt.Bridge(StubData(), feed_factory=lambda: feed)
@@ -324,6 +333,7 @@ def test_the_feed_rides_the_loop_and_its_frames_cross(
     ]
     assert receiver.drops == ["the socket broke"]
     assert receiver.backs == 1
+    assert receiver.serves == 1  # the serve poke crossed too (#1019)
     assert not feed.cancelled
     bridge.stop()
     assert not bridge.running

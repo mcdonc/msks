@@ -75,7 +75,11 @@ class Bridge(QtCore.QObject):
     ``landed(frame)`` delivers each pushed frame to the GUI
     thread, ``feed_dropped(reason)`` and ``feed_reconnected()``
     carry the subscription's outage and recovery — the screens
-    flash the one and refresh on the other. The workspace
+    flash the one and refresh on the other — and
+    ``feed_served()`` tells every connection's first frame
+    (#1019): the poke the screens re-read on, first connection
+    included, because frames published while no connection
+    stood never landed. The workspace
     page's decider registration (#999) rides the same loop as
     its own task: ``start_decider(workspace)`` claims a
     workspace's holds for the page's lifetime —
@@ -98,6 +102,7 @@ class Bridge(QtCore.QObject):
     landed = QtCore.Signal(object)
     feed_dropped = QtCore.Signal(str)
     feed_reconnected = QtCore.Signal()
+    feed_served = QtCore.Signal()
     decider_landed = QtCore.Signal(str, object)
     decider_rejected = QtCore.Signal(str)
 
@@ -196,6 +201,7 @@ class Bridge(QtCore.QObject):
         feed.on_frame = self.landed.emit
         feed.on_drop = self.feed_dropped.emit
         feed.on_reconnect = self.feed_reconnected.emit
+        feed.on_serve = self.feed_served.emit
         self._feed_task = loop.create_task(feed.run())
 
     def stop_tasks(self, loop: asyncio.AbstractEventLoop) -> None:

@@ -16,13 +16,13 @@ connection that reached its serve loop.
 """
 
 import asyncio
-import json
 import logging
 
 import websockets
 
 from ..egress import env_dial_events
 from ..egress import refused as refused_close
+from ..frames import decode_frame
 
 logger = logging.getLogger(__name__)
 
@@ -74,27 +74,16 @@ def backoff(delays: tuple[float, ...], attempt: int) -> float:
     return delays[step]
 
 
-def decode_frame(raw: str) -> dict | None:
-    """One wire text as the frame dict the screens read, or
-    ``None`` for junk — a line that is not JSON, or JSON that is
-    not an object. The hub publishes objects only; anything else
-    is a peer gone wrong, and the feed skips it rather than
-    dying on it."""
-    try:
-        frame = json.loads(raw)
-    except ValueError:
-        return None
-    return frame if isinstance(frame, dict) else None
-
-
 class EventsFeed:
     """The subscription's whole life: dial, receive, deliver —
     reconnect until the task is cancelled. ``on_frame`` takes
     each decoded frame, ``on_drop`` the reason each connection
     ends or dial fails, ``on_reconnect`` the moment a connection
-    serves after a drop; the bridge wires all three to signals.
-    A drop that never connected tells once per attempt — the
-    outage's own heartbeat, a flash while it lasts (#946,
+    serves after a drop, and ``on_serve`` the first frame of
+    every connection (#1019) — the poke the screens re-read on,
+    first connection included; the bridge wires all four to
+    signals. A drop that never connected tells once per attempt
+    — the outage's own heartbeat, a flash while it lasts (#946,
     AGENTS.md's exception rule: never a silent ``None``)."""
 
     def __init__(
@@ -107,7 +96,9 @@ class EventsFeed:
         self.on_frame = None
         self.on_drop = None
         self.on_reconnect = None
+        self.on_serve = None
         self.dropped = False
+        self.serving = False
 
     async def run(self) -> None:
         """Connect and serve until cancelled, the ladder between
@@ -170,14 +161,32 @@ class EventsFeed:
 
     async def serve(self, ws) -> None:
         """Receive until the stream ends: the first frame tells
-        the reconnect — a frame proves the stream, where a
+        the serve (#1019) — a frame proves the stream, where a
         connection that only reached the handshake proves
         nothing (the daemon accepts and then refuses a bad
-        token). Every decoded frame crosses to ``on_frame``;
-        junk is skipped, logged, not fatal."""
+        token) — and every decoded frame crosses to
+        ``on_frame``; junk is skipped, logged, not fatal."""
         async for raw in ws:
+            self.note_serve()
             self.note_connection()
             self.land(raw)
+
+    def note_serve(self) -> None:
+        """A connection's first frame, told once per connection
+        (#1019): the serve poke the screens re-read on — frames
+        published while no connection stood never landed, so a
+        feed that comes to serve hands its hosts a re-read,
+        first connection included (the opening read and this
+        re-read bracket the startup race: a frame published
+        between the REST answer and the server-side subscribe
+        misses the socket but shows in the re-read). The
+        reconnect flash beside it is :meth:`note_connection`'s
+        own tell."""
+        if self.serving:
+            return
+        self.serving = True
+        if self.on_serve is not None:
+            self.on_serve()
 
     def land(self, raw: str) -> None:
         """One wire text delivered: decoded, junk skipped, the
@@ -204,7 +213,10 @@ class EventsFeed:
         """A connection's end or a dial's failure, told with its
         reason: the bridge flashes the current screen while the
         feed retries — each attempt re-tells, the outage's own
-        heartbeat while it lasts."""
+        heartbeat while it lasts. The serve flag clears with it:
+        the next connection's first frame is a serve again, its
+        own poke (#1019)."""
         self.dropped = True
+        self.serving = False
         if self.on_drop is not None:
             self.on_drop(reason)

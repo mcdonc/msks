@@ -56,12 +56,6 @@ from .rows import (
     workspace_rows,
 )
 
-#: The standing refresh cadence (#939), milliseconds — the TUI's
-#: own listing interval (#470 L2, five seconds): the list reloads
-#: on this tick while the window owns it, so a workspace another
-#: surface moved appears without a keypress.
-REFRESH_MS = 5000
-
 #: The bridge call's key for a listing refresh (#939): the
 #: screen answers only its own key, whatever else shares the
 #: bridge.
@@ -235,9 +229,6 @@ class WorkspaceList(QtWidgets.QWidget):
         self.remove_button.clicked.connect(self.remove_held)
         self.remove_button.setEnabled(False)
         self.sync_actions()
-        self.timer = QtCore.QTimer(self)
-        self.timer.setInterval(REFRESH_MS)
-        self.timer.timeout.connect(self.refresh)
         # The status line alone rides the top (#972): the row
         # cells carry the start/stop and shell actions, the
         # page's own actions the bottom row carries, and the
@@ -274,14 +265,14 @@ class WorkspaceList(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def refresh(self) -> None:
-        """One listing refresh through the bridge (#939) — the
-        timer's tick and the button's click share it, and the
-        screen's own open does the first. A refresh already in
-        flight is skipped, exactly the TUI listing's own guard
-        (#470): ticks that outlive a slow call would stack
-        identical requests while the first answer has yet to
-        land. The rows on screen stand until the answer replaces
-        them."""
+        """One listing refresh through the bridge (#939, #1019)
+        — the screen's own open, a listing-affecting frame the
+        events feed pushed, and the feed's serve poke share it.
+        A refresh already in flight is skipped, exactly the TUI
+        listing's own guard (#470): pokes that outlive a slow
+        call would stack identical requests while the first
+        answer has yet to land. The rows on screen stand until
+        the answer replaces them."""
         if self.pending:
             return
         self.pending = True
@@ -837,30 +828,20 @@ class WorkspaceList(QtWidgets.QWidget):
         self.status.clear()
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
-        """The screen's first refresh at open (#939), and the
-        tick's resume on a re-show: the screen refreshes while it
-        owns the window. A wrapper without its ``timer`` does
-        neither (#959): Qt can deliver events to a screen whose
-        construction never finished, and to the empty wrapper
-        PySide6 raises at teardown for a C++ object that
-        outlived its Python one — neither owns the tick the
-        open starts."""
-        timer = getattr(self, "timer", None)
-        if timer is not None:
+        """The screen's refresh at open (#939, #1019): the
+        standing tick is gone — the listing re-reads on the
+        listing-affecting frames the events feed pushes
+        (:meth:`refresh` and the feed's serve pokes below) —
+        and a re-show refreshes, the screen's own answer for
+        the frames that landed while it was hidden. A wrapper
+        without its ``status`` (#959) refreshes nothing: Qt
+        can deliver events to a screen whose construction
+        never finished, and to the empty wrapper PySide6
+        raises at teardown for a C++ object that outlived its
+        Python one."""
+        if getattr(self, "status", None) is not None:
             self.refresh()
-            timer.start()
         super().showEvent(event)
-
-    def hideEvent(self, event: QtGui.QHideEvent) -> None:
-        """The tick stops with the screen (#939): a closed
-        window hides its children, and a timer tick after close
-        must not touch widgets. A wrapper without its ``timer``
-        (#959) has no tick to stop — showEvent names the two
-        shapes that arrive here half-built."""
-        timer = getattr(self, "timer", None)
-        if timer is not None:
-            timer.stop()
-        super().hideEvent(event)
 
     def eventFilter(
         self, watched: QtCore.QObject, event: QtCore.QEvent
