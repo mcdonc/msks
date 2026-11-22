@@ -187,6 +187,35 @@ def test_the_scale_knobs_read_the_environment(
     assert app.FONT_SCALE_ENV == "MSKSC_GUI_FONT_SCALE"
 
 
+def test_the_chrome_anchor_converts_through_the_screen_dpi() -> None:
+    """The chrome's pixel anchor (#1056): the point size a
+    screen's font dpi answers for it, so the same 15 pixels
+    rasterize wherever the session opens — 15pt at macOS's 72,
+    11.25pt at the 96 an X11 or Wayland session or the
+    offscreen platform answers. A session with no screen at
+    all takes the offscreen floor."""
+
+    class Screen:
+        def __init__(self, dpi: float) -> None:
+            self.dpi = dpi
+
+        def logicalDotsPerInch(self) -> float:
+            return self.dpi
+
+    class Session:
+        def __init__(self, screen: Screen | None) -> None:
+            self.screen = screen
+
+        def primaryScreen(self) -> Screen | None:
+            return self.screen
+
+    assert app.screen_dpi(Session(Screen(96.0))) == 96.0
+    assert app.screen_dpi(Session(None)) == app.NO_SCREEN_DPI
+    assert app.chrome_pt(15, 72.0) == pytest.approx(15.0)  # macOS
+    assert app.chrome_pt(15, 96.0) == pytest.approx(11.25)  # Linux
+    assert app.chrome_pt(18, 96.0) == pytest.approx(13.5)  # 1.2 knob
+
+
 def test_the_saved_geometry_reads_only_usable_rects(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -400,15 +429,34 @@ def test_the_gui_window_opens_offscreen(
     qapp = QtWidgets.QApplication.instance()
     assert qapp is not None
     assert qapp.platformName() == "offscreen"
-    # The chrome's anchor (#1046): the terminal face's own
-    # default, whatever the platform's font carried — one
-    # absolute write on the application font before any widget
-    # built, the same size on every platform.
+    # The chrome's anchor (#1046, #1056): the terminal face's
+    # default as a pixel size — 15 logical pixels — one absolute
+    # write on the application font before any widget built,
+    # converted through the screen's own dpi so the same pixels
+    # open on every platform (the offscreen platform answers
+    # 96 where macOS answers 72).
     from msks.client.gui.terminal import fonts
 
+    dpi = qapp.primaryScreen().logicalDotsPerInch()
     assert qapp.font().pointSizeF() == pytest.approx(
-        fonts.DEFAULT_PT * app.FONT_SCALE
+        app.chrome_pt(fonts.DEFAULT_PT * app.FONT_SCALE, dpi)
     )
+    # The converted point size rasterizes back to the anchor's
+    # own pixels: 15 at the default scale, on a 96-dpi host and
+    # a 72-dpi one alike (#1056). The pin reads the size back
+    # off a face the database always holds — the bundled
+    # terminal face, registered because the offscreen
+    # platform may answer an empty database, where an app font
+    # of Sans Serif resolves to nothing — and the conversion
+    # is the dpi's, not the family's.
+    from PySide6.QtGui import QFontInfo
+
+    fonts.register_faces()
+    face = fonts.make_font()
+    face.setPointSizeF(qapp.font().pointSizeF())
+    realized = QFontInfo(face).pixelSize()
+    assert realized >= 0
+    assert realized == round(fonts.DEFAULT_PT * app.FONT_SCALE)
     # The opening geometry, first open (#939): nothing saved
     # answers, so the fixed 1280x720 default does (the platform
     # places the frame, so the size is what is pinned).
@@ -837,6 +885,12 @@ def test_open_window_reuses_an_existing_app(
         def setFont(self, font: FakeFont) -> None:
             shown.append(f"font {font.size}")
 
+        def primaryScreen(self) -> object:
+            return self  # the screen-shape pair the anchor converts through
+
+        def logicalDotsPerInch(self) -> float:
+            return 96.0
+
         def exec(self) -> int:
             shown.append("exec")
             return 3
@@ -898,10 +952,12 @@ def test_open_window_reuses_an_existing_app(
         Bridge.start, Bridge.stop = real_start, real_stop  # type: ignore[method-assign]
     assert shown.count("created") == 1  # the pre-made one only
     assert styles == ["Fusion"]  # the session never picks the style
-    # The chrome's anchor (#1046): the terminal default's 15pt,
-    # whatever the existing app's 9pt font carried — one
-    # absolute write on the application font, before any widget.
-    assert "font 15.0" in shown
+    # The chrome's anchor (#1046, #1056): the terminal
+    # default's 15 pixels converted through the 96-dpi screen
+    # the fake answers — 11.25pt — whatever the existing app's
+    # 9pt font carried. One absolute write on the application
+    # font, before any widget.
+    assert "font 11.25" in shown
     # The desktop identity (#1021, #1043): the entry name the
     # compositor matches the icon by, and the application name
     # macOS's menu bar titles its application menu after — both
@@ -1149,6 +1205,12 @@ def test_open_window_keeps_a_user_style_choice(
         def setFont(self, font: object) -> None:
             pass
 
+        def primaryScreen(self) -> object:
+            return self  # the screen-shape pair the anchor converts through
+
+        def logicalDotsPerInch(self) -> float:
+            return 96.0
+
         def exec(self) -> int:
             return 0
 
@@ -1171,16 +1233,18 @@ def test_open_window_keeps_a_user_style_choice(
         Bridge.start, Bridge.stop = real_start, real_stop  # type: ignore[method-assign]
     assert os.environ["QT_STYLE_OVERRIDE"] == "Chosen"
     # The style write never happened — the choice stands — but
-    # the anchored font still applied (#1046): the terminal
-    # default's 15pt, whatever the stub's 10pt platform font
-    # carried.
-    assert styles == ["font 15"]
-    # A preset knob multiplies the anchor itself (#1046): a
-    # fresh open writes the knob's size, not the platform
-    # default's — 15pt at 1.2 lands 18pt, where the stub's
-    # 10pt platform font at 1.2 would land 12. The geometry
-    # file the first open wrote is repointed away: the second
-    # open reads nothing the first saved.
+    # the anchored font still applied (#1046, #1056): the
+    # terminal default's 15 pixels converted through the 96-dpi
+    # screen the stub answers — 11.25pt — whatever the stub's
+    # 10pt platform font carried.
+    assert styles == ["font 11.25"]
+    # A preset knob multiplies the anchor itself (#1046, #1056):
+    # a fresh open writes the knob's size, not the platform
+    # default's — 15 pixels at 1.2 lands 18 pixels, 13.5pt at
+    # the stub's 96 dpi, where the stub's 10pt platform font at
+    # 1.2 would land 12pt. The geometry file the first open
+    # wrote is repointed away: the second open reads nothing the
+    # first saved.
     os.environ["MSKSC_GUI_FONT_SCALE"] = "1.2"
     monkeypatch.setattr(
         app, "geometry_path", lambda: tmp_path / "gui-window-2.json"
@@ -1191,4 +1255,4 @@ def test_open_window_keeps_a_user_style_choice(
         assert app.open_window(stub) == 0
     finally:
         Bridge.start, Bridge.stop = real_start, real_stop  # type: ignore[method-assign]
-    assert styles == ["font 15", "font 18"]
+    assert styles == ["font 11.25", "font 13.5"]

@@ -66,14 +66,26 @@ NO_DISPLAY = (
 # so the window looks the same wherever it opens.
 FUSION_STYLE = "Fusion"
 
-#: The window's font scale (#939, #1046): the multiplier the
-#: window's fonts take over the terminal face's own default —
-#: the anchor :func:`open_window` writes — so the tabs, the
-#: buttons, and the tables' headers frame the content at the
-#: size the content runs. One scale for the whole window,
+#: The window's font scale (#939, #1046, #1056): the multiplier
+#: the window's fonts take over the chrome's pixel anchor — the
+#: anchor :func:`open_window` writes, 15 logical pixels, the size
+#: the terminal face's 15pt default rasterizes to on macOS — so
+#: the tabs, the buttons, and the tables' headers open at one
+#: size on every platform. One scale for the whole window,
 #: applied to the application font before the first widget
 #: reads it.
 FONT_SCALE = 1.0
+
+#: Points per inch — Qt's own divisor: a point size and the
+#: screen's logical dpi together name the pixels a face
+#: rasterizes to (``pixels = points * dpi / 72``).
+PT_PER_INCH = 72.0
+
+#: The dpi a session with no screen answers (#1056): a
+#: defensive floor — Qt hands the window a screen on every
+#: platform the client runs (offscreen included, which
+#: synthesizes its own), a branch no desktop session reaches.
+NO_SCREEN_DPI = 96.0
 
 #: The window's opening size (#939), the shape no saved
 #: geometry answers: 1280 by 720 — a listing five columns wide
@@ -81,10 +93,11 @@ FONT_SCALE = 1.0
 DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 720
 
-#: The environment knob for the font scale (#939, #1046): an
-#: operator whose display or taste reads the anchored size
-#: wrong sets the multiplier. The window's size needs no knob —
-#: it answers to the saved geometry or the fixed default above.
+#: The environment knob for the font scale (#939, #1046, #1056):
+#: an operator whose display or taste reads the anchored size
+#: wrong sets the multiplier, over the 15-pixel anchor. The
+#: window's size needs no knob — it answers to the saved
+#: geometry or the fixed default above.
 FONT_SCALE_ENV = "MSKSC_GUI_FONT_SCALE"
 
 #: The saved window geometry's file name, under the client
@@ -140,6 +153,28 @@ def scale_from_env(name: str, default: float) -> float:
     if math.isfinite(value) and value > 0:
         return value
     return default
+
+
+def screen_dpi(app: object) -> float:
+    """The primary screen's font dpi (#1056): the divisor the
+    chrome's pixel anchor converts through. The floor answers
+    a session that carries no screen at all — defensive, for
+    Qt hands every platform the client runs a screen."""
+    screen = app.primaryScreen()
+    if screen is None:
+        return NO_SCREEN_DPI
+    return screen.logicalDotsPerInch()
+
+
+def chrome_pt(pixels: float, dpi: float) -> float:
+    """The point size that rasterizes to the asked logical
+    pixels at the platform's font dpi (#1056): a point size
+    rasterizes through that dpi — the same 15pt opens at 15
+    pixels where a session answers 72 (macOS) and a third
+    larger at the 96 an X11 or Wayland session answers — so a
+    size meant to read the same everywhere names pixels and
+    converts through the screen's own dpi."""
+    return pixels * PT_PER_INCH / dpi
 
 
 def read_geometry() -> tuple[int, int, int, int] | None:
@@ -357,20 +392,27 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     from .terminal import fonts
 
     # The chrome's anchor sits on the application before the
-    # first widget builds (#939, #1046): every screen the window
-    # opens — the table, the button, the status line — inherits
-    # the anchored size without a per-widget hand-tune. The
-    # anchor is the terminal face's own default, so the chrome
-    # frames the content at the size the content runs on every
-    # platform: the platform's own font default (13pt on macOS,
-    # 9–10pt on Linux) no longer decides the chrome's size. A
-    # preset knob is the operator's own choice and wins over the
-    # default. The write is absolute — a second open in one
-    # process writes the same size again, never a scale
-    # compounded onto the standing font.
+    # first widget builds (#939, #1046, #1056): every screen the
+    # window opens — the table, the button, the status line —
+    # inherits the anchored size without a per-widget hand-tune.
+    # The anchor is the terminal face's own default *in pixels*:
+    # the face's 15pt rasterizes to 15 logical pixels where a
+    # session answers 72 dpi (macOS) but 20 — a third larger —
+    # at the 96 an X11 or Wayland session answers (#1056), so
+    # the write converts the pixel anchor through the screen's
+    # own dpi and the chrome opens at one size on every
+    # platform, the platform's own font default (13pt on macOS,
+    # 9–10pt on Linux) deciding nothing. A preset knob is the
+    # operator's own choice and multiplies the anchor. The write
+    # is absolute — a second open in one process writes the same
+    # size again, never a scale compounded onto the standing
+    # font.
+    dpi = screen_dpi(app)
     font = app.font()
     font.setPointSizeF(
-        fonts.DEFAULT_PT * scale_from_env(FONT_SCALE_ENV, FONT_SCALE)
+        chrome_pt(
+            fonts.DEFAULT_PT * scale_from_env(FONT_SCALE_ENV, FONT_SCALE), dpi
+        )
     )
     app.setFont(font)
     apply_identity(app)

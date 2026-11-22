@@ -42,10 +42,15 @@ takes back the place and size the last close left, as long as a
 connected screen still shows some of that rect.
 
 `MSKSC_GUI_FONT_SCALE` multiplies the window's base font size.
-The base is the terminal face's own default, 15pt, so the
-window's chrome and its terminal content open at one size on
-every platform. The default multiplier is 1.0. The [zoom
-keys](#the-zoom-keys) change the size at runtime.
+The base is 15 logical pixels, the size the terminal face's
+15pt default rasterizes to on macOS. A Linux session rasterizes
+a point size larger (96 against 72 font dpi), so the window
+anchors its chrome in pixels and converts through the screen's
+own dpi: the chrome opens at the same size on every platform
+(#1056). The terminal content keeps its own 15pt default, so
+it opens larger than the chrome on a 96-dpi session. The
+default multiplier is 1.0. The [zoom
+keys](#the-zoom-keys) change both sizes at runtime.
 
 ## The connection
 
