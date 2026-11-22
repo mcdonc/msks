@@ -340,6 +340,10 @@ async def test_a_scoped_clone_creates_the_callers_row(daemon) -> None:
 
     peer, app, _api = daemon
     source = (await create(peer(ALICE), "build")).json()
+    # A second holder makes the bare name plural: a clone that
+    # ignored the scope and resolved unscoped would answer the
+    # ambiguity 409 instead of alice's row.
+    await create(peer(BOB), "build")
     state_dir = app.state.settings.vmm.state_dir
     for path in (
         persist.overlay_path(state_dir, source["id"]),

@@ -338,7 +338,8 @@ workspace's id, or the `--user OWNER` option on the workspace verbs (`start`,
 `stop`, `rm`, `clone`, `key`, `resize`, `mount`, `umount`): the name then
 resolves against that owner's rows alone. The option is root's; a non-root
 caller passing it is refused, because every non-root call already addresses
-the caller's own rows.
+the caller's own rows. `--user` takes the account name, or the bare uid the
+error printed for a dead owner.
 
 ## `msks ls`
 

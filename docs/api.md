@@ -153,8 +153,8 @@ the workspace-ref routes: `GET …/workspaces/{ref}`, `start`,
 and the 405 `PUT`/`PATCH` refusal. The value is an account name
 the daemon resolves to a uid, and the request's ref resolution
 runs against that owner's rows alone. The scope changes the view
-alone: the request still acts with the caller's own authority —
-a clone through a scope creates the new row as the caller's. The
+alone: the request still acts with the caller's own authority. A
+clone through a scope creates the new row as the caller's. The
 scope always filters, even when the named owner is one the owner
 filter would bypass (root's own rows, the daemon account's): an
 explicit scope resolves as that one owner alone, which is the one

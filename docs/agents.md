@@ -47,8 +47,9 @@ bare name two or more owners hold exits 6 with every owner named.
 `--user OWNER` on a workspace verb (`start`, `stop`, `rm`,
 `clone`, `key`, `resize`, `mount`, `umount`) resolves the name
 against that owner's rows alone. The selector is root only: a
-non-root caller passing it is refused. A listing that spans owners
-carries an `owner` column beside the name.
+non-root caller passing it is refused. OWNER is the account name,
+or the bare uid the error printed for a dead owner. A listing that
+spans owners carries an `owner` column beside the name.
 
 A workspace's `status` is one of these values:
 
