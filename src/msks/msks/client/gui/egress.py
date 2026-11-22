@@ -178,6 +178,7 @@ class EgressTab(QtWidgets.QWidget):
         self.pending_write = False
         self.before: list[str] | None = None
         self.working: list[str] = []
+        self.wrote_mode = ""
         self.seq = 0
         self.list_key = ""
         self.switch_key = ""
@@ -253,6 +254,7 @@ class EgressTab(QtWidgets.QWidget):
         self.switch_key = ""
         self.write_key = ""
         self.before = None
+        self.wrote_mode = ""
         self.workspace_id = workspace_id
         self.frame = None
         self.rules = None
@@ -341,12 +343,21 @@ class EgressTab(QtWidgets.QWidget):
     def repaint_entries(self) -> None:
         """The editor's list from the working list (#1050): one
         row per entry, the empty state's stand-in beneath while
-        none stands, and the buttons following the ground and the
-        selection."""
-        self.entries.clear()
-        for entry in self.working:
-            self.entries.addItem(entry)
-        self.empty.setVisible(not self.working)
+        none stands, and the buttons following the ground and
+        the selection. A rebuild the rows already show skips
+        itself: the page's tick repaints every few seconds, and
+        the selection the Remove action reads must survive the
+        ticks that change nothing — a frame that changes the
+        list rebuilds the rows and the selection goes with it."""
+        shown = [
+            self.entries.item(row).text()
+            for row in range(self.entries.count())
+        ]
+        if shown != self.working:
+            self.entries.clear()
+            for entry in self.working:
+                self.entries.addItem(entry)
+            self.empty.setVisible(not self.working)
         self.sync_buttons()
 
     def editable(self) -> bool:
@@ -477,29 +488,37 @@ class EgressTab(QtWidgets.QWidget):
         """One composed list to the daemon (#1050): the snapshot
         stands for the rollback, and a composition that empties
         a static posture asks the shared question first — a yes
-        sends the confirmed write, a no decides nothing."""
+        sends the confirmed write, a no decides nothing. The
+        posture the composition writes beside is captured here:
+        a frame the modal ask lets land (a switch another
+        surface made) cannot repoint the write the operator
+        answers for."""
         if not self.editable():
             return
         self.before = self.working
-        if self.empties_static(entries):
-            if self.ask_empty_static():
-                self.write(entries, confirm_empty=True)
+        mode = self.current
+        if not self.empties_static(entries):
+            self.write(entries, mode)
             return
-        self.write(entries)
+        if self.ask_empty_static():
+            self.write(entries, mode, confirm_empty=True)
+            return
+        self.before = None  # the no decided nothing: no snapshot stands
 
     def write(
-        self, entries: list[str], *, confirm_empty: bool = False
+        self, entries: list[str], mode: str, *, confirm_empty: bool = False
     ) -> None:
         """One allowlist write through the bridge (#1050): the
         policy route the CLI's ``egress mode --allow`` drives,
-        the standing mode beside the full new list — the editor
-        changes the list, not the posture — under its own key,
-        one at a time. The working list takes the composition at
-        once (the operator reads their edit the moment they make
-        it, the daemon's answer confirming) and the answer —
-        the fresh rules frame — repaints it."""
+        the composed posture beside the full new list — the
+        editor changes the list, not the posture — under its own
+        key, one at a time. The working list takes the
+        composition at once (the operator reads their edit the
+        moment they make it, the daemon's answer confirming) and
+        the answer — the fresh rules frame — repaints it."""
         self.pending_write = True
         self.working = entries
+        self.wrote_mode = mode
         self.seq += 1
         self.write_key = f"{WRITE_STEM}-{self.seq}"
         self.note.setText("saving …")
@@ -508,7 +527,7 @@ class EgressTab(QtWidgets.QWidget):
             self.write_key,
             "set_egress_mode",
             self.workspace_id,
-            self.current,
+            mode,
             confirm_empty,
             entries,
         )
@@ -618,29 +637,31 @@ class EgressTab(QtWidgets.QWidget):
     def settle_write_refusal(self, message: str) -> None:
         """The refused write's arms (#1050): the escape asks its
         question, everything else names itself — and every arm
-        but a resent yes rolls the working list back to the
-        snapshot the change took: the daemon is the authority,
-        and a refused edit must not ride a later one."""
+        but a resent yes restores the list from the standing
+        frame: the daemon is the authority (it refused the
+        write, so its list stands), and a refused edit must not
+        ride a later one."""
         if CONFIRM_MARKER in message:
             self.confirm_write_refusal()
             return
         self.note.setText(f"refused: {message}")
-        self.rollback()
+        self.restore_entries()
 
     def confirm_write_refusal(self) -> None:
         """The escape's arm over a refused write (#1050): the
-        composition goes to the question, not the working list —
-        a read the modal ask lets land can repaint the list
-        mid-question, and the operator's yes confirms the write
-        that was refused, not whatever landed under the
+        composition and its posture go to the question — a read
+        the modal ask lets land can repaint the list and the
+        mode mid-question, and the operator's yes confirms the
+        write that was refused, not whatever landed under the
         dialog. A yes resends it confirmed; a no decides
         nothing."""
         sent = self.working
+        mode = self.wrote_mode
         if self.ask_empty_static():
-            self.write(sent, confirm_empty=True)
+            self.write(sent, mode, confirm_empty=True)
             return
         self.note.setText("")
-        self.rollback()
+        self.restore_entries()
 
     def switch_refused(self, key: str, failure: object) -> None:
         """A refused switch (#1042): the refusal settles on the
@@ -671,12 +692,10 @@ class EgressTab(QtWidgets.QWidget):
         self.note.setText(f"refused: {message}")
         self.take(self.frame)
 
-    def rollback(self) -> None:
-        """The refused write's restore (#1050): the working list
-        takes the snapshot the change took — ``change`` always
-        stands one behind a write that can fail — and the list
-        repaints from it, the refusal standing on the note line
-        beside the list the daemon still holds."""
-        self.working = self.before or []
+    def restore_entries(self) -> None:
+        """The refused write's restore (#1050): the standing
+        frame repaints the list — fresher than the snapshot the
+        change took whenever a frame landed under the question's
+        modal loop — and the snapshot the rollback held goes."""
         self.before = None
-        self.repaint_entries()
+        self.take(self.frame)

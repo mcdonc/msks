@@ -829,3 +829,121 @@ def test_the_entry_dialog_builds_and_submits(qt) -> None:
     dialog.submit()
     assert dialog.entry == "example.com"
     assert dialog.result() == QtWidgets.QDialog.DialogCode.Accepted
+
+
+def asking_with_frame(tab, monkeypatch, frame: dict) -> list:
+    """The question's stub over a landing frame (#1050 review):
+    the ask pushes the frame — a switch another surface made
+    while the question stood — then answers Yes."""
+    asks: list[tuple] = []
+
+    def ask(parent, title: str, text: str) -> bool:
+        asks.append((parent, title, text))
+        tab.push({"event": "egress.rules", "data": frame})
+        return True
+
+    monkeypatch.setattr(egress_mod, "confirm", ask)
+    return asks
+
+
+def test_the_confirmed_write_keeps_the_composed_posture(
+    qt, monkeypatch
+) -> None:
+    """The confirmation's unit (#1050 review): the posture the
+    composition captured is the posture the confirmed write
+    carries — a frame the modal ask lets land cannot repoint the
+    write the operator answers for, on the gate's own ask and on
+    the route's refusal ask alike."""
+    tab, bridge = make_tab(qt)
+    bridge.succeeded.emit(
+        tab.list_key,
+        rules_frame(mode="static", allow_list=(".d.org",), allowed=()),
+    )
+    tab.entries.setCurrentRow(0)
+    asking_with_frame(tab, monkeypatch, rules_frame(mode="interactive"))
+    tab.remove()  # the gate's ask: the frame lands under the question
+    assert bridge.calls[-1] == (
+        tab.write_key,
+        "set_egress_mode",
+        ("ws-a", "static", True, []),
+    )
+    bridge.succeeded.emit(
+        tab.write_key,
+        {
+            **rules_frame(mode="static", allow_list=(), allowed=()),
+            "applied": True,
+        },
+    )
+    # The route's refusal arm: a verdict stood at the send and
+    # left before the answer — the local gate passes, the daemon
+    # refuses, and the ask lands the same racing frame.
+    bridge.succeeded.emit(
+        tab.list_key, rules_frame(mode="static", allow_list=(".d.org",))
+    )
+    tab.entries.setCurrentRow(0)
+    tab.remove()
+    assert bridge.calls[-1] == (
+        tab.write_key,
+        "set_egress_mode",
+        ("ws-a", "static", False, []),
+    )
+    asking_with_frame(
+        tab,
+        monkeypatch,
+        rules_frame(mode="interactive", allow_list=(".d.org",)),
+    )
+    bridge.failed.emit(tab.write_key, EMPTY_REFUSAL)
+    assert bridge.calls[-1] == (
+        tab.write_key,
+        "set_egress_mode",
+        ("ws-a", "static", True, []),
+    )
+
+
+def test_a_tick_that_changes_nothing_keeps_the_selection(qt) -> None:
+    """The tick's repaint (#1050 review): a frame whose list the
+    rows already show rebuilds nothing — the selection the
+    Remove action reads survives the page's ticks — and a frame
+    that changes the list rebuilds the rows, the selection going
+    with it."""
+    tab, _bridge = make_tab(qt)
+    tab.entries.setCurrentRow(0)
+    assert tab.remove_button.isEnabled()
+    tab.take(rules_frame())  # the same list: the rows stand
+    assert tab.entries.currentRow() == 0
+    assert tab.remove_button.isEnabled()
+    tab.take(rules_frame(allow_list=(".debian.org", "example.com")))
+    assert tab.entries.currentRow() == -1  # a changed list rebuilds
+    assert not tab.remove_button.isEnabled()
+
+
+def test_each_accepted_form_persists_through_the_route(
+    qt, monkeypatch
+) -> None:
+    """The daemon's accepted forms (#1050): one add of each — a
+    host, a scope, an address, a CIDR, and host:port — each
+    posts the whole list through the policy route and stays on
+    the list the reply repaints."""
+    tab, bridge = make_tab(qt)
+    forms = (
+        "example.com",
+        "*.example.com",
+        "10.1.2.3",
+        "10.0.0.0/8",
+        "example.com:443",
+    )
+    standing = [".debian.org"]
+    for form in forms:
+        fake_entry_dialog(monkeypatch, form)
+        tab.add()
+        standing = [*standing, form]
+        assert bridge.calls[-1] == (
+            tab.write_key,
+            "set_egress_mode",
+            ("ws-a", "interactive", False, standing),
+        )
+        bridge.succeeded.emit(
+            tab.write_key,
+            {**rules_frame(allow_list=tuple(standing)), "applied": True},
+        )
+        assert entry_rows(tab) == standing
