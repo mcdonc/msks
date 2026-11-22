@@ -527,6 +527,24 @@ async def test_the_form_picks_the_remote_parser(monkeypatch) -> None:
         }
 
 
+async def test_the_direction_select_reads_sshs_pair(monkeypatch) -> None:
+    """The direction choices read ssh's own pair (#1032): local
+    and remote, named for the side that holds the listener."""
+    scripted_link(monkeypatch, [])
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_proxies(pilot, app)
+        await pilot.press("a")
+        await wait_for(lambda: isinstance(app.screen, ProxyFormScreen))
+        select = app.screen.query_one("#field-direction", Select)
+        assert [(str(prompt), value) for prompt, value in select._options] == [  # noqa: SLF001
+            ("local (-L)", "-L"),
+            ("remote (-R)", "-R"),
+        ]
+
+
 async def test_a_markup_carrying_bind_removes_whole(monkeypatch) -> None:
     """The -L parser leaves the bind field's charset open, so a
     stored bind can carry a closing markup tag: the add form takes

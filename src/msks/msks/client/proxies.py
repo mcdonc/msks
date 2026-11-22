@@ -165,8 +165,15 @@ def parse_remote_spec(raw: str) -> dict:
     }
 
 
+def direction_word(row: dict) -> str:
+    """One row's direction as ssh's own word (#1032): the wire
+    value's ``forward`` reads ``local`` beside ``remote``, the
+    pair named for the side that holds the listener."""
+    return "remote" if row["direction"] == "remote" else "local"
+
+
 def proxy_endpoint(row: dict) -> tuple[str, str]:
-    """One row's (listen, target) display pair: a forward proxy
+    """One row's (listen, target) display pair: a local proxy
     listens on the daemon host and reaches the guest; a remote one
     listens on the workspace's gateway and reaches the daemon's
     side."""
@@ -187,7 +194,7 @@ def proxy_line(row: dict) -> str:
     label = f" [{row['label']}]" if row.get("label") else ""
     reason = f" — {row['reason']}" if row.get("reason") else ""
     return (
-        f"{row['direction']} proxy {row['id']}: {listen} -> "
+        f"{direction_word(row)} proxy {row['id']}: {listen} -> "
         f"{target}{label} ({row.get('status', 'stopped')}{reason})"
     )
 
@@ -241,7 +248,7 @@ def cmd_proxy_add(
         "-L",
         "--local",
         metavar="[BIND:]PORT:HOST:PORT",
-        help="forward: the daemon binds PORT (loopback, or BIND) and "
+        help="local: the daemon binds PORT (loopback, or BIND) and "
         "bridges to the workspace's port — HOST names the workspace "
         "itself (localhost)",
     ),
@@ -250,7 +257,7 @@ def cmd_proxy_add(
         "-R",
         "--remote",
         metavar="RPORT:HOST:TPORT",
-        help="reverse: the workspace's gateway binds RPORT and bridges "
+        help="remote: the workspace's gateway binds RPORT and bridges "
         "to the daemon-side service HOST:TPORT",
     ),
     label: str | None = typer.Option(
@@ -296,7 +303,7 @@ def cmd_proxy_ls(
                 [
                     str(row["id"]),
                     row["workspace_id"],
-                    row["direction"],
+                    direction_word(row),
                     *proxy_endpoint(row),
                     row.get("label") or "",
                     row_status(row),

@@ -247,10 +247,10 @@ describes what a mount is and every kind of skip.
 
 ### The Proxies tab
 
-![The Proxies tab: one listening forward, one failed remote](screens/gui-proxies.png)
+![The Proxies tab: one listening local proxy, one failed remote](screens/gui-proxies.png)
 
 The tab manages the workspace's persisted proxies. The rows read
-the direction (`-L` forward, `-R` remote), the spec in the CLI's
+the direction (local `-L`, remote `-R`), the spec in the CLI's
 own grammar, the label, and the live status word with its cause.
 **Add** opens the form, and a spec the CLI's parser refuses keeps
 the form standing with the rule on its note line. **Edit**

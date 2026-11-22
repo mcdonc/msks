@@ -13,7 +13,7 @@ from ..proxies import parse_local_spec, parse_remote_spec
 
 #: The spec grammar's unnamed hosts (#809, mirrored from the
 #: TUI's own constants — the parity test holds the pair): a
-#: forward's default bind and a remote's default target, the
+#: local's default bind and a remote's default target, the
 #: loopback the daemon binds when the row names none.
 DEFAULT_LISTEN_HOST = "127.0.0.1"
 DEFAULT_TARGET_HOST = "127.0.0.1"
@@ -23,7 +23,7 @@ DEFAULT_TARGET_HOST = "127.0.0.1"
 FORWARD_CHOICE = "-L"
 REMOTE_CHOICE = "-R"
 
-#: The direction select's choices, forward first — the add
+#: The direction select's choices, local first — the add
 #: path's own default.
 DIRECTION_CHOICES = (FORWARD_CHOICE, REMOTE_CHOICE)
 
@@ -42,7 +42,7 @@ def bracketed_host(host: str) -> str:
 def spec_text(row: dict) -> str:
     """One row's spec in the CLI's own grammar (#988, the TUI's
     own text): the exact words ``msks proxy add`` takes — a
-    forward's bind appears only when the row names one, its host
+    local's bind appears only when the row names one, its host
     field the workspace's two spellings, an IPv6 literal
     bracketed so the text parses back."""
     if row["direction"] == "remote":
@@ -57,7 +57,7 @@ def spec_text(row: dict) -> str:
 
 def direction_letter(row: dict) -> str:
     """The row's direction as ssh's letter (#988): ``-L`` for a
-    forward, ``-R`` for a remote."""
+    local, ``-R`` for a remote."""
     return (
         REMOTE_CHOICE if row.get("direction") == "remote" else FORWARD_CHOICE
     )
@@ -103,7 +103,7 @@ def parsed_body(letter: str, raw: str) -> tuple[dict | None, str]:
 def form_seeds(row: dict | None) -> dict:
     """The form's seeded values (#988): the edited row's letter,
     its spec text, and its label — the add path's blanks with
-    the forward letter standing."""
+    the local letter standing."""
     if row is None:
         return {"letter": FORWARD_CHOICE, "spec": "", "label": ""}
     return {

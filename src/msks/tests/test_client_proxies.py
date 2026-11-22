@@ -140,7 +140,7 @@ def test_add_posts_the_spec_on_the_workspace_route(
         "target_port": 22,
         "label": "ssh",
     }
-    assert "forward proxy 3" in capsys.readouterr().out
+    assert "local proxy 3" in capsys.readouterr().out
 
 
 def test_add_remote_posts_the_target(
@@ -217,6 +217,10 @@ def test_ls_prints_table_and_json(
     rc = cli.main(["proxy", "ls"], transport=transport)
     assert rc == 0
     table = capsys.readouterr().out
+    # The DIR cell reads ssh's word (#1032), never the wire's
+    # own "forward" spelling.
+    assert " local " in table
+    assert "forward" not in table
     assert "guest:22" in table
     assert "listening" in table
     assert "failed (address in use)" in table

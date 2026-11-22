@@ -143,7 +143,7 @@ tagged `vX.Y.Z`.
 
 - **The GUI workspace proxies tab (#988).** The workspace page
   grows a Proxies tab beside Mounts. The tab lists the
-  workspace's forwards and remotes with their live status, and
+  workspace's local and remote proxies with their live status, and
   Add and Edit parse the spec with the CLI's own parsers before
   anything sends; Removal asks first. Every proxy transition the daemon
   publishes for the open workspace refreshes the tab through the
@@ -388,6 +388,12 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **Proxy direction terms (#1032).** The TUI's proxy form, the
+  `msks proxy add` help and listings, and the docs chapters now
+  call the two directions local (`-L`) and remote (`-R`), ssh's
+  own pair, named for the side that holds the listener. The
+  flags, the form's stored values, and the API rows are
+  unchanged.
 - **The conditional certifi overlay (#785).** The nix builds
   swap certifi in the python package set only while the pinned
   nixpkgs sits below the `certifi>=2026.10.23` floor pyproject
