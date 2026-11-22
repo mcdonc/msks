@@ -15,12 +15,12 @@
         inherit system;
         config = { };
       };
-      # certifi above the pinned nixpkgs' while it sits below the
-      # pyproject floor (#606): the overlay applies only while the
-      # pinned set needs it (#785) — a set that already clears the
-      # floor keeps its own certifi, and the python closure comes
-      # from the binary cache — and nix/certifi-gate.nix names a
-      # composed set that misses the floor at eval time.
+      # certifi above the pinned nixpkgs while the pin sits below
+      # the pyproject floor (#606): the overlay applies only while
+      # the pinned set needs it (#785) — a set that already clears
+      # the floor keeps its own certifi, and the python closure
+      # comes from the binary cache — and nix/certifi-gate.nix
+      # names a composed set that misses the floor at eval time.
       pkgs = import ./nix/certifi-gate.nix (
         if floor.metBy basePkgs then
           basePkgs

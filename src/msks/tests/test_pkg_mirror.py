@@ -162,24 +162,32 @@ COMPOSITIONS = {
 
 def test_the_certifi_overlay_and_gate_stay_wired() -> None:
     """flake.nix, devenv.nix, and nix/module.nix compose both halves
-    of the conditional certifi overlay (#785): the overlay itself
-    and the eval-time gate. Dropping either line while a supported
-    pin sits below the floor fails deep in the build's runtime-deps
-    check — this test fails at pytest time instead, naming the
-    file."""
+    of the conditional certifi overlay (#785): the overlay itself,
+    the floor its condition reads, and the eval-time gate. Dropping
+    any of those lines while a supported pin sits below the floor
+    fails deep in the build's runtime-deps check — this test fails
+    at pytest time instead, naming the file. The greps run over
+    comment-stripped lines, so a commented-out line counts as
+    dropped."""
     for path, prefix in COMPOSITIONS.items():
-        text = (REPO_ROOT / path).read_text()
+        stripped = strip_comments((REPO_ROOT / path).read_text())
         overlay = f"{prefix}certifi-overlay.nix"
         gate = f"{prefix}certifi-gate.nix"
-        assert overlay in text, (
+        floor = f"{prefix}certifi-floor.nix"
+        assert overlay in stripped, (
             f"{path} dropped the certifi overlay ({overlay}) — a pin "
             f"below the pyproject floor fails the build's runtime "
             f"deps check without it (#785)"
         )
-        assert gate in text, (
+        assert gate in stripped, (
             f"{path} dropped the certifi gate ({gate}) — a composed "
             f"set below the floor loses its named eval-time check "
             f"(#785)"
+        )
+        assert floor in stripped, (
+            f"{path} dropped the floor read ({floor}) — the overlay "
+            f"condition and the gate lose the one pyproject floor "
+            f"definition (#785)"
         )
 
 

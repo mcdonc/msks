@@ -6,19 +6,24 @@
 # misses it — so the nix side cannot drift from the floor the
 # wheel's runtime-deps check enforces.
 rec {
-  # The floor pyproject declares, e.g. "2026.10.23".
+  # The floor pyproject declares, e.g. "2026.10.23". The
+  # specifier's shape is "certifi>=X.Y.Z" — the version's digits
+  # end at a quote, a comma, or a space, so a ceiling
+  # ("certifi>=2026.10.23,<2027") reads the floor the same as the
+  # bare floor does.
   version =
     let
       floorLines = builtins.filter (
         line:
-        builtins.isString line && builtins.match ''.*"certifi>=[0-9.]+".*'' line != null
+        builtins.isString line
+        && builtins.match ''.*"certifi>= *[0-9.]+[" ,].*'' line != null
       ) (builtins.split "\n" (builtins.readFile ../pyproject.toml));
     in
     if floorLines == [ ] then
-      throw "pyproject.toml declares no certifi>= floor — nix/certifi-floor.nix cannot read it"
+      throw "pyproject.toml carries no certifi>= floor in the shape nix/certifi-floor.nix parses (\"certifi>=X.Y.Z\") — fix the specifier or the parser"
     else
       builtins.head (
-        builtins.match ''.*"certifi>=([0-9.]+)".*'' (builtins.head floorLines)
+        builtins.match ''.*"certifi>= *([0-9.]+)[" ,].*'' (builtins.head floorLines)
       );
 
   # The python 3.14 certifi a pkgs set carries — "0" when the set

@@ -136,7 +136,7 @@ in
     package = lib.mkOption {
       type = lib.types.package;
       default = msksd;
-      defaultText = lib.literalExpression "let p = import ./nix/certifi-gate.nix (pkgs.extend (import ./nix/certifi-overlay.nix)); in p.python314.pkgs.callPackage ./nix/msks-pkg.nix { ... }";
+      defaultText = lib.literalExpression "let p = import ./nix/certifi-gate.nix (if (import ./nix/certifi-floor.nix).metBy pkgs then pkgs else pkgs.extend (import ./nix/certifi-overlay.nix)); in p.python314.pkgs.callPackage ./nix/msks-pkg.nix { ... }";
       description = ''
         The msksd package to run. The default builds the one wheel
         against a python package set whose certifi clears the

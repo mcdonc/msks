@@ -23,8 +23,9 @@ else
     build would fail deep in the runtime-deps check; the two usual
     causes:
     - the composition dropped nix/certifi-overlay.nix while its
-      nixpkgs still sits below the floor — restore
-      `pkgs.extend (import ./nix/certifi-overlay.nix)`;
+      nixpkgs still sits below the floor — restore it where the
+      composition lives (flake.nix: overlays = [...]; devenv.nix
+      and nix/module.nix: pkgs.extend (import ...));
     - nix/certifi-pkg.nix pins a wheel below the floor — bump it
       (wheel URL and hash from the new uv.lock entry).
   ''
