@@ -2529,13 +2529,17 @@ tagged <code>vX.Y.Z</code>.</p>
   created), refreshed on a five-second tick and a Refresh
   button. A refused refresh flashes a status line while the
   rows stand; an outage holds its message until the daemon
-  answers again. The window opens at 1280×720, runs its chrome
-  (tabs, buttons, table headers) at the terminal face's own
-  15pt default on every platform (<code>MSKSC_GUI_FONT_SCALE</code>
-  multiplies that anchor, default <code>1.0</code>; <code>1.3</code> restores the
-  old 19.5pt macOS look), and reopens at the geometry it last
-  closed at — kept under the client state root (see
-  <code>docs/cli.md</code> → Client environment).</li>
+  answers again. The window opens at 1280×720 and runs its
+  chrome (tabs, buttons, table headers) at 15 logical pixels,
+  the size the terminal face's 15pt default rasterizes to on
+  macOS. The window converts the anchor through the screen's
+  font dpi, so the chrome opens at the same size on every
+  platform (#1056). The terminal content keeps its own 15pt
+  default. <code>MSKSC_GUI_FONT_SCALE</code> multiplies the anchor
+  (default <code>1.0</code>; <code>1.3</code> restores the old macOS look). The
+  window reopens at the geometry it last closed at, kept under
+  the client state root (see <code>docs/cli.md</code> → Client
+  environment).</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
