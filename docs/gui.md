@@ -332,6 +332,14 @@ explains placeholders and sentinels.
 The **Audit** group beneath lists the daemon's recorded secret
 events, newest first: mint, revoke, expiry, and unlock rows. A
 renew changes a row's deadline without recording an audit row.
+The TIME cell shows the row's local clock. A row from an
+earlier day carries its date beside the clock. The `!` column
+marks a sighting: a placeholder token that reached a host its
+mint did not allow, the exfiltration signal. The daemon's
+recorded rows are the four lifecycle kinds, so this table's
+marker column stays blank. A sighting streams into the TUI's
+audit view live. The column's header carries that meaning as
+its tooltip.
 
 The page re-reads itself. It re-reads at every show and behind
 every action, and the daemon's pushed secret frames re-read it

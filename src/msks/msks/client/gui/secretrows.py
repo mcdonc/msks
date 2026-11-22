@@ -21,11 +21,10 @@ holds no PySide6 import and the coverage gate lands on it
 whole.
 """
 
-import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from ..ages import clock_now, created_label, parse_stamp
+from ..ages import clock_label, clock_now, created_label, parse_stamp
 
 #: The renew picker's ttl choices (#390): the duration picker
 #: over TTL-appropriate labels — the hours-to-a-month span a
@@ -89,12 +88,13 @@ class SecretRow:
 class AuditRow:
     """One recorded audit row as the audit view renders it
     (#965, over #390): the marker (``!`` on a sighting — the
-    exfiltration signal, the row kind the view highlights), the
-    local wall-clock label beside its epoch (the sort key — an
-    undated row keeps a blank column and sorts undated), the
-    kind, the workspace/name identity, the destination text,
-    and the coverage the filters read. Plain data with nothing
-    Qt-bound in it."""
+    exfiltration signal, the row kind the view highlights),
+    the local wall-clock label beside its epoch (the sort
+    key; a row from an earlier day carries its date beside
+    the clock (#1064), and an undated row keeps a blank
+    column and sorts undated), the kind, the workspace/name
+    identity, the destination text, and the coverage the
+    filters read. Plain data with nothing Qt-bound in it."""
 
     audit_id: int | None
     kind: str
@@ -267,12 +267,14 @@ def audit_stamp_epoch(iso: object) -> float:
     return moment.timestamp()
 
 
-def audit_time(ts: float) -> str:
-    """The audit row's local wall-clock label; an undated row (a
+def audit_time(ts: float, now: datetime | None = None) -> str:
+    """The audit row's local wall-clock label (#1064): the
+    clock alone on a row from the viewer's own day, the date
+    beside the clock on a row from an earlier day — the
+    shared leaf's own spelling
+    (:func:`msks.client.ages.clock_label`). An undated row (a
     stamp that does not parse) keeps a blank column."""
-    if ts <= 0.0:
-        return ""
-    return time.strftime("%H:%M:%S", time.localtime(ts))
+    return clock_label(ts, now)
 
 
 def audit_dests(kind: str, row: dict) -> tuple[str, ...]:

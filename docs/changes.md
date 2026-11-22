@@ -452,6 +452,13 @@ gui`. The nix package keeps the daemon's closure lean, so on
 
 ### Fixed
 
+- **The secrets audit rows' time labels (#1064).** The audit
+  rows in the GUI's Secrets tab and in the TUI's audit views
+  show the local clock for a row from the viewer's own day,
+  and carry the date beside the clock for a row from an
+  earlier day. The GUI's `!` column header carries a tooltip
+  naming the sighting marker and where the marker appears.
+
 - **The GUI's menu bar on macOS names the client msks
   (#1043).** The bold application menu read the process name —
   `python3.14` for the console script — until the application

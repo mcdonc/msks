@@ -12,6 +12,7 @@ shape)."""
 
 import importlib.util
 import os
+import time
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -189,8 +190,9 @@ def page_answer(
 def pin_clock(monkeypatch, when) -> None:
     """The presenter's clock pinned at both modules that read it
     (#966's fakes): the countdown reads the presenter's own
-    binding, the created label the shared leaf's — one pin for
-    both, so every label under test is deterministic."""
+    binding, the created and audit labels the shared leaf's —
+    one pin for all of them, so every label under test is
+    deterministic."""
     monkeypatch.setattr(secretrows_mod, "clock_now", lambda: when)
     monkeypatch.setattr(ages_mod, "clock_now", lambda: when)
 
@@ -281,6 +283,48 @@ def test_the_page_answer_renders_both_groups(qt, monkeypatch) -> None:
     assert tab.counts.text() == "2 placeholders · 2 audit rows"
     assert not tab.list_empty.isVisibleTo(tab)
     assert not tab.audit_empty.isVisibleTo(tab)
+    window.close()
+
+
+def test_the_audit_rows_carry_their_dates_and_the_marker_tip(
+    qt, monkeypatch
+) -> None:
+    """The audit group's own columns (#1064): a row from the
+    pinned clock's own day keeps the clock alone in its TIME
+    cell, a row from an earlier day carries its date beside
+    the clock — and the ``!`` header carries the sighting's
+    tooltip, the marker's meaning and where it fires."""
+    pinned = NOW + timedelta(days=3)
+    tab, window, _bridge = make_tab(qt, monkeypatch)
+    pin_clock(monkeypatch, pinned)
+    tab.on_succeeded(
+        secrets_mod.PAGE_KEY,
+        page_answer(
+            audit=[
+                recorded(3, "revoke"),
+                recorded(4, "mint", created_at=pinned.isoformat()),
+            ]
+        ),
+    )
+    cells_by_kind = {row[2]: row[1] for row in rows_texts(tab.audit_table)}
+    assert cells_by_kind["mint"] == time.strftime(
+        "%H:%M:%S",
+        time.localtime(secretrows_mod.audit_stamp_epoch(pinned.isoformat())),
+    )
+    assert cells_by_kind["revoke"] == time.strftime(
+        "%Y-%m-%d %H:%M:%S",
+        time.localtime(
+            secretrows_mod.audit_stamp_epoch("2030-01-02T03:04:05")
+        ),
+    )
+    marker = tab.audit_table.horizontalHeaderItem(cells.MARKER_COLUMN)
+    assert marker.text() == "!"
+    assert marker.toolTip() == cells.MARKER_TIP
+    # A table with no header labels yet answers nothing: the
+    # tip's own guard.
+    bare = qt.QtWidgets.QTableWidget(0, len(cells.AUDIT_COLUMNS))
+    cells.marker_tip(bare)
+    assert bare.horizontalHeaderItem(cells.MARKER_COLUMN) is None
     window.close()
 
 
