@@ -63,7 +63,7 @@ from .rows import (
     workspace_label,
 )
 
-#: The listen address a forward row names when it names none,
+#: The listen address a local row names when it names none,
 #: and the target address a remote row names when it names none
 #: — the daemon's own defaults, mirrored for display (the client
 #: imports no daemon module).
@@ -110,7 +110,7 @@ def spec_text(row: dict) -> str:
     """One row's spec in the CLI's own grammar (#809): the exact
     words ``msks proxy add`` takes — the listing, the compact
     line's tooltip-free cousin, and the edit form's seeded input
-    share one vocabulary. A forward's bind appears only when the
+    share one vocabulary. A local proxy's bind appears only when the
     row names one (loopback is the default, unnamed); its host
     field is the workspace's two spellings. An IPv6 literal
     arrives bracketed, so the text parses back (#890 review)."""
@@ -125,7 +125,7 @@ def spec_text(row: dict) -> str:
 
 
 def pair_text(row: dict) -> str:
-    """One row's port pair (#807's display spec): the forward
+    """One row's port pair (#807's display spec): the local
     direction's ``listen -> target``, the remote direction's
     ``listen <- target`` — the arrows point the way the traffic
     bridges, read left to right."""
@@ -157,8 +157,8 @@ def status_text(row: dict) -> str:
 
 def display_order(rows: list[dict]) -> list[dict]:
     """The rows in the compact line's display order (#807): the
-    forwards first, then the remotes — whatever order the daemon
-    served them in."""
+    local rows first, then the remote rows — whatever order the
+    daemon served them in."""
     return [row for row in rows if row["direction"] == "forward"] + [
         row for row in rows if row["direction"] == "remote"
     ]
@@ -289,7 +289,7 @@ def seed_spec(row: dict) -> str:
 def seeded_direction(seed: dict) -> str:
     """The direction select's value for one seed row (#890): the
     letter ssh gives the row's direction; the add path's own
-    forward default when no seed stands."""
+    local default when no seed stands."""
     return (
         REMOTE_CHOICE if seed.get("direction") == "remote" else FORWARD_CHOICE
     )

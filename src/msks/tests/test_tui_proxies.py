@@ -539,7 +539,7 @@ async def test_the_direction_select_reads_sshs_pair(monkeypatch) -> None:
         await pilot.press("a")
         await wait_for(lambda: isinstance(app.screen, ProxyFormScreen))
         select = app.screen.query_one("#field-direction", Select)
-        assert [(str(prompt), value) for prompt, value in select._options] == [
+        assert [(str(prompt), value) for prompt, value in select._options] == [  # noqa: SLF001
             ("local (-L)", "-L"),
             ("remote (-R)", "-R"),
         ]

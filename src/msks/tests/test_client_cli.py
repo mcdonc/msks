@@ -6659,6 +6659,24 @@ def test_proxy_add_help_reads_sshs_direction_pair(
     assert "reverse" not in flat
 
 
+def test_proxy_display_reads_sshs_direction_pair() -> None:
+    """#1032: the listing's DIR cell and the add summary print
+    ssh's local/remote words; the wire value keeps its own
+    spelling (the API rows stay on their final names)."""
+    from msks.client import proxies
+
+    row = {
+        "id": 3,
+        "direction": "forward",
+        "listen_port": 2201,
+        "target_port": 22,
+        "status": "listening",
+    }
+    assert proxies.direction_word(row) == "local"
+    assert proxies.direction_word({**row, "direction": "remote"}) == "remote"
+    assert "local proxy 3: " in proxies.proxy_line(row)
+
+
 def test_start_json_survives_a_failed_refresh(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

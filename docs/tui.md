@@ -236,8 +236,8 @@ mount's kind beside its spec (`refs:/srv/refs:ro · skipped`), and an
 `applies at next start` note while a change is pending.
 
 When the workspace holds proxies, a proxies line follows the mounts line.
-It carries one port pair per proxy, the forwards before a bar and the
-remotes after it:
+It carries one port pair per proxy, the local pairs before a bar and
+the remote pairs after it:
 
 ```text
 8888 -> 8889, 9111 -> 9115 | 8881 <- 8882, 8866 <- 8762

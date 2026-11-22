@@ -175,7 +175,7 @@ lines:
 8888 -> 8889, 9111 -> 9115 | 8881 <- 8882
 ```
 
-The forwards sit before the bar, the remotes after it. Each pair reads
+The local pairs sit before the bar, the remote pairs after it. Each pair reads
 `listen -> target` (or `<-` for a remote). A listening pair shows green. A
 pair whose bind refused shows red. The line moves on every proxy transition
 the daemon publishes, without a refresh.

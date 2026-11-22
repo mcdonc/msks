@@ -389,10 +389,11 @@ tagged `vX.Y.Z`.
 ### Changed
 
 - **Proxy direction terms (#1032).** The TUI's proxy form, the
-  `msks proxy add` help, and the docs chapters now call the two
-  directions local (`-L`) and remote (`-R`), ssh's own pair,
-  named for the side that holds the listener. The flags, the
-  form's stored values, and the API rows are unchanged.
+  `msks proxy add` help and listings, and the docs chapters now
+  call the two directions local (`-L`) and remote (`-R`), ssh's
+  own pair, named for the side that holds the listener. The
+  flags, the form's stored values, and the API rows are
+  unchanged.
 - **The conditional certifi overlay (#785).** The nix builds
   swap certifi in the python package set only while the pinned
   nixpkgs sits below the `certifi>=2026.10.23` floor pyproject
