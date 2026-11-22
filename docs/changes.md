@@ -350,6 +350,16 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **The conditional certifi overlay (#785).** The nix builds
+  swap certifi in the python package set only while the pinned
+  nixpkgs sits below the `certifi>=2026.10.23` floor pyproject
+  declares. The pinned nixpkgs (unstable, since #991) already
+  carries 2026.10.23, so `nix build .#server` serves the python
+  closure from the binary cache instead of rebuilding httpx,
+  mitmproxy, and every other dependent from source. An eval-time
+  gate (`nix/certifi-gate.nix`) names a composed set that misses
+  the floor, reading it from pyproject.toml.
+
 - **The attached clients follow the daemon over the events
   websocket instead of polling (#1019).** The TUI's workspaces
   list, workspace page, and proxies page, and the GUI's

@@ -70,10 +70,17 @@ let
   # way. flake.nix re-exposes the server output and the Debian and
   # NixOS image archives for `nix build`, the devenv-less release
   # path (#537). The Fedora archive is devenv-only.
-  # releasePkgs carries the certifi overlay (#606) — the same one
-  # flake.nix applies to its pkgs — so both halves build identical
-  # store paths while the dev shell's plain pkgs stays untouched.
-  releasePkgs = pkgs.extend (import ./nix/certifi-overlay.nix);
+  # releasePkgs carries the certifi overlay only while the pinned
+  # set needs it (#606, #785) — the same condition flake.nix
+  # applies to its pkgs, gated by nix/certifi-gate.nix — so both
+  # halves build identical store paths while the dev shell's plain
+  # pkgs stays untouched.
+  releasePkgs = import ./nix/certifi-gate.nix (
+    if (import ./nix/certifi-floor.nix).metBy pkgs then
+      pkgs
+    else
+      pkgs.extend (import ./nix/certifi-overlay.nix)
+  );
   msksServer = releasePkgs.python314.withPackages (ps: [
     (ps.callPackage ./nix/msks-pkg.nix {
       textual = ps.callPackage ./nix/textual-pkg.nix { };

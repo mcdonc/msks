@@ -68,12 +68,20 @@ let
   # (#542): the wheel needs no compiled dependency, and the
   # module loads the platform's libnetfilter_queue at runtime
   # (the service's environment carries it). msksdPkgs carries the
-  # certifi overlay (#606): whatever certifi the host's nixpkgs
-  # carries, the overlay resolves the wheel nix/certifi-pkg.nix
-  # pins across the whole python set, so every dependent (httpx,
-  # mitmproxy) builds against the one certifi the wheel's
-  # >=2026.10.23 floor names.
-  msksdPkgs = pkgs.extend (import ./certifi-overlay.nix);
+  # certifi overlay only while the host's nixpkgs sits below the
+  # pyproject floor (#606, #785): below it, the overlay resolves
+  # the wheel nix/certifi-pkg.nix pins across the whole python
+  # set, so every dependent (httpx, mitmproxy) builds against the
+  # one certifi the wheel's >=2026.10.23 floor names; a host set
+  # that already clears the floor keeps its own certifi and every
+  # dependent comes from the binary cache. nix/certifi-gate.nix
+  # names a composed set that misses the floor either way.
+  msksdPkgs = import ./certifi-gate.nix (
+    if (import ./certifi-floor.nix).metBy pkgs then
+      pkgs
+    else
+      pkgs.extend (import ./certifi-overlay.nix)
+  );
   msksd = msksdPkgs.python314.pkgs.callPackage ./msks-pkg.nix {
     textual = msksdPkgs.python314.pkgs.callPackage ./textual-pkg.nix { };
     litellm = msksdPkgs.python314.pkgs.callPackage ./litellm-pkg.nix { };
@@ -128,13 +136,14 @@ in
     package = lib.mkOption {
       type = lib.types.package;
       default = msksd;
-      defaultText = lib.literalExpression "let p = pkgs.extend (import ./nix/certifi-overlay.nix); in p.python314.pkgs.callPackage ./nix/msks-pkg.nix { ... }";
+      defaultText = lib.literalExpression "let p = import ./nix/certifi-gate.nix (pkgs.extend (import ./nix/certifi-overlay.nix)); in p.python314.pkgs.callPackage ./nix/msks-pkg.nix { ... }";
       description = ''
         The msksd package to run. The default builds the one wheel
-        against a python package set whose certifi is the wheel
-        nix/certifi-pkg.nix pins (#606) — a package set of your own
-        resolves certifi itself, and the wheel's >=2026.10.23 floor
-        holds only when that set carries a certifi at or above it.
+        against a python package set whose certifi clears the
+        >=2026.10.23 floor — the set's own certifi while it already
+        clears it, the wheel nix/certifi-pkg.nix pins while it does
+        not (#606, #785) — and a package set of your own resolves
+        certifi itself.
       '';
     };
 
