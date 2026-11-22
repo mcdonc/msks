@@ -1,13 +1,14 @@
 # The textual TUI framework for the msksd closure (#195/#203).
 #
-# nixpkgs (nixos-26.05) carries 8.2.6, below the >=8.2.8 floor the
+# nixpkgs now carries 8.2.8, matching the >=8.2.8 floor the
 # consent decider TUI declares: the ListView focus semantics the TUI
 # depends on are pinned at 8.2.8 (wholesale rebuilds mount a fresh
 # list and set focus after mount — an 8.2.6 ListView drops that
-# focus). Built here from the PyPI wheel — pure python, no compiled
-# extensions — against nixpkgs' own rich/pygments/… so the daemon
-# closure stays on the platform's package set wherever the floor
-# allows it.
+# focus). The wheel stays so the closure keeps the floor whatever
+# the channel behind the pin carries. Built from the PyPI wheel —
+# pure python, no compiled extensions — against nixpkgs' own
+# rich/pygments/… so the daemon closure stays on the platform's
+# package set wherever the floor allows it.
 #
 # Bump workflow: bump `version` and swap `src.url`/`hash` to the
 # new wheel uv.lock pins (nix prints the real hash on mismatch),

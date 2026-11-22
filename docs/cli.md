@@ -124,6 +124,24 @@ A key msks stages itself is an unencrypted OpenSSH-format key (`ed25519`,
 refused with a line giving the fixes in order: `ssh-add` the key, decrypt a
 copy, or pass `--pubkey` at create.
 
+One more variable carries the GUI window's font scale (#939):
+`MSKSC_GUI_FONT_SCALE` multiplies the platform's default font point size
+(default `1.5`). It has no config-file key, because it changes only how the
+window opens. A value that does not name a usable number (unparseable,
+`nan`, an infinity, zero, or negative) reads as the default.
+
+The window itself opens at 1280 by 720, and thereafter at the geometry it
+last closed at — place and size together, kept as `gui-window.json` under
+the client state root (`MSKSC_STATE_DIR`, else the XDG state home's msks
+subtree, the sessions' own root). A saved geometry no connected screen
+shows is ignored, so an unplugged monitor cannot strand the window off the
+desktop.
+
+A Ctrl-C in the terminal that started the window closes it (#1037). The
+close takes the window's own quit path: every open shell closes and the
+geometry saves, exactly as the close button ends it. The client exits
+with 130, the terminal's interrupted status.
+
 `MSKSC_PUBKEY_FILE` points at your key's public half, a `.pub`
 file ([the identity section](first-run.md#the-key-files)
 owns the agent requirement this form carries). A create with it
@@ -251,8 +269,8 @@ options to its own, and a remembered separator would turn
 msks's transport into the remote command:
 
 ```yaml
-ssh_options: -A -o ServerAliveInterval=30   # string form (shell-split)
-ssh_options:                                # list form (tokens stay whole)
+ssh_options: -A -o ServerAliveInterval=30 # string form (shell-split)
+ssh_options: # list form (tokens stay whole)
   - -A
   - -o
   - ServerAliveInterval=30
@@ -1439,6 +1457,27 @@ replaces msks's remote shell entirely (rsync takes the last `-e`, and the
 empty-host fill keeps pointing at the workspace id your own transport must
 then reach), the same override shape ssh passthrough options have. The host
 prerequisites are `ssh` and `rsync`. The exit code is rsync's own.
+
+## `msks gui-shortcut`
+
+The GUI window shows an msks icon once the desktop can resolve
+it (#1021). A Wayland taskbar reads the window's app id, looks up
+the desktop entry with that id, and shows the icon the entry points
+at.
+
+`msks gui-shortcut` installs both under the XDG data home
+(`XDG_DATA_HOME`, else `~/.local/share`). The `msks.desktop` entry
+lands under `applications`, and the icon renders land under
+`icons/hicolor`, one PNG per size plus the scalable SVG. The entry's
+`Exec` line carries the absolute path of the `msks` command the
+installing shell resolved, so the desktop finds the client even when
+the venv's bin directory is not on the desktop's `PATH`. Run the
+command again after an upgrade to refresh the renders. It overwrites
+in place and is safe to re-run.
+
+The window itself also sets the icon directly, so on X11 and macOS the
+window carries it without the install. Linux is the only desktop the
+command serves. Elsewhere it prints one line and exits 1.
 
 ## Errors, exit codes, and timeouts
 

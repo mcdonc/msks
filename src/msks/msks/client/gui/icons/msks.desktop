@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=msks
+GenericName=Workspace Client
+Comment=Open the msks workspace client
+Exec=msks gui
+Icon=msks
+Terminal=false
+Categories=Development;System;
+StartupWMClass=msks

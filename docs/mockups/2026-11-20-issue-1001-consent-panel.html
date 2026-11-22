@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Shells consent panel · #1001</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #fff;
+        --section: #f3f3f3;
+        --text: #202020;
+        --border: #767676;
+        --focus: #005a9e;
+        --error: #a4262c;
+        font:
+          15px system-ui,
+          sans-serif;
+        color: var(--text);
+        background: #e2e2e2;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 24px;
+      }
+      button,
+      summary,
+      select {
+        font: inherit;
+      }
+      button,
+      summary {
+        cursor: pointer;
+      }
+      button {
+        background: #fafafa;
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        padding: 5px 12px;
+      }
+      button:focus-visible,
+      summary:focus-visible,
+      select:focus-visible,
+      textarea:focus-visible {
+        outline: 3px solid var(--focus);
+        outline-offset: 2px;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0;
+      }
+      h2 {
+        font-size: 15px;
+        margin: 0 0 8px;
+      }
+      p {
+        max-width: 78ch;
+        line-height: 1.5;
+      }
+      header,
+      nav,
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      header {
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+      .window {
+        max-width: 1160px;
+        margin: auto;
+        background: var(--bg);
+        border: 1px solid var(--border);
+      }
+      .titlebar {
+        padding: 8px 16px;
+        background: var(--section);
+        border-bottom: 1px solid #aaa;
+        text-align: center;
+      }
+      .chrome {
+        padding: 10px;
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        border-bottom: 1px solid #aaa;
+      }
+      nav {
+        gap: 0;
+      }
+      nav span {
+        padding: 6px 14px;
+      }
+      nav .selected {
+        border: 1px solid var(--border);
+        border-bottom: 3px solid var(--focus);
+      }
+      .panel {
+        background: var(--section);
+        padding: 12px;
+        border-bottom: 1px solid var(--border);
+      }
+      .rows {
+        max-height: 190px;
+        overflow-y: auto;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 68px auto;
+        gap: 12px;
+        align-items: center;
+        padding: 9px 0;
+        border-top: 1px solid #ccc;
+      }
+      .dest {
+        overflow-wrap: anywhere;
+        user-select: text;
+      }
+      .countdown {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .actions {
+        display: flex;
+        gap: 10px;
+      }
+      .split {
+        display: flex;
+        position: relative;
+      }
+      .split > button {
+        border-radius: 3px 0 0 3px;
+      }
+      .split > .duration {
+        list-style: none;
+        border: 1px solid var(--border);
+        border-left: 0;
+        border-radius: 0 3px 3px 0;
+        background: #fafafa;
+        padding: 5px 8px;
+      }
+      .menu {
+        position: fixed;
+        inset: auto;
+        margin: 0;
+        width: 155px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        padding: 3px;
+        box-shadow: 1px 3px 5px #0002;
+      }
+      .menu button {
+        display: block;
+        width: 100%;
+        border: 0;
+        text-align: left;
+      }
+      .menu button:hover {
+        background: #e2eef8;
+      }
+      .flash {
+        color: var(--error);
+        margin: 8px 0 0;
+        min-height: 1.5em;
+      }
+      .shellbar {
+        padding: 6px;
+        display: flex;
+        gap: 4px;
+        background: #f7f7f7;
+      }
+      .terminal {
+        display: block;
+        width: 100%;
+        height: 360px;
+        padding: 14px;
+        background: #fff;
+        color: #202020;
+        font:
+          14px/1.5 ui-monospace,
+          monospace;
+        border: 0;
+        resize: vertical;
+      }
+      .footer {
+        font-size: 13px;
+        padding: 8px;
+        border-top: 1px solid #ccc;
+      }
+      .explanation {
+        max-width: 1160px;
+        margin: 16px auto;
+      }
+      .receipt {
+        min-height: 1.5em;
+        color: #333;
+      }
+      .badge {
+        font-size: 13px;
+      }
+      .hidden,
+      [hidden] {
+        display: none !important;
+      }
+      @media (max-width: 600px) {
+        body {
+          padding: 8px;
+        }
+        .chrome {
+          gap: 8px;
+          align-items: flex-start;
+        }
+        nav span {
+          padding: 6px 7px;
+        }
+        .row {
+          grid-template-columns: minmax(0, 1fr) 62px;
+        }
+        .actions {
+          grid-column: 1/-1;
+          justify-content: flex-end;
+        }
+        .terminal {
+          height: 300px;
+        }
+        .panel {
+          padding: 10px;
+        }
+        .controls {
+          gap: 6px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          animation: none !important;
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>
+        Shells consent panel <span class="badge">Planning mockup · #1001</span>
+      </h1>
+      <div class="controls">
+        <label for="state">Preview state</label
+        ><select id="state">
+          <option value="held">Pending requests</option>
+          <option value="failed">Failed verdict</option>
+          <option value="empty">Empty queue</option></select
+        ><button id="resolve" type="button">Simulate resolved frame</button>
+      </div>
+    </header>
+    <main class="window" aria-label="Workspace alpha">
+      <div class="titlebar">msks — alpha</div>
+      <div class="chrome">
+        <button type="button" aria-label="Back to workspace list">
+          ‹ Back
+        </button>
+        <nav aria-label="Workspace tabs">
+          <span class="selected" aria-current="page">Shells</span
+          ><span>Mounts</span><span>Proxies</span><span>Events</span
+          ><span>Info</span>
+        </nav>
+      </div>
+      <section class="panel" aria-labelledby="pending-heading">
+        <h2 id="pending-heading">Pending connections</h2>
+        <div class="rows" id="rows"></div>
+        <p class="flash" role="status" hidden>
+          decide failed: no held request with that id
+        </p>
+      </section>
+      <div class="shellbar" aria-label="Terminal tabs">
+        <button type="button" aria-current="page">1 ×</button
+        ><button type="button" aria-label="Open a shell tab">+</button>
+      </div>
+      <textarea
+        class="terminal"
+        aria-label="Workspace terminal"
+        spellcheck="false"
+      >
+alpha:~$ curl https://api.github.com
+
+</textarea>
+      <div class="footer">running · fedora · 2 mounts</div>
+    </main>
+    <section class="explanation" aria-label="Mockup notes">
+      <p>
+        Native Qt controls remain the implementation target. The menu beside
+        each action sends the selected duration immediately. A main click always
+        sends <code>tilrestart</code>. Sending a verdict keeps the row. Use
+        “Simulate resolved frame” to remove it.
+      </p>
+      <p class="receipt" role="status" id="receipt">No verdict sent.</p>
+      <p>
+        This full-page sketch illustrates the design document
+        <code
+          >2026-11-20-issue-1001-gui-phase-5-5-the-consent-panel-in-the-shells-ta-design.md</code
+        >. Resize to compare desktop and narrow layouts. The preview state
+        selector and frame button are mockup controls, not application features.
+      </p>
+    </section>
+    <script>
+      const rows = document.querySelector("#rows");
+      const panel = document.querySelector(".panel");
+      const receipt = document.querySelector("#receipt");
+      const durations = ["once", "5m", "15m", "tilrestart", "forever"];
+      function send(host, action, duration) {
+        receipt.textContent = `Sent ${action} ${host} ${duration}. The row remains until a resolved frame arrives.`;
+        document
+          .querySelectorAll(":popover-open")
+          .forEach((menu) => menu.hidePopover());
+      }
+      function render() {
+        rows.replaceChildren();
+        for (const [host, time] of [
+          ["api.github.com:443", "1m 42s"],
+          ["registry.npmjs.org:443", "58s"],
+        ]) {
+          const row = document.createElement("div");
+          row.className = "row";
+          const dest = document.createElement("span");
+          dest.className = "dest";
+          dest.textContent = host;
+          const count = document.createElement("span");
+          count.className = "countdown";
+          count.textContent = time;
+          count.setAttribute("aria-label", `${time} remaining`);
+          const actions = document.createElement("div");
+          actions.className = "actions";
+          for (const action of ["Allow", "Deny"]) {
+            const split = document.createElement("div");
+            split.className = "split";
+            const main = document.createElement("button");
+            main.type = "button";
+            main.textContent = action;
+            main.setAttribute("aria-label", `${action} ${host} until restart`);
+            main.onclick = () => send(host, action.toLowerCase(), "tilrestart");
+            const arrow = document.createElement("button");
+            arrow.type = "button";
+            arrow.className = "duration";
+            arrow.textContent = "▾";
+            arrow.setAttribute(
+              "aria-label",
+              `${action} ${host} for a duration`,
+            );
+            const menu = document.createElement("div");
+            menu.className = "menu";
+            menu.popover = "auto";
+            arrow.popoverTargetElement = menu;
+            arrow.onclick = () => {
+              const rect = arrow.getBoundingClientRect();
+              menu.style.left = `${Math.max(8, rect.right - 155)}px`;
+              menu.style.top = `${rect.bottom}px`;
+            };
+            for (const duration of durations) {
+              const choice = document.createElement("button");
+              choice.type = "button";
+              choice.textContent = `${action} ${duration}`;
+              choice.onclick = () => send(host, action.toLowerCase(), duration);
+              menu.append(choice);
+            }
+            split.append(main, arrow, menu);
+            actions.append(split);
+          }
+          row.append(dest, count, actions);
+          rows.append(row);
+        }
+        panel.hidden = false;
+      }
+      document.querySelector("#state").onchange = (e) => {
+        render();
+        panel.hidden = e.target.value === "empty";
+        document.querySelector(".flash").hidden = e.target.value !== "failed";
+        receipt.textContent = "No verdict sent.";
+      };
+      document.querySelector("#resolve").onclick = () => {
+        rows.firstElementChild?.remove();
+        panel.hidden = !rows.childElementCount;
+        receipt.textContent =
+          "Resolved frame received. Removed the oldest row.";
+      };
+      render();
+    </script>
+  </body>
+</html>

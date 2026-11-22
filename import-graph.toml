@@ -41,6 +41,9 @@ entry_points = [
 # four groups import one module instead of pushing
 # msks.client.env past the fan-in ceiling.
 facades = [
+  # #1001: the panel shares consent duration vocabulary through its
+  # presenter module, keeping the TUI controller's fan-in unchanged.
+  "msks.client.gui.consent",
   "msks.client.context",
   "msks.client.tui.consent_ui",
   "msks.interceptor",
@@ -192,7 +195,12 @@ identity = 2
 # #852: the TUI's status line carries the version-skew marker —
 # rows.py joins the client's own version word for the marker's
 # client side (the same module-edge-plus-name +2).
-spec = 11
+# #944: the GUI workspace-detail presenter reads the mount-mode
+# vocabulary (MOUNT_MODES) through the allowlist door — the same
+# module-edge-plus-name +2 the TUI's reads take.
+# #1007: the macOS menu bar's About box names the client's own
+# version word — the same module-edge-plus-name +2.
+spec = 15
 
 [snapshot.config]
 configio = 3

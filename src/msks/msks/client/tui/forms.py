@@ -12,8 +12,6 @@ cancels — no form traps focus.
 """
 
 import asyncio
-import contextlib
-from datetime import UTC, datetime
 
 from rich.markup import escape
 from textual.app import ComposeResult
@@ -23,6 +21,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Input, Select, Static
 
 from ..create import invoking_user
+from ..images import ordered_image_rows, stamp_moment
 from .rows import clip, workspace_label
 
 
@@ -209,25 +208,6 @@ def whole_number(value: str) -> bool:
 #: The sort floor for rows without a usable stamp (#186): the
 #: oldest representable aware moment, so a missing or unparseable
 #: stamp sorts below every dated row inside its distro group.
-FIRST_MOMENT = datetime(1, 1, 1, tzinfo=UTC)
-
-
-def stamp_moment(stamp: str | None) -> datetime | None:
-    """One import stamp as an aware local moment, or ``None`` when
-    the row carries no stamp or a moment the clock cannot parse
-    (#186) — a naive stamp reads as local time, matching the CLI
-    table's own rendering. Distinct from
-    :mod:`msks.client.tui.importer`'s ``imported_moment`` row
-    helper: that one reads a dict and treats a naive stamp as
-    UTC."""
-    # OverflowError rides extreme stamps: a year-1 moment has no
-    # representation in some local zones. TypeError covers a
-    # daemon sending a non-string.
-    with contextlib.suppress(ValueError, TypeError, OverflowError):
-        return datetime.fromisoformat(stamp).astimezone()
-    return None
-
-
 def imported_day(stamp: str | None) -> str:
     """One import stamp as a local calendar date, ``YYYY-MM-DD``,
     or ``-`` when the row carries no usable stamp — the column
@@ -249,19 +229,6 @@ def image_plain_refs(rows: list[dict]) -> dict[str, str]:
     for row in rows:
         plain.setdefault(f"{row['name']}:{row['version']}", row["hash"])
     return plain
-
-
-def ordered_image_rows(rows: list[dict]) -> list[dict]:
-    """The image select's ordering: distro name ascending, then
-    import date descending — the newest build of a distro leads
-    its group, and a row without a usable stamp sorts below every
-    dated row of its group."""
-    newest_first = sorted(
-        rows,
-        key=lambda row: stamp_moment(row.get("imported")) or FIRST_MOMENT,
-        reverse=True,
-    )
-    return sorted(newest_first, key=lambda row: row["name"])
 
 
 def image_options(rows: list[dict]) -> list[tuple[str, str]]:

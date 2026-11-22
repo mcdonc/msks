@@ -1,10 +1,10 @@
 """The workspace commands: the root callback and the lifecycle
 and reach verbs.
 
-`ls`, `agent-card`, `tui`, `storage`, `create`, `start`, `stop`,
-`clone`, `resize`, `mount`, `umount`, `rm`, `console`, `forward`,
-`key`, `ssh`, `rsync` — thin typer wrappers over the
-workspaces/ssh/rsync modules' own commands.
+`ls`, `agent-card`, `tui`, `gui`, `gui-shortcut`, `storage`,
+`create`, `start`, `stop`, `clone`, `resize`, `mount`, `umount`,
+`rm`, `console`, `forward`, `key`, `ssh`, `rsync` — thin typer
+wrappers over the workspaces/ssh/rsync modules' own commands.
 """
 
 import typer
@@ -14,6 +14,8 @@ from ..config import bootstrap
 from ..console import run_workspace_shell
 from ..create import read_pubkey  # noqa: F401 — the tests' seam
 from ..forward import run_workspace_forward
+from ..gui.app import run as run_gui
+from ..gui.shortcut import run as run_shortcut
 from ..images import (  # noqa: F401
     cmd_image_check,
     cmd_image_default,
@@ -165,6 +167,25 @@ def tui(
     """The full-screen workspace tree (#309): the workspaces list,
     each workspace's page, and the consent decider."""
     return run_main_tui(workspace, conf=cliapp.invoked_conf)
+
+
+@app.command("gui")
+@one_line_interrupts
+def gui() -> int:
+    """The desktop GUI client (#924): the PySide6 front end over
+    the daemon's REST API. Ships in the base install (#1023);
+    the workspace screens arrive with the plan's later phases."""
+    return run_gui(conf=cliapp.invoked_conf)
+
+
+@app.command("gui-shortcut")
+@one_line_interrupts
+def gui_shortcut() -> int:
+    """Install the GUI's desktop shortcut (#1021): the window's
+    icon and launcher entry under the XDG data home, so the
+    taskbar shows the msks icon and the desktop's menus find
+    the client."""
+    return run_shortcut()
 
 
 @app.command("storage")

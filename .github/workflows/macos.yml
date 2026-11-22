@@ -109,6 +109,11 @@ jobs:
           python -m pip install --quiet --upgrade pip
           python -m pip install --quiet -e .
           python -m pip install --quiet --group dev
+          # The GUI dependencies arrive with the editable
+          # install above (#1023), so the offscreen window test
+          # runs on macOS too — the GUI ships for both platforms
+          # (#924); its xcb/wayland dlopen pins are guarded on
+          # plugin presence and skip where macOS ships qcocoa.
 
       # Plain pytest, no coverage gate: on darwin the suite runs
       # under the platform skips (#691) — the same posture as a

@@ -268,6 +268,14 @@ def dial_events(url: str, token: str | None):
     )
 
 
+def env_dial_events():
+    """The events websocket dial on the environment's own daemon
+    (#946): the address and token the environment names, the TLS
+    shape the address's own — the watch loop's dial pre-seated,
+    the GUI feed's default factory."""
+    return dial_events(env_url(), env_token())
+
+
 async def watch_one(ws, workspace_id, decide, duration, url, token) -> None:
     """One connection's lifetime: announce, then print every
     frame."""

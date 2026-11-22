@@ -6,6 +6,15 @@ from here, so each sibling counts one importer, not five
 (the fan-in ceiling the import graph carries).
 """
 
+from ...ages import (
+    clock_now as clock_now,
+)
+from ...ages import (
+    created_label as created_label,
+)
+from ...ages import (
+    parse_stamp as parse_stamp,
+)
 from ..consent_ui import (
     ConfirmScreen as ConfirmScreen,
 )
@@ -58,12 +67,6 @@ from ..rows import (
     clip as clip,
 )
 from ..rows import (
-    clock_now as clock_now,
-)
-from ..rows import (
-    created_label as created_label,
-)
-from ..rows import (
     expanded_columns as expanded_columns,
 )
 from ..rows import (
@@ -71,9 +74,6 @@ from ..rows import (
 )
 from ..rows import (
     padded_cells as padded_cells,
-)
-from ..rows import (
-    parse_stamp as parse_stamp,
 )
 from ..rows import (
     workspace_label as workspace_label,

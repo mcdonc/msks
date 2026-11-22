@@ -6,6 +6,436 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Removed
+
+- **The GUI workspace page's Info tab (#1017).** The page's
+  tab strip carries Shells, Mounts, Proxies, and Events. The
+  health facts the tab showed are gone with it. They are the
+  daemon's own facts rather than the workspace's: the machine
+  fact already reads through the images tab, and a refused
+  read's flash on the status line already tells the daemon's
+  reachability. The page no longer asks the daemon for a
+  health doc on its refresh tick.
+
+### Added
+
+- **The GUI docs chapter (`docs/gui.md`) (#1008).** The
+  operator docs for the desktop client: the install, the
+  connection with its picker, the workspace list and the detail
+  page's four tabs, the Images and Secrets tabs, the zoom keys,
+  and the external-terminal launcher. The chapter embeds an
+  offscreen-captured screenshot for every documented surface,
+  and the docs site's nav lists it beside the TUI chapter.
+
+- **The macOS menu bar (#1007).** The GUI window on macOS
+  carries the platform's menu bar with the two standard roles:
+  About opens a dialog centered on the window naming the client
+  and its version, and Quit on Cmd+Q closes through the
+  window's own quit path, the one that closes every open shell.
+  Linux and Windows windows keep the shape they have.
+
+- **The GUI window follows the desktop's color scheme
+  (#1006).** A light desktop paints the window light and a
+  dark one dark, and a desktop switch mid-session repaints
+  live with no restart. The terminal grids switch with the
+  chrome, and a program's own terminal colors keep winning
+  over the theme. A desktop that names no scheme keeps the
+  palette the platform theme handed the window.
+
+- **The GUI window icon (`msks gui-shortcut`) (#1021).** The GUI
+  window carries a custom msks icon: it sets its desktop identity
+  and icon directly. The new `msks gui-shortcut` command installs
+  the desktop entry and the icon renders under the XDG data home,
+  where a Wayland taskbar resolves them. The install is
+  idempotent, so re-running it after an upgrade refreshes the
+  renders.
+
+- **The GUI connection picker (#1009).** The workspace list's
+  status row carries a connection button naming the daemon the
+  window talks to, with a menu of the client's presets: the
+  config file's daemon aliases, the environment the shell
+  exported, and the dev daemon's state-dir preset. Picking one
+  reconnects the window over the picked values through the
+  same config resolution `msks --daemon` uses; the open
+  terminals close with the connection they belonged to, and
+  the font zoom carries over.
+
+- **Shells consent panel (#1001).** Pending connections appear above the
+  terminal tabs with a countdown and inline Allow and Deny actions.
+  Each action offers a duration menu, and the panel collapses when the
+  queue is empty.
+
+- **The GUI consent presenter (#1000).** The workspace page's
+  decider registration now feeds a consent presenter: the
+  held flows build as row models carrying the destination
+  label and the countdown, and the verdict seam sends the
+  same decide exchange `msks egress decide` makes with the
+  duration chosen in the same action. A row clears on the
+  daemon's resolved frame, never on the click itself. The
+  consent panel that renders the rows from the GUI lands
+  with the rest of phase 5.5.
+
+- **The GUI's decider registration (#999).** Opening a
+  workspace page in `msks gui` registers the page as that
+  workspace's egress decider: an `interactive` workspace's
+  held flows wait for the page while it shows, the pending
+  holds and the egress posture arriving on the page's own
+  events connection. Closing the page, going back, or closing
+  the window retires the registration, and a dropped connection
+  re-registers with a fresh snapshot on reconnect. A refused
+  registration (an unknown workspace) flashes its reason on the
+  page's status line; the consent panel that answers the holds
+  from the GUI lands with the rest of phase 5.5.
+- **The GUI whole-client zoom (#976).** Ctrl+Plus, Ctrl+Equal,
+  and Ctrl+Minus step the UI fonts and the terminal fonts
+  together, and Ctrl+0 sets both back to their defaults. The
+  keys answer wherever the focus stands, and the window
+  resizes around the visible terminal so its columns and rows
+  hold at the new size. The terminal keeps its 7–28 pt window;
+  the UI fonts clamp to 8–28 pt.
+
+- **The GUI workspace events tab (#989).** The workspace page
+  grows an Events tab beside Proxies. Each row shows a receipt
+  stamp, the kind, and the summary, and a pushed frame appends
+  without a manual action.
+
+- **The GUI workspace proxies tab (#988).** The workspace page
+  grows a Proxies tab beside Mounts. The tab lists the
+  workspace's forwards and remotes with their live status, and
+  Add and Edit parse the spec with the CLI's own parsers before
+  anything sends; Removal asks first. Every proxy transition the daemon
+  publishes for the open workspace refreshes the tab through the
+  events feed, so a bind that fails while the tab stands paints
+  itself.
+
+- **The GUI workspace mounts tab (#987).** The workspace page
+  grows a Mounts tab beside Shells. The tab lists the
+  workspace's mounts with their derived state, and Add, Edit,
+  and Remove compose the next whole list and save it through
+  the route `msks mount` drives — next-start semantics, one
+  flight at a time. A refused save shows the daemon's message
+  and keeps the edited list, and the tab states in words while
+  the configured set differs from the attached one.
+
+- **The GUI workspace edit action (#986).** The workspace list's
+  context menu grows an Edit action opening an editor in the
+  create dialog's shape, seeded with the workspace's values.
+  The changed sizes and topology send through the resize route
+  `msks resize` drives, and the list refreshes when the daemon
+  answers. A row whose edits wait for the next start leads its
+  status with the `↻N` marker, the tooltip and the detail
+  strips stating in words how many changes the next start
+  applies. The name field stays off the form until the daemon's
+  rename route lands.
+
+- **The GUI secrets tab (#966).** The desktop GUI's Secrets
+  tab renders the TUI secrets page: the placeholder listing
+  with coverage, destinations, a live TTL countdown, the
+  created label, and the lock state, with the sentinel panel
+  beside it. Activating a row fetches its sentinel and fills
+  the panel masked; the reveal sits behind a confirmation and
+  the copy writes the real value to the clipboard. Mint opens
+  the form (name, destinations, coverage, TTL, and the value
+  typed or pasted directly), renew opens the TTL picker, and
+  revoke asks first — each action landing through the bridge
+  with the listing refreshed behind it. The TTL column counts
+  down from the deadline epoch the presenter lands, with no
+  daemon call per tick, and the audit group beneath replays
+  the recorded rows newest first.
+
+- **The GUI secrets presenter (#965).** The secrets tab
+  gains its data layer: the daemon's placeholder rows build
+  as plain row models carrying the id, coverage, destinations,
+  TTL countdown, created label, and lock state; the sentinel
+  panel's model masks the sentinel a row exposes beside the
+  reach its prefix names; the mint form's TTL choices and the
+  audit view's rows build as plain data. The tab's widget
+  lands next on the `pyside-gui` branch.
+
+- **The GUI images tab (#964).** The desktop GUI's Images tab
+  renders the TUI image page's two groups: the daemon's catalog
+  with the default marker, hash prefixes, and import dates, and
+  the published channel with descriptions, sizes, build dates,
+  and the `[imported]`/`[local]` membership markers. Rows the
+  daemon's machine cannot boot stay off the published group.
+  Activating a published row imports it behind a progress dialog
+  that holds the wait while the daemon downloads, verifies, and
+  floor-checks, and the catalog refreshes when the import lands.
+  A catalog row opens its full record, Remove asks for
+  confirmation, and Set as the default posts the designation;
+  a right-click on a published row offers the import behind
+  the same progress dialog; the channel URL follows
+  `image_manifest_url` with the same default the TUI page
+  reads. The two groups' standing tally —
+  `N in the catalog · M published` — reads on a selectable
+  line beneath the published pane, the workspace list's own
+  bottom strip's style. Both panes' bold column headers
+  read as one table's chrome and their columns sort — the
+  sorted-by column carries its arrow, the dates and sizes
+  ordering by their moments and whole MiB rather than their
+  labels' spelling. The catalog pane's columns share the
+  window's whole width, and the published pane spreads its
+  spare room across the size, hash, build date, and marker —
+  the description keeping its whole value with no empty tail —
+  while a tight pane takes its character budget from the
+  description first (a middle ellipsis down to a handful of
+  characters), then the hash, then the ref and build date, with
+  the size and marker reading whole in every pane a real window
+  shows; no horizontal scrollbar ever hides a row's cells.
+
+- **The GUI images presenter (#963).** The images tab gains
+  its data layer: the daemon's catalog and the published
+  channel's manifest build as plain row models. The catalog
+  group carries each row's reference, default designation, hash
+  prefix, and import date; the published group carries the
+  descriptions, sizes, build dates, and the
+  `[imported]`/`[local]` membership markers, with the rows the
+  daemon's machine cannot boot left off. The tab's widget
+  lands next on the `pyside-gui` branch.
+
+- **The GUI workspaces pane fills its width (#964).** The
+  workspace list's columns now consume the pane's whole width
+  at any width over the default — the screen's own resize
+  event read the viewport one layout pass behind, so every
+  widen left its last delta as blank space beside the rows, a
+  maximized window most of all. The pane's own resize re-flows
+  the columns.
+
+- **GUI row actions on the workspace list (#972).** The
+  workspace list's toolbar is gone: the Start, Stop, Shell,
+  External, and Refresh buttons leave the page and the rows
+  reclaim the vertical space. Each row carries its own action
+  cell — a start/stop toggle that reads the row's state (play
+  while the workspace stands stopped or only created, stop
+  otherwise) and a shell button. The list keeps refreshing on
+  its own five-second timer. A right-click on a row opens the
+  same actions plus Delete, which removes the workspace behind
+  a confirmation. The external-terminal action moved to the
+  workspace detail page.
+
+- **GUI tabbed main window (#962).** The desktop GUI's main
+  window now opens on a top-level tab strip: the Workspaces
+  tab holds the workspace list and detail screens, and the
+  Images and Secrets tabs of the plan land beside it. Arrow
+  keys cross the tabs, and Up from the list's top row returns
+  to the tab strip. A green gradient badge on the Workspaces
+  tab — a drawn disc, bright at the crown and deep at the
+  foot, a white plus on it, the pointing hand over it — opens
+  the create-workspace dialog, the TUI create form's counterpart: the same fields,
+  blank fields left to the daemon's defaults, and a refusal
+  keeping the dialog open with the failure on its note line.
+
+- **GUI top-level Shells tab (#974).** The
+  workspace detail page's tab row, on the back arrow's own row,
+  now carries a Shells tab, with Shells the default. The shell
+  sessions live as subtabs inside the Shells tab. Opening a
+  detail page with no shell subtab open creates one and focuses
+  it.
+
+- **GUI detail-page footer and tab-strip layout (#971).** The
+  workspace detail page carries the listing's one-line
+  description bar at its bottom, beneath the terminal tabs. The
+  header line at the top is gone: the window title carries the
+  workspace's name while the page shows. The tab strip's "+" is
+  the last tab itself, directly right of the rightmost shell
+  tab, instead of pinned to the strip's right edge.
+
+- **GUI terminal-tab polish (#969).** A "+" at the right edge
+  of the detail page's tab strip opens a new shell tab. Shell
+  tabs keep a minimum width of about three characters beside
+  their close button. The page's top chrome loses its Shell
+  button: the "+" owns that action.
+
+- **GUI workspace shells in terminal tabs (#954).** The GUI's
+  workspace detail page is now tabbed: every open shell on the
+  workspace gets its own terminal tab, titled with its session
+  number (double-click renames). Shells keep running when you
+  leave the page; closing a tab ends its session. A Shell
+  action on the workspace list opens the page on a new shell
+  tab, and an External action opens the same shell in the
+  terminal named by `terminal_open_cmd`, as the TUI does.
+
+- **The GUI terminal's user surfaces (#953).** The terminal
+  widget grows grid-anchored selection (drag, double-click
+  word, triple-click line, edge autoscroll into scrollback),
+  the clipboard paths (Ctrl+Shift+C/V, PRIMARY select-then-
+  middle-click, bracketed paste under mode 2004, OSC 52
+  writes from the workspace), hyperlinks (OSC 8 and
+  plain-text URLs, pointing hand, Ctrl+Click opening gated to
+  browser schemes), and a find bar over the library's search
+  API (live needle restart, match stepping with a counter,
+  viewport highlighting). A program that enables mouse
+  reporting owns the mouse: selection stands aside.
+
+- **The GUI terminal widget (#952).** `msks/client/gui/terminal/` is the
+  cell-grid screen over the libghostty-vt render state: per-cell colors,
+  styles, and the cursor paint offscreen through the binding, keys and
+  mouse encode through the library's encoders (legacy, application
+  cursor keys, the Kitty keyboard protocol), wheel and Shift+PgUp/PgDn
+  page the scrollback, resize with reflow reaches the child as
+  `TIOCSWINSZ`, and font stepping follows Konsole's cell metrics from one
+  measured face. Tabs arrive in #954; the widget ships ready for them.
+
+- **The GUI terminal session (#951).** `msks/client/gui/termsession.py` runs a workspace shell's child on a pseudo-terminal — the `msks ssh` argv the TUI's own new-terminal action spawns — behind what becomes a terminal tab in the GUI window (#924 phase 4.5). The module is pure stdlib: the master fd is exposed for the tab's event-loop integration, resizes reach the child through `TIOCSWINSZ`, and a child that traps hangup is force-killed after a short grace so closing a tab never stalls the window.
+
+- **The GUI's libghostty-vt binding (#950).** The terminal
+  emulation core lands in the client as a pure-ctypes binding:
+  the render state, the key and mouse encoders, and the
+  selection gesture the phase 4.5 terminal widget will drive,
+  with every C struct mirrored exactly (padding members
+  included) and pinned by size against the ABI. The base
+  install carries `pyghostty` (#1023), whose wheel bundles the
+  official `libghostty-vt` build the binding loads.
+- **The GUI live events feed (#946).** The window subscribes to
+  the daemon's events socket over the bridge's loop: a pushed
+  lifecycle frame refreshes the screen the operator sees at
+  once, the polling timer staying the backstop, and lands in
+  the workspace page's events section. A dropped socket
+  reconnects with backoff, and the outage flashes on the
+  current screen while it lasts.
+- **The GUI workspace detail page (#945).** Opening a row in the
+  workspace list — a double-click or Enter on it — swaps to that
+  workspace's page: the mounts with their derived state and
+  next-start note, the daemon's health facts, and the recent
+  events, refreshed on the listing's own cadence. A failed
+  refresh flashes while the page keeps its
+  content; Back (or Escape) returns to the list, and a
+  workspace another surface deleted closes its page behind a
+  notice.
+- **The GUI start and stop actions (#940).** The workspace
+  list's Start and Stop buttons act on the selected workspace
+  over the same bridge the refresh uses; Stop asks for
+  confirmation, with No as the default, and a refusal sends
+  nothing to the daemon. The list refreshes when an action
+  finishes, flashing the outcome the daemon's answer carries; a
+- **The GUI start and stop actions (#940).** The workspace
+  list's Start and Stop buttons act on the selected workspace
+  over the same bridge the refresh uses; Stop asks for
+  confirmation, with No as the default, and a refusal sends
+  nothing to the daemon. The list refreshes when an action
+  finishes, flashing the outcome the daemon's answer carries; a
+  failed action flashes the status line and the rows stand. A
+  selectable detail line at the listing's bottom follows the
+  selection: the held workspace's identity, posture, and costs
+  on one `·`-separated row (id, image, cpu, memory, egress
+  mode, the mounts and pending markers, and the storage cost
+  the capacity report charges).
+- **`msks gui` (#928).** The desktop GUI client opens its
+  phase-1 window shell on Linux and macOS: a PySide6 front end
+  over the daemon's REST API, with the workspace screens to
+  follow. The GUI dependencies are base dependencies (#1023);
+  a session without a display hears a one-line notice instead
+  of a crash.
+- **The GUI workspace list (#939).** The GUI window opens on
+  the workspace list: the TUI listing's five columns (name,
+  status with the unresolved-mounts marker, id, image,
+  created), refreshed on a five-second tick and a Refresh
+  button. A refused refresh flashes a status line while the
+  rows stand; an outage holds its message until the daemon
+  answers again. The window opens at 1280×720, runs its fonts
+  at 1.5× the platform default (`MSKSC_GUI_FONT_SCALE` to
+  change), and reopens at the geometry it last closed at —
+  kept under the client state root (see `docs/cli.md` →
+  Client environment).
+
+### Changed
+
+- **The GUI dependencies are base dependencies (#1023).** A
+  plain `pip install msks` now installs the desktop GUI, and
+  the `gui` extra is gone. Every install gains about 250 MB
+  (PySide6-Essentials and pyghostty). A stripped install
+  (PySide6 removed or broken) hears a reinstall hint on `msks
+gui`. The nix package keeps the daemon's closure lean, so on
+  a nix host the GUI is a pip surface (`pip install msks`).
+
+- **The GUI's active-tab mark (#1012).** The main
+  Workspaces/Images/Secrets strip and the workspace detail
+  strip paint the selected tab with an accent-tinted
+  background, so the page the operator stands on reads at a
+  glance. The tint follows the session palette, and the
+  keyboard keeps a dotted rim on the focused tab.
+- **The workspace detail panes use the window's full width
+  (#1025).** The Mounts, Proxies, and Events tables share the
+  whole horizontal width of their tab: the mode, state,
+  direction, and status columns hug their text, and the wide
+  columns share the remainder. Event summaries wrap within the
+  pane instead of growing a horizontal scroll.
+- **The GUI's popups read with capitalized words (#1018).**
+  The create, edit, and mint dialogs' field labels, note
+  lines, and buttons now start each label with a capital
+  letter — `Name`, `VCPUs`, `Memory MiB`, `Create`, `Cancel`,
+  `Apply` — matching the window titles' own style, and the
+  mount and proxy forms' labels and `Save`/`Cancel` buttons
+  follow. Acronyms keep their unit casing (`VCPUs`, `TTL`,
+  `MiB`).
+
+- **The GUI's tab pages carry their action buttons at the
+  bottom (#1011).** The Workspaces tab's green plus badge is
+  gone from the tab strip: Add, Edit, and Remove sit in a row
+  at the bottom of the page (the pattern the detail page's
+  Mounts and Proxies pages set), Add opening the create dialog
+  and Edit and Remove acting on the selected row, Remove
+  behind its confirmation. The Secrets tab's Refresh and Mint
+  buttons and the Images tab's Refresh button moved from the
+  top of their pages to the same bottom row.
+
+- **The GUI secrets page fills the window and drops the
+  sentinel pane (#997).** The placeholder listing and the audit
+  table each span the window's whole width, their columns
+  sharing the spare space and re-flowing on every window
+  resize. The Sentinel pane beside the listing is gone: a row
+  activation or a mint no longer fetches a sentinel, and the
+  sentinel stays the CLI's and the TUI's own surface.
+
+- **The nixpkgs pin behind devenv and the release flake now
+  tracks `nixpkgs-unstable` (#990).** The dev shell's fontconfig
+  matches the host's generation again, and the warning wall at
+  `msks gui` startup is gone. Guest images and flake outputs
+  build against unstable, so operators building images from
+  source see closure diffs from the channel move.
+
+### Fixed
+
+- **`scripts/cut-release.sh` resolves `python3` explicitly
+  (#1038).** The script's two python reads (the tagged version
+  and the release-notes gate) ran a bare `python`, which macOS
+  and minimal Linux hosts do not ship; they now run the
+  resolved `python3`, and a host with none — or an interpreter
+  too old for tomllib — dies naming it before anything is
+  pushed.
+
+- **Ctrl-C closes the GUI window (#1037).** A Ctrl-C in the
+  terminal that started `msks gui` now closes the window
+  through its own quit path, the one the close button takes.
+  Every open shell closes and the window geometry saves. The
+  client exits with 130, the terminal's interrupted status.
+
+- **Quitting the GUI with a focused terminal no longer
+  crashes the client (#1034).** Closing a terminal freed the
+  emulator's handles before Qt delivered the focus-out of the
+  hide that followed. The focus report read the freed handle,
+  and the read took the process down on every quit whose
+  close path touched a focused shell, the menu bar's Cmd+Q
+  included. A closed screen now answers no focus report and
+  sizes no grid.
+
+- **The GUI's popups open centered on the main window
+  (#1014).** Every popup the GUI opens — the create and edit
+  forms, the mounts and proxies add and edit forms, the image
+  detail record and import progress, the mint form, and the
+  stop, delete, remove, and revoke questions — opens centered
+  on the main window instead of wherever the window manager
+  places it: the forms were parentless top-level windows, and
+  the questions' placement stayed the manager's even parented.
+
+- **The GUI window names its own widget style (#937).** A
+  desktop session no longer picks the style for the window: a
+  Plasma session with the union style selected previously
+  handed the bundled Qt a session-built style plugin that
+  failed to load its parts. The window runs the Fusion style,
+  which ships inside the Qt binding itself, and a user's own
+  `QT_STYLE_OVERRIDE` still wins.
+
 ## \[v0.9.2] - 2026-11-15
 
 ### Fixed

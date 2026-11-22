@@ -29,7 +29,7 @@
 # host's own systemd and /var carry what those units provided.
 #
 # Host requirement: an nixpkgs carrying python314 (the daemon's
-# interpreter; nixos-26.05 does).
+# interpreter; the unstable pin does).
 {
   config,
   lib,

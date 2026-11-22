@@ -7,13 +7,14 @@ pure helpers (coverage, TTL, the audit seed) get direct tests in
 test_consent_tui_helpers.py.
 """
 
+import asyncio
 import base64
 import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from msks.client.tui import data as data_mod
-from msks.client.tui import rows as rows_mod
+from msks.client import ages as ages_mod
+from msks.client.data import RestFailure
 from msks.client.tui import secrets as secrets_mod
 from msks.client.tui.link import AuditLink
 from msks.client.tui.secrets import (
@@ -244,7 +245,7 @@ async def test_the_page_lists_rows_with_the_live_countdown(
     """Every row shows coverage, name, destinations, the TTL, and
     the created label; the TTL repaints as the clock moves (#390)."""
     now = {"at": datetime(2030, 6, 1, 12, 0, 0, tzinfo=UTC)}
-    monkeypatch.setattr(rows_mod, "clock_now", lambda: now["at"])
+    monkeypatch.setattr(ages_mod, "clock_now", lambda: now["at"])
     monkeypatch.setattr(secrets_mod.cells, "clock_now", lambda: now["at"])
     monkeypatch.setattr(secrets_mod.screen, "clock_now", lambda: now["at"])
     data = FakeData([])
@@ -981,8 +982,12 @@ async def test_the_audit_view_replays_and_streams() -> None:
         # waited on their text, not the row count (the compose
         # stream lags the count; the count alone races the reads).
         await wait_for(lambda: "swap" in audit_text(app, 0))
-        assert "revoke" in audit_text(app, 1)
-        assert "mint" in audit_text(app, 2)
+        # The replay rows mount behind the live one on a slow
+        # runner — the macOS CI host once rendered row 0 while
+        # row 1 still mounted, so each row is waited on its
+        # text, not asserted the moment the first lands.
+        await wait_for(lambda: "revoke" in audit_text(app, 1))
+        await wait_for(lambda: "mint" in audit_text(app, 2))
         assert "*/github_api" in audit_text(app, 1)  # daemon-wide coverage
         # A live sighting lands: the row carries the marker.
         factory.made[0].push(
@@ -999,8 +1004,12 @@ async def test_the_audit_view_replays_and_streams() -> None:
         assert "sighting" in marked.classes
         # No registration was sent: the view claims no decider.
         assert factory.made[0].sent == []
-        await pilot.press("r")
-        await wait_for(lambda: not on_audit(app))
+        # The leave-press retries: a press issued inside a
+        # rebuild's swap window no-ops (by design), and the
+        # sighting row's mount just rebuilt the list — CI's macOS
+        # runner lost a bare press here and the screen never
+        # closed (the wait then burned its whole budget).
+        await press_until(pilot, "r", lambda: not on_audit(app))
 
 
 async def test_the_audit_seed_dedups_against_the_live_tail() -> None:
@@ -1131,6 +1140,55 @@ async def test_the_audit_view_filters_by_kind_and_workspace() -> None:
         view.kind = "mint"
         view.rebuilds.request()
         await wait_for(lambda: "No events match" in audit_empty(app))
+
+
+async def test_started_rides_out_a_rebuilds_swap_window(
+    monkeypatch,
+) -> None:
+    """The compose-settled start (#987's macOS flake, the family
+    the leave-press retry fixed): a refresh callback landing
+    inside a rebuild's swap window — the old list removed, the
+    fresh one not yet mounted — starts the replay without dying
+    on the absent rows; the window is transient and the fresh
+    list mounts within it."""
+    data = FakeData([])
+    data.audit_rows = [audit_row(1, "mint", workspaces=["ws-a"])]
+    factory = FakeFactory([FakeWS([])])
+
+    def link_factory() -> AuditLink:
+        return AuditLink(
+            ws_factory=factory, reconnect_delays=(0.01, 0.01, 0.01)
+        )
+
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        screen = await open_audit(pilot, app, link_factory)
+        await wait_for(lambda: screen.rows_widget() is not None)
+        held = screen.rows_widget()
+        body = screen.query_one("#audit-body")
+        gate = asyncio.Event()
+        real_mount = body.mount
+
+        async def held_mount(*args, **kwargs):
+            # The swap's own window: the old list is gone and the
+            # fresh one not yet mounted while the gate holds.
+            await gate.wait()
+            return await real_mount(*args, **kwargs)
+
+        monkeypatch.setattr(body, "mount", held_mount)
+        # A moved log requests the rebuild; its swap parks inside
+        # the window the gate holds open.
+        screen.link_or_stub().controller.seed_audit(
+            [audit_row(2, "revoke", workspaces=["ws-a"])]
+        )
+        screen.rebuilds.request()
+        await pilot.pause()
+        await wait_for(lambda: screen.rows_widget() is None)
+        screen.started()  # rides the window out: no raise
+        gate.set()
+        await wait_for(lambda: screen.rows_widget() is not None)
+        fresh = screen.rows_widget()
+        assert fresh is not held
 
 
 async def test_an_empty_audit_log_states_it() -> None:
@@ -2118,7 +2176,7 @@ async def test_a_refusal_arms_no_re_run(tmp_path, monkeypatch) -> None:
 
     async def refused() -> list[dict]:
         data.pending_fetches += 1
-        raise data_mod.RestFailure("msks: 403: no window", reach=False)
+        raise RestFailure("msks: 403: no window", reach=False)
 
     data.pending_secrets = refused
     app, _follow = make_app(data)
@@ -2144,7 +2202,7 @@ async def test_a_spent_prompt_never_re_arms(tmp_path, monkeypatch) -> None:
 
     async def lost_daemon(values: list[dict]) -> dict:
         tried.append([dict(v) for v in values])
-        raise data_mod.RestFailure("daemon away", reach=True)
+        raise RestFailure("daemon away", reach=True)
 
     data.unlock_secrets = lost_daemon
     app, _follow = make_app(data)
@@ -2236,7 +2294,7 @@ async def test_the_re_run_takes_its_turn_after_a_page_unlock(
         # The upload meets an outage: the rows stay locked, and
         # the re-run's turn finds the prompt spent.
         async def lost(values):
-            raise data_mod.RestFailure("daemon away", reach=True)
+            raise RestFailure("daemon away", reach=True)
 
         data.unlock_secrets = lost
         gate.set()

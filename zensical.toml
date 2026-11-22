@@ -23,6 +23,7 @@ nav = [
   { "The host doctor" = "doctor.md" },
   { "First run" = "first-run.md" },
   { "The TUI" = "tui.md" },
+  { "The GUI" = "gui.md" },
   { "Host Share Mounts" = "mounts.md" },
   { "Guest Networking" = "networking.md" },
   { "Workspace Proxies" = "proxies.md" },
@@ -42,8 +43,16 @@ nav = [
 
 # The internal design history stays in the repository, off the
 # published site (unreadable from the nav, unlisted here on
-# purpose).
+# purpose). The planning/spec artifacts (#1001's plan, design,
+# and mockup) and the panel's visual-evidence screenshots build
+# no pages: they are working records, not operator docs. The
+# GUI chapter that one day documents the panel links what it
+# needs from the chapters' own assets.
 exclude_docs = """
+plans/*
+specs/*
+mockups/*
+screenshots/*
 """
 
 [project.theme.palette]

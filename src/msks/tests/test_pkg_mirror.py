@@ -61,11 +61,40 @@ def nix_dependency_names(nix_path: Path) -> set[str]:
     }
 
 
+def nix_removed_dependency_names() -> set[str]:
+    """The names msks-pkg.nix's ``pythonRemoveDeps`` strips from
+    the wheel metadata at build time: the mirror tests subtract
+    them, so a stripped name is a deliberate, visible decision
+    rather than silent drift.
+
+    The entries are kept verbatim, mixed case included: the
+    remove hook's sed matches the wheel METADATA case-
+    sensitively and hatchling normalizes dependency names to
+    lower case there, so a mixed-case entry strips nothing —
+    and shows up here as a name the mirror cannot match."""
+    nix = strip_comments(PKG_NIX.read_text())
+    start = nix.index("pythonRemoveDeps = [")
+    body = nix[start + len("pythonRemoveDeps = [") : nix.index("]", start)]
+    return {
+        line.strip().strip('"') for line in body.splitlines() if line.strip()
+    }
+
+
+def mirrored_dependency_names() -> set[str]:
+    """The dependency names the nix package actually carries:
+    pyproject's set minus the removals (uvicorn's bracketed line
+    is dropped and re-served by the plain nixpkgs package, and
+    the GUI names are stripped per the lean-closure stance,
+    #1023)."""
+    return dependency_names() - nix_removed_dependency_names()
+
+
 def test_every_pyproject_dependency_is_in_the_nix_package() -> None:
     """Each [project.dependencies] name appears in msks-pkg.nix's
-    dependencies list — the mirror the package closure builds from."""
+    dependencies list — the mirror the package closure builds
+    from — unless pythonRemoveDeps names it."""
     have = nix_dependency_names(PKG_NIX)
-    missing = dependency_names() - have
+    missing = mirrored_dependency_names() - have
     assert not missing, (
         f"pyproject dependencies missing from nix/msks-pkg.nix: "
         f"{sorted(missing)} — the package build fails its runtime "
@@ -84,14 +113,31 @@ def test_no_extra_nix_dependencies_beyond_pyproject() -> None:
     )
 
 
+def test_the_removal_list_carries_only_the_known_names() -> None:
+    """pythonRemoveDeps is pinned to the names the lean-closure
+    stance covers (#1023): uvicorn re-served plain, and the two
+    GUI names the pip surface owns. The names are lower case
+    because the hook's sed matches the METADATA exactly and
+    hatchling normalizes dependency names there — the pinned
+    set fails the moment a mixed-case entry slips in. A new
+    removal is a deliberate decision — this test is where it
+    gets recorded."""
+    assert nix_removed_dependency_names() == {
+        "uvicorn",
+        "pyside6-essentials",
+        "pyghostty",
+    }
+
+
 def test_both_locks_pin_the_same_nixpkgs_revision() -> None:
-    """flake.nix's and README's claim that each flake attribute
-    builds the same store path as its `devenv build outputs.<name>`
-    twin holds while both locks pin the same nixpkgs revision
-    (#537). devenv.yaml tracks the moving nixos-26.05 branch and
-    the flake pins a rev, so a devenv bump that leaves flake.lock
-    behind fails here — re-pin the flake to match, or soften the
-    same-path claim where it is stated (README, flake.nix)."""
+    """docs/development.md's and flake.nix's claim that each flake
+    attribute builds the same store path as its `devenv build
+    outputs.<name>` twin holds while both locks pin the same nixpkgs
+    revision (#537). devenv.yaml tracks the moving nixpkgs-unstable
+    branch and the flake pins a rev, so a devenv bump that leaves
+    flake.lock behind fails here — re-pin the flake to match, or
+    soften the same-path claim where it is stated
+    (docs/development.md, flake.nix)."""
 
     def locked_rev(path: Path) -> str:
         nodes = json.loads(path.read_text())["nodes"]
