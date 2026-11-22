@@ -126,6 +126,52 @@ def data_home() -> Path:
     )
 
 
+def exec_exe(line: str) -> str | None:
+    """The executable one standing ``Exec`` line carries
+    (#1045): the first field after the key, when the line has
+    one and its path can carry verbatim — else ``None``, the
+    answer that leaves the template's plain command."""
+    parts = line.removeprefix("Exec=").split()
+    if parts and usable_exe(parts[0]):
+        return parts[0]
+    return None
+
+
+def standing_exe(entry: Path) -> str | None:
+    """The executable the standing entry carries (#1045),
+    read from its ``Exec`` line: the launch's last resolution
+    tier. A session that resolves no client — the desktop's
+    ``PATH`` is not the launching shell's — must not downgrade
+    an entry that names a working client to the bare command
+    the desktop cannot run."""
+    try:
+        lines = entry.read_text().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if not line.startswith("Exec="):
+            continue
+        return exec_exe(line)
+    return None
+
+
+def launch_exe(entry: Path) -> str | None:
+    """The executable the launch replants the entry's ``Exec``
+    line with (#1045), in tiers: the running command itself
+    when the entry's own absolute launch answers for it — a
+    launch from the desktop runs the path the entry carries,
+    and the replant writes the same path back — else the
+    ``PATH`` lookup the command uses, else the executable the
+    standing entry already carries."""
+    if (
+        sys.argv
+        and Path(sys.argv[0]).name == DESKTOP_ID
+        and usable_exe(sys.argv[0])
+    ):
+        return sys.argv[0]
+    return shutil.which(DESKTOP_ID) or standing_exe(entry)
+
+
 def ensure_installed() -> None:
     """Plant the shortcut at GUI startup (#1045): the wheel
     cannot run a step after pip installs it — pip runs console
@@ -148,7 +194,9 @@ def ensure_installed() -> None:
         if not home.is_absolute():
             print(NOT_ABSOLUTE, file=sys.stderr)
             return
-        install_shortcut(home, shutil.which(DESKTOP_ID))
+        install_shortcut(
+            home, launch_exe(home / "applications" / DESKTOP_FILE)
+        )
     except (OSError, RuntimeError) as exc:
         print(
             f"msks: cannot install the desktop shortcut: {exc}",

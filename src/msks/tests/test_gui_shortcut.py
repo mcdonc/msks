@@ -298,6 +298,104 @@ def test_the_launch_plant_survives_a_refused_write(
     assert "cannot install the desktop shortcut" in capsys.readouterr().err
 
 
+def test_a_desktop_launch_replants_its_own_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A launch from the desktop entry (#1045): the entry's
+    ``Exec`` path is the running command itself, and the
+    replant writes that same path back — the desktop session's
+    ``PATH`` never enters the resolution, so the entry a
+    desktop click runs is the entry the next desktop click
+    runs."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    shortcut.install_shortcut(tmp_path, "/opt/other/bin/msks")
+    monkeypatch.setattr(shortcut.shutil, "which", lambda name: None)
+    monkeypatch.setattr(sys, "argv", ["/opt/venv/bin/msks", "gui"])
+    shortcut.ensure_installed()
+    entry = tmp_path / "applications" / shortcut.DESKTOP_FILE
+    assert "Exec=/opt/venv/bin/msks gui" in entry.read_text()
+
+
+def test_an_unresolvable_launch_keeps_the_standing_exec(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A launch that resolves no client (#1045) — a desktop
+    session whose ``PATH`` carries no ``msks`` and a bare
+    running command: the standing entry keeps the absolute
+    ``Exec`` it carries instead of a downgrade to the bare
+    command the desktop cannot run. The break the tier guards:
+    the plant once rewrote the entry to ``Exec=msks gui`` one
+    desktop launch after a terminal launch had written the
+    absolute path, and the next desktop click failed."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    shortcut.install_shortcut(tmp_path, "/opt/venv/bin/msks")
+    monkeypatch.setattr(shortcut.shutil, "which", lambda name: None)
+    monkeypatch.setattr(sys, "argv", ["msks", "gui"])
+    shortcut.ensure_installed()
+    entry = tmp_path / "applications" / shortcut.DESKTOP_FILE
+    assert "Exec=/opt/venv/bin/msks gui" in entry.read_text()
+
+
+def test_a_fresh_unresolvable_launch_plants_the_plain_command(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A first launch that resolves no client (#1045): nothing
+    stands to keep, so the entry carries the plain command the
+    template ships — the same answer the command gives a
+    shell whose ``PATH`` carries no ``msks``. The empty argv is
+    the degenerate arm of the first tier: an embedder that
+    hands the window no argv at all still plants the default."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setattr(shortcut.shutil, "which", lambda name: None)
+    monkeypatch.setattr(sys, "argv", [])
+    shortcut.ensure_installed()
+    entry = tmp_path / "applications" / shortcut.DESKTOP_FILE
+    assert f"Exec={shortcut.DESKTOP_ID} gui" in entry.read_text()
+
+
+def test_an_unusable_standing_exec_plants_the_plain_command(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A standing ``Exec`` the spec cannot carry verbatim
+    (#1045) — the template's own bare command: the last tier
+    refuses it and the replant keeps the plain command, the
+    same text the standing entry already carried."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    shortcut.install_shortcut(tmp_path, None)
+    monkeypatch.setattr(shortcut.shutil, "which", lambda name: None)
+    monkeypatch.setattr(sys, "argv", ["msks", "gui"])
+    shortcut.ensure_installed()
+    entry = tmp_path / "applications" / shortcut.DESKTOP_FILE
+    assert f"Exec={shortcut.DESKTOP_ID} gui" in entry.read_text()
+
+
+def test_a_standing_entry_without_an_exec_line_plants_the_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A standing entry that carries no ``Exec`` line at all
+    (#1045) — a hand-truncated file: the last tier reads
+    nothing from it and the replant writes the template's own
+    command."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    entry = tmp_path / "applications" / shortcut.DESKTOP_FILE
+    entry.parent.mkdir(parents=True)
+    entry.write_text("[Desktop Entry]\nType=Application\n")
+    monkeypatch.setattr(shortcut.shutil, "which", lambda name: None)
+    monkeypatch.setattr(sys, "argv", ["msks", "gui"])
+    shortcut.ensure_installed()
+    assert f"Exec={shortcut.DESKTOP_ID} gui" in entry.read_text()
+
+
 def test_the_gui_entry_plants_the_shortcut_before_the_window(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

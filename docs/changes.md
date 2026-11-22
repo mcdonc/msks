@@ -22,10 +22,10 @@ tagged `vX.Y.Z`.
 - **The GUI launch plants the desktop shortcut (#1045).** On
   a Linux desktop, every `msks gui` launch installs the
   desktop entry and the icon renders under the XDG data home
-  before the window opens, so the taskbar shows the msks icon
-  from the first launch after a fresh install. `msks
-gui-shortcut` stays as the manual plant and prints the
-  entry's path.
+  before the window opens. The taskbar shows the msks icon
+  from the first launch after a fresh install. The
+  `msks gui-shortcut` command stays as the manual plant and
+  prints the entry's path.
 
 - **The GUI docs chapter (`docs/gui.md`) (#1008).** The
   operator docs for the desktop client: the install, the

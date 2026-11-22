@@ -1473,12 +1473,14 @@ lands under `applications`, and the icon renders land under
 installing shell resolved, so the desktop finds the client even when
 the venv's bin directory is not on the desktop's `PATH`.
 
-The `msks gui` launch plants the same entry and renders before the
-window opens (#1045), so the taskbar icon works from the first
-launch after a fresh install, and the next launch after an upgrade
-refreshes the renders. The command stays for a manual plant: it
-prints the entry's path, and it overwrites in place and is safe to
-re-run.
+The `msks gui` launch plants the same entry and renders before
+the window opens (#1045). The taskbar icon works from the
+first launch after a fresh install, and the next launch after
+an upgrade refreshes the renders. A launch from the desktop
+entry replants the entry's own absolute path. A launch that
+resolves no client keeps the absolute path the entry carries.
+The command stays for a manual plant: it prints the entry's
+path, and it overwrites in place and is safe to re-run.
 
 The window itself also sets the icon directly, so on X11 and macOS the
 window carries it without the install. Linux is the only desktop the

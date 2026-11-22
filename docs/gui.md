@@ -23,14 +23,19 @@ window opens fine over ssh while one stands.
 
 The window plants its own desktop entry and taskbar icon on a
 Linux desktop. Every `msks gui` launch installs both under the
-XDG data home before the window opens, so the taskbar shows
-the msks icon from the first launch after a fresh install.
-The install is idempotent: the next launch after an upgrade
-refreshes the icon renders. A plant the filesystem refuses
-names itself in one stderr line and the window still opens.
-`msks gui-shortcut` does the same work by hand and prints the
-entry's path. On macOS nothing is planted. The dock reads the
-icon the window itself already carries.
+XDG data home before the window opens. The taskbar shows the
+msks icon from the first launch after a fresh install, and the
+next launch after an upgrade refreshes the icon renders. When
+the install fails, msks prints one line on stderr and the
+window still opens. `msks gui-shortcut` does the same work by
+hand and prints the entry's path. On macOS nothing is planted.
+The dock reads the icon the window itself already carries.
+
+Uninstalling the wheel leaves the entry and the icons in
+place, because they live in the XDG data home, outside the
+wheel's tree. Delete `~/.local/share/applications/msks.desktop`
+and the `msks.*` files under `~/.local/share/icons/hicolor` to
+remove them by hand.
 
 The window opens 1280 by 720 the first time. Every later open
 takes back the place and size the last close left, as long as a
