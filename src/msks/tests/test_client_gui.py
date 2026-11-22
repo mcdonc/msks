@@ -445,10 +445,10 @@ def test_the_gui_window_opens_offscreen(
     # own pixels: 15 at the default scale, on a 96-dpi host and
     # a 72-dpi one alike (#1056). The pin reads the size back
     # off a face the database always holds — the bundled
-    # terminal face, registered for the empty database the
-    # offscreen platform can answer (an app font of Sans Serif
-    # resolves to nothing there, and the conversion is the
-    # dpi's, not the family's).
+    # terminal face, registered because the offscreen
+    # platform may answer an empty database, where an app font
+    # of Sans Serif resolves to nothing — and the conversion
+    # is the dpi's, not the family's.
     from PySide6.QtGui import QFontInfo
 
     fonts.register_faces()

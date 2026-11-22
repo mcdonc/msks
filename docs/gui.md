@@ -50,7 +50,7 @@ own dpi: the chrome opens at the same size on every platform
 (#1056). The terminal content keeps its own 15pt default, so
 it opens larger than the chrome on a 96-dpi session. The
 default multiplier is 1.0. The [zoom
-keys](#the-zoom-keys) change either size at runtime.
+keys](#the-zoom-keys) change both sizes at runtime.
 
 ## The connection
 

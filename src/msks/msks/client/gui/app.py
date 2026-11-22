@@ -84,8 +84,7 @@ PT_PER_INCH = 72.0
 #: The dpi a session with no screen answers (#1056): a
 #: defensive floor — Qt hands the window a screen on every
 #: platform the client runs (offscreen included, which
-#: synthesizes its own), so the branch names the dpi the
-#: common session would carry, not one a desktop reaches.
+#: synthesizes its own), a branch no desktop session reaches.
 NO_SCREEN_DPI = 96.0
 
 #: The window's opening size (#939), the shape no saved
