@@ -19,7 +19,7 @@ contract: nothing imports it at CLI parse time, and the
 workspace page (itself lazily imported) owns the import.
 """
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from .consent import (
     EGRESS_MODES,
@@ -73,6 +73,18 @@ IN_EFFECT_NOW = "in effect now"
 NEXT_START = "takes effect at next start"
 
 
+class ModePicker(QtWidgets.QComboBox):
+    """The switcher's combo (#1049 review): the wheel passes
+    through — a scroll across the pane never switches a live
+    posture — while popup picks and typed selection commit
+    through ``activated`` as every deliberate pick does."""
+
+    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
+        """One wheel event over the switcher ignores itself: the
+        parent takes the scroll, the pick stands."""
+        event.ignore()
+
+
 class EgressTab(QtWidgets.QWidget):
     """The page's egress posture surface (#1042): the current mode
     with its meaning, the switcher under it — a pick commits at
@@ -101,7 +113,7 @@ class EgressTab(QtWidgets.QWidget):
         self.mode_line.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
         )
-        self.pick = QtWidgets.QComboBox()
+        self.pick = ModePicker()
         self.pick.addItems(list(EGRESS_MODES))
         self.pick.currentIndexChanged.connect(self.sync)
         # The pick is the commit (#1049 review): ``activated`` is

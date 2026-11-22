@@ -25,6 +25,7 @@ from msks.client.tui.consent import (  # noqa: E402
     effective_allows,
     parse_rules,
 )
+from PySide6 import QtCore, QtGui  # noqa: E402
 
 #: The route's nothing-effectively-allowed refusal, verbatim
 #: (#280) — the message the tab's refusal arm matches.
@@ -181,6 +182,28 @@ def test_effective_allows_reads_the_shared_rule() -> None:
     assert not effective_allows(empty)
     assert effective_allows(parse_rules(rules_frame(allow_list=(".d.org",))))
     assert effective_allows(parse_rules(rules_frame()))
+
+
+def test_a_wheel_over_the_switcher_changes_nothing(qt) -> None:
+    """The wheel's pass-through (#1049 review): a scroll across
+    the pane never switches a live posture — the event ignores
+    itself for the parent to take, the pick stands, and nothing
+    posts through the bridge."""
+    tab, bridge = make_tab(qt)
+    event = QtGui.QWheelEvent(
+        QtCore.QPointF(1.0, 1.0),
+        QtCore.QPointF(1.0, 1.0),
+        QtCore.QPoint(0, 0),
+        QtCore.QPoint(0, 120),
+        QtCore.Qt.MouseButton.NoButton,
+        QtCore.Qt.KeyboardModifier.NoModifier,
+        QtCore.Qt.ScrollPhase.NoScrollPhase,
+        False,
+    )
+    tab.pick.wheelEvent(event)
+    assert not event.isAccepted()
+    assert tab.pick.currentText() == "interactive"
+    assert bridge.calls == []
 
 
 def test_the_refusal_marker_matches_the_routes_message() -> None:
