@@ -88,10 +88,13 @@ def fit_images(table: ListTable, budget: int | None) -> None:
     """The image cells' display (#939): the whole value when
     the budget is open, else the value ellipsized around the
     middle — the version half of a reference kept, the TUI
-    clip's own shape."""
+    clip's own shape. A row the rebuild has not filled yet
+    stands as it is, the action column's own rule."""
     metrics = table.fontMetrics()
     for row in range(table.rowCount()):
         item = table.item(row, IMAGE_COLUMN)
+        if item is None:
+            continue
         whole = item.data(IMAGE_ROLE)
         if budget is None:
             item.setText(whole)

@@ -146,3 +146,20 @@ def pick_item(
     if picker.exec() != QtWidgets.QDialog.DialogCode.Accepted:
         return None
     return picker.textValue()
+
+
+def prompt_text(parent, title: str, label: str, text: str = "") -> str | None:
+    """The text prompt asked centered (#1063): one line of
+    input over the asking window, ``text`` the opening value —
+    a cancelled prompt answers None, a submit the entered
+    text, stripped. The static ``getText`` call leaves the
+    placement to the window manager; this build centers on
+    the asking window first, the picker's own rule."""
+    prompt = QtWidgets.QInputDialog(parent)
+    prompt.setWindowTitle(title)
+    prompt.setLabelText(label)
+    prompt.setTextValue(text)
+    center_on_parent(prompt)
+    if prompt.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+        return None
+    return prompt.textValue().strip()
