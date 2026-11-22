@@ -125,11 +125,11 @@ refused with a line giving the fixes in order: `ssh-add` the key, decrypt a
 copy, or pass `--pubkey` at create.
 
 One more variable carries the GUI window's font scale (#939, #1046):
-`MSKSC_GUI_FONT_SCALE` multiplies the window's base font size (the terminal
-face's 15pt default) with a default of `1.0`. It has no config-file key,
-because it changes only how the window opens. A value that does not name a
-usable number (unparseable, `nan`, an infinity, zero, or negative) reads as
-the default.
+`MSKSC_GUI_FONT_SCALE` multiplies the window's base font size, the
+terminal face's 15pt default. The default multiplier is `1.0`. It has no
+config-file key, because it changes only how the window opens. A value that
+does not name a usable number (unparseable, `nan`, an infinity, zero, or
+negative) reads as the default.
 
 The window itself opens at 1280 by 720, and thereafter at the geometry it
 last closed at — place and size together, kept as `gui-window.json` under

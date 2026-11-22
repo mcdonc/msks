@@ -1175,11 +1175,16 @@ def test_open_window_keeps_a_user_style_choice(
     # default's 15pt, whatever the stub's 10pt platform font
     # carried.
     assert styles == ["font 15"]
-    # The write is absolute (#1046): a second open in one
-    # process writes the anchor again instead of compounding a
-    # scale onto the standing font, and a preset knob multiplies
-    # the anchor itself — 15pt at 1.2 lands 18pt.
+    # A preset knob multiplies the anchor itself (#1046): a
+    # fresh open writes the knob's size, not the platform
+    # default's — 15pt at 1.2 lands 18pt, where the stub's
+    # 10pt platform font at 1.2 would land 12. The geometry
+    # file the first open wrote is repointed away: the second
+    # open reads nothing the first saved.
     os.environ["MSKSC_GUI_FONT_SCALE"] = "1.2"
+    monkeypatch.setattr(
+        app, "geometry_path", lambda: tmp_path / "gui-window-2.json"
+    )
     Bridge.start = lambda self: None  # type: ignore[method-assign]
     Bridge.stop = lambda self: None  # type: ignore[method-assign]
     try:

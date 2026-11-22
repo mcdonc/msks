@@ -340,22 +340,15 @@ tagged `vX.Y.Z`.
   created), refreshed on a five-second tick and a Refresh
   button. A refused refresh flashes a status line while the
   rows stand; an outage holds its message until the daemon
-  answers again. The window opens at 1280×720, runs its fonts
-  at 1.5× the platform default (`MSKSC_GUI_FONT_SCALE` to
-  change), and reopens at the geometry it last closed at —
-  kept under the client state root (see `docs/cli.md` →
-  Client environment).
+  answers again. The window opens at 1280×720, runs its chrome
+  (tabs, buttons, table headers) at the terminal face's own
+  15pt default on every platform (`MSKSC_GUI_FONT_SCALE`
+  multiplies that anchor, default `1.0`; `1.3` restores the
+  old 19.5pt macOS look), and reopens at the geometry it last
+  closed at — kept under the client state root (see
+  `docs/cli.md` → Client environment).
 
 ### Changed
-
-- **The GUI window's font scale is anchored to the terminal
-  size (#1046).** The window's chrome (tab titles, button
-  text, table headers) now opens at the terminal face's own
-  default, 15pt, on every platform. It previously ran at 1.5×
-  the platform's font default, which read 30% oversized on
-  macOS (19.5pt). `MSKSC_GUI_FONT_SCALE` now multiplies the
-  15pt anchor with a default of `1.0`; the old macOS size is
-  `1.3`.
 
 - **The attached clients follow the daemon over the events
   websocket instead of polling (#1019).** The TUI's workspaces
