@@ -34,6 +34,7 @@ on:
       - devenv.yaml
       - devenv.lock
       - nix/guest.nix
+      - nix/virtiofsd-as.c
       - nix/agent-toolchain.nix
       - nix/pi-shrinkwrap-patch.py
       - nix/pi-shrinkwrap-integrity.json
@@ -53,6 +54,7 @@ on:
       - devenv.yaml
       - devenv.lock
       - nix/guest.nix
+      - nix/virtiofsd-as.c
       - nix/agent-toolchain.nix
       - nix/pi-shrinkwrap-patch.py
       - nix/pi-shrinkwrap-integrity.json

@@ -8,6 +8,18 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The `virtiofsd-as` owner-exec helper (#1087).** The repo
+  carries the helper's C source — about a hundred auditable
+  lines: `virtiofsd-as <uid> --fd <n> -- <argv>` validates the
+  invocation, clears supplementary groups, drops every
+  capability, and execs one fixed virtiofsd path as the named
+  uid with a scrubbed environment and one journal audit line per
+  exec. Each release publishes a manylinux wheel per architecture
+  (`x86_64`, `aarch64`) carrying the static binary — compiled by
+  the release workflow on the runners of each arch, beside the
+  pure wheel — and the NixOS module builds it from the in-repo
+  source into `security.wrappers.msks-virtiofsd-as`. The daemon
+  wiring follows in #1088.
 - **Root addressing for shared names (#1084).** A bare workspace
   name two or more owners hold is its own error kind: exit 6 under
   `--json`, a line naming every owner otherwise. The workspace

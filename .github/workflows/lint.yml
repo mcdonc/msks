@@ -55,6 +55,18 @@ jobs:
           devenv --quiet -O dotenv.enable:bool false shell --
           bash -c 'ruff check src/ && ruff format --check src/'
 
+      # The helper's compile check (#1087): the C source cannot
+      # rot between releases — -Werror at every push, the same
+      # flags the release legs and the nix build compile with. A
+      # plain dynamic compile here; the setuid-carrying static
+      # shapes are the release legs' and the module build's.
+      - name: Compile check (virtiofsd-as)
+        env:
+          TMPDIR: /tmp
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          cc -O2 -Wall -Wextra -Werror -o /tmp/virtiofsd-as nix/virtiofsd-as.c
+
       - name: Complexity gate (xenon rank A)
         env:
           TMPDIR: /tmp

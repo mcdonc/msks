@@ -6,27 +6,39 @@
 #
 # Jobs, ordered so each has what it needs:
 #
-# 1. wheel   — build the wheel and stage it as the artifact the
-#              harness, the publish, and the release job read.
-# 2. macos-acceptance — the harness against the staged wheel
+# 1. wheel   — build the pure wheel and sdist, and stage them
+#              as the artifacts the harness, the publish, and
+#              the release job read.
+# 2. platform-wheels — the manylinux wheels carrying the
+#              virtiofsd-as owner-exec helper (#1087), one per
+#              architecture: each leg compiles nix/virtiofsd-as.c
+#              with the runner's native gcc — static, on
+#              ubuntu-latest (x86_64) and ubuntu-24.04-arm
+#              (aarch64), no cross toolchain — drops the binary
+#              into the package as msks/bin/virtiofsd-as, builds
+#              the wheel around it, and retags it manylinux_2_17.
+#              A matching host's pip prefers these over the pure
+#              wheel; the SHASUMS the release job records covers
+#              every wheel the same way.
+# 3. macos-acceptance — the harness against the staged wheel
 #              (#740): the wheel installed on a real macOS
 #              runner, driving the acceptance tests against the
 #              shipped code. Its green is the gate both
 #              publishes wait on.
-# 3. pypi    — publish the wheel through the registered trusted
-#              publisher (the pending publisher names this file
-#              and the `pypi` environment; no token lives in the
-#              repo).
-# 4. release — create the version release: the changelog's
+# 4. pypi    — publish every wheel and the sdist through the
+#              registered trusted publisher (the pending
+#              publisher names this file and the `pypi`
+#              environment; no token lives in the repo).
+# 5. release — create the version release: the changelog's
 #              human-authored section (scripts/release_notes.py
 #              extracts it at the tag) prepended to GitHub's
-#              auto-generated notes, with the wheel, its checksum,
-#              and a provisional manifest — the previous
-#              release's images.json — attached (#659). The
-#              provisional keeps the channel URL answering while
-#              the image legs build; images-merge clobbers it with
-#              the merged manifest.
-# 5. images  — the hash-keyed channel, two legs (one per arch:
+#              auto-generated notes, with every wheel, the sdist,
+#              their checksums, and a provisional
+#              manifest — the previous release's images.json —
+#              attached (#659). The provisional keeps the channel
+#              URL answering while the image legs build;
+#              images-merge clobbers it with the merged manifest.
+# 6. images  — the hash-keyed channel, two legs (one per arch:
 #              x86_64 on ubuntu-latest, aarch64 on
 #              ubuntu-24.04-arm — GitHub's arm64 runners) walking
 #              that arch's flavors in order. Per flavor the nix
@@ -39,7 +51,7 @@
 #              uploads to an immutable release tagged
 #              images/<hash> whose title names the flavor and arch
 #              and body links what changed.
-# 6. images-merge — the single manifest writer: reads both legs'
+# 7. images-merge — the single manifest writer: reads both legs'
 #              row artifacts (disjoint by construction — each leg
 #              writes only its arch's flavors, so the merge cannot
 #              race itself) and attaches images.json — ref, hash,
@@ -112,13 +124,96 @@ jobs:
           path: dist/
           retention-days: 1
 
+  # The owner-exec helper's manylinux wheels (#1087): each leg
+  # compiles nix/virtiofsd-as.c with the runner's native gcc —
+  # static, one leg per architecture, no cross toolchain — drops
+  # the binary into the package as msks/bin/virtiofsd-as, and
+  # builds the wheel around it. Static glibc is exact here
+  # because the helper does no NSS lookups (the uid parses
+  # numerically), which is the usual static-glibc hazard; a
+  # fully static payload references no external library, so the
+  # manylinux_2_17 tag is compliant without auditwheel repair.
+  # `--wheel` builds straight from the tree: the sdist target
+  # excludes msks/bin on purpose (pyproject.toml), so an
+  # sdist-derived build could never carry the binary.
+  platform-wheels:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      # gcc and libc6-dev (libc.a among them) ride on the runner
+      # image; the compile of one small C file is seconds.
+      - name: Compile the helper into the package
+        run: |
+          mkdir -p src/msks/msks/bin
+          cc -O2 -Wall -Wextra -Werror -static \
+            -o src/msks/msks/bin/virtiofsd-as nix/virtiofsd-as.c
+          file src/msks/msks/bin/virtiofsd-as
+
+      - name: Build and retag the wheel
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet build wheel
+          python -m build --wheel
+          wheel tags --platform-tag "manylinux_2_17_$ARCH" \
+            dist/msks-*-py3-none-any.whl
+
+      # The artifact's own smoke: the binary is inside the wheel,
+      # runs on this runner's arch, refuses a malformed invocation
+      # exactly as the shipped helper must — and is gated fully
+      # static (no interpreter, no NEEDED entries), the property
+      # that makes it run on any same-arch Linux and the tag
+      # claim honest.
+      - name: Smoke the binary from inside the wheel
+        run: |
+          python - <<'PY'
+          import pathlib, subprocess, zipfile
+          wheel = next(pathlib.Path("dist").glob("msks-*-manylinux_2_17*.whl"))
+          with zipfile.ZipFile(wheel) as zf:
+              zf.extract("msks/bin/virtiofsd-as", "/tmp/wheel-smoke")
+          binary = pathlib.Path("/tmp/wheel-smoke/msks/bin/virtiofsd-as")
+          binary.chmod(binary.stat().st_mode | 0o111)
+          probe = subprocess.run([str(binary)], capture_output=True, text=True)
+          assert probe.returncode == 2, probe.stderr
+          assert "usage: virtiofsd-as" in probe.stderr, probe.stderr
+          elf = subprocess.run(
+              ["readelf", "-d", str(binary)], capture_output=True, text=True
+          ).stdout
+          assert "NEEDED" not in elf, elf
+          interp = subprocess.run(
+              ["readelf", "-l", str(binary)], capture_output=True, text=True
+          ).stdout
+          assert "INTERP" not in interp, interp
+          print(wheel.name, "carries a fully static, working helper")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-manylinux-${{ matrix.arch }}
+          path: dist/*manylinux*.whl
+          retention-days: 1
+          if-no-files-found: error
+
   # The GitHub release waits on the harness too (#896): a red
-  # harness holds the wheel, its checksum, and the provisional
+  # harness holds every wheel, the sdist, and the provisional
   # manifest until the wheel proves it installs on a Mac.
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [wheel, macos-acceptance]
+    needs: [wheel, platform-wheels, macos-acceptance]
     permissions:
       contents: write
     steps:
@@ -129,10 +224,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download the wheel
+      # Every wheel — pure and both manylinux legs — plus the
+      # sdist land in dist/, so the SHASUMS line below and the
+      # dist/* upload above carry them with no further plumbing.
+      - name: Download the wheels
         uses: actions/download-artifact@v4
         with:
-          name: wheel
+          pattern: wheel*
+          merge-multiple: true
           path: dist/
 
       # The human-authored notes come first; GitHub's auto-generated
@@ -244,25 +343,28 @@ jobs:
           python -m pytest acceptance/test_hostsetup_macos_acceptance.py -v
 
   # The PyPI publish alone behind the harness (#896): the wheel
-  # job stages the artifact, the harness proves it installs, and
-  # only then does the package reach PyPI. The trusted publisher
-  # binds the repository, this file's name, and the `pypi`
-  # environment — not the job — so the publish's move from the
-  # wheel job into this one keeps the registration valid with no
-  # PyPI-side change.
+  # job stages the artifacts, the harness proves they install,
+  # and only then does the package reach PyPI. The trusted
+  # publisher binds the repository, this file's name, and the
+  # `pypi` environment — not the job — so the publish's move from
+  # the wheel job into this one keeps the registration valid with
+  # no PyPI-side change.
   pypi:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [wheel, macos-acceptance]
+    needs: [wheel, platform-wheels, macos-acceptance]
     permissions:
       contents: read
       id-token: write
     environment: pypi
     steps:
-      - name: Download the wheel
+      # Every wheel (pure and both manylinux legs) plus the sdist:
+      # the trusted publisher serves whatever dist/ holds.
+      - name: Download the wheels
         uses: actions/download-artifact@v4
         with:
-          name: wheel
+          pattern: wheel*
+          merge-multiple: true
           path: dist/
 
       - name: Publish to PyPI (trusted publisher)
