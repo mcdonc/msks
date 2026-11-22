@@ -45,9 +45,9 @@ def spec_for(row: dict, mounts: tuple | None = None) -> VmSpec:
         timezone=row.get("timezone"),
         mounts=row_mounts(row, mounts),
         # The row's seed epoch at spec time (#1069): the renewal
-        # suffix reads it, so each bake lands an instance-id the
-        # guest has not consumed — the create-time bake carries
-        # the default zero and keeps the plain id.
+        # suffix reads it, so each renewal bake lands an
+        # instance-id the guest has not consumed — the create-time
+        # bake and a launch heal keep the plain id.
         seed_epoch=row.get("seed_epoch") or 0,
     )
 

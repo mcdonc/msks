@@ -135,8 +135,9 @@ class VmSpec:
     # instance-id, so a mount set that leaves and returns must
     # renew under an id the guest has not consumed, and the
     # epoch is what distinguishes two bakes of one content. Zero
-    # is a spec built outside the row path — the create-time
-    # bake, which keeps the plain id.
+    # is a spec built outside the row path and the row itself
+    # before its first boot-time bake — the create-time bake
+    # keeps the plain id.
     seed_epoch: int = 0
 
 
