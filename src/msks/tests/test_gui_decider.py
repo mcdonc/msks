@@ -5,10 +5,14 @@ and rules posture landing on the TUI's pure consent
 controller, the reconnect ladder re-registering with the
 controller reset (holds that resolved during the outage drop,
 not linger), and the daemon's refusal of the registration
-ending the link with its reason told. The link is plain
-asyncio — these tests drive it against a fake socket, no Qt,
-no daemon, no display; the bridge's own tests carry the
-signals and the task's life, the page's own the lifetime
+ending the link with its reason told. The presence tells
+(#1052) beside them: the registration's answer tells the
+serve once per connection, every connection end and failed
+dial tells the drop with its reason — the retire's cancel
+included — and the refusal keeps its own tell. The link is
+plain asyncio — these tests drive it against a fake socket,
+no Qt, no daemon, no display; the bridge's own tests carry
+the signals and the task's life, the page's own the lifetime
 bracket.
 """
 
@@ -153,18 +157,25 @@ def rejected_raw(reason: str | None = None) -> str:
 
 
 class Recorder:
-    """The link's two callbacks, recorded for the asserts."""
+    """The link's four callbacks, recorded for the asserts."""
 
     def __init__(self) -> None:
         self.outcomes: list[tuple[str, object]] = []
         self.refusals: list[str] = []
+        self.serves = 0
+        self.drops: list[str] = []
 
     def wire(self, link: decider_mod.DeciderLink) -> None:
         link.on_frame = self.note_frame
         link.on_rejected = self.refusals.append
+        link.on_serve = self.note_serve
+        link.on_drop = self.drops.append
 
     def note_frame(self, outcome: str, payload: object) -> None:
         self.outcomes.append((outcome, payload))
+
+    def note_serve(self) -> None:
+        self.serves += 1
 
 
 def drive(
@@ -443,5 +454,165 @@ def test_a_controller_handed_in_is_the_one_the_link_drives() -> None:
         own = decider_mod.DeciderLink("ws-a")
         assert own.controller is not given
         assert own.controller.workspace_id == "ws-a"
+
+    asyncio.run(scenario())
+
+
+def test_the_registration_tells_its_presence() -> None:
+    """The presence seams (#1052): the registration's answer —
+    the first owned frame of a connection — tells the serve
+    once, junk and foreign frames telling nothing, and the
+    connection's ends each tell the drop with their own reason:
+    the clean close, the failed dial, the page's retire."""
+
+    async def scenario() -> None:
+        first = FakeWS(
+            [
+                rules_raw(),
+                request_raw("req-1"),
+                "not json at all",
+                request_raw("req-9", ws="ws-b"),
+            ]
+        )
+        # After the scripted socket the dial fails forever: the
+        # outage's own heartbeat, one drop per attempt, until
+        # the cancel takes the link.
+        sockets = [first]
+
+        def dial():
+            return sockets.pop(0) if sockets else BrokenDial()
+
+        link = decider_mod.DeciderLink("ws-a", ws_factory=dial)
+        seen = Recorder()
+        seen.wire(link)
+        task = drive(link)
+        await settle()
+        task.cancel()
+        await settle(0.01)  # the cancel's delivery: the retire's drop
+        # One serve for the whole first connection: the first
+        # owned frame told it, and the owned frame behind it,
+        # the junk, and the foreign hold did not re-tell.
+        assert seen.serves == 1
+        assert seen.drops[0] == "the daemon closed the events socket"
+        assert seen.drops[1] == "the dial failed: connection refused"
+        assert seen.drops[-1] == "the page retired the registration"
+        assert link.serving is False
+
+    asyncio.run(scenario())
+
+
+def test_a_reconnect_restores_the_presence() -> None:
+    """The drop and its reconnect (#1052): a wire that breaks
+    mid-stream tells its drop, and the reconnect's registration
+    answer tells the serve again — the indicator reads
+    connected, down, connected in step with the wire."""
+
+    async def scenario() -> None:
+        first = FakeWS([rules_raw(), request_raw("req-1")])
+        first.script.append(RuntimeError("wire cut"))
+        second = FakeWS([rules_raw(mode="static"), request_raw("req-1")])
+        sockets = [first, second]
+
+        def dial():
+            return sockets.pop(0) if sockets else BrokenDial()
+
+        link = decider_mod.DeciderLink("ws-a", ws_factory=dial)
+        seen = Recorder()
+        seen.wire(link)
+        task = drive(link)
+        await settle()
+        task.cancel()
+        assert seen.drops[0] == "the socket broke: wire cut"
+        assert seen.serves == 2  # each connection's own answer
+        assert link.serving is False  # the cancel's drop told
+
+    asyncio.run(scenario())
+
+
+def test_the_token_refusals_close_tells_its_own_drop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The close's two arms (#1052): the token refusal's close
+    (4401) tells the token's own reason, and a plain close
+    (1000) tells the socket's break — the same reading the
+    feed's own drops carry."""
+
+    async def scenario() -> None:
+        monkeypatch.setattr(decider_mod, "REFUSED_RETRY_S", 0.001)
+        plain = refused_closed(1000)
+        first = FakeWS([refused_closed(4401)])
+        second = FakeWS([request_raw("req-1"), plain])
+        sockets = [first, second]
+
+        def dial():
+            return sockets.pop(0) if sockets else BrokenDial()
+
+        link = decider_mod.DeciderLink("ws-a", ws_factory=dial)
+        seen = Recorder()
+        seen.wire(link)
+        task = drive(link, delays=(3600.0,))
+        await settle()
+        assert seen.drops == [
+            "the daemon refused the token",
+            f"the socket broke: {plain}",
+        ]
+        # The second connection's hold told its serve before
+        # the close took the wire.
+        assert seen.serves == 1
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_a_rejected_registration_tells_no_drop_and_no_serve() -> None:
+    """The refusal's own tell (#1052): the rejected registration
+    crosses its reason and ends the link — the rejection's own
+    frame never tells a serve, and no drop paints an outage
+    over the refusal."""
+
+    async def scenario() -> None:
+        socket = FakeWS(
+            [rejected_raw("unknown workspace"), request_raw("req-1")]
+        )
+        link = decider_mod.DeciderLink("ws-nope", ws_factory=lambda: socket)
+        seen = Recorder()
+        seen.wire(link)
+        task = drive(link)
+        await wait_done(task)
+        assert seen.serves == 0
+        assert seen.drops == []
+        assert seen.refusals == ["unknown workspace"]
+
+    asyncio.run(scenario())
+
+
+def test_the_retire_tells_its_drop() -> None:
+    """The page's retire (#1052): the cancel ends the link with
+    a drop told — the indicator reads down while the page is
+    away — and the task still ends cancelled, the bridge's own
+    contract."""
+
+    async def scenario() -> None:
+        socket = FakeWS([rules_raw()])
+        sockets = [socket]
+
+        def dial():
+            return sockets.pop(0) if sockets else BrokenDial()
+
+        link = decider_mod.DeciderLink("ws-a", ws_factory=dial)
+        seen = Recorder()
+        seen.wire(link)
+        # The ladder parks after the clean close: the cancel is
+        # the next end the link meets.
+        task = drive(link, delays=(3600.0,))
+        await settle()
+        assert seen.serves == 1
+        task.cancel()
+        await settle(0.01)
+        assert task.cancelled()
+        assert seen.drops == [
+            "the daemon closed the events socket",
+            "the page retired the registration",
+        ]
 
     asyncio.run(scenario())

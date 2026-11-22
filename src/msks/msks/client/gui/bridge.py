@@ -86,7 +86,10 @@ class Bridge(QtCore.QObject):
     ``stop_decider()`` retires it, the socket's close the
     daemon's own retire — and the link's landings cross as
     ``decider_landed(outcome, payload)`` with the daemon's
-    refusal of the registration as ``decider_rejected(reason)``.
+    refusal of the registration as ``decider_rejected(reason)``,
+    its presence as ``decider_served()`` and
+    ``decider_dropped(reason)`` (#1052 — the Egress tab's
+    indicator reads them live).
     The registration's state lands on the controller the ask
     carries (#1000): the page's consent presenter owns one, and
     the rows the panel renders read the same map the frames
@@ -105,6 +108,8 @@ class Bridge(QtCore.QObject):
     feed_served = QtCore.Signal()
     decider_landed = QtCore.Signal(str, object)
     decider_rejected = QtCore.Signal(str)
+    decider_served = QtCore.Signal()
+    decider_dropped = QtCore.Signal(str)
 
     def __init__(
         self,
@@ -267,6 +272,8 @@ class Bridge(QtCore.QObject):
         link = self._decider_factory(workspace_id, controller)
         link.on_frame = self.decider_landed.emit
         link.on_rejected = self.decider_rejected.emit
+        link.on_serve = self.decider_served.emit
+        link.on_drop = self.decider_dropped.emit
         self._decider_workspace = workspace_id
         self._decider_controller = controller
         task = loop.create_task(link.run())

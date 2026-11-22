@@ -19,6 +19,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The Egress tab's decider presence indicator (#1052).**
+  The GUI workspace page's Egress tab shows the page's egress
+  decider registration live under the mode switcher: connected
+  while it stands, down through an outage with the
+  re-registration on its own, and the daemon's refusal with
+  its reason. Under `static` and `allow` modes the line
+  explains the mode instead: no holds wait there, so an
+  unprompted workspace names which case it is in.
 - **The GUI workspaces page's Clone action (#1063).** The
   page's bottom button row carries a Clone button beside Edit,
   and a right-click on a row carries a Clone entry. Both ask

@@ -9,11 +9,14 @@ audit surface (#1051): the in-effect verdicts the rules frame
 carries, each revocable in place through the revoke route, and
 the consent rows' audit trail with its deny-to-allowlist
 action — a denial's name joining the allowlist through the
-same write path the editor owns. A pick on the switcher
+same write path the editor owns — and the decider presence
+indicator (#1052, :mod:`msks.client.gui.egresspresence`):
+the page's registration — the link that claims the
+workspace's holds (#999) — shown live under the posture row.
+A pick on the switcher
 commits at once, the picked mode's meaning beside the pick.
 Allow and deny of a live hold stay in the consent panel (#999,
-#1000), and the decider presence indicator is #1042's later
-sub-issue. The nothing-effectively-allowed refusal to
+#1000). The nothing-effectively-allowed refusal to
 ``static`` — the offline-workspace escape — reaches the
 operator as a question with an explicit confirm, never a
 silent failure or a raw error: the switch asks before it sends
@@ -42,6 +45,7 @@ from .consent import (
 )
 from .dialogs import Centered
 from .egressaudit import AuditTrail
+from .egresspresence import PresenceLine
 from .forms import ModePicker, confirm, muted_note, save_cancel_row
 
 #: The rules read's key stem (#1042): each flight carries its own
@@ -209,19 +213,24 @@ class EntryDialog(Centered, QtWidgets.QDialog):
 class EgressTab(QtWidgets.QWidget):
     """The page's egress posture surface (#1042): the current mode
     with its meaning, the switcher under it — a pick commits at
-    once — then two columns (#1051): the allowlist editor with
-    the in-effect verdicts and their Revoke under it on the
-    left, the audit trail with its filter and its
-    deny-to-allowlist action on the right, the note line under
-    both. The note answers the switch, the writes, and the
-    revokes. The rules read refreshes on the page's tick and on
-    every pushed ``egress.rules`` frame — a switch the CLI made
-    elsewhere paints itself here — and the switch and the
-    allowlist write each fly one flight at a time, the reply the
-    fresh rules frame with the ``applied`` fact beside it. The
-    revoke is its own route beside the policy one: it flies one
-    at a time too, its landing re-reading both the posture and
-    the trail."""
+    once — the decider presence indicator under that (#1052):
+    the page's registration painted live from the bridge's
+    signals — connected while it stands, down through an
+    outage, its refusal with the reason — the modes that hold
+    no prompts answering with their own words. Then two columns
+    (#1051): the allowlist editor with the in-effect verdicts
+    and their Revoke under it on the left, the audit trail with
+    its filter and its deny-to-allowlist action on the right,
+    the note line under both. The note answers the switch, the
+    writes, and the revokes — never the presence, whose tells
+    are the indicator's own. The rules read refreshes on the
+    page's tick and on every pushed ``egress.rules`` frame — a
+    switch the CLI made elsewhere paints itself here — and the
+    switch and the allowlist write each fly one flight at a
+    time, the reply the fresh rules frame with the ``applied``
+    fact beside it. The revoke is its own route beside the
+    policy one: it flies one at a time too, its landing
+    re-reading both the posture and the trail."""
 
     def __init__(self, bridge) -> None:
         super().__init__()
@@ -259,6 +268,12 @@ class EgressTab(QtWidgets.QWidget):
         self.pick.activated.connect(self.switch)
         self.words = QtWidgets.QLabel("", self)
         self.words.setWordWrap(True)
+        # The presence indicator (#1052): the registration's
+        # state under the posture row — an unprompted workspace
+        # explains itself here, the mode's own words included.
+        # The line wires itself to the bridge's tells and takes
+        # the open's reset and the mode with the tab's own.
+        self.presence_line = PresenceLine(bridge)
         row = QtWidgets.QHBoxLayout()
         row.addWidget(self.pick)
         row.addWidget(self.words, stretch=1)
@@ -323,6 +338,7 @@ class EgressTab(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.mode_line)
         layout.addLayout(row)
+        layout.addWidget(self.presence_line)
         layout.addLayout(columns, stretch=1)
         layout.addWidget(self.note)
         self.sync()
@@ -362,6 +378,10 @@ class EgressTab(QtWidgets.QWidget):
         self.frame = None
         self.rules = None
         self.note.setText("")
+        # The indicator resets with the open (#1052): the new
+        # workspace's registration is its own, and its first
+        # tell — serve, drop, or refusal — paints the line.
+        self.presence_line.host(workspace_id)
         self.audit.host(workspace_id)
         self.take({})
 
@@ -400,6 +420,7 @@ class EgressTab(QtWidgets.QWidget):
             f"current mode: {mode}" if mode else "current mode: —"
         )
         self.follow(mode)
+        self.presence_line.take(mode)
         self.retake_entries()
         self.retake_verdicts()
         self.sync()

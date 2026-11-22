@@ -30,6 +30,7 @@ if importlib.util.find_spec("PySide6") is None:
     )
 
 from msks.client.gui import egress as egress_mod  # noqa: E402
+from msks.client.gui import egresspresence as presence_mod  # noqa: E402
 from msks.client.tui.consent import (  # noqa: E402
     EMPTY_STATIC_QUESTION,
     effective_allows,
@@ -66,15 +67,19 @@ class FakeSignal:
 
 
 class StubBridge:
-    """The bridge's surface for the tab's tests: the two signals
-    it reads and the one verb it calls, every call recorded,
-    every flight a real future — the tab holds it for the cancel
-    a workspace switch takes."""
+    """The bridge's surface for the tab's tests: the signals
+    it reads — the calls' answers and the decider presence
+    tells (#1052) — and the one verb it calls, every call
+    recorded, every flight a real future — the tab holds it
+    for the cancel a workspace switch takes."""
 
     def __init__(self) -> None:
         self.calls: list[tuple] = []
         self.succeeded = FakeSignal()
         self.failed = FakeSignal()
+        self.decider_served = FakeSignal()
+        self.decider_dropped = FakeSignal()
+        self.decider_rejected = FakeSignal()
 
     def call(self, key: str, method: str, *args: object):
         from concurrent.futures import Future
@@ -1254,3 +1259,148 @@ def test_deny_to_allowlist_under_an_unread_posture_answers_itself(
     tab.audit.allow_wanted.emit("denied.example")
     assert tab.note.text() == egress_mod.NO_READ
     assert [c for c in bridge.calls if c[1] == "set_egress_mode"] == []
+
+
+def test_the_presence_indicator_follows_the_registration(qt) -> None:
+    """The presence indicator (#1052): the page's decider
+    registration painted live — connecting at the open, the
+    serve telling connected, the drop telling down, and the
+    reconnect's serve restoring it — while the mode holds
+    prompts."""
+    tab, _bridge = make_tab(qt)
+    assert tab.presence_line.text() == (
+        "the decider registration is connecting"
+    )
+    _bridge.decider_served.emit()
+    assert tab.presence_line.text() == (
+        "holds wait for this page — the decider registration is connected"
+    )
+    _bridge.decider_dropped.emit("the socket broke")
+    assert tab.presence_line.text() == (
+        "the decider registration is down — reconnecting"
+    )
+    _bridge.decider_served.emit()  # the reconnect re-registered
+    assert tab.presence_line.text() == (
+        "holds wait for this page — the decider registration is connected"
+    )
+
+
+def test_a_refused_registration_surfaces_its_reason(qt) -> None:
+    """The refusal (#1052): the daemon's refusal of the
+    registration leads the line with its reason beside it — a
+    blank reason keeps the line whole — and it leads whatever
+    the mode says: a standing fault over a posture fact."""
+    tab, _bridge = make_tab(qt)
+    _bridge.decider_served.emit()
+    _bridge.decider_rejected.emit("unknown workspace")
+    assert tab.presence_line.text() == (
+        "the daemon refused the decider registration — unknown workspace"
+    )
+    _bridge.decider_rejected.emit("")
+    assert tab.presence_line.text() == (
+        "the daemon refused the decider registration"
+    )
+    # The refusal leads the no-prompts modes' own words too.
+    _bridge.succeeded.emit(tab.list_key, rules_frame(mode="static"))
+    assert tab.presence_line.text() == (
+        "the daemon refused the decider registration"
+    )
+
+
+def test_the_modes_that_hold_no_prompts_answer_for_themselves(qt) -> None:
+    """The no-prompts modes (#1052): under `static` and `allow`
+    the indicator explains the mode — no holds wait — whatever
+    the registration's state, and an unread posture reads the
+    registration's words alone."""
+    tab, bridge = make_tab(qt)
+    bridge.succeeded.emit(tab.list_key, rules_frame(mode="allow"))
+    bridge.decider_served.emit()
+    assert (
+        tab.presence_line.text() == "no holds wait — allow mode gates nothing"
+    )
+    bridge.decider_dropped.emit("the socket broke")
+    assert (
+        tab.presence_line.text() == "no holds wait — allow mode gates nothing"
+    )
+    bridge.succeeded.emit(tab.list_key, rules_frame(mode="static"))
+    assert tab.presence_line.text() == (
+        "no holds wait — static mode gates without questions"
+    )
+    # The posture back to prompts: the registration's state
+    # words take the line again.
+    bridge.succeeded.emit(tab.list_key, rules_frame(mode="interactive"))
+    assert tab.presence_line.text() == (
+        "the decider registration is down — reconnecting"
+    )
+    # No read landed: the state's words alone.
+    tab.take("not a frame")
+    assert tab.presence_line.text() == (
+        "the decider registration is down — reconnecting"
+    )
+
+
+def test_a_workspace_switch_resets_the_indicator(qt) -> None:
+    """The open's reset over the indicator (#1052): a workspace
+    switch puts the line back to connecting — the new
+    workspace's registration is its own, and its first tell
+    paints the line."""
+    tab, bridge = make_tab(qt)
+    bridge.decider_rejected.emit("unknown workspace")
+    tab.host("ws-b")
+    assert tab.presence_line.text() == (
+        "the decider registration is connecting"
+    )
+    bridge.decider_served.emit()
+    assert tab.presence_line.text() == (
+        "holds wait for this page — the decider registration is connected"
+    )
+
+
+def test_the_unhosted_tab_shows_no_presence(qt) -> None:
+    """The unhosted tab (#1052): no workspace stands, and the
+    indicator says nothing — the page hosts before the link's
+    tells arrive."""
+    bridge = StubBridge()
+    tab = egress_mod.EgressTab(bridge)
+    qt.keep.append(tab)
+    assert tab.presence_line.text() == ""
+    bridge.decider_served.emit()
+    assert tab.presence_line.text() == ""
+
+
+def test_presence_text_covers_the_states() -> None:
+    """The line's own function (#1052): every state's words, the
+    refusal's lead, and the no-prompts modes' answer — the
+    label's paints read no other source."""
+    words = presence_mod.PRESENCE_WORDS
+    assert (
+        presence_mod.presence_text(
+            "interactive", presence_mod.PRESENCE_CONNECTING
+        )
+        == words[presence_mod.PRESENCE_CONNECTING]
+    )
+    assert (
+        presence_mod.presence_text(
+            "interactive", presence_mod.PRESENCE_CONNECTED
+        )
+        == words[presence_mod.PRESENCE_CONNECTED]
+    )
+    assert (
+        presence_mod.presence_text("interactive", presence_mod.PRESENCE_DOWN)
+        == words[presence_mod.PRESENCE_DOWN]
+    )
+    assert (
+        presence_mod.presence_text("static", presence_mod.PRESENCE_CONNECTED)
+        == presence_mod.NO_PROMPTS_WORDS["static"]
+    )
+    assert (
+        presence_mod.presence_text("allow", presence_mod.PRESENCE_DOWN)
+        == presence_mod.NO_PROMPTS_WORDS["allow"]
+    )
+    assert presence_mod.presence_text(
+        "static", presence_mod.PRESENCE_REFUSED, "unknown workspace"
+    ) == ("the daemon refused the decider registration — unknown workspace")
+    assert (
+        presence_mod.presence_text("", presence_mod.PRESENCE_CONNECTED)
+        == (words[presence_mod.PRESENCE_CONNECTED])
+    )

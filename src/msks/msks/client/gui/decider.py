@@ -21,6 +21,18 @@ workspace the daemon cannot resolve answers
 ``egress.decider_rejected``; the link ends there, the reason
 crossing to ``on_rejected`` for the panel to surface.
 
+The link's presence is told as it changes (#1052): the
+registration's answer — the first owned frame of a connection,
+only a registered decider's to receive — tells the serve once
+per connection, every connection's end and failed dial tells
+the drop with its reason (the page's own retire included), and
+the refusal keeps its own tell; the bridge wires them to
+signals beside the frames, and the Egress tab's indicator
+reads them live. The window's feed still flashes the
+daemon-wide outage the same dial failure names, and the link
+keeps re-registering under it — the feed's ladder (#946)
+between every attempt, reset by every connection that served.
+
 The protocol state is the TUI's own pure controller
 (:class:`msks.client.tui.consent.ConsentController` — stdlib
 only, no Textual): the frame parsing, the pending-hold map, and
@@ -35,10 +47,6 @@ no Qt beside it: :class:`DeciderLink` is plain asyncio over the
 shared dial seams, its callbacks the bridge wires to signals —
 so the suite drives a link against a fake socket with no
 binding and no daemon, and the coverage gate lands on it whole.
-A dropped link says nothing of its own: the window's feed
-flashes the daemon-wide outage on the same failure, and the
-link keeps re-registering under it — the feed's ladder (#946)
-between every attempt, reset by every connection that served.
 """
 
 import asyncio
@@ -48,7 +56,7 @@ import websockets
 
 from ..egress import env_dial_events
 from ..egress import refused as refused_close
-from ..tui.consent import REJECTED, ConsentController
+from ..tui.consent import ADDED, REJECTED, RULES, ConsentController
 from .feed import RECONNECT_DELAYS, REFUSED_RETRY_S, backoff, close_quietly
 
 
@@ -65,10 +73,11 @@ class DeciderLink:
     connection, feeding a :class:`ConsentController`; the page
     starts and stops the task, and the bridge wires
     ``on_frame(outcome, payload)`` — each landed frame's
-    application — and ``on_rejected(reason)`` to signals. The
-    unwired link still runs: frames land in the controller and
-    the outcomes tell to nobody, the feed's own bare
-    contract."""
+    application — ``on_rejected(reason)``, and the presence
+    seams ``on_serve()`` and ``on_drop(reason)`` (#1052) to
+    signals. The unwired link still runs: frames land in the
+    controller and the outcomes tell to nobody, the feed's own
+    bare contract."""
 
     def __init__(
         self,
@@ -95,6 +104,17 @@ class DeciderLink:
         self.ws_factory = ws_factory or env_dial_events
         self.on_frame = None
         self.on_rejected = None
+        #: Whether the standing connection has served its
+        #: registration (#1052): True from its first owned
+        #: frame until the connection's end.
+        self.serving = False
+        #: The presence seams (#1052): ``on_serve`` told once per
+        #: serving connection and ``on_drop`` with a reason on
+        #: every connection end, failed dial, and the retire's
+        #: cancel — the bridge wires both to signals, and the
+        #: Egress tab's indicator paints them.
+        self.on_serve = None
+        self.on_drop = None
 
     async def run(self) -> None:
         """Register and serve until cancelled — the feed's own
@@ -105,15 +125,31 @@ class DeciderLink:
         the loop instead: a workspace the daemon cannot resolve
         stays unresolved by reconnecting."""
         attempt = 0
-        while True:
-            served, refused, rejected = await self.pump_one()
-            if rejected:
-                return
-            if refused:
-                await asyncio.sleep(REFUSED_RETRY_S)
-                continue
-            attempt = 0 if served else attempt + 1
-            await asyncio.sleep(backoff(self.reconnect_delays, attempt))
+        try:
+            while True:
+                served, refused, rejected = await self.pump_one()
+                if rejected:
+                    return
+                attempt = 0 if served else attempt + 1
+                await asyncio.sleep(self.retry_gap(refused, attempt))
+        except asyncio.CancelledError:
+            # The page's retire (#999): the cancel is the
+            # registration's own end, and the drop tells it
+            # (#1052) — the indicator reads down while the page
+            # is away, and the raise keeps the task's cancelled
+            # contract.
+            self.note_drop("the page retired the registration")
+            raise
+
+    def retry_gap(self, refused: bool, attempt: int) -> float:
+        """The gap before the next attempt (#999): the daemon's
+        token refusal takes the fixed slow interval — a token
+        the daemon does not hold cannot become valid by
+        reconnecting — and every other end takes the ladder's
+        own step."""
+        if refused:
+            return REFUSED_RETRY_S
+        return backoff(self.reconnect_delays, attempt)
 
     async def pump_one(self) -> tuple[bool, bool, bool]:
         """One connection's lifetime; ``(served, refused,
@@ -121,23 +157,46 @@ class DeciderLink:
         ladder resets on the next attempt), whether the daemon's
         close was its token refusal (the fixed slow interval
         instead), and whether the daemon refused the
-        registration outright (the loop's stop). A dial that
-        fails — the environment's own refusal included, the
-        feed's reading of the same arm — tells nobody and
-        reconnects: the feed flashes the outage the same dial
-        feeds."""
+        registration outright (the loop's stop). Every arm ends
+        in a drop told with its reason (#1052) — a dial that
+        fails and a wire that breaks included, the feed's own
+        reading of the same arms — while the refused
+        registration keeps its refusal's own tell: the link
+        ends, and no drop paints an outage over it."""
         try:
             ws = await self.ws_factory().__aenter__()
-        except SystemExit, Exception:
+        except (SystemExit, Exception) as exc:
+            self.note_drop(f"the dial failed: {exc}")
             return False, False, False
         try:
-            return await self.serve(ws)
+            served, refused, rejected = await self.serve(ws)
         except websockets.ConnectionClosed as exc:
-            return True, refused_close(exc), False
-        except Exception:
+            return self.closed(exc)
+        except Exception as exc:
+            self.note_drop(f"the socket broke: {exc}")
             return True, False, False
         finally:
             await close_quietly(ws)
+        if not rejected:
+            self.note_drop("the daemon closed the events socket")
+        return served, refused, rejected
+
+    def closed(
+        self, exc: websockets.ConnectionClosed
+    ) -> tuple[bool, bool, bool]:
+        """The wire's close (#1052): the token refusal's close
+        tells the token's own reason beside its fixed slow
+        interval, and any other close tells the socket's break
+        on the ladder — the same reading the feed's own drops
+        carry."""
+        refused = refused_close(exc)
+        reason = (
+            "the daemon refused the token"
+            if refused
+            else f"the socket broke: {exc}"
+        )
+        self.note_drop(reason)
+        return True, refused, False
 
     async def serve(self, ws) -> tuple[bool, bool, bool]:
         """Register this workspace, reset the protocol state,
@@ -155,16 +214,51 @@ class DeciderLink:
 
     def land(self, raw: str) -> bool:
         """One wire text through the controller: the outcome and
-        payload cross to ``on_frame``, and the daemon's refusal
-        of the registration — True, the loop's stop signal —
-        carries its reason to ``on_rejected``. Junk skips inside
-        the controller, never fatal to the connection."""
+        payload cross to ``on_frame``, an owned frame — the
+        registration's answer among them — tells the serve
+        (#1052), and the daemon's refusal of the registration —
+        True, the loop's stop signal — carries its reason to
+        ``on_rejected``. Junk skips inside the controller, never
+        fatal to the connection."""
         outcome, payload = self.controller.apply_frame(raw)
         if self.on_frame is not None:
             self.on_frame(outcome, payload)
         if outcome != REJECTED:
+            self.note_answer(outcome)
             return False
         self.reject_reason = payload or "the daemon refused the registration"
         if self.on_rejected is not None:
             self.on_rejected(self.reject_reason)
         return True
+
+    def note_answer(self, outcome: str) -> None:
+        """The registration's answer outcomes (#1052): an owned
+        frame — the workspace's rules or a hold, only a
+        registered decider's to receive — tells the serve; every
+        other outcome (junk, a foreign frame, a resolution)
+        leaves the standing presence as it stands."""
+        if outcome in (RULES, ADDED):
+            self.note_serve()
+
+    def note_serve(self) -> None:
+        """The registration's answer landed (#1052): an owned
+        frame — the workspace's rules or a hold, only a
+        registered decider's to receive — told once per
+        connection, the indicator's connected state. The frames
+        behind the first owned one do not re-tell; a drop clears
+        the flag, so the next connection's answer tells again."""
+        if self.serving:
+            return
+        self.serving = True
+        if self.on_serve is not None:
+            self.on_serve()
+
+    def note_drop(self, reason: str) -> None:
+        """The connection's end or the dial's failure, told with
+        its reason (#1052): the indicator's down state. Each
+        attempt of an outage re-tells — the outage's own
+        heartbeat, the feed's own reading of its drops — while
+        the link keeps re-registering under it."""
+        self.serving = False
+        if self.on_drop is not None:
+            self.on_drop(reason)

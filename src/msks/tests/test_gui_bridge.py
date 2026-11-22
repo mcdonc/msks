@@ -362,18 +362,25 @@ class ParkingLink:
 
 
 class StubLink:
-    """The decider link's shape for the bridge's tests: one
-    frame outcome and the registration's refusal told at once,
-    then a serve the stop must cancel."""
+    """The decider link's shape for the bridge's tests: the
+    presence told first — one serve and one drop (#1052) — then
+    one frame outcome and the registration's refusal, then a
+    serve the stop must cancel."""
 
     def __init__(self, workspace_id: str, controller=None) -> None:
         self.workspace_id = workspace_id
         self.controller = controller
         self.on_frame = None
         self.on_rejected = None
+        self.on_serve = None
+        self.on_drop = None
         self.cancelled = False
 
     async def run(self) -> None:
+        if self.on_serve is not None:
+            self.on_serve()
+        if self.on_drop is not None:
+            self.on_drop("the socket broke")
         if self.on_frame is not None:
             self.on_frame("added", f"hold-for-{self.workspace_id}")
         if self.on_rejected is not None:
@@ -399,21 +406,31 @@ def test_the_decider_registration_rides_the_loop_with_the_page(
     qt = qapp_setup
 
     class DeciderReceiver(qt.Receiver):
-        """The shell-shaped receiver: the link's two signals, the
-        deliveries appended for the asserts."""
+        """The shell-shaped receiver: the link's four signals,
+        the deliveries appended for the asserts."""
 
         def __init__(self, bridge) -> None:
             super().__init__(bridge)
             self.landed: list[tuple[str, object]] = []
             self.refusals: list[str] = []
+            self.serves = 0
+            self.drops: list[str] = []
             bridge.decider_landed.connect(self.on_landed)
             bridge.decider_rejected.connect(self.on_refused)
+            bridge.decider_served.connect(self.on_serve_told)
+            bridge.decider_dropped.connect(self.on_drop_told)
 
         def on_landed(self, outcome: str, payload: object) -> None:
             self.landed.append((outcome, payload))
 
         def on_refused(self, reason: str) -> None:
             self.refusals.append(reason)
+
+        def on_serve_told(self) -> None:
+            self.serves += 1
+
+        def on_drop_told(self, reason: str) -> None:
+            self.drops.append(reason)
 
     links: list[StubLink] = []
     bridge = qt.Bridge(
@@ -433,6 +450,10 @@ def test_the_decider_registration_rides_the_loop_with_the_page(
         time.sleep(TICK)
     assert receiver.landed == [("added", "hold-for-ws-1")]
     assert receiver.refusals == ["unknown workspace"]
+    # The presence tells (#1052) cross the same way: the serve
+    # and the drop land on the GUI thread beside the frames.
+    assert receiver.serves == 1
+    assert receiver.drops == ["the socket broke"]
     # The re-ask for the standing workspace is a no-op: the
     # page's open and its show both ask, and one link serves.
     bridge.start_decider("ws-1")

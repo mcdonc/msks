@@ -79,6 +79,8 @@ class StubBridge:
         self.feed_served = FakeSignal()
         self.decider_landed = FakeSignal()
         self.decider_rejected = FakeSignal()
+        self.decider_served = FakeSignal()
+        self.decider_dropped = FakeSignal()
         #: The decider registration's bracket (#999): the page's
         #: asks and retires, recorded for the lifetime asserts,
         #: with the controller each ask carried beside it — the
