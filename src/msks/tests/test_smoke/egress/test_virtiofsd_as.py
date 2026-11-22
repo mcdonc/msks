@@ -19,7 +19,8 @@ pytestmark = pytest.mark.skipif(
     reason="root only: the setuid paths need it",
 )
 
-SOURCE = Path(__file__).resolve().parents[4] / "nix" / "virtiofsd-as.c"
+SOURCE = Path(__file__).resolve().parents[5] / "nix" / "virtiofsd-as.c"
+assert SOURCE.exists(), f"helper source missing at {SOURCE}"
 
 #: The stub the helper execs: it records its own identity,
 #: capabilities, environment, and open fds — everything the
