@@ -764,7 +764,6 @@ def test_a_serve_poke_under_a_page_flight_is_carried(qt) -> None:
     bridge.feed_served.emit()
     assert bridge.calls == []
     assert tab.page_due
-    tab.pending = False
     tab.page_landed(page_answer())
     assert bridge.calls == [(images_mod.PAGE_KEY, "images_page", (CHANNEL,))]
     assert not tab.page_due

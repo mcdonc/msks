@@ -380,9 +380,9 @@ tagged `vX.Y.Z`.
   second, so a busy interception stream stays cheap). The
   events feed's drop flashes on whichever page owns the window,
   and a reconnecting feed re-reads the page whole. The two
-  Refresh buttons are gone; the published channel
-  manifest still refetches only through the page's re-reads
-  because the channel publishes no frame.
+  Refresh buttons are gone; the published channel manifest
+  still refetches only through the page's re-reads because the
+  channel publishes no frame.
 - **The attached clients follow the daemon over the events
   websocket instead of polling (#1019).** The TUI's workspaces
   list, workspace page, and proxies page, and the GUI's
