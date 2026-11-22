@@ -1,13 +1,15 @@
 """``msks rsync`` tests: the host fill, the remote-shell string, the
 run loop.
 
-The argv pieces are pinned separately (rsync's own argument shapes
-were probed against the real binary: the empty host passes no host
-word to the remote shell, ``user@host:`` appends ``-l user`` after
-the ``-e`` words, the last ``-e`` wins, and the ``-e`` value is
-word-split honoring double quotes), and — where a local sshd
-exists — one integration test runs stock rsync against it through
-the agent, proving the transport path rsync's ssh children take.
+The argv pieces are pinned separately, probed against the real
+binary on both flavors a host ships (the last ``-e`` wins and
+the ``-e`` value is word-split honoring double quotes in GNU
+rsync and openrsync alike; a ``user@host:`` destination names
+the user to the shell after the ``-e`` words — GNU as ``-l user
+host``, openrsync as one ``user@host`` word), and — where a
+local sshd exists — one integration test runs stock rsync
+against it through the agent, proving the transport path
+rsync's ssh children take.
 """
 
 import shlex

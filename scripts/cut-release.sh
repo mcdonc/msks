@@ -38,9 +38,13 @@ die() {
 # notes tool): resolve the interpreter once, die naming it when a
 # host offers none — macOS and minimal Linuxes ship no bare
 # ``python``, and the failure would otherwise read as a broken
-# tagged tree (#1038).
+# tagged tree (#1038). The tomllib probe names an interpreter too
+# old for the gates instead of letting its ModuleNotFoundError
+# masquerade as an unreadable pyproject.
 python3=$(command -v python3) ||
   die "python3 must be on PATH (run inside the devenv shell)"
+"$python3" -c 'import tomllib' 2>/dev/null ||
+  die "$python3 is older than 3.11 (no tomllib); run inside the devenv shell"
 
 tag=${1:-}
 [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
