@@ -727,14 +727,18 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         subscribe."""
         self.currentWidget().refresh()
 
-    @QtCore.Slot(str)
-    def decider_refused(self, reason: str) -> None:
+    @QtCore.Slot(str, str)
+    def decider_refused(self, workspace: str, reason: str) -> None:
         """The daemon refused the page's decider registration
         (#999): the reason flashes on the screen the operator
         sees — a workspace the daemon cannot resolve stays that
         way, so the link ended itself and one flash is the
-        whole tell. The consent panel takes the surface over
-        when the phase's later work docks it."""
+        whole tell. A refusal off a link the page already
+        retired (a switch away the race let land) tells nobody
+        (#1052): the workspace it names is not the page's. The
+        Egress tab's indicator carries the standing record."""
+        if workspace != self.detail.workspace_id:
+            return
         screen = self.currentWidget()
         screen.flash(f"the decider registration was refused — {reason}")
 

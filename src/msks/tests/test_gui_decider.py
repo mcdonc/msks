@@ -524,7 +524,10 @@ def test_a_reconnect_restores_the_presence() -> None:
         task.cancel()
         assert seen.drops[0] == "the socket broke: wire cut"
         assert seen.serves == 2  # each connection's own answer
-        assert link.serving is False  # the cancel's drop told
+        # The second connection's end-drop left the flag down;
+        # the cancel's own drop needs no delivery of its own
+        # for this assert.
+        assert link.serving is False
 
     asyncio.run(scenario())
 

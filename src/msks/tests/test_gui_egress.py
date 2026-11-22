@@ -1271,15 +1271,15 @@ def test_the_presence_indicator_follows_the_registration(qt) -> None:
     assert tab.presence_line.text() == (
         "the decider registration is connecting"
     )
-    _bridge.decider_served.emit()
+    _bridge.decider_served.emit("ws-a")
     assert tab.presence_line.text() == (
         "holds wait for this page — the decider registration is connected"
     )
-    _bridge.decider_dropped.emit("the socket broke")
+    _bridge.decider_dropped.emit("ws-a", "the socket broke")
     assert tab.presence_line.text() == (
         "the decider registration is down — reconnecting"
     )
-    _bridge.decider_served.emit()  # the reconnect re-registered
+    _bridge.decider_served.emit("ws-a")  # the reconnect re-registered
     assert tab.presence_line.text() == (
         "holds wait for this page — the decider registration is connected"
     )
@@ -1291,12 +1291,12 @@ def test_a_refused_registration_surfaces_its_reason(qt) -> None:
     blank reason keeps the line whole — and it leads whatever
     the mode says: a standing fault over a posture fact."""
     tab, _bridge = make_tab(qt)
-    _bridge.decider_served.emit()
-    _bridge.decider_rejected.emit("unknown workspace")
+    _bridge.decider_served.emit("ws-a")
+    _bridge.decider_rejected.emit("ws-a", "unknown workspace")
     assert tab.presence_line.text() == (
         "the daemon refused the decider registration — unknown workspace"
     )
-    _bridge.decider_rejected.emit("")
+    _bridge.decider_rejected.emit("ws-a", "")
     assert tab.presence_line.text() == (
         "the daemon refused the decider registration"
     )
@@ -1314,11 +1314,11 @@ def test_the_modes_that_hold_no_prompts_answer_for_themselves(qt) -> None:
     registration's words alone."""
     tab, bridge = make_tab(qt)
     bridge.succeeded.emit(tab.list_key, rules_frame(mode="allow"))
-    bridge.decider_served.emit()
+    bridge.decider_served.emit("ws-a")
     assert (
         tab.presence_line.text() == "no holds wait — allow mode gates nothing"
     )
-    bridge.decider_dropped.emit("the socket broke")
+    bridge.decider_dropped.emit("ws-a", "the socket broke")
     assert (
         tab.presence_line.text() == "no holds wait — allow mode gates nothing"
     )
@@ -1343,14 +1343,26 @@ def test_a_workspace_switch_resets_the_indicator(qt) -> None:
     """The open's reset over the indicator (#1052): a workspace
     switch puts the line back to connecting — the new
     workspace's registration is its own, and its first tell
-    paints the line."""
+    paints the line. A retired link's tell still in flight
+    lands with the old workspace's name and changes nothing
+    (#1052 review): the retire's cancel crosses the threads
+    after the host, and the drop it carries must not paint the
+    workspace the page moved to."""
     tab, bridge = make_tab(qt)
-    bridge.decider_rejected.emit("unknown workspace")
+    bridge.decider_rejected.emit("ws-a", "unknown workspace")
     tab.host("ws-b")
     assert tab.presence_line.text() == (
         "the decider registration is connecting"
     )
-    bridge.decider_served.emit()
+    # The retire's drop, landed after the host: a foreign
+    # workspace's tell, told and ignored.
+    bridge.decider_dropped.emit("ws-a", "the page retired the registration")
+    bridge.decider_served.emit("ws-a")
+    bridge.decider_rejected.emit("ws-a", "unknown workspace")
+    assert tab.presence_line.text() == (
+        "the decider registration is connecting"
+    )
+    bridge.decider_served.emit("ws-b")
     assert tab.presence_line.text() == (
         "holds wait for this page — the decider registration is connected"
     )
@@ -1364,7 +1376,7 @@ def test_the_unhosted_tab_shows_no_presence(qt) -> None:
     tab = egress_mod.EgressTab(bridge)
     qt.keep.append(tab)
     assert tab.presence_line.text() == ""
-    bridge.decider_served.emit()
+    bridge.decider_served.emit("ws-a")
     assert tab.presence_line.text() == ""
 
 

@@ -412,9 +412,9 @@ def test_the_decider_registration_rides_the_loop_with_the_page(
         def __init__(self, bridge) -> None:
             super().__init__(bridge)
             self.landed: list[tuple[str, object]] = []
-            self.refusals: list[str] = []
-            self.serves = 0
-            self.drops: list[str] = []
+            self.refusals: list[tuple[str, str]] = []
+            self.serves: list[str] = []
+            self.drops: list[tuple[str, str]] = []
             bridge.decider_landed.connect(self.on_landed)
             bridge.decider_rejected.connect(self.on_refused)
             bridge.decider_served.connect(self.on_serve_told)
@@ -423,14 +423,14 @@ def test_the_decider_registration_rides_the_loop_with_the_page(
         def on_landed(self, outcome: str, payload: object) -> None:
             self.landed.append((outcome, payload))
 
-        def on_refused(self, reason: str) -> None:
-            self.refusals.append(reason)
+        def on_refused(self, workspace: str, reason: str) -> None:
+            self.refusals.append((workspace, reason))
 
-        def on_serve_told(self) -> None:
-            self.serves += 1
+        def on_serve_told(self, workspace: str) -> None:
+            self.serves.append(workspace)
 
-        def on_drop_told(self, reason: str) -> None:
-            self.drops.append(reason)
+        def on_drop_told(self, workspace: str, reason: str) -> None:
+            self.drops.append((workspace, reason))
 
     links: list[StubLink] = []
     bridge = qt.Bridge(
@@ -449,11 +449,12 @@ def test_the_decider_registration_rides_the_loop_with_the_page(
             break
         time.sleep(TICK)
     assert receiver.landed == [("added", "hold-for-ws-1")]
-    assert receiver.refusals == ["unknown workspace"]
-    # The presence tells (#1052) cross the same way: the serve
-    # and the drop land on the GUI thread beside the frames.
-    assert receiver.serves == 1
-    assert receiver.drops == ["the socket broke"]
+    assert receiver.refusals == [("ws-1", "unknown workspace")]
+    # The presence tells (#1052) cross the same way, each with
+    # its own link's workspace: the serve and the drop land on
+    # the GUI thread beside the frames.
+    assert receiver.serves == ["ws-1"]
+    assert receiver.drops == [("ws-1", "the socket broke")]
     # The re-ask for the standing workspace is a no-op: the
     # page's open and its show both ask, and one link serves.
     bridge.start_decider("ws-1")

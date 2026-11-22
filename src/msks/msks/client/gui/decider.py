@@ -27,7 +27,9 @@ only a registered decider's to receive — tells the serve once
 per connection, every connection's end and failed dial tells
 the drop with its reason (the page's own retire included), and
 the refusal keeps its own tell; the bridge wires them to
-signals beside the frames, and the Egress tab's indicator
+signals beside the frames — each carrying the link's own
+workspace, so a retired link's tell cannot paint the
+workspace the page moved to — and the Egress tab's indicator
 reads them live. The window's feed still flashes the
 daemon-wide outage the same dial failure names, and the link
 keeps re-registering under it — the feed's ladder (#946)
@@ -130,8 +132,11 @@ class DeciderLink:
                 served, refused, rejected = await self.pump_one()
                 if rejected:
                     return
-                attempt = 0 if served else attempt + 1
-                await asyncio.sleep(self.retry_gap(refused, attempt))
+                if refused:
+                    await asyncio.sleep(REFUSED_RETRY_S)
+                    continue
+                attempt = self.next_attempt(attempt, served)
+                await asyncio.sleep(backoff(self.reconnect_delays, attempt))
         except asyncio.CancelledError:
             # The page's retire (#999): the cancel is the
             # registration's own end, and the drop tells it
@@ -141,15 +146,14 @@ class DeciderLink:
             self.note_drop("the page retired the registration")
             raise
 
-    def retry_gap(self, refused: bool, attempt: int) -> float:
-        """The gap before the next attempt (#999): the daemon's
-        token refusal takes the fixed slow interval — a token
-        the daemon does not hold cannot become valid by
-        reconnecting — and every other end takes the ladder's
-        own step."""
-        if refused:
-            return REFUSED_RETRY_S
-        return backoff(self.reconnect_delays, attempt)
+    @staticmethod
+    def next_attempt(attempt: int, served: bool) -> int:
+        """The ladder's counter (#999), the feed's own rule: reset
+        by a connection that served, climbed by one that never
+        reached its serve loop. The token refusal's slow arm
+        leaves the counter where it stood — the feed's own
+        reading of the same close."""
+        return 0 if served else attempt + 1
 
     async def pump_one(self) -> tuple[bool, bool, bool]:
         """One connection's lifetime; ``(served, refused,

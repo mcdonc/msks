@@ -86,10 +86,13 @@ class Bridge(QtCore.QObject):
     ``stop_decider()`` retires it, the socket's close the
     daemon's own retire — and the link's landings cross as
     ``decider_landed(outcome, payload)`` with the daemon's
-    refusal of the registration as ``decider_rejected(reason)``,
-    its presence as ``decider_served()`` and
-    ``decider_dropped(reason)`` (#1052 — the Egress tab's
-    indicator reads them live).
+    refusal of the registration as
+    ``decider_rejected(workspace, reason)``, its presence as
+    ``decider_served(workspace)`` and
+    ``decider_dropped(workspace, reason)`` (#1052 — the Egress
+    tab's indicator reads them live, each tell carrying its
+    own link's workspace: a retired link's drop cannot paint
+    the workspace the page moved to).
     The registration's state lands on the controller the ask
     carries (#1000): the page's consent presenter owns one, and
     the rows the panel renders read the same map the frames
@@ -107,9 +110,9 @@ class Bridge(QtCore.QObject):
     feed_reconnected = QtCore.Signal()
     feed_served = QtCore.Signal()
     decider_landed = QtCore.Signal(str, object)
-    decider_rejected = QtCore.Signal(str)
-    decider_served = QtCore.Signal()
-    decider_dropped = QtCore.Signal(str)
+    decider_rejected = QtCore.Signal(str, str)
+    decider_served = QtCore.Signal(str)
+    decider_dropped = QtCore.Signal(str, str)
 
     def __init__(
         self,
@@ -271,9 +274,19 @@ class Bridge(QtCore.QObject):
         self.retire_decider()
         link = self._decider_factory(workspace_id, controller)
         link.on_frame = self.decider_landed.emit
-        link.on_rejected = self.decider_rejected.emit
-        link.on_serve = self.decider_served.emit
-        link.on_drop = self.decider_dropped.emit
+        # The presence and refusal tells carry their own link's
+        # workspace (#1052 review): the closure holds the launch's
+        # id, not the standing slot a retire clears — a drop off
+        # a link the page already retired lands with the retired
+        # workspace's name, and the indicator it no longer hosts
+        # ignores it.
+        link.on_rejected = lambda reason: self.decider_rejected.emit(
+            workspace_id, reason
+        )
+        link.on_serve = lambda: self.decider_served.emit(workspace_id)
+        link.on_drop = lambda reason: self.decider_dropped.emit(
+            workspace_id, reason
+        )
         self._decider_workspace = workspace_id
         self._decider_controller = controller
         task = loop.create_task(link.run())

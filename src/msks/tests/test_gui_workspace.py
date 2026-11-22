@@ -756,15 +756,24 @@ def test_a_refused_registration_flashes_the_current_screen(qt) -> None:
     reason flashes on the screen the operator sees — the page
     while it owns the window, the list after the page went
     back — one flash the whole tell, the link having ended
-    itself."""
+    itself. A refusal off a foreign workspace's link tells
+    nobody (#1052): the page's own workspace is the one whose
+    registration can be refused."""
     shell, window, bridge = make_shell(qt)
-    shell.decider_refused("unknown workspace")
-    assert shell.listing.status.text() == (
+    shell.listing.opened.emit("ws-a")
+    shell.decider_refused("ws-b", "not this page's")
+    assert shell.detail.status.text() == ""
+    shell.decider_refused("ws-a", "unknown workspace")
+    assert shell.detail.status.text() == (
         "the decider registration was refused — unknown workspace"
     )
-    shell.listing.opened.emit("ws-a")
-    shell.decider_refused("the workspace left")
-    assert shell.detail.status.text() == (
+    shell.detail.back.emit()  # the list owns the window again
+    shell.decider_refused("ws-a", "the workspace left")
+    assert shell.listing.status.text() == (
+        "the decider registration was refused — the workspace left"
+    )
+    shell.decider_refused("ws-b", "not this page's")
+    assert shell.listing.status.text() == (
         "the decider registration was refused — the workspace left"
     )
 

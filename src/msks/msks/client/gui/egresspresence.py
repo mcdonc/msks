@@ -70,12 +70,15 @@ def presence_text(mode: str, state: str, reason: str = "") -> str:
 class PresenceLine(QtWidgets.QLabel):
     """The registration's presence painted live (#1052): the
     page's own link's tells — the bridge's ``decider_served``,
-    ``decider_dropped``, and ``decider_rejected`` signals —
-    connected here, each telling its state, the standing mode
-    told beside them (the no-prompts modes answer for
-    themselves). The open resets the line to connecting: the new
-    workspace's registration is its own, and its first tell
-    paints the line."""
+    ``decider_dropped``, and ``decider_rejected`` signals, each
+    carrying its link's workspace — connected here, a foreign
+    workspace's tell told and ignored (a retired link's drop
+    must not paint the workspace the page moved to), each own
+    tell naming its state, the standing mode told beside them
+    (the no-prompts modes answer for themselves). The open
+    resets the line to connecting: the new workspace's
+    registration is its own, and its first tell paints the
+    line."""
 
     def __init__(self, bridge) -> None:
         super().__init__()
@@ -98,7 +101,7 @@ class PresenceLine(QtWidgets.QLabel):
         self.mode = ""
         self.state = PRESENCE_CONNECTING
         self.reason = ""
-        self.repaint()
+        self.repaint_line()
 
     def take(self, mode: str) -> None:
         """The standing mode (#1052), told with every landed
@@ -106,45 +109,49 @@ class PresenceLine(QtWidgets.QLabel):
         posture that holds prompts reads the registration's
         state words under it."""
         self.mode = mode
-        self.repaint()
+        self.repaint_line()
 
-    @QtCore.Slot()
-    def served(self) -> None:
+    @QtCore.Slot(str)
+    def served(self, workspace_id: str) -> None:
         """The registration served (#1052): the daemon answered
         it — an owned frame landed — and the line says the holds
         wait for this page while the mode holds prompts."""
+        if workspace_id != self.workspace_id:
+            return
         self.state = PRESENCE_CONNECTED
         self.reason = ""
-        self.repaint()
+        self.repaint_line()
 
-    @QtCore.Slot(str)
-    def dropped(self, reason: str) -> None:
+    @QtCore.Slot(str, str)
+    def dropped(self, workspace_id: str, reason: str) -> None:
         """The registration's connection ended or its dial
         failed (#1052): the line reads down — the link
         re-registers on its own, and the window's feed flashes
         the daemon-wide outage the same failure names. The
         reason stays off the line: the feed's flash carries
         it."""
+        if workspace_id != self.workspace_id:
+            return
         self.state = PRESENCE_DOWN
-        self.repaint()
+        self.repaint_line()
 
-    @QtCore.Slot(str)
-    def refused(self, reason: str) -> None:
+    @QtCore.Slot(str, str)
+    def refused(self, workspace_id: str, reason: str) -> None:
         """The daemon refused the registration (#1052): the
         refusal leads the line whatever the mode says, its
         reason beside it — the link ended, and the page's own
         re-open alone retries."""
+        if workspace_id != self.workspace_id:
+            return
         self.state = PRESENCE_REFUSED
         self.reason = reason
-        self.repaint()
+        self.repaint_line()
 
-    def repaint(self) -> None:
+    def repaint_line(self) -> None:
         """The line from the standing facts (#1052): the
         refusal leading, the mode's own answer beside it, the
-        registration's state words under them. A line with no
-        workspace says nothing: the page hosts before it
-        tells."""
-        if not self.workspace_id:
-            self.setText("")
-            return
+        registration's state words under them. The unhosted
+        line keeps its construction blank — the page hosts
+        before any tell of its own paints, and a foreign
+        workspace's tell never reaches here."""
         self.setText(presence_text(self.mode, self.state, self.reason))
