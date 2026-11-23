@@ -494,6 +494,15 @@ KEY_CASES = [
         "vmm.virtiofsd",
         "/usr/local/bin/virtiofsd",
     ),
+    # #1088: the helper's name stays raw at load — the spawn
+    # resolves it (PATH names, the wheel's bundled binary, the
+    # install location) when a cross-owner share needs it.
+    (
+        "virtiofsd_as",
+        "msks-virtiofsd-as",
+        "vmm.virtiofsd_as",
+        "msks-virtiofsd-as",
+    ),
     (
         "mount_host_mode",
         "prefix",

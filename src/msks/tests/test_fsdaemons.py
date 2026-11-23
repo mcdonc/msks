@@ -51,6 +51,34 @@ from msks.spec.mounts import MountSpec, mount_tag
 from msks.spec.vm import VmSpec
 from test_api import auth, client  # noqa: F401 (fixture)
 
+# The shallow vm-dir roots this module's short_vm_dir() made —
+# swept after each test however it ended.
+_SHORT_ROOTS: list[Path] = []
+
+
+@pytest.fixture(autouse=True)
+def sweep_short_roots():
+    """Drop the shallow roots short_vm_dir() made, after every
+    test however it ended."""
+    yield
+    for root in _SHORT_ROOTS:
+        shutil.rmtree(root, ignore_errors=True)
+    _SHORT_ROOTS.clear()
+
+
+def short_vm_dir(name: str) -> Path:
+    """A vm directory under a shallow mkdtemp in /tmp (the
+    local_driver env fixture's rule, the login-user test's
+    above): the daemon binds each share's vhost socket itself
+    (#1088), and under pytest-xdist the worker's basetemp gains
+    a popen-gwN component that pushes a deep per-test tree past
+    AF_UNIX's 108-byte path limit."""
+    root = Path(tempfile.mkdtemp(prefix="msks-fs-", dir="/tmp"))
+    _SHORT_ROOTS.append(root)
+    vm_dir = root / name
+    vm_dir.mkdir(parents=True)
+    return vm_dir
+
 
 async def socket_sleeper(
     socket: Path, ack: Path, *, ignore_term: bool = False
@@ -615,8 +643,7 @@ async def test_fs_daemons_spawn_and_stop(tmp_path: Path) -> None:
     share_dir.mkdir()
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    vm_dir = tmp_path / "vms" / "ws1"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws1")
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path),
     )
@@ -669,8 +696,7 @@ async def test_spawn_failure_unwinds_earlier_daemons(
     proj.mkdir()
     data = tmp_path / "data"
     data.mkdir()
-    vm_dir = tmp_path / "vms" / "ws2"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws2")
     settings = Settings()
     docs = tmp_path / "docs"
     docs.mkdir()
@@ -707,8 +733,7 @@ async def test_restarted_daemon_kills_by_pidfile(tmp_path: Path) -> None:
     either way."""
     import asyncio
 
-    vm_dir = tmp_path / "vms" / "ws3"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws3")
     settings = Settings()
     driver, _spawned = driver_over(settings)
     socket = fs_socket_path(vm_dir, "proj")
@@ -742,8 +767,7 @@ async def test_restarted_daemon_kills_by_identity(tmp_path: Path) -> None:
 
     if not Path("/proc").exists():
         pytest.skip("the identity arm reads /proc (Linux-only)")
-    vm_dir = tmp_path / "vms" / "ws-ident"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-ident")
     driver, _spawned = driver_over(Settings())
     socket = fs_socket_path(vm_dir, "proj")
     socket.touch()
@@ -781,8 +805,7 @@ async def test_the_helper_lane_execs_the_helper_as_the_owner(
 
     share_dir = tmp_path / "proj"
     share_dir.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-helper"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-helper")
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path, virtiofsd_as="/fake/virtiofsd-as")
     )
@@ -817,8 +840,7 @@ async def test_the_shortcut_lane_execs_directly(tmp_path: Path) -> None:
     daemon's own uid and gid exactly as before."""
     share_dir = tmp_path / "proj"
     share_dir.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-direct"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-direct")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, spawned = driver_over(settings)
@@ -853,8 +875,7 @@ async def test_the_helper_lane_refuses_without_a_helper(
 
     share_dir = tmp_path / "proj"
     share_dir.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-nohelper"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-nohelper")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
@@ -881,8 +902,7 @@ async def test_the_seam_refuses_a_dead_owner_race(
 
     share_dir = tmp_path / "proj"
     share_dir.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-race"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-race")
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path, virtiofsd_as="/fake/virtiofsd-as")
     )
@@ -1024,8 +1044,7 @@ async def test_the_start_refuses_a_below_floor_virtiofsd(
 
     shared = tmp_path / "share"
     shared.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-old"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-old")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     spec = VmSpec(
@@ -1166,8 +1185,7 @@ async def test_spawn_guards_name_every_refusal(tmp_path: Path) -> None:
     name."""
     from msks.microvm.errors import MicrovmError
 
-    vm_dir = tmp_path / "vms" / "ws-g"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-g")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
@@ -1233,8 +1251,7 @@ async def test_stop_is_idempotent_and_kills_a_hang(tmp_path: Path) -> None:
     local_mod.fsproc.FS_TERM_GRACE_S = 0.1
     share_dir = tmp_path / "proj"
     share_dir.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-h"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-h")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
@@ -1304,8 +1321,7 @@ async def test_terminate_of_an_external_death_is_tolerated(
     completes."""
     share_dir = tmp_path / "proj"
     share_dir.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-e"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-e")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
@@ -1336,8 +1352,7 @@ async def test_untracked_sweep_tolerates_garbage_pidfiles(
     """The restarted-daemon sweep: a garbage pidfile reads as None
     and is swept beside a serving one's kill, and the second
     sweep over an empty directory is a no-op."""
-    vm_dir = tmp_path / "vms" / "ws-u"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-u")
     driver, _spawned = driver_over(Settings())
     socket = fs_socket_path(vm_dir, "proj")
     garbage = fs_pidfile_path(vm_dir, "junk")
@@ -1366,8 +1381,7 @@ async def test_stop_skips_an_already_exited_daemon(tmp_path: Path) -> None:
     and skips it, the stop completes."""
     share_dir = tmp_path / "proj"
     share_dir.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-x"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-x")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
@@ -1442,8 +1456,7 @@ async def test_untracked_sweep_escalates_to_kill(tmp_path: Path) -> None:
     real_grace = local_mod.fsproc.FS_TERM_GRACE_S
     local_mod.fsproc.FS_TERM_GRACE_S = 0.2
     try:
-        vm_dir = tmp_path / "vms" / "ws-imm"
-        vm_dir.mkdir(parents=True)
+        vm_dir = short_vm_dir("ws-imm")
         driver, _spawned = driver_over(Settings())
         socket = fs_socket_path(vm_dir, "proj")
         immortal = await socket_sleeper(socket, vm_dir / "sleeper-up")
@@ -1479,8 +1492,7 @@ async def test_untracked_sweep_kills_a_term_ignoring_daemon(
     real_grace = local_mod.fsproc.FS_TERM_GRACE_S
     local_mod.fsproc.FS_TERM_GRACE_S = 0.2
     try:
-        vm_dir = tmp_path / "vms" / "ws-imm2"
-        vm_dir.mkdir(parents=True)
+        vm_dir = short_vm_dir("ws-imm2")
         driver, _spawned = driver_over(Settings())
         socket = fs_socket_path(vm_dir, "proj")
         stubborn = await socket_sleeper(
@@ -1528,8 +1540,7 @@ async def test_a_daemon_dying_at_exec_names_its_log(tmp_path: Path) -> None:
 
     share_dir = tmp_path / "proj"
     share_dir.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-dead"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-dead")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
@@ -1566,8 +1577,7 @@ async def test_a_silent_daemon_passes_as_serving(tmp_path: Path) -> None:
     always preceded accept)."""
     share_dir = tmp_path / "proj"
     share_dir.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-silent"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-silent")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, spawned = driver_over(settings)
@@ -1617,8 +1627,7 @@ async def test_sweep_keeps_a_killproof_daemons_pidfile(tmp_path):
     daemon."""
     import msks.microvm.local as local_mod
 
-    vm_dir = tmp_path / "vms" / "ws-dstate"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-dstate")
     socket = fs_socket_path(vm_dir, "proj")
     live = await socket_sleeper(socket, vm_dir / "sleeper-up")
     pidfile = fs_pidfile_path(vm_dir, "proj")
@@ -1652,8 +1661,7 @@ async def test_a_host_mount_spawns_under_its_derived_tag(
     and pidfile carry the hs- tag — never a share lookup."""
     shared = tmp_path / "code"
     shared.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-h"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-h")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(
         host_mode="identity", host_roots=(str(tmp_path),)
@@ -1685,8 +1693,7 @@ async def test_a_host_mount_spawn_refuses_an_ungated_path(
     tree the operator closed."""
     shared = tmp_path / "code"
     shared.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-x"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-x")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(
         host_mode="identity", host_roots=(str(tmp_path / "other"),)
