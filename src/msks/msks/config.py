@@ -94,6 +94,7 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_HOST",
     "MSKSD_PORT",
     "MSKSD_SOCKET",
+    "MSKSD_SOCKET_GROUP",
     "MSKSD_TLS_CERT",
     "MSKSD_TLS_KEY",
     "MSKSD_EVENT_POLL_S",
@@ -513,6 +514,13 @@ def render_template() -> str:
 #                           # TCP serves alone otherwise; the
 #                           # empty string always serves TCP
 #                           # alone
+# socket_group: msks        # the group the local listener is
+#                           # handed to at bind (#1093): the
+#                           # socket's runtime directory and the
+#                           # socket file land under the group
+#                           # (0750/0660), and its members connect
+#                           # with no token. Unset keeps the
+#                           # bind's own group
 # tls_cert: /etc/msksd/tls.crt  # operator-provided TLS material;
 # tls_key: /etc/msksd/tls.key   # both unset -> a self-signed CA is
 #                           # generated on first run and its

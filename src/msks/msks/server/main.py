@@ -148,29 +148,44 @@ async def serve_listeners(app) -> None:
 
 @contextlib.asynccontextmanager
 async def local_listener(app, api, path: Path):
-    """The local listener's lifetime: bind, serve beside the TCP
-    listener, stop and unlink on the way out (#555).
+    """The local listener's lifetime: bind, hand the socket to
+    the configured group (#1080), serve beside the TCP listener,
+    stop and unlink on the way out (#555).
 
     The socket file is removed when the TCP server ends — a
-    graceful stop or a startup failure — so a restart binds
-    cleanly; a hard kill can leave the file, and ``bind`` replaces
-    a stale socket it finds.
+    graceful stop, a startup failure, or a refused handover — so
+    a restart binds cleanly; a hard kill can leave the file, and
+    ``bind`` replaces a stale socket it finds.
     """
     config = socket_config(app, api)
     localsocket.wrap_protocols(config)
     sock = localsocket.bind(path)
-    app.state.unix_socket_gid = path.stat().st_gid
-    server = localsocket.QuietServer(config)
-    task = asyncio.create_task(server.serve(sockets=[sock]))
+    task: asyncio.Task | None = None
     try:
+        group = app.state.settings.server.socket_group
+        # The gid the peer policy reads is captured after any
+        # sharing chgrp (#1080): the group gate agrees with the
+        # group the file on disk holds, never the one it was
+        # born with. A refused handover — an unknown group, a
+        # chown the daemon's membership does not back — raises
+        # here, inside the try whose finally unlinks: the file
+        # never leaks from a refused startup.
+        app.state.unix_socket_gid = (
+            localsocket.share_with_group(path, group)
+            if group is not None
+            else path.stat().st_gid
+        )
+        server = localsocket.QuietServer(config)
+        task = asyncio.create_task(server.serve(sockets=[sock]))
         yield server
     finally:
-        server.should_exit = True
-        # BaseException: a TCP startup failure raises SystemExit
-        # through the caller, and the loop's teardown can cancel
-        # this await — either way the socket file must go.
-        with contextlib.suppress(BaseException):
-            await task
+        if task is not None:
+            server.should_exit = True
+            # BaseException: a TCP startup failure raises SystemExit
+            # through the caller, and the loop's teardown can cancel
+            # this await — either way the socket file must go.
+            with contextlib.suppress(BaseException):
+                await task
         localsocket.unlink(path)
 
 
@@ -213,7 +228,9 @@ def keep_startup_bound(old: Settings, new: Settings) -> None:
     resolves every workspace's artifact directory live from
     ``vmm.state_dir`` — a reload that moved it would report each
     running workspace absent, orphan its VMM, and point deletes at
-    the new tree. Each of these keeps its startup value until a
+    the new tree. The local listener's socket path and sharing
+    group are bound at startup with the TLS pair. Each of these
+    keeps its startup value until a
     restart; a reload naming a new one changes nothing.
     """
     if new.server.tls_cert is None:
@@ -221,6 +238,7 @@ def keep_startup_bound(old: Settings, new: Settings) -> None:
     if new.server.tls_key is None:
         new.server.tls_key = old.server.tls_key
     new.server.socket = old.server.socket
+    new.server.socket_group = old.server.socket_group
     new.vmm.state_dir = old.vmm.state_dir
     new.server.db_path = old.server.db_path
 
