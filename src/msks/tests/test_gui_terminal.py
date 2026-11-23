@@ -423,6 +423,30 @@ def test_painted_text_lands_in_the_right_cells(screen, qt):
 # --- paint damage (#1104) ------------------------------------------------
 
 
+def test_the_cache_carries_the_screens_pixel_ratio(screen, qt, monkeypatch):
+    """The cache pixmap holds device pixels and carries the
+    screen's ratio (#1110): a ratio-1 pixmap on a scaled screen
+    blitted one device pixel for one device pixel, covering
+    only the top-left 1/ratio of the terminal while the rest
+    kept the frames that painted there before — the garbage
+    the scaled-display report chased. The offscreen suite
+    always runs at ratio 1, so the pin drives the seam the
+    paint reads the ratio through."""
+    from msks.client.gui.terminal import paint
+
+    vt(screen, b"\x1b[2J\x1b[Hsome text")
+    screen.grab()
+    assert screen.cell_cache.devicePixelRatio() == 1.0
+    assert screen.cell_cache.size() == screen.size()
+    monkeypatch.setattr(paint, "pixel_ratio", lambda screen: 2.0)
+    screen.grab()
+    assert screen.cell_cache.devicePixelRatio() == 2.0
+    assert screen.cell_cache.width() == screen.width() * 2
+    assert screen.cell_cache.height() == screen.height() * 2
+    assert screen.cache_key[-1] == 2.0
+    assert screen.painted_rows == list(range(screen.rows))
+
+
 def test_one_typed_character_repaints_its_row_alone(screen, qt):
     """The paint's damage set is the library's own row flags
     (#1104): the first grab builds the cell cache and paints

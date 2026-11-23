@@ -103,13 +103,21 @@ def sync_cache(screen, colors, rects_by_row) -> QPainter:
 
 def rebuild_cache(screen, colors) -> bool:
     """Whether the cache rebuilds before this paint, leaving
-    a fresh pixmap behind: one built for other pixels or cell
-    metrics (a zoom on a maximized window, a hidden tab's
-    font change), or one whose base fill carries a stale
-    background — a scheme flip's terminal_set moves the
+    a fresh pixmap behind: one built for other pixels, cell
+    metrics, or screen ratio (a zoom on a maximized window, a
+    hidden tab's font change, a window moved between displays
+    that scale differently), or one whose base fill carries a
+    stale background — a scheme flip's terminal_set moves the
     render state's palette. The fill is the base the cells
     without their own background show through, and the fringe
-    below and right of the grid."""
+    below and right of the grid. The pixmap carries the
+    screen's device pixel ratio (#1110): it holds device
+    pixels while the painting stays in logical coordinates,
+    and the blit lands one device pixel for one device pixel
+    — a ratio-1 pixmap on a scaled screen would cover only
+    the top-left 1/ratio of the terminal with the rest
+    showing the frames that painted there before."""
+    ratio = pixel_ratio(screen)
     key = (
         screen.width(),
         screen.height(),
@@ -117,6 +125,7 @@ def rebuild_cache(screen, colors) -> bool:
         screen.metrics.cell_height,
         screen.cols,
         screen.rows,
+        round(ratio, 3),
     )
     rebuild = screen.cell_cache is None or screen.cache_key != key
     scheme = bytes(colors)
@@ -124,10 +133,21 @@ def rebuild_cache(screen, colors) -> bool:
         screen.cache_palette = scheme
         rebuild = True  # the base fill carries the new background
     if rebuild:
-        screen.cell_cache = QPixmap(max(1, key[0]), max(1, key[1]))
+        screen.cell_cache = QPixmap(
+            max(1, round(screen.width() * ratio)),
+            max(1, round(screen.height() * ratio)),
+        )
+        screen.cell_cache.setDevicePixelRatio(ratio)
         screen.cell_cache.fill(rgb(colors.background))
         screen.cache_key = key
     return rebuild
+
+
+def pixel_ratio(screen) -> float:
+    """The screen's device pixel ratio the cache builds for —
+    the widget's own answer, read per paint so a window moved
+    between displays that scale differently rebuilds."""
+    return screen.devicePixelRatioF()
 
 
 def scrollbar_offset(screen):
