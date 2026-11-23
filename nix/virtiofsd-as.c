@@ -12,7 +12,9 @@
  * above the standard three closes, so exactly one descriptor
  * crosses the exec. A malformed invocation refuses and exits
  * nonzero, and nothing about the caller's environment crosses
- * the exec. The fixed path is compile-time
+ * the exec. Every exec, refusal, and failure writes one journal
+ * line (mirrored to stderr) — a virtiofsd missing at the fixed
+ * path shows up there by name. The fixed path is compile-time
  * (-DVIRTIOFSD_PATH=...), so a caller cannot point the exec at
  * a binary of its choosing; the default is the location the
  * distro packages install virtiofsd at.
@@ -60,15 +62,34 @@ static char *const environment[] = {
     NULL,
 };
 
+/* One line to the journal under this binary's ident — the
+ * durable copy of every event: each exec's audit line, every
+ * refusal, every failure (a virtiofsd missing at the fixed
+ * path lands here as an error an operator can find after the
+ * fact). Where /dev/log is unreachable (no syslog on the host)
+ * the call quietly drops and the stderr mirror carries the
+ * event alone. */
+static void journal(int priority, const char *text)
+{
+    openlog("virtiofsd-as", LOG_PID, LOG_AUTHPRIV);
+    syslog(priority, "%s", text);
+    closelog();
+}
+
 static __attribute__((noreturn)) void refuse(const char *message)
 {
     fprintf(stderr, "virtiofsd-as: %s\n", message);
+    journal(LOG_WARNING, message);
     exit(2);
 }
 
 static __attribute__((noreturn)) void fail(const char *what)
 {
-    fprintf(stderr, "virtiofsd-as: %s: %s\n", what, strerror(errno));
+    char text[256];
+    int err = errno;
+    snprintf(text, sizeof(text), "%s: %s", what, strerror(err));
+    fprintf(stderr, "virtiofsd-as: %s\n", text);
+    journal(LOG_ERR, text);
     exit(1);
 }
 
@@ -152,9 +173,7 @@ static void audit(unsigned long uid, int fd, int argc, char **argv)
         append(line, sizeof(line), &used, argv[i]);
     }
     line[used] = '\0';
-    openlog("virtiofsd-as", LOG_PID, LOG_AUTHPRIV);
-    syslog(LOG_INFO, "%s", line);
-    closelog();
+    journal(LOG_INFO, line);
     fprintf(stderr, "virtiofsd-as: audit: %s\n", line);
 }
 
