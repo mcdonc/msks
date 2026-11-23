@@ -964,7 +964,8 @@ def test_bind_fs_socket_hands_a_listening_fd_at_the_path(
     """The bind the spawn hands out (#1088): the returned fd is a
     listening socket bound at exactly the named path — the fd↔path
     correspondence the argv's --fd number and the teardown's
-    unlink both lean on."""
+    unlink both lean on. The fd stays close-on-exec on every
+    platform (#1105): the daemon's own execs never leak it."""
     import socket as socket_module
     import stat as stat_module
 
@@ -974,6 +975,7 @@ def test_bind_fs_socket_hands_a_listening_fd_at_the_path(
         st = os.fstat(fd)
         assert stat_module.S_ISSOCK(st.st_mode)
         assert socket_module_getsockopt(fd) == 1  # SO_ACCEPTCONN: listening
+        assert not os.get_inheritable(fd)  # close-on-exec, portably
         probe = socket_module.socket(
             socket_module.AF_UNIX, socket_module.SOCK_STREAM
         )
