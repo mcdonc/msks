@@ -438,6 +438,35 @@ def test_the_editors_escape_cancels(hub, tabs, qt):
     assert tabs.tabText(0) == "1"
 
 
+def test_the_editors_override_keeps_the_escape_for_the_cancel(hub, tabs, qt):
+    """The override claim before the dispatch (#1099): the
+    page's Back shortcut asks the editor first — Qt sends the
+    ShortcutOverride the shortcut matched — and the filter's
+    accept yields the shortcut and keeps the press for the
+    cancel arm. The question alone cancels nothing, and
+    another key's question passes through to the editor."""
+    hub.open_shell("ws-a")
+    tabs.host("ws-a")
+    tabs.begin_rename(0)
+    Qt = qt.QtCore.Qt
+    override = qt.QtGui.QKeyEvent(
+        qt.QtCore.QEvent.Type.ShortcutOverride,
+        Qt.Key.Key_Escape,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    assert tabs.eventFilter(tabs.editor, override) is True
+    assert override.isAccepted()
+    assert tabs.editor is not None  # the press cancels, not the question
+    other = qt.QtGui.QKeyEvent(
+        qt.QtCore.QEvent.Type.ShortcutOverride,
+        Qt.Key.Key_A,
+        Qt.KeyboardModifier.NoModifier,
+        "a",
+    )
+    assert tabs.eventFilter(tabs.editor, other) is False
+    tabs.cancel_rename()
+
+
 def test_the_editor_never_stacks(hub, tabs):
     """A second edit takes the first editor down, not beside
     it."""
