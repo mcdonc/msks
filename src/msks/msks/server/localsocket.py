@@ -267,9 +267,10 @@ def peer_allowed(uid: int, socket_gid: int | None) -> bool:
 
     The daemon's own uid always passes (the same-user deployment
     — ``msksd`` and ``msks`` as one user). Otherwise the peer
-    must belong to the socket file's group: the operator who
-    chgrps the socket to a shared group has said who else may
-    connect, and this resolves membership the way login does —
+    must belong to the socket file's group — the group the
+    daemon handed the socket to at startup (:func:`share_with_group`,
+    the ``socket_group`` setting) names who else may connect —
+    and this resolves membership the way login does —
     ``os.getgrouplist`` answers with every supplementary group
     the account database holds for the user, including the
     nesting a directory backend (SSSD with AD) expands itself,
