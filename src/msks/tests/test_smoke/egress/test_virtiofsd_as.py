@@ -1,8 +1,18 @@
 """The owner-exec helper's privileged paths (#1087): the setuid
 exec as the workspace owner's uid, the scrubbed environment, the
-cleared supplementary groups, the dropped capabilities, and the
-audit line. Root-only — this lane is the suite that runs as root;
-no guest, no egress, no /dev/kvm.
+cleared supplementary groups, the dropped capabilities, the
+one-fd-across-the-exec exclusivity, and the audit line — plus the
+uid-0 target, the one case where the kernel would keep the
+capabilities through the uid switch and the helper's explicit
+empty capset is the only thing that drops them. Root-only — this
+lane is the suite that runs as root; no guest, no egress, no
+/dev/kvm.
+
+The probe the helper execs is a compiled C program, not a shell
+script: it dumps its identity, capabilities, environment, and fd
+table to stdout (the pipe survives the exec), so no shell, no
+record file, and no environment but the helper's own is between
+the exec and the assertions.
 """
 
 import os
@@ -22,30 +32,56 @@ pytestmark = pytest.mark.skipif(
 SOURCE = Path(__file__).resolve().parents[5] / "nix" / "virtiofsd-as.c"
 assert SOURCE.exists(), f"helper source missing at {SOURCE}"
 
-#: The stub the helper execs: it records its own identity,
-#: capabilities, environment, and open fds — everything the
-#: acceptance criteria name — to a file the test reads back.
-STUB = """\
-#!/bin/sh
-out=$1
-{
-  echo "uid=$(id -u)"
-  echo "gid=$(id -g)"
-  sed -n 's/^Groups:[[:space:]]*/groups=/p' /proc/self/status
-  sed -n 's/^CapEff:[[:space:]]*/capeff=/p' /proc/self/status
-  sed -n 's/^CapBnd:[[:space:]]*/capbnd=/p' /proc/self/status
-  env | LC_ALL=C sort
-  for f in /proc/self/fd/*; do
-    echo "fd:${f##*/}:$(readlink "$f")"
-  done
-} > "$out" 2>&1
-"""
-
 #: The fixed environment the exec lands with (nix/virtiofsd-as.c):
 #: one PATH and nothing else.
 HELPER_PATH = (
     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 )
+
+#: The probe: one line per fact — uid/gid, the supplementary group
+#: list, the capability lines from /proc/self/status, every
+#: environment entry, every open fd and whether it is a socket,
+#: and argv[1] to prove the pass-through.
+PROBE = """\
+#include <stdio.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+extern char **environ;
+
+int main(int argc, char **argv)
+{
+    gid_t groups[64];
+    int n = getgroups(64, groups);
+    printf("uid=%lu\\n", (unsigned long)getuid());
+    printf("gid=%lu\\n", (unsigned long)getgid());
+    printf("groups=");
+    for (int i = 0; i < n; i++)
+        printf("%s%lu", i ? "," : "", (unsigned long)groups[i]);
+    printf("\\n");
+    FILE *status = fopen("/proc/self/status", "r");
+    if (status != NULL) {
+        char line[256];
+        while (fgets(line, sizeof(line), status) != NULL)
+            if (line[0] == 'C' && line[1] == 'a' && line[2] == 'p')
+                fputs(line, stdout);
+        fclose(status);
+    }
+    for (char **e = environ; *e != NULL; e++)
+        printf("env:%s\\n", *e);
+    for (int fd = 0; fd < 128; fd++) {
+        struct stat st;
+        if (fstat(fd, &st) == 0)
+            printf("fd:%d:%s\\n", fd,
+                   S_ISSOCK(st.st_mode) ? "socket" : "other");
+    }
+    if (argc > 1)
+        printf("arg=%s\\n", argv[1]);
+    fflush(stdout);
+    return 0;
+}
+"""
 
 
 def owner_account():
@@ -60,166 +96,186 @@ def owner_account():
     return entry
 
 
-def build_helper(tmp_path: Path, target: Path) -> tuple[Path, Path]:
-    """Compile the helper (``target`` as the fixed virtiofsd path)
-    and install it setuid-root, plus the world-writable record
-    file the stub writes as the owner uid."""
-    binary = tmp_path / "virtiofsd-as"
-    cc = shutil.which("cc")
-    assert cc is not None, "this lane's shell carries no C compiler"
+def open_tmp_tree(tmp_path: Path) -> None:
+    """Make pytest's tmp tree traversable by the target uid: the
+    lane's basetemp is 0700 root-owned, and nobody must walk it to
+    exec the helper and the probe. Stops at /tmp, which keeps its
+    own mode (the sticky bit stays)."""
+    p = tmp_path
+    while p != Path("/tmp"):
+        assert p != p.parent, f"{tmp_path} is not under /tmp"
+        os.chmod(p, 0o755)
+        p = p.parent
+
+
+def cc(source_text: str, out: Path) -> None:
+    compiler = shutil.which("cc")
+    assert compiler is not None, "this lane's shell carries no C compiler"
+    source = out.with_suffix(".c")
+    source.write_text(source_text)
     subprocess.run(
         [
-            cc,
+            compiler,
             "-O2",
             "-Wall",
             "-Wextra",
             "-Werror",
-            f'-DVIRTIOFSD_PATH="{target}"',
-            str(SOURCE),
             "-o",
-            str(binary),
+            str(out),
+            str(source),
         ],
         check=True,
     )
+
+
+def build_helper(tmp_path: Path, target: Path) -> Path:
+    """Compile the helper (``target`` as the fixed virtiofsd path)
+    and install it setuid-root in the now-traversable tree."""
+    binary = tmp_path / "virtiofsd-as"
+    cc(f'#define VIRTIOFSD_PATH "{target}"\n#include "{SOURCE}"\n', binary)
     os.chown(binary, 0, 0)
     os.chmod(binary, 0o4755)
-    record = tmp_path / "record"
-    record.touch()
-    os.chmod(record, 0o666)
-    return binary, record
+    return binary
 
 
-def write_stub(tmp_path: Path) -> Path:
-    stub = tmp_path / "virtiofsd"
-    stub.write_text(STUB)
-    stub.chmod(0o755)
-    return stub
+def build_probe(tmp_path: Path) -> Path:
+    probe = tmp_path / "probe"
+    cc(PROBE, probe)
+    probe.chmod(0o755)
+    return probe
 
 
-def record_lines(record: Path) -> dict[str, str]:
-    """The stub's evidence, keyed: uid/gid/groups/caps are single
-    lines; the environment and fd lines ride along unparsed."""
-    lines = record.read_text().splitlines()
-    keyed = {}
-    env = []
-    fds = []
-    for line in lines:
-        if line.startswith(("uid=", "gid=", "groups=", "capeff=", "capbnd=")):
-            key, _, value = line.partition("=")
-            keyed[key] = value
-        elif "=" in line:
-            env.append(line)
-        else:
+def run_as(
+    caller_uid: int, caller_gid: int, target_uid: int, binary: Path, fd: int
+):
+    """One helper invocation as an unprivileged caller through
+    setpriv — the setuid bit on the helper is what lifts euid to
+    root — targeting ``target_uid``, and carrying a hostile
+    environment nothing of which may cross the exec."""
+    return subprocess.run(
+        [
+            "setpriv",
+            "--reuid",
+            str(caller_uid),
+            "--regid",
+            str(caller_gid),
+            "--clear-groups",
+            str(binary),
+            str(target_uid),
+            "--fd",
+            str(fd),
+            "--",
+            "carried-arg",
+        ],
+        pass_fds=[fd],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "HONEY": "pot", "LD_PRELOAD": "/nope"},
+    )
+
+
+def evidence(result) -> dict[str, str | list[str]]:
+    """The probe's stdout, parsed: scalar facts keyed, the env and
+    fd lines kept whole."""
+    facts: dict[str, str | list[str]] = {}
+    env: list[str] = []
+    fds: list[str] = []
+    for line in result.stdout.splitlines():
+        if line.startswith("Cap") and ":" in line:
+            key, _, value = line.partition(":")
+            facts[key.strip()] = value.strip()
+        elif line.startswith("env:"):
+            env.append(line[len("env:") :])
+        elif line.startswith("fd:"):
             fds.append(line)
-    keyed["env"] = "\n".join(env)
-    keyed["fds"] = "\n".join(fds)
-    return keyed
+        elif "=" in line:
+            key, _, value = line.partition("=")
+            facts[key] = value
+    facts["env"] = env
+    facts["fds"] = fds
+    return facts
+
+
+def assert_common_drops(evidence_map, uid: int, fd: int) -> None:
+    assert evidence_map["uid"] == str(uid)
+    assert evidence_map["gid"] == str(uid)
+    assert evidence_map["groups"] == ""
+    for key in ("CapEff", "CapPrm", "CapBnd"):
+        assert int(str(evidence_map[key]), 16) == 0, (key, evidence_map[key])
+    # Exactly the fixed environment crosses — one PATH, nothing
+    # else; no shell sits between exec and environ.
+    assert evidence_map["env"] == [HELPER_PATH]
+    # Exactly one fd crosses: the standard three and the listening
+    # socket, nothing else.
+    open_fds = {int(line.split(":")[1]) for line in evidence_map["fds"]}
+    assert open_fds == {0, 1, 2, fd}
+    assert any(line == f"fd:{fd}:socket" for line in evidence_map["fds"])
+    assert evidence_map["arg"] == "carried-arg"
 
 
 def test_execs_as_the_owner_uid_with_every_privilege_dropped(tmp_path):
     entry = owner_account()
-    stub = write_stub(tmp_path)
-    binary, record = build_helper(tmp_path, stub)
+    open_tmp_tree(tmp_path)
+    probe = build_probe(tmp_path)
+    binary = build_helper(tmp_path, probe)
     server, client = socket.socketpair()
     fd = server.fileno()
     with server, client:
-        result = subprocess.run(
-            [
-                "setpriv",
-                "--reuid",
-                str(entry.pw_uid),
-                "--regid",
-                str(entry.pw_gid),
-                "--clear-groups",
-                str(binary),
-                str(entry.pw_uid),
-                "--fd",
-                str(fd),
-                "--",
-                str(record),
-            ],
-            pass_fds=[fd],
-            capture_output=True,
-            text=True,
-            env={**os.environ, "HONEY": "pot", "LD_PRELOAD": "/nope"},
-        )
+        result = run_as(entry.pw_uid, entry.pw_gid, entry.pw_uid, binary, fd)
     assert result.returncode == 0, result.stderr
-    evidence = record_lines(record)
-    assert evidence["uid"] == str(entry.pw_uid)
-    assert evidence["gid"] == str(entry.pw_gid)
-    assert evidence["groups"] == ""
-    for key in ("capeff", "capbnd"):
-        assert evidence[key] == "0000000000000000"
-    # Nothing of the caller's environment crosses the exec: the
-    # one fixed PATH, the shell's own PWD at most.
-    env_names = {
-        line.partition("=")[0] for line in evidence["env"].splitlines()
-    }
-    assert env_names <= {"PATH", "PWD"}
-    assert HELPER_PATH in evidence["env"]
-    # The listening fd survives the exec, still a socket.
-    assert any(
-        line.startswith(f"fd:{fd}:socket:")
-        for line in evidence["fds"].splitlines()
-    )
-    # One audit line per exec: uid, fd, and the argv (the record
-    # path rides in it) — on stderr where the daemon's spawn log
-    # reads it; the journal copy goes to the lane host's syslog.
+    assert_common_drops(evidence(result), entry.pw_uid, fd)
+    # One audit line per exec: uid, fd, and the argv — on stderr
+    # where the daemon's spawn log reads it; the journal copy goes
+    # to the lane host's syslog.
     assert "audit:" in result.stderr
     assert f"uid={entry.pw_uid}" in result.stderr
     assert f"fd={fd}" in result.stderr
-    assert str(record) in result.stderr
+    assert "carried-arg" in result.stderr
+
+
+def test_execs_as_uid_0_with_every_capability_dropped(tmp_path):
+    """The uid-0 target — the one case where the kernel keeps the
+    capability sets through the uid switch: the helper's explicit
+    empty capset is the only thing standing between a root-owner
+    share and a fully privileged virtiofsd."""
+    entry = owner_account()
+    open_tmp_tree(tmp_path)
+    probe = build_probe(tmp_path)
+    binary = build_helper(tmp_path, probe)
+    server, client = socket.socketpair()
+    fd = server.fileno()
+    with server, client:
+        result = run_as(entry.pw_uid, entry.pw_gid, 0, binary, fd)
+    assert result.returncode == 0, result.stderr
+    assert_common_drops(evidence(result), 0, fd)
 
 
 def test_refuses_when_the_setuid_bit_is_absent(tmp_path):
     entry = owner_account()
-    stub = write_stub(tmp_path)
-    binary, record = build_helper(tmp_path, stub)
+    open_tmp_tree(tmp_path)
+    probe = build_probe(tmp_path)
+    binary = build_helper(tmp_path, probe)
     os.chmod(binary, 0o755)
     server, client = socket.socketpair()
     fd = server.fileno()
     with server, client:
-        result = subprocess.run(
-            [
-                "setpriv",
-                "--reuid",
-                str(entry.pw_uid),
-                "--regid",
-                str(entry.pw_gid),
-                "--clear-groups",
-                str(binary),
-                str(entry.pw_uid),
-                "--fd",
-                str(fd),
-                "--",
-                str(record),
-            ],
-            pass_fds=[fd],
-            capture_output=True,
-            text=True,
-        )
+        result = run_as(entry.pw_uid, entry.pw_gid, entry.pw_uid, binary, fd)
     assert result.returncode != 0
     assert "not running setuid-root" in result.stderr
-    assert record.read_text() == ""
+    assert result.stdout == ""
 
 
 def test_a_dropped_exec_failure_names_the_target(tmp_path):
     """The exec itself failing after the privilege drop: the
     refusal names the fixed path, and the audit line still stands
     — the exec was attempted as the owner."""
-    binary, record = build_helper(tmp_path, tmp_path / "absent-virtiofsd")
+    open_tmp_tree(tmp_path)
+    binary = build_helper(tmp_path, tmp_path / "absent-virtiofsd")
     server, client = socket.socketpair()
     fd = server.fileno()
     with server, client:
         result = subprocess.run(
-            [
-                str(binary),
-                "65534",
-                "--fd",
-                str(fd),
-                "--",
-                str(record),
-            ],
+            [str(binary), "65534", "--fd", str(fd), "--", "x"],
             pass_fds=[fd],
             capture_output=True,
             text=True,

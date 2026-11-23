@@ -8,12 +8,14 @@
  * runs as, which share it serves. This binary is only the
  * privilege boundary: it validates the invocation, drops every
  * privilege but the target uid, and execs one fixed virtiofsd
- * path with one inherited listening-socket fd. A malformed
- * invocation refuses and exits nonzero, and nothing about the
- * caller's environment crosses the exec. The fixed path is
- * compile-time (-DVIRTIOFSD_PATH=...), so a caller cannot point
- * the exec at a binary of its choosing; the default is the
- * location the distro packages install virtiofsd at.
+ * path with one inherited listening-socket fd — every other fd
+ * above the standard three closes, so exactly one descriptor
+ * crosses the exec. A malformed invocation refuses and exits
+ * nonzero, and nothing about the caller's environment crosses
+ * the exec. The fixed path is compile-time
+ * (-DVIRTIOFSD_PATH=...), so a caller cannot point the exec at
+ * a binary of its choosing; the default is the location the
+ * distro packages install virtiofsd at.
  *
  * Installed setuid-root (root:msksd, mode 4750; the NixOS
  * wrapper name is msks-virtiofsd-as). The rejected designs and
@@ -28,6 +30,7 @@
 #include <fcntl.h>
 #include <grp.h>
 #include <linux/capability.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +40,13 @@
 #include <sys/syscall.h>
 #include <syslog.h>
 #include <unistd.h>
+
+#ifndef SYS_close_range
+/* The generic syscall number since kernel 5.9, uniform across
+ * the architectures the release builds for; newer libc headers
+ * define it themselves. */
+#define SYS_close_range 436
+#endif
 
 #ifndef VIRTIOFSD_PATH
 #define VIRTIOFSD_PATH "/usr/libexec/virtiofsd"
@@ -63,34 +73,34 @@ static __attribute__((noreturn)) void fail(const char *what)
 }
 
 /* Decimal digits only — no sign, no whitespace, no empty string.
- * The bound is uid_t: unsigned 32-bit on every Linux the release
- * builds for. The multiply cannot wrap: value stays <= 2^32-1 at
- * each step and unsigned long is 64-bit on those platforms. */
+ * The accumulator is 64-bit, so the multiply cannot wrap before
+ * the bound check on any Linux (ILP32 included); the bound is
+ * uid_t: unsigned 32-bit. */
 static unsigned long parse_uid(const char *text)
 {
-    unsigned long value = 0;
+    uint64_t value = 0;
     if (*text == '\0')
         refuse("uid: expected a number");
     for (const char *p = text; *p != '\0'; p++) {
         if (*p < '0' || *p > '9')
             refuse("uid: expected a number");
-        value = value * 10 + (unsigned long)(*p - '0');
-        if (value > 4294967295UL)
+        value = value * 10 + (uint64_t)(*p - '0');
+        if (value > 4294967295u)
             refuse("uid: out of range");
     }
-    return value;
+    return (unsigned long)value;
 }
 
 static int parse_fd(const char *text)
 {
-    long value = 0;
+    uint64_t value = 0;
     if (*text == '\0')
         refuse("fd: expected a number");
     for (const char *p = text; *p != '\0'; p++) {
         if (*p < '0' || *p > '9')
             refuse("fd: expected a number");
-        value = value * 10 + (long)(*p - '0');
-        if (value > 2147483647L)
+        value = value * 10 + (uint64_t)(*p - '0');
+        if (value > 2147483647u)
             refuse("fd: out of range");
     }
     return (int)value;
@@ -113,7 +123,9 @@ static void drop_capabilities(void)
 
 /* One audit line per exec — to the journal and, mirrored, to
  * stderr (the daemon's spawn log). The passed argv carries the
- * share facts: --shared-dir and --tag ride in it verbatim. */
+ * share facts: --shared-dir and --tag ride in it verbatim —
+ * control bytes included, so the argv's composer (the daemon,
+ * #1088) owns sanitizing what it puts there. */
 static void audit(unsigned long uid, int fd, int argc, char **argv)
 {
     char line[4096];
@@ -173,6 +185,15 @@ int main(int argc, char **argv)
     if (setresuid((uid_t)uid, (uid_t)uid, (uid_t)uid) != 0)
         fail("cannot become the owner uid");
     drop_capabilities();
+
+    /* Exactly one fd crosses the exec: everything above the
+     * standard three, except the listening fd, closes — no
+     * stray descriptor of the caller's reaches virtiofsd. */
+    if (fd > 3 &&
+        syscall(SYS_close_range, 3u, (unsigned int)fd - 1u, 0u) != 0)
+        fail("cannot close stray fds");
+    if (syscall(SYS_close_range, (unsigned int)fd + 1u, ~0u, 0u) != 0)
+        fail("cannot close stray fds");
     audit(uid, fd, argc, argv);
 
     /* The exec: the fixed path as argv[0], the passed argv

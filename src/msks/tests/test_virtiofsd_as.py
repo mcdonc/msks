@@ -111,7 +111,9 @@ SHAPE_CASES = [
 def test_malformed_invocation_refuses(helper, name, args, message):
     binary, marker = helper
     result = run(binary, args)
-    assert result.returncode != 0
+    # Usage refusals carry their own exit code (2), apart from
+    # the system-failure exit (1) — the seam 2b's daemon reads.
+    assert result.returncode == 2
     assert message in result.stderr
     assert not marker.exists()
 
@@ -119,7 +121,8 @@ def test_malformed_invocation_refuses(helper, name, args, message):
 def test_refuses_a_closed_fd(helper):
     binary, marker = helper
     result = run(binary, ["1000", "--fd", "93", "--", "x"])
-    assert result.returncode != 0
+    # A system failure, not a usage error: exit 1.
+    assert result.returncode == 1
     assert "the listening fd is not open" in result.stderr
     assert not marker.exists()
 
