@@ -130,6 +130,13 @@ class VmmSettings:
     # The virtiofs daemon behind host mounts (#620, part #622):
     # the platform's own binary, exec'd once per attached share.
     virtiofsd: str = "virtiofsd"
+    # The owner-exec helper behind cross-owner shares (#1087,
+    # #1088): the setuid binary the daemon execs a share's
+    # virtiofsd through as the workspace's owner, resolved by
+    # resolve_virtiofsd_as. The shortcut lane (owner == the
+    # daemon's own uid) never touches it, so a dev daemon
+    # without one stays fully functional.
+    virtiofsd_as: str = "virtiofsd-as"
     state_dir: Path = field(
         default_factory=lambda: Path("~/.local/state/msksd").expanduser()
     )
@@ -530,6 +537,7 @@ def vmm_settings_from_env(
         virtiofsd=resolve_virtiofsd(
             _env(env, "MSKSD_VIRTIOFSD", cls.virtiofsd)
         ),
+        virtiofsd_as=_env(env, "MSKSD_VIRTIOFSD_AS", cls.virtiofsd_as),
         state_dir=Path(
             _env(env, "MSKSD_STATE_DIR", str(cls().state_dir))
         ).expanduser(),

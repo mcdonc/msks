@@ -41,6 +41,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <syslog.h>
+#include <signal.h>
 #include <unistd.h>
 
 #ifndef SYS_close_range
@@ -196,9 +197,20 @@ int main(int argc, char **argv)
     struct stat st;
     char **child;
 
+    /* The target probe (#1088): the daemon compares its resolved
+     * virtiofsd against the one this binary will exec, and a
+     * start whose resolved binary differs refuses by name instead
+     * of failing downstream at virtiofsd's argument parsing. One
+     * line to stdout, no privilege, no exec. */
+    if (argc == 2 && strcmp(argv[1], "--print-target") == 0) {
+        printf(VIRTIOFSD_PATH "\n");
+        return 0;
+    }
+
     if (argc < 6 || strcmp(argv[2], "--fd") != 0 ||
         strcmp(argv[4], "--") != 0)
-        refuse("usage: virtiofsd-as <uid> --fd <n> -- <argv...>");
+        refuse("usage: virtiofsd-as <uid> --fd <n> -- <argv...> | "
+               "virtiofsd-as --print-target");
     uid = parse_uid(argv[1]);
     fd = parse_fd(argv[3]);
     /* The listening fd is 3 or above: 0-2 are the standard
@@ -256,6 +268,20 @@ int main(int argc, char **argv)
      * whatever later packaging does to that path. */
     if (prctl(PR_SET_NO_NEW_PRIVS, 1UL, 0UL, 0UL, 0UL) != 0)
         fail("cannot set no-new-privileges");
+
+    /* The daemon that spawned this exec cannot signal the child
+     * it lands as (#1088): the virtiofsd runs as the workspace's
+     * owner, and the daemon holds no CAP_KILL over another uid's
+     * process. The parent-death signal is the daemon-death half
+     * of that story — a crashed or restarted daemon reaps every
+     * helper-exec'd virtiofsd at once, instead of leaving them
+     * serving sockets no client will ever open again. It
+     * survives the execve; the getppid check closes the race
+     * where the parent died between the fork and this prctl. */
+    if (prctl(PR_SET_PDEATHSIG, SIGTERM, 0UL, 0UL, 0UL) != 0)
+        fail("cannot set the parent-death signal");
+    if (getppid() == 1)
+        refuse("the spawning parent is gone; refusing to linger");
 
     /* Exactly one fd crosses the exec: everything above the
      * standard three, except the listening fd, closes — no

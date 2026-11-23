@@ -128,8 +128,10 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_LLM_MODELS",
     "MSKSD_LLM_API_KEY",
     # VmmSettings — the virtiofs daemon behind host mounts
-    # (#620, part #622).
+    # (#620, part #622); the owner-exec helper a cross-owner
+    # share execs through (#1087, #1088).
     "MSKSD_VIRTIOFSD",
+    "MSKSD_VIRTIOFSD_AS",
     # MountSettings — the host-share gates (#667, #672): the
     # mode and the allowed roots. The #620 named-share list
     # (MSKSD_MOUNT_SHARES) is removed (#685).

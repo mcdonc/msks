@@ -158,3 +158,15 @@ def test_valid_shape_refuses_without_the_setuid_bit(helper):
     assert result.returncode != 0
     assert "not running setuid-root" in result.stderr
     assert not marker.exists()
+
+
+def test_print_target_reports_the_fixed_path(helper):
+    """The daemon's coherence probe (#1088): --print-target prints
+    the compile-time virtiofsd path as one line and exits zero —
+    no privilege, no exec behind it, and the fd the daemon bound
+    is never touched (the arm answers before any fd parsing)."""
+    binary, _marker = helper
+    result = run(binary, ["--print-target"])
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(_marker.parent / "virtiofsd")
+    assert "usage:" not in result.stderr
