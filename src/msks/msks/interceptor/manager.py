@@ -59,6 +59,10 @@ class PlaceholderEntry:
     #: The placeholder row's id — the event stream's durable handle
     #: (#201); the row itself retires on revoke/expiry.
     placeholder_id: int
+    #: The row's owner (#1090) — the uid the wire events (swap and
+    #: sighting alike) publish to, so the live tail reaches the
+    #: row's owner alone on a multi-owner daemon.
+    owner_uid: int
     dests: tuple[str, ...]
     backend_ref: str
 
@@ -96,11 +100,13 @@ def row_entry(row: dict, covers: bool) -> PlaceholderEntry:
     """One live row as the addon's hot path sees it: its allowlist
     when it covers the workspace, an empty tuple held for
     detection alone (#339) — no SNI matches an empty dests tuple,
-    so a foreign sentinel never decrypts or swaps on its own."""
+    so a foreign sentinel never decrypts or swaps on its own.
+    The row's owner (#1090) rides along for the wire events."""
     return PlaceholderEntry(
         sentinel=row["sentinel"],
         name=row["name"],
         placeholder_id=row["id"],
+        owner_uid=row["owner_uid"],
         dests=tuple(row["dests"]) if covers else (),
         backend_ref=row["backend_ref"],
     )
@@ -302,7 +308,10 @@ class Interceptor:
         """One wire event's payload (#201): the placeholder's row id,
         the workspace, the destination the wire named, and the time —
         the sighting carries the same shape, so the stream's readers
-        treat the two alike."""
+        treat the two alike. The frame publishes to the row's owner
+        (#1090): the swap's workspace is the owner's own (coverage
+        matches owners), and a sighting — a foreign sentinel caught
+        on another owner's wire — is a fact about the row it names."""
         await self.app.state.hub.publish(
             event,
             {
@@ -312,6 +321,7 @@ class Interceptor:
                 "host": host,
                 "ts": time.time(),
             },
+            owner=entry.owner_uid,
         )
 
     # --- lifecycle ---------------------------------------------------

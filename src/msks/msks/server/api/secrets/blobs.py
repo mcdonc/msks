@@ -183,7 +183,8 @@ async def reencrypt_rows(app, accepted: list) -> list[dict]:
 async def publish_unlocks(app, hub, accepted: list) -> None:
     """The same trail every row mutation leaves (#514 review): one
     audit row and one event per unlocked row, the coverage named
-    like every lifecycle event's."""
+    like every lifecycle event's. Each frame's audience is the
+    row's owner (#1090)."""
     for row, _value in accepted:
         audit_id = await app.state.model.record_audit("unlock", row)
         await hub.publish(
@@ -195,4 +196,5 @@ async def publish_unlocks(app, hub, accepted: list) -> None:
                 "name": row["name"],
                 "ts": time.time(),
             },
+            owner=row["owner_uid"],
         )

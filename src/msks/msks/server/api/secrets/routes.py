@@ -291,6 +291,7 @@ def router(app, hub) -> APIRouter:
         # The audit row commits before this publish: a registration
         # whose replay read lands in the gap delivers the row twice,
         # and the client's audit-id dedup drops the second (#305).
+        # The frame's audience is the minting owner (#1090).
         await hub.publish(
             "secret.mint",
             {
@@ -301,6 +302,7 @@ def router(app, hub) -> APIRouter:
                 "dests": dests,
                 "ts": time.time(),
             },
+            owner=owner,
         )
         # The sentinel rides this reply and the on-demand row fetch
         # (#440); the value is the operator's own and rides no
@@ -446,7 +448,8 @@ def router(app, hub) -> APIRouter:
         # The lock above released before the publish: a registration
         # in the commit-to-publish gap replays the row, and the
         # client's audit-id dedup drops whichever delivery is second
-        # (#305) — the dedup is load-bearing here, not a belt.
+        # (#305) — the dedup is load-bearing here, not a belt. The
+        # frame's audience is the row's owner (#1090).
         await hub.publish(
             "secret.revoke",
             {
@@ -456,6 +459,7 @@ def router(app, hub) -> APIRouter:
                 "name": row["name"],
                 "ts": time.time(),
             },
+            owner=row["owner_uid"],
         )
         # The redirect stands down when the last placeholder went
         # (#199) — the row is already gone, so refresh reads the new

@@ -374,7 +374,10 @@ microvm = 16
 # #1084: the owner scope — deps' scope dependency reads the bypass
 # rule and builds the scope wrapper beside the daemon-uid mapping
 # (two more names on the same statement).
-model = 25
+# #1090: the events websocket's subscribe takes the bypass rule
+# beside the ambiguity class — the viewer the socket registers
+# as (one more name on the events statement).
+model = 26
 # #808: the proxy routes read the two direction-shaped bind and
 # target defaults the create path applies (module edge + both
 # names).
