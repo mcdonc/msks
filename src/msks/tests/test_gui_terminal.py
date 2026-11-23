@@ -567,8 +567,9 @@ def test_a_scrolled_flood_paints_the_same_pixels_as_one_whole_pass(screen, qt):
         incremental = paint_planned(screen, qt)
     assert incremental is not None
     whole = paint_whole(screen, qt)
-    # the grid's pixels alone: the fringe below it repaints only
-    # on a full pass, and the comparison is about the rows
+    # the grid's pixels alone: the comparison is about the rows
+    # — the fringe below the grid differs between the kept
+    # incremental image and the fresh whole-pass one by design
     cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
     grid = qt.QtCore.QRect(0, 0, screen.cols * cw, screen.rows * ch)
     assert incremental.copy(grid) == whole.copy(grid)
