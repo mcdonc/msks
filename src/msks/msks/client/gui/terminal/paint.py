@@ -32,9 +32,8 @@ from PySide6.QtCore import QPointF, QRect, Qt
 from PySide6.QtGui import QColor, QPainter, QPixmap
 
 from .. import ghostty as gt
-from . import find
+from . import find, links
 from .fonts import font_key
-from .links import URL_RE
 
 # The per-cell scratch the painter reads graphemes into — a
 # cell's cluster never exceeds the library's 16-codepoint
@@ -80,6 +79,74 @@ def paint_event(screen, painter: QPainter) -> None:
     paint_exit_banner(screen, painter)
     if screen.bell_flash:
         paint_bell_flash(screen, painter)
+
+
+def paint_cells(screen, painter: QPainter, colors, rects_by_row) -> None:
+    """Walk the rows the render state holds and paint the
+    damaged ones into the cache, consuming each painted row's
+    dirty flag. A row outside the damage set keeps both its
+    pixels and its per-cell text in the cache. The walk also
+    reads every row's wrap flag, and the URL scan stitches
+    the cached texts into the span list — soft-wrapped rows
+    scan as one text (#1100)."""
+    ok, iterator = screen.lib.get(
+        screen.lib.render_state_get,
+        screen.render_state,
+        gt.RS_ROW_ITERATOR,
+        ctypes.c_void_p(screen.row_iterator),
+    )
+    # A state with a palette always holds its rows (probed: a
+    # never-updated state answers no colors; an updated one
+    # answers both). # pragma: no branch — the no-iterator arm
+    # has no state that reaches it.
+    if ok and iterator.value:  # pragma: no branch
+        style = gt.Style()
+        style.size = ctypes.sizeof(style)
+        codepoints = (ctypes.c_uint32 * CLUSTER_CAP)()
+        screen.link_spans = walk_rows(
+            screen, painter, colors, style, codepoints, iterator, rects_by_row
+        )
+
+
+def walk_rows(
+    screen, painter, colors, style, codepoints, iterator, rects_by_row
+):
+    """The viewport walk: a row paints when it carries damage
+    or the pass takes every row, and the answer is the
+    per-row URL span list the scan derives — a row outside
+    the damage set keeps the per-cell text its cached pixels
+    still show, and its spans come back from the same
+    text."""
+    rows = screen.link_rows
+    wraps: list[bool] = []
+    count = 0
+    y = 0
+    while screen.lib.row_iterator_next(iterator.value):
+        _, cells = screen.lib.get(
+            screen.lib.row_get,
+            iterator.value,
+            gt.ROW_CELLS,
+            ctypes.c_void_p(screen.row_cells),
+        )
+        if screen.cache_full or row_dirty(screen, iterator.value):
+            paint_damaged_row(
+                screen,
+                painter,
+                colors,
+                style,
+                codepoints,
+                iterator.value,
+                cells,
+                rows,
+                rects_by_row,
+                count,
+                y,
+            )
+        wraps.append(links.row_wraps(screen, count))
+        count += 1
+        y += screen.metrics.cell_height
+    del rows[count:]
+    return links.scan(rows, wraps)
 
 
 def sync_cache(screen, colors, rects_by_row) -> QPainter:
@@ -169,69 +236,6 @@ def scrollbar_offset(screen):
     return bar.offset if ok else None
 
 
-def paint_cells(screen, painter: QPainter, colors, rects_by_row) -> None:
-    """Walk the rows the render state holds and paint the
-    damaged ones into the cache, consuming each painted row's
-    dirty flag. A row outside the damage set keeps both its
-    pixels and its URL spans in the cache. The walk also
-    records each painted row's plain text into the URL scan,
-    and paints the find bar's match underlays beneath the
-    cells."""
-    ok, iterator = screen.lib.get(
-        screen.lib.render_state_get,
-        screen.render_state,
-        gt.RS_ROW_ITERATOR,
-        ctypes.c_void_p(screen.row_iterator),
-    )
-    # A state with a palette always holds its rows (probed: a
-    # never-updated state answers no colors; an updated one
-    # answers both). # pragma: no branch — the no-iterator arm
-    # has no state that reaches it.
-    if ok and iterator.value:  # pragma: no branch
-        style = gt.Style()
-        style.size = ctypes.sizeof(style)
-        codepoints = (ctypes.c_uint32 * CLUSTER_CAP)()
-        screen.link_spans = walk_rows(
-            screen, painter, colors, style, codepoints, iterator, rects_by_row
-        )
-
-
-def walk_rows(
-    screen, painter, colors, style, codepoints, iterator, rects_by_row
-):
-    """The viewport walk: a row paints when it carries damage
-    or the pass takes every row, and the answer is the trimmed
-    per-row URL span list — a row outside the damage set keeps
-    the spans its cached pixels still show."""
-    spans = screen.link_spans
-    count = 0
-    y = 0
-    while screen.lib.row_iterator_next(iterator.value):
-        _, cells = screen.lib.get(
-            screen.lib.row_get,
-            iterator.value,
-            gt.ROW_CELLS,
-            ctypes.c_void_p(screen.row_cells),
-        )
-        if screen.cache_full or row_dirty(screen, iterator.value):
-            paint_damaged_row(
-                screen,
-                painter,
-                colors,
-                style,
-                codepoints,
-                iterator.value,
-                cells,
-                spans,
-                rects_by_row,
-                count,
-                y,
-            )
-        count += 1
-        y += screen.metrics.cell_height
-    return spans[:count]
-
-
 def paint_damaged_row(
     screen,
     painter,
@@ -240,19 +244,20 @@ def paint_damaged_row(
     codepoints,
     iterator: int,
     cells,
-    spans,
+    rows,
     rects_by_row,
     count: int,
     y: int,
 ) -> None:
     """One damaged row's contribution to the cache: the find
-    underlays beneath it, its cells, its URL span entry, the
-    consumption of its dirty flag, and its place in the paint
-    record the damage pins read."""
+    underlays beneath it, its cells, its per-cell text into
+    the scan's row cache, the consumption of its dirty flag,
+    and its place in the paint record the damage pins
+    read."""
     paint_underlays(screen, painter, rects_by_row.get(count, []), y)
-    while len(spans) <= count:
-        spans.append([])
-    spans[count] = paint_row(
+    while len(rows) <= count:
+        rows.append([])
+    rows[count] = paint_row(
         screen, painter, colors, style, codepoints, cells, y
     )
     clean = ctypes.c_bool(False)
@@ -295,17 +300,14 @@ def paint_underlays(screen, painter: QPainter, rects, y: int) -> None:
 
 
 def paint_row(screen, painter: QPainter, colors, style, codepoints, cells, y):
-    """One row's cells left to right; answers the row's URL
-    spans from the text the cells carried."""
+    """One row's cells left to right; answers the row's
+    per-cell text for the URL scan."""
     x = 0
     row_chars: list[str] = []
     while screen.lib.row_cells_next(cells.value):
         paint_cell(screen, painter, colors, style, codepoints, x, y, row_chars)
         x += screen.metrics.cell_width
-    return [
-        (m.start(), m.end(), m.group(0))
-        for m in URL_RE.finditer("".join(row_chars))
-    ]
+    return row_chars
 
 
 def cell_colors(screen, colors, cells):

@@ -170,6 +170,11 @@ class TerminalWidget(QWidget):
         self.autoscroll.setInterval(50)
         self.autoscroll.timeout.connect(self.autoscroll_tick)
         self.link_spans: list[list[tuple[int, int, str]]] = []
+        # The URL scan's row cache (#1100): each viewport row's
+        # per-cell text, refreshed when the painter paints that
+        # row and read whole by the scan each paint — soft-wrapped
+        # rows stitch across the cached texts.
+        self.link_rows: list[list[str]] = []
         self.hand_cursor = False
         # The cell cache (#1104): rows painted into an offscreen
         # pixmap and blitted whole each paint, so a typed

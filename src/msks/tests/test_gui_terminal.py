@@ -3106,6 +3106,110 @@ def test_the_span_upper_bound_excludes_the_next_cell(screen, qt):
     assert links.under(screen, qt.QtCore.QPointF(cw * end, ch // 2)) is None
 
 
+def test_a_wrapped_url_opens_whole_from_either_row(screen, qt):
+    """A URL longer than the row width soft-wraps onto the
+    next row; each row's fragment carries the whole URL, so a
+    Ctrl+Click on either opens it uncut (#1100)."""
+    from msks.client.gui.terminal import links
+
+    screen.grab().toImage()  # settles the widget's offscreen geometry
+    url = "https://example.com/" + "a" * (
+        screen.cols - 10
+    )  # one row and a tail
+    tail = len(url) - screen.cols  # the second row's cells
+    vt(screen, b"\x1b[2J\x1b[H" + url.encode() + b"\r\nplain")
+    screen.grab().toImage()  # the paint pass fills the URL scan
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    QPointF = qt.QtCore.QPointF
+    assert screen.link_spans[0] == [(0, screen.cols, url)]
+    assert screen.link_spans[1] == [(0, tail, url)]
+    assert links.under(screen, QPointF(cw * (screen.cols - 1), ch // 2)) == url
+    assert links.under(screen, QPointF(cw * (tail - 1), ch + ch // 2)) == url
+    # one past the fragment's last cell on the second row
+    assert links.under(screen, QPointF(cw * tail, ch + ch // 2)) is None
+
+
+def test_a_hard_newline_never_stitches(screen, qt):
+    """A URL-ending row followed by a fresh line stays two
+    rows: only the wrap flag joins a scan."""
+    from msks.client.gui.terminal import links
+
+    screen.grab().toImage()  # settles the widget's offscreen geometry
+    url = "https://example.com/" + "a" * (screen.cols - 25)  # fits one row
+    vt(screen, b"\x1b[2J\x1b[H" + url.encode() + b"\r\ntail")
+    screen.grab().toImage()
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    assert screen.link_spans[0] == [(0, len(url), url)]
+    assert screen.link_spans[1] == []
+    assert (
+        links.under(screen, qt.QtCore.QPointF(cw * (len(url) - 1), ch // 2))
+        == url
+    )
+    assert links.under(screen, qt.QtCore.QPointF(cw, ch + ch // 2)) is None
+
+
+def test_a_two_character_cluster_keeps_the_span_in_cells(screen, qt):
+    """A base letter and its combining mark share one cell
+    whose text carries two characters; the URL after it
+    starts on the next cell, not one character later."""
+    from msks.client.gui.terminal import links
+
+    vt(screen, b"\x1b[2J\x1b[He\xcc\x81https://example.com/x")
+    screen.grab().toImage()
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    QPointF = qt.QtCore.QPointF
+    assert links.under(screen, QPointF(0, ch // 2)) is None  # the cluster cell
+    assert links.under(screen, QPointF(cw, ch // 2)) == (
+        "https://example.com/x"
+    )
+
+
+def test_a_url_ending_mid_row_scans_only_its_cells(screen, qt):
+    """A URL followed by wrapping words: the span stops at
+    the URL's own cells, and the continuation row of the same
+    wrapped line answers no link."""
+    url = "https://example.com/words"
+    tail = " ".join(["tail"] * 15)  # pushes the line past the width
+    vt(screen, b"\x1b[2J\x1b[H" + (url + " " + tail).encode())
+    screen.grab().toImage()
+    assert screen.link_spans[0] == [(0, len(url), url)]
+    assert screen.link_spans[1] == []
+
+
+def test_a_url_cut_by_the_bottom_answers_no_link(screen, qt):
+    """A URL whose continuation sits below the viewport's
+    bottom edge cannot be known whole: the visible fragment
+    answers no link rather than a truncated one, and the
+    scrolled view that holds all its rows answers the whole
+    URL."""
+    from msks.client.gui.terminal import links
+
+    screen.grab().toImage()  # settles the widget's offscreen geometry
+    url = "https://example.com/" + "a" * (screen.cols * 3 - 5)  # four rows
+    vt(screen, b"\x1b[2J\x1b[H")
+    for index in range(screen.rows - 3):
+        vt(screen, f"filler {index}\r\n".encode())
+    vt(screen, url.encode() + b"\r\n")
+    for index in range(10):
+        vt(screen, f"tail {index}\r\n".encode())
+    screen.scroll_rows(-100)  # clamps at the scrollback's top
+    screen.grab().toImage()
+    assert scrollbar(screen)[2] == 0
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    QPointF = qt.QtCore.QPointF
+    bottom = screen.rows - 1
+    # the viewport's last three rows hold the URL's first three
+    # rows; its fourth row sits below the bottom edge
+    for row in (bottom - 2, bottom - 1, bottom):
+        assert links.under(screen, QPointF(cw * 5, ch * row + ch // 2)) is None
+    screen.scroll_rows(1)  # one row down: every row of the URL in view
+    screen.grab().toImage()
+    assert (
+        links.under(screen, QPointF(cw * 5, ch * (bottom - 3) + ch // 2))
+        == url
+    )
+
+
 def test_the_hand_drops_when_the_pointer_leaves(screen, qt):
     """The pointing hand is an application-global override; a
     leave event drops it so the rest of the app keeps its
