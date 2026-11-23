@@ -493,6 +493,31 @@ def test_a_changed_find_pass_repaints_every_row(screen, qt):
     find.close(screen)
 
 
+def test_a_scheme_flip_repaints_every_row(screen, qt):
+    """The scheme flip's own path — ``terminal_set`` of the
+    base colors, what ``colors.apply`` runs — flags every row
+    (probed): the whole grid repaints with the new colors, and
+    a program's own SGR colors keep their cells' explicit
+    ones. OSC 10/11 asks a different question: their override
+    layer never reaches this render-state ABI at all (the
+    palette and the cells' colors both answer unchanged,
+    probed), so the terminal never showed them — before this
+    change the same full-grid paint filled from the same
+    answers."""
+    import ctypes
+
+    vt(screen, b"\x1b[2J\x1b[Hsome text")
+    screen.grab()
+    screen.lib.terminal_set(
+        screen.terminal,
+        gt.OPT_COLOR_BACKGROUND,
+        ctypes.byref(gt.ColorRgb(30, 30, 90)),
+    )
+    screen.refresh()
+    screen.grab()
+    assert screen.painted_rows == list(range(screen.rows))
+
+
 def test_the_inverse_and_faint_styles_paint(screen, qt):
     """Inverse swaps the cell's colors and faint dims the ink —
     both paint without changing the grid — and an empty cell
