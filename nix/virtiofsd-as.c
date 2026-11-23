@@ -151,6 +151,12 @@ static void drop_capabilities(void)
  * journal line under its ident. */
 static void append(char *line, size_t size, int *used, const char *text)
 {
+    /* Defensive only: the execve ABI delivers non-NULL argv
+     * strings and audit()'s used never runs negative — but this
+     * is the function a future audit format extends, so the
+     * guards make the hazards impossible, not unreachable. */
+    if (line == NULL || text == NULL || used == NULL || *used < 0)
+        return;
     for (const char *p = text; *p != '\0' && *used < (int)size - 1; p++) {
         unsigned char byte = (unsigned char)*p;
         line[(*used)++] = (byte >= 0x20 && byte != 0x7f) ? *p : '?';
@@ -167,6 +173,12 @@ static void audit(unsigned long uid, int fd, int argc, char **argv)
     char line[4096];
     int used = snprintf(line, sizeof(line), "exec uid=%lu fd=%d argv=",
                         uid, fd);
+    /* snprintf answers the would-be length; a future format
+     * string that could truncate would push used past the
+     * buffer — clamp so the terminator below always lands in
+     * bounds, whatever the format grows into. */
+    if (used < 0 || used >= (int)sizeof(line) - 1)
+        used = (int)sizeof(line) - 1;
     for (int i = 5; i < argc && used < (int)sizeof(line) - 1; i++) {
         if (i > 5)
             append(line, sizeof(line), &used, " ");
