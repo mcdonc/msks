@@ -721,6 +721,102 @@ def test_the_focus_refusal_answers_qts_own_tab_delivery(qt):
         host.close()
 
 
+def test_shortcut_override_claims_only_the_bare_escape(screen, qt):
+    """The override's own bounds (#1099): Qt's shortcut
+    dispatch sends a ``ShortcutOverride`` to the focus widget
+    before a matching shortcut consumes the press, and the
+    accept — the answer Qt reads off the event's accepted
+    flag — yields the shortcut. The claim names the bare Esc
+    alone: a modified Esc or another key stays unaccepted, so
+    no other shortcut the window stands loses its key."""
+    QEvent = qt.QtCore.QEvent
+    Qt = qt.QtCore.Qt
+
+    def override(key, modifiers):
+        return qt.QtGui.QKeyEvent(
+            QEvent.Type.ShortcutOverride, int(key), modifiers, ""
+        )
+
+    bare = override(Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
+    assert screen.event(bare) is True
+    assert bare.isAccepted()
+    for other in (
+        override(Qt.Key.Key_Escape, Qt.KeyboardModifier.ControlModifier),
+        override(Qt.Key.Key_Escape, Qt.KeyboardModifier.ShiftModifier),
+        override(Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier),
+    ):
+        assert screen.event(other) is True  # the base's answer
+        assert not other.isAccepted()
+
+
+def test_escape_reaches_the_child_past_a_back_shortcut(qt):
+    """The bug's own path (#1099): the workspace page stands a
+    widget-scoped shortcut on the bare Esc — its Back — and
+    the match consumes the press before the encoder, so the
+    program inside never reads the key. A terminal under the
+    same shortcut keeps the press: Qt's override question
+    answers first, the shortcut stays quiet, and the pty
+    reads the escape byte. The delivery is the shortcut
+    system's own — the press goes through ``sendEvent``, the
+    dispatch a real platform serves."""
+    from msks.client.gui.terminal import TerminalWidget
+
+    host = qt.QtWidgets.QWidget()
+    host.show()
+    host.activateWindow()  # a shortcut answers in the active window
+    fired = []
+    escape = qt.QtGui.QShortcut(
+        qt.QtGui.QKeySequence(qt.QtCore.Qt.Key.Key_Escape), host
+    )
+    escape.activated.connect(lambda: fired.append(1))
+    widget = TerminalWidget([sys.executable, "-c", ECHOER], parent=host)
+    try:
+        hush_echo(widget)
+        drain_until(widget, b"ready")
+        widget.show()
+        widget.setFocus()
+        qt.app.processEvents()
+        qt.app.sendEvent(widget, key_event(qt, qt.QtCore.Qt.Key.Key_Escape))
+        assert b"\x1b" in drain_until(widget, b"\x1b")
+        assert fired == []
+    finally:
+        shutdown(widget)
+        host.close()
+
+
+def test_escape_still_answers_back_off_the_terminal(qt):
+    """The shortcut's own arm (#1099): the refusal yields the
+    key only while the terminal holds the focus it was sent
+    to. A press that lands on the chrome — the Back button
+    the page anchors — still fires the shortcut, and the
+    terminal's pty reads nothing: the press never became a
+    terminal key."""
+    from msks.client.gui.terminal import TerminalWidget
+
+    host = qt.QtWidgets.QWidget()
+    host.show()
+    host.activateWindow()
+    fired = []
+    escape = qt.QtGui.QShortcut(
+        qt.QtGui.QKeySequence(qt.QtCore.Qt.Key.Key_Escape), host
+    )
+    escape.activated.connect(lambda: fired.append(1))
+    button = qt.QtWidgets.QPushButton(host)
+    button.setFocusPolicy(qt.QtCore.Qt.FocusPolicy.StrongFocus)
+    widget = TerminalWidget([sys.executable, "-c", SLEEPER], parent=host)
+    try:
+        drain_until(widget, b"ready")
+        widget.show()
+        qt.app.processEvents()
+        qt.app.sendEvent(button, key_event(qt, qt.QtCore.Qt.Key.Key_Escape))
+        assert fired == [1]
+        time.sleep(0.1)  # a byte on the wire needs a moment
+        assert widget.session.read_available() in (None, b"")
+    finally:
+        shutdown(widget)
+        host.close()
+
+
 def test_control_keys_encode_through_the_modifier_mask(qt):
     """Ctrl+C is the interrupt byte: the encoder spells it
     from the key and the mask, and the pty's line discipline

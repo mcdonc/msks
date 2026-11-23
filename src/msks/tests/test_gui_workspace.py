@@ -543,6 +543,43 @@ def test_the_show_anchors_on_the_tab_the_row_shows(qt) -> None:
     assert window.focusWidget() is page.hub.find("ws-a", 1).widget
 
 
+def test_escape_answers_back_on_the_chrome_not_the_terminal(qt) -> None:
+    """The page's own Esc contract (#1099): the Back shortcut
+    answers while the chrome holds the keyboard — the Back
+    button the anchor sets — and yields the key while a
+    shell's terminal holds it, the press delivered through
+    the shortcut dispatch a real platform serves. The
+    terminal half's own byte pin lives with the terminal's
+    tests; this one pins the page the shortcut stands on."""
+    page, window, bridge = make_page(qt)
+    backs = []
+    page.back.connect(lambda: backs.append(1))
+    Qt = qt.QtCore.Qt
+
+    def escape_press() -> object:
+        return qt.QtGui.QKeyEvent(
+            qt.QtCore.QEvent.Type.KeyPress,
+            int(Qt.Key.Key_Escape),
+            Qt.KeyboardModifier.NoModifier,
+            "",
+        )
+
+    # The Shells tab shows a shell: its terminal holds the
+    # keyboard, and the press reaches the encoder instead.
+    session = page.hub.find("ws-a", 1)
+    page.anchor_focus()
+    assert window.focusWidget() is session.widget
+    qt.app.sendEvent(session.widget, escape_press())
+    assert backs == []
+    # The chrome's own holder: the Back button the anchor
+    # names, and the shortcut answers from there.
+    show_tab(page, "Events")
+    page.anchor_focus()
+    qt.app.processEvents()
+    qt.app.sendEvent(page.back_button, escape_press())
+    assert backs == [1]
+
+
 def test_a_reopen_resets_the_row_and_anchors_the_terminal(qt) -> None:
     """Every open starts on Shells (#974): a prior visit's tab
     must not hand the next workspace a hidden terminal holding

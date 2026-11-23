@@ -463,6 +463,35 @@ class TerminalWidget(QWidget):
 
     # --- keyboard -----------------------------------------------------
 
+    def event(self, event: QEvent) -> bool:  # noqa: N802
+        """The bare Esc belongs to the program inside (#1099):
+        the workspace page stands a widget-scoped shortcut on
+        the key — Esc goes Back — and Qt asks the focus widget
+        first, with a ``ShortcutOverride`` event, whether the
+        matching shortcut should yield. The accept keeps the
+        press for the terminal: it reaches the encoder like
+        every other key, and the shell reads its Esc. Only the
+        unmodified Esc is claimed — a modified one matches no
+        terminal key the page steals, and the zoom keys and
+        every other shortcut keep their answers, the refusal
+        here names one key and one shortcut. This is Esc's
+        sibling of Tab's own refusal (#1066,
+        :meth:`focusNextPrevChild`): Qt's machinery answers
+        before the encoder, so the interception stands before
+        the machinery."""
+        if event.type() == QEvent.Type.ShortcutOverride:
+            key = event.key()
+            claimed = (
+                Qt.KeyboardModifier.ControlModifier
+                | Qt.KeyboardModifier.ShiftModifier
+                | Qt.KeyboardModifier.AltModifier
+                | Qt.KeyboardModifier.MetaModifier
+            )
+            if key == Qt.Key.Key_Escape and not event.modifiers() & claimed:
+                event.accept()
+                return True
+        return super().event(event)
+
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         if self.handle_shortcut(event):
             return
