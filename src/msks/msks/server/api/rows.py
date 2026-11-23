@@ -14,7 +14,12 @@ from fastapi import HTTPException
 from ...hostshares import check_host_share
 from ...model.workspaces import AmbiguousRef
 from ...spec.mounts import MountIssue, parse_mounts, validate_mounts
-from ...spec.owners import AMBIGUOUS_CLOSE, AMBIGUOUS_WORKSPACE, owners_word
+from ...spec.owners import (
+    AMBIGUOUS_CLOSE,
+    AMBIGUOUS_WORKSPACE,
+    dead_owner_cause,
+    owners_word,
+)
 from ...spec.vm import VmSpec, VmStatus
 from .streams import close_reason
 
@@ -48,6 +53,7 @@ def spec_for(row: dict, mounts: tuple | None = None) -> VmSpec:
         ssh_pubkey=row.get("ssh_pubkey"),
         login_user=row.get("login_user"),
         timezone=row.get("timezone"),
+        owner_uid=row.get("owner_uid"),
         mounts=row_mounts(row, mounts),
         # The row's seed epoch at spec time (#1069): the renewal
         # suffix reads it, so each renewal bake lands an
@@ -218,19 +224,43 @@ def stopping_workspaces(app) -> set[str]:
     return existing
 
 
+def dead_owner_issues(row: dict, mounts: tuple) -> tuple:
+    """The skip set a uid no account holds produces (#1088): a
+    virtiofsd cannot exec as a deleted account, so every one of
+    the workspace's mounts skips with the one named cause. The
+    gate the split (mount_state) and the listing
+    (list_mount_issues) share — the row's marker and the start's
+    refusal read the same word either surface derived it."""
+    owner_uid = row.get("owner_uid")
+    if owner_uid is None:
+        return ()
+    dead = dead_owner_cause(owner_uid)
+    if dead is None:
+        return ()
+    return tuple(
+        MountIssue(kind="skipped", mount=mount, detail=dead)
+        for mount in mounts
+    )
+
+
 async def mount_state(app, row: dict) -> tuple[tuple, tuple]:
     """A row's mounts split into the attachable and the skipped
-    (#620, part #621; #672).
+    (#620, part #621; #672; #1088).
 
     The derivation reads live state every time it runs: each
     mount re-runs the #667 gates against the daemon's current
     host mode, allowed roots, and the daemon VM's own mount
     state, and a refusal (a root the VM no longer mounts, a root
     the policy narrowed away, a symlink that moved) becomes a
-    ``skipped`` mount with the gate's message. The start
-    proceeds without the mount; the skip is state, derived again
-    on every read."""
+    ``skipped`` mount with the gate's message. A workspace whose
+    owner uid no account holds skips every mount at this gate
+    and the workspace still boots (#1088). The start proceeds
+    without the mount; the skip is state, derived again on
+    every read."""
     mounts = parse_mounts(row.get("mounts"))
+    dead = dead_owner_issues(row, mounts)
+    if dead:
+        return (), dead
     issues = host_mount_issues(app, mounts)
     skipped = {issue.mount for issue in issues}
     return (
@@ -384,8 +414,10 @@ async def row_mount_issues(app, row: dict) -> tuple:
 async def list_mount_issues(app, rows: list[dict]) -> dict[str, tuple]:
     """Every row's derived mount issues, keyed by id (#620, part
     #624): the gates read per-row state only, so the listing
-    matches the row read."""
-    return {
-        row["id"]: host_mount_issues(app, parse_mounts(row.get("mounts")))
-        for row in rows
-    }
+    matches the row read — including the dead-owner gate (#1088)."""
+    issues = {}
+    for row in rows:
+        mounts = parse_mounts(row.get("mounts"))
+        dead = dead_owner_issues(row, mounts)
+        issues[row["id"]] = dead if dead else host_mount_issues(app, mounts)
+    return issues

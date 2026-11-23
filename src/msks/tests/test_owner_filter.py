@@ -13,6 +13,7 @@ from ext4tools import realtools  # noqa: F401 — the tools stay real here
 from msks.app import build_app
 from msks.server.api import build_api
 from msks.settings import (
+    MountSettings,
     NetSettings,
     ServerSettings,
     Settings,
@@ -382,6 +383,60 @@ async def test_the_daemon_uid_caller_may_scope(daemon, monkeypatch) -> None:
     )
     assert reply.status_code == 200
     assert reply.json()["id"] == alice_row["id"]
+
+
+async def test_a_dead_owners_mounts_skip_but_the_workspace_boots(
+    daemon, tmp_path, monkeypatch
+) -> None:
+    """#1088's dead-owner gate: a workspace whose owner uid no
+    account holds skips every mount at the derivation — the named
+    cause rides the row, the spec the seam launches carries no
+    mounts — and the start proceeds mountless, because a
+    virtiofsd cannot exec as a deleted account."""
+    import pwd
+
+    peer, app, _api = daemon
+    app.state.settings.mounts = MountSettings(host_roots=(str(tmp_path),))
+    real_getpwuid = pwd.getpwuid
+
+    def dead_alice(uid):
+        if uid == ALICE:
+            raise KeyError(uid)
+        return real_getpwuid(uid)
+
+    monkeypatch.setattr(pwd, "getpwuid", dead_alice)
+    share = tmp_path / "proj"
+    share.mkdir()
+    wid = (await create(peer(ALICE), "build")).json()["id"]
+    await app.state.model.set_mounts(
+        wid, [{"host": str(share), "guest": "/mnt/proj", "mode": "rw"}]
+    )
+    launched = []
+    real_launch = app.state.microvm.launch
+
+    async def capture_launch(spec):
+        launched.append(spec)
+        return await real_launch(spec)
+
+    app.state.microvm.launch = capture_launch
+    started = await peer(ROOT).post(
+        f"/api/v1/workspaces/{wid}/start", headers=auth()
+    )
+    assert started.status_code == 200
+    assert launched[0].mounts == ()
+    assert launched[0].owner_uid == ALICE
+    row = (await peer(ROOT).get("/api/v1/workspaces", headers=auth())).json()[
+        0
+    ]
+    assert row["mount_issues"] == [
+        {
+            "kind": "skipped",
+            "host": str(share),
+            "guest": "/mnt/proj",
+            "mode": "rw",
+            "detail": f"owner uid {ALICE} no longer exists",
+        }
+    ]
 
 
 async def test_each_owner_resolves_their_own_name(daemon) -> None:

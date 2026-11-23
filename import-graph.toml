@@ -270,8 +270,11 @@ persist = 12
 # module it already owns. #672: one more name — mount_tag, the
 # device name both mount forms attach as. #874: the local driver
 # split into a package — the vm vocabulary imports spread from
-# the one module to its config and driver submodules.
-spec = 22
+# the one module to its config and driver submodules. #1088:
+# the spawn seam reads the dead-owner cause (spec.owners) —
+# the race refusal naming the same word the derivation gate's
+# skip carries.
+spec = 24
 
 [snapshot.model]
 # #514: the blob staleness hash moved to the crypto leaf with the
@@ -434,8 +437,10 @@ secretcache = 4
 # word, the close code both dial routes take, and the owner
 # phrase, all on the rows statement (module edge beside the
 # three names); the console and forward dials reach it through
-# rows' close helper.
-spec = 52
+# rows' close helper. #1088: the same statement gains the
+# dead-owner cause — the skip word the listing and the start's
+# split share.
+spec = 53
 # #773: the clone route reads the state-disk floor (create_refusal
 # beside the artifacts' allocated-cost file_cost) before any byte
 # copies.

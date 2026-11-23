@@ -101,6 +101,14 @@ class VmSpec:
     # that names none — the guest carries the key for root and its
     # own msks account either way.
     login_user: str | None = None
+    # The workspace's owning uid (#1082): the peer credential
+    # that created it, carried onto the spec for the share seam
+    # (#1088) — a share's virtiofsd execs as this uid, through
+    # the setuid helper when it differs from the daemon's own
+    # uid and directly when it does not. None is a spec built
+    # outside the row path (conformance checkers, direct
+    # launches): the seam runs it as the daemon's own uid.
+    owner_uid: int | None = None
     # The host's timezone captured at create (#633), the zone
     # name the guest's clock follows (the seed's first-boot block
     # sets it). None is a UTC-or-unreadable host: nothing rides,

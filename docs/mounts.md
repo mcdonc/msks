@@ -75,6 +75,25 @@ the reason, and the row carries the standing marker (`msks ls` prints `running,
 1 mount skipped`) until the config and the row agree again. The workspace's
 other mounts attach.
 
+A workspace whose owner uid no account on the host holds skips every one of
+its mounts with the cause `owner uid 1001 no longer exists` (the uid spelled
+as it is). The share's virtiofsd execs as the workspace's owner, and a deleted
+account names no uid to exec as. The workspace itself still starts without its
+mounts, and the marker clears when the uid resolves again — the account came
+back, or the row moved to another owner by hand.
+
+## Who a share's virtiofsd runs as
+
+Each share's virtiofsd runs as the workspace's owner: the account whose peer
+credential created the workspace. The daemon binds the share's vhost socket
+itself and hands the listening socket to virtiofsd across the exec, so the
+owning account needs no access to the daemon's state. When the owner is the
+daemon's own account (the dev daemon, a single-user install), virtiofsd execs
+directly. When the owner is another account, the daemon execs through the
+`virtiofsd-as` setuid helper (installed by the setup tools, `root:msksd`,
+mode 4750; `MSKSD_VIRTIOFSD_AS` names another path) and every exec writes one
+journal line under the helper's ident: the uid, the fd, and the argv.
+
 ## Coherence between guests
 
 A host tree attaches read-write to any number of workspaces at once, and every

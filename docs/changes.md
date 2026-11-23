@@ -8,6 +8,18 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Owner-tracked virtiofsd exec (#1088).** Each share's
+  virtiofsd now runs as the workspace's owner: the daemon binds
+  the share's vhost socket itself and hands the listening socket
+  across the exec (`--fd`, no `--socket-path`), execing through
+  the `virtiofsd-as` helper when the owner differs from the
+  daemon's own account (`MSKSD_VIRTIOFSD_AS` overrides the
+  helper's location) and directly, exactly as before, when it
+  does not — the dev daemon and single-user installs keep their
+  shape. A workspace whose owner uid no account holds skips its
+  mounts with the named cause `owner uid N no longer exists` and
+  still starts.
+
 - **The `virtiofsd-as` owner-exec helper (#1087).** The repo
   carries the helper's C source: `virtiofsd-as <uid> --fd <n> --
 <argv>` validates the invocation, clears supplementary groups,

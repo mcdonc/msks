@@ -80,6 +80,33 @@ def cmdline_is_vmm(cmdline: bytes, binary: str, sock: Path) -> bool:
     )
 
 
+def proc_start_time(pid: int) -> int | None:
+    """The pid's kernel start time, /proc's 22nd stat field —
+    the process identity half of the fs pidfile's guard (#1088):
+    under the --fd contract a share's virtiofsd names no socket
+    path in its argv, so the pidfile carries the spawn's start
+    time beside the pid and a pid that matches both is the very
+    process an earlier daemon spawned (a recycled pid never
+    matches the second half). The comm field can carry spaces
+    and parens, so the parse anchors at the last ``)``. None
+    when the pid is gone or its stat is unreadable — the caller
+    falls back to the legacy cmdline guard."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_bytes()
+    except OSError:
+        return None
+    tail = stat.rsplit(b")", 1)
+    if len(tail) != 2:
+        return None
+    fields = tail[1].split()
+    if len(fields) < 20:  # state(3)..starttime(22) is 20 fields
+        return None
+    try:
+        return int(fields[19])
+    except ValueError:
+        return None
+
+
 async def kill_procs(procs: list) -> None:
     """Kill and reap every process in the sweep — the
     spawn-failure unwind's shape."""

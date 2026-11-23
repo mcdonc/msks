@@ -53,13 +53,16 @@ from .driver import (
     LocalCloudHypervisor,
 )
 from .fsproc import (
+    FD_SERVE_GRACE_S,
     FS_TERM_GRACE_S,
     VERSION_PROBE_TIMEOUT_S,
+    bind_fs_socket,
     fs_pid_serves,
     host_mount_facts,
-    read_fs_pid,
+    read_fs_identity,
     stop_fs_pid,
     sweep_fs_pidfile,
+    write_fs_pidfile,
 )
 from .procs import (
     cmdline_is_vmm,
@@ -68,6 +71,7 @@ from .procs import (
     kill_procs,
     pid_dead_by,
     pid_gone,
+    proc_start_time,
     read_cmdline,
 )
 
@@ -105,11 +109,15 @@ __all__ = [
     "vm_memory",
     "vm_net",
     "FS_TERM_GRACE_S",
+    "FD_SERVE_GRACE_S",
     "VERSION_PROBE_TIMEOUT_S",
+    "bind_fs_socket",
     "fs_pid_serves",
     "host_mount_facts",
-    "read_fs_pid",
+    "proc_start_time",
+    "read_fs_identity",
     "stop_fs_pid",
     "sweep_fs_pidfile",
+    "write_fs_pidfile",
     "LocalCloudHypervisor",
 ]
