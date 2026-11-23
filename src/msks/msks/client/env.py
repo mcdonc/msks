@@ -12,7 +12,10 @@ environment these readers read.
 #555 adds the local shape: ``MSKSC_SOCKET`` (or the default
 socket an unconfigured client finds) connects through the
 daemon's unix listener with peer-credential authentication — no
-token, no TLS. The two shapes flow through one address string:
+token, no TLS. The default such a client looks for is its own
+runtime root's socket first, then the system deployment's
+``/run/msks/msksd.sock`` (#1080). The two shapes flow through
+one address string:
 a TCP daemon is its ``https://host:port`` URL; the local daemon
 is ``http+unix://<percent-encoded path>`` (the curl convention),
 and :func:`is_unix` answers which shape a resolved address
@@ -42,18 +45,14 @@ UNIX_SCHEME = "http+unix://"
 
 #: The message an unconfigured client exits with (#555): the
 #: socket paths it looked for and the two settings that name a
-#: daemon outright. Without a runtime dir there is nothing to
-#: look for, and the message says that instead of an empty list.
+#: daemon outright. The candidates always hold the system
+#: deployment's path (#1080), so the list is never empty.
 UNCONFIGURED_MESSAGE = (
     "no daemon configured and no local socket found ({looked}); "
     "set MSKSC_URL (and MSKSC_TOKEN) for a remote daemon, "
     "MSKSC_SOCKET for a local one, or start msksd"
 )
 LOOKED_FOR = "looked for {candidates}"
-LOOKED_NOWHERE = (
-    "no $XDG_RUNTIME_DIR to look in — a socket outside it is a "
-    "path MSKSC_SOCKET names"
-)
 
 
 def unix_url(path: str) -> str:
@@ -105,13 +104,10 @@ def env_url() -> str:
 
 def looked_for() -> str:
     """The refusal's parenthetical: the paths a client in this
-    environment actually checks, or — when no runtime dir gives
-    it none — the fact that names what to do about it."""
-    candidates = socket_candidates()
-    if not candidates:
-        return LOOKED_NOWHERE
+    environment checks — its runtime root's socket, then the
+    system deployment's ``/run/msks/msksd.sock`` (#1080)."""
     return LOOKED_FOR.format(
-        candidates=", ".join(str(path) for path in candidates)
+        candidates=", ".join(str(path) for path in socket_candidates())
     )
 
 

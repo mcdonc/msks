@@ -17,6 +17,15 @@ tagged `vX.Y.Z`.
   and the daemon's own uid keep receiving every owner's frames,
   and every non-secret event still broadcasts to every socket.
   The audit replay and the live tail now agree.
+- **`socket_group` and the system socket candidate (#1093).**
+  `MSKSD_SOCKET_GROUP` names the group the daemon hands its
+  local listener to at startup: the socket's runtime directory
+  takes 0750 and the socket 0660 under the group, so members
+  connect with no token. The unconfigured client now falls to
+  the system deployment's `/run/msks/msksd.sock` when its own
+  runtime root holds no socket, and its refusal names both
+  paths it checked. The daemon-side half of #1080's phase 3;
+  the system unit that drives the setting lands with #1094.
 
 - **Owner-tracked virtiofsd exec (#1088).** Each share's
   virtiofsd now runs as the workspace's owner: the daemon binds

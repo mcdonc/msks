@@ -442,8 +442,10 @@ secretcache = 4
 # three names); the console and forward dials reach it through
 # rows' close helper. #1088: the same statement gains the
 # dead-owner cause — the skip word the listing and the start's
-# split share.
-spec = 53
+# split share. #1093: the sharing chgrp names its runtime-dir
+# shape — SOCKET_DIR joins the local listener's path-vocabulary
+# statement.
+spec = 54
 # #773: the clone route reads the state-disk floor (create_refusal
 # beside the artifacts' allocated-cost file_cost) before any byte
 # copies.

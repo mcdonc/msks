@@ -6,6 +6,7 @@ without a token."""
 
 import asyncio
 import contextlib
+import grp
 import os
 import shutil
 import socket as socketlib
@@ -22,6 +23,7 @@ import websockets
 from fastapi import FastAPI, Request, WebSocket
 from msks.server import localsocket, main
 from msks.server.api.deps import authed_accept, require_token
+from msks.spec import sockets
 from msks.spec.sockets import (
     default_socket_path,
     find_default_socket,
@@ -71,19 +73,27 @@ def test_default_path_without_xdg_is_no_socket(monkeypatch) -> None:
     assert default_socket_path() is None
 
 
-def test_candidates_are_the_own_runtime_dir_alone(monkeypatch) -> None:
-    """The client looks where the same-user daemon bound: its own
-    runtime root. A socket anywhere else is a deployment choice
-    the client names explicitly, never guesses at."""
+def test_candidates_own_runtime_root_first_then_the_system_path(
+    monkeypatch,
+) -> None:
+    """The client looks where the same-user daemon bound first —
+    its own runtime root — then falls to the system deployment's
+    /run/msks/msksd.sock (#1080). A socket anywhere else is a
+    deployment choice the client names explicitly, never guesses
+    at."""
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1234")
-    assert socket_candidates() == [Path("/run/user/1234/msks/msksd.sock")]
+    assert socket_candidates() == [
+        Path("/run/user/1234/msks/msksd.sock"),
+        Path("/run/msks/msksd.sock"),
+    ]
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
-    assert socket_candidates() == []
+    assert socket_candidates() == [Path("/run/msks/msksd.sock")]
 
 
 def test_candidates_follow_xdg_pointed_at_run(monkeypatch) -> None:
-    """A host whose XDG_RUNTIME_DIR is /run itself still resolves
-    one candidate, /run/msks/msksd.sock."""
+    """A host whose XDG_RUNTIME_DIR is /run itself resolves one
+    candidate: the two paths coincide, and the list carries no
+    duplicate."""
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run")
     assert socket_candidates() == [Path("/run/msks/msksd.sock")]
 
@@ -94,6 +104,10 @@ def test_find_default_socket_skips_non_sockets(
     user_run = tmp_path / "runtime"
     (user_run / "msks").mkdir(parents=True)
     (user_run / "msks" / "msksd.sock").write_text("not a socket")
+    # The system candidate points somewhere this host's state
+    # cannot reach: the answer reads the candidates alone, not
+    # whatever a live system daemon on the test host serves.
+    monkeypatch.setattr(sockets, "SYSTEM_RUNTIME_ROOT", tmp_path / "absent")
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(user_run))
     assert find_default_socket() is None
     assert is_socket_file(user_run / "msks" / "msksd.sock") is False
@@ -150,6 +164,156 @@ def test_bind_refuses_a_non_socket_file(tmp_path: Path) -> None:
     path.write_text("a config file, not a socket")
     with pytest.raises(OSError, match="not a socket"):
         localsocket.bind(path)
+
+
+# --- the sharing chgrp (#1080) -------------------------------------------
+
+
+def test_share_hands_the_socket_and_its_directory_to_the_group(
+    shallow_socket_dir: Path,
+) -> None:
+    """The chgrp the socket_group setting drives: the socket keeps
+    0660 under the new group, the runtime directory takes 0750
+    with it (traverse to the socket, nothing more), and the gid
+    the function answers is the one on the file. The chgrp here
+    targets the test account's own primary group — the one a
+    non-root daemon may always hand its own inodes to."""
+    group = grp.getgrgid(os.getgid()).gr_name
+    path = shallow_socket_dir / "run" / "msks" / "msksd.sock"
+    sock = localsocket.bind(path)
+    try:
+        gid = localsocket.share_with_group(path, group)
+        assert gid == os.getgid()
+        assert path.stat().st_gid == gid
+        assert stat.S_IMODE(path.stat().st_mode) == 0o660
+        assert path.parent.stat().st_gid == gid
+        assert stat.S_IMODE(path.parent.stat().st_mode) == 0o750
+    finally:
+        sock.close()
+        localsocket.unlink(path)
+
+
+def test_share_refuses_an_unknown_group(
+    shallow_socket_dir: Path,
+) -> None:
+    """A group name no account database answers refuses at
+    startup, named — never a socket silently served private."""
+    path = shallow_socket_dir / "msks" / "msksd.sock"
+    sock = localsocket.bind(path)
+    try:
+        with pytest.raises(OSError, match="does not exist"):
+            localsocket.share_with_group(path, "msks-no-such-group")
+    finally:
+        sock.close()
+        localsocket.unlink(path)
+
+
+def test_share_refuses_a_chown_the_membership_does_not_back(
+    shallow_socket_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A chown the daemon's own groups do not back (EPERM on a
+    live host) refuses with the remedy named: the account must
+    hold the group."""
+    path = shallow_socket_dir / "msks" / "msksd.sock"
+    sock = localsocket.bind(path)
+
+    def refused(*_args, **_kwargs):
+        raise PermissionError(1, "Operation not permitted")
+
+    try:
+        monkeypatch.setattr(localsocket.os, "chown", refused)
+        with pytest.raises(OSError, match="must hold the group"):
+            localsocket.share_with_group(path, "users")
+    finally:
+        sock.close()
+        localsocket.unlink(path)
+
+
+def test_share_refuses_a_socket_beside_other_files(
+    shallow_socket_dir: Path,
+) -> None:
+    """The handover takes the listener's own runtime directory and
+    nothing else (#1093 review): a socket directly under a
+    runtime root — whose parent the daemon owns but which holds
+    the session's other sockets too — refuses, and a relative
+    path refuses the same way. The chgrp never rewrites a
+    directory the listener did not create for itself."""
+    beside = shallow_socket_dir / "msksd.sock"
+    sock = localsocket.bind(beside)
+    try:
+        with pytest.raises(OSError, match="not that shape"):
+            localsocket.share_with_group(beside, "users")
+    finally:
+        sock.close()
+        localsocket.unlink(beside)
+    with pytest.raises(OSError, match="not that shape"):
+        localsocket.share_with_group(Path("msksd.sock"), "users")
+
+
+def test_share_refuses_a_directory_another_account_owns(
+    shallow_socket_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The runtime directory must be the daemon's own: a `msks`
+    directory another account owns refuses — a root-run daemon
+    must not chgrp a user's directory out from under them."""
+    path = shallow_socket_dir / "msks" / "msksd.sock"
+    sock = localsocket.bind(path)
+    real = os.geteuid()
+    try:
+        monkeypatch.setattr(localsocket.os, "geteuid", lambda: real + 1)
+        with pytest.raises(OSError, match="not that shape"):
+            localsocket.share_with_group(path, "users")
+    finally:
+        sock.close()
+        localsocket.unlink(path)
+
+
+async def test_a_refused_handover_unlinks_the_socket(
+    shallow_socket_dir: Path,
+) -> None:
+    """A refused handover leaves no socket file behind (#1093
+    review): the chgrp runs inside the listener's try, whose
+    finally unlinks — the file never leaks from a refused
+    startup."""
+    path = shallow_socket_dir / "msks" / "msksd.sock"
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            settings=SimpleNamespace(
+                server=SimpleNamespace(
+                    port=0,
+                    access_log=False,
+                    socket_group="msks-no-such-group",
+                )
+            )
+        )
+    )
+    with pytest.raises(OSError, match="does not exist"):
+        async with main.local_listener(app, FastAPI(), path):
+            raise AssertionError("the handover refused before serving")
+    assert not path.exists()
+
+
+async def test_the_listener_captures_the_gid_after_the_sharing_chgrp(
+    shallow_socket_dir: Path,
+) -> None:
+    """The peer policy's gid is the one the file holds after the
+    sharing chgrp (#1080) — local_listener runs the chgrp before
+    the capture, so the group gate agrees with the file on disk."""
+    group = grp.getgrgid(os.getgid()).gr_name
+    path = shallow_socket_dir / "run" / "msks" / "msksd.sock"
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            settings=SimpleNamespace(
+                server=SimpleNamespace(
+                    port=0, access_log=False, socket_group=group
+                )
+            )
+        )
+    )
+    async with main.local_listener(app, FastAPI(), path):
+        gid = app.state.unix_socket_gid
+        assert gid == os.getgid()
+        assert path.stat().st_gid == gid
 
 
 # --- peer credentials and policy -----------------------------------------
@@ -481,6 +645,7 @@ def fake_listener_app(
                     host="127.0.0.1",
                     port=port,
                     socket=socket_setting,
+                    socket_group=None,
                     access_log=False,
                     tls_cert=None,
                     tls_key=None,

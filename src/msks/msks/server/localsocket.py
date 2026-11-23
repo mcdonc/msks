@@ -19,6 +19,7 @@ the marker: only the wrapped protocols set it, and they set it
 only when ``getsockopt(SO_PEERCRED)`` answered.
 """
 
+import grp
 import os
 import pwd
 import socket
@@ -29,7 +30,7 @@ from pathlib import Path
 
 import uvicorn
 
-from ..spec.sockets import default_socket_path
+from ..spec.sockets import SOCKET_DIR, default_socket_path
 
 #: The marker's kind half: ``scope[\"client\"][0]`` on a request
 #: that arrived through the local listener. The pid half of the
@@ -122,9 +123,10 @@ def bind(path: Path) -> socket.socket:
     file is born with it (#742): the umask the bind runs under
     makes creation itself land 0660 — no window sits between the
     file's appearance and its mode — and the chmod pins the mode
-    on a platform whose socket creation ignores umask. An
-    operator widening access to a group chgrps the file, and the
-    credential policy below agrees with whatever group it holds.
+    on a platform whose socket creation ignores umask. Sharing
+    access with a group is :func:`share_with_group`'s job — the
+    ``socket_group`` setting drives it at startup, and the peer
+    policy below reads the group the daemon started with.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     refuse_taken_path(path)
@@ -146,6 +148,52 @@ def bind(path: Path) -> socket.socket:
         sock.close()
         raise
     return sock
+
+
+def share_with_group(path: Path, group: str) -> int:
+    """Hand the runtime directory and the bound socket to
+    *group* (#1080), and answer the group's gid.
+
+    The handover takes the listener's own runtime directory —
+    the one shaped like the default's: named ``msks`` and owned
+    by the daemon's own account (the unit's
+    ``RuntimeDirectory`` and the default bind's ``mkdir`` both
+    land exactly that shape). A socket anywhere else — directly
+    under a runtime root, beside another daemon's files, at a
+    relative path — refuses rather than chmod a directory the
+    listener does not own: the guard keeps the chgrp from
+    rewriting, say, ``$XDG_RUNTIME_DIR`` or ``/tmp`` itself.
+
+    The directory takes 0750 — the group may traverse to the
+    socket, nothing more — and the socket keeps its 0660 with
+    the new group. The answer is the gid the peer policy reads:
+    the caller captures it after this chgrp, so the group gate
+    agrees with the file on disk. A refusal at startup beats a
+    socket silently served private.
+    """
+    parent = path.parent
+    if parent.name != SOCKET_DIR or parent.stat().st_uid != os.geteuid():
+        raise OSError(
+            f"socket_group needs the socket under a directory named "
+            f"{SOCKET_DIR!r} the daemon's own account owns; {parent} is "
+            "not that shape (point MSKSD_SOCKET at a <...>/msks/msksd.sock "
+            "path)"
+        )
+    try:
+        gid = grp.getgrnam(group).gr_gid
+    except KeyError:
+        raise OSError(f"socket group {group!r} does not exist") from None
+    try:
+        os.chown(path, -1, gid)
+        os.chmod(path, 0o660)
+        os.chown(parent, -1, gid)
+        os.chmod(parent, 0o750)
+    except OSError as exc:
+        raise OSError(
+            f"handing the socket at {path} to group {group!r} failed: "
+            f"{exc} (the daemon's account must hold the group)"
+        ) from exc
+    return gid
 
 
 def refuse_taken_path(path: Path) -> None:
