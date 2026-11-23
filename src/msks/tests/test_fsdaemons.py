@@ -1801,7 +1801,10 @@ async def test_stop_fs_pid_takes_the_term_fast_path() -> None:
         stderr=asyncio.subprocess.DEVNULL,
     )
     try:
-        assert await local_mod.stop_fs_pid(sleeper.pid) is True
+        assert (
+            await local_mod.stop_fs_pid(sleeper.pid, Path("/no/such.sock"))
+            is True
+        )
     finally:
         with contextlib.suppress(ProcessLookupError):
             sleeper.kill()

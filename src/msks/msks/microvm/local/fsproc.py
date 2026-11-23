@@ -163,7 +163,7 @@ def fs_exit_nudge(socket_path: Path) -> None:
         pass
 
 
-async def stop_fs_pid(pid: int, socket_path: Path | None = None) -> bool:
+async def stop_fs_pid(pid: int, socket_path: Path) -> bool:
     """TERM, a short death-wait, then KILL, then the socket's
     disconnect exit; True when the pid died. An untracked daemon
     has no process handle to wait on, so the death check polls
@@ -177,8 +177,7 @@ async def stop_fs_pid(pid: int, socket_path: Path | None = None) -> bool:
         return True
     with contextlib.suppress(ProcessLookupError, PermissionError):
         os.kill(pid, signal.SIGKILL)
-    if socket_path is not None:
-        fs_exit_nudge(socket_path)
+    fs_exit_nudge(socket_path)
     return await pid_dead_by(pid, FS_TERM_GRACE_S)
 
 
