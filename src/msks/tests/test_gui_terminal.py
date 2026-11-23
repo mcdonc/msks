@@ -11,6 +11,7 @@ states the trap).
 """
 
 import ctypes
+import math
 import os
 import string
 import subprocess
@@ -464,10 +465,8 @@ def test_a_fractional_ratio_covers_every_device_pixel(screen, qt, monkeypatch):
 
     vt(screen, b"\x1b[2J\x1b[Hsome text")
     screen.grab()
-    ratio = 1.5
+    ratio = 1.25  # 533 x 1.25 rounds down under round(), up under ceil
     monkeypatch.setattr(paint, "pixel_ratio", lambda screen: ratio)
-    import math
-
     image = qt.QtGui.QImage(
         math.ceil(screen.width() * ratio),
         math.ceil(screen.height() * ratio),
