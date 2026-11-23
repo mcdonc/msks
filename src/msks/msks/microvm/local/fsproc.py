@@ -99,8 +99,15 @@ def bind_fs_socket(path: Path) -> int:
     lane's) and the daemon's own until the spawn closes it."""
     sock = socket_module.socket(
         socket_module.AF_UNIX,
-        socket_module.SOCK_STREAM | socket_module.SOCK_CLOEXEC,
+        socket_module.SOCK_STREAM,
     )
+    # Close-on-exec without the Linux-only SOCK_CLOEXEC flag
+    # (#1105): a darwin CPython's socket module carries no such
+    # attribute and the macOS verify suite died on it, while
+    # set_inheritable(False) sets the same fcntl close-on-exec
+    # bit on every platform. The spawn's pass_fds clears the
+    # bit for the child that receives the descriptor.
+    sock.set_inheritable(False)
     sock.bind(str(path))
     sock.listen(8)
     return sock.detach()
