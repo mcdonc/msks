@@ -1729,6 +1729,66 @@ def test_final_output_and_exit_share_one_readiness_window(qt):
         shutdown(widget)
 
 
+def test_a_late_exit_reports_its_real_code(qt):
+    """#1099 follow-up: the kernel closes the child's slave fds
+    before the child is waitable, so the exit report can land in
+    that window. A child that drops its tty and lives on puts
+    child_gone exactly there — the bounded wait collects the
+    real code instead of reporting the 0 placeholder (the race
+    a loaded CI runner caught)."""
+    from msks.client.gui.terminal import TerminalWidget
+
+    child = (
+        "import os, signal, time; "
+        "signal.signal(signal.SIGHUP, signal.SIG_IGN); "
+        "[os.close(fd) for fd in (0, 1, 2)]; "
+        "time.sleep(0.2); "
+        "raise SystemExit(7)"
+    )
+    exits = []
+    widget = TerminalWidget([sys.executable, "-c", child])
+    try:
+        widget.process_exited.connect(exits.append)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not exits:
+            qt.app.processEvents()
+            time.sleep(0.01)
+        assert widget.session.exited
+        assert exits == [7]
+    finally:
+        shutdown(widget)
+
+
+def test_a_wedged_child_reports_the_placeholder_within_the_grace(qt):
+    """#1099 follow-up's other arm: a child that drops its tty
+    and stays wedged past the grace still gets its report, on
+    time and with the 0 placeholder — the report never hangs on
+    a child the grace cannot collect."""
+    from msks.client.gui.terminal import TerminalWidget
+
+    child = (
+        "import os, signal, time; "
+        "signal.signal(signal.SIGHUP, signal.SIG_IGN); "
+        "[os.close(fd) for fd in (0, 1, 2)]; "
+        "time.sleep(30)"
+    )
+    exits = []
+    widget = TerminalWidget([sys.executable, "-c", child])
+    try:
+        widget.process_exited.connect(exits.append)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not exits:
+            qt.app.processEvents()
+            time.sleep(0.01)
+        assert widget.session.exited
+        assert exits == [0]
+        # The child is still alive: the teardown's escalation
+        # is what collects it.
+        assert widget.session.child_pid is not None
+    finally:
+        shutdown(widget)
+
+
 def test_a_burst_of_final_bytes_takes_the_exit_path(screen, qt):
     """The burst arm itself: a drain that delivers the child's
     last bytes with the session already marked exited runs the
