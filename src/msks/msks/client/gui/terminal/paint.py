@@ -274,7 +274,10 @@ def paint_event(screen, painter: QPainter, region: QRegion) -> None:
     )
     rows = screen.repaint_rows | overlay_rows(screen, cursor)
     paint_cells(screen, painter, colors, rects_by_row, region, full, rows)
-    paint_past_grid(screen, painter, colors, region, full)
+    # the fringe and the lane paint every pass, clipped to the
+    # region — a row's strip spans the widget's width, so any
+    # partial plan's region reaches them anyway
+    paint_fringe(screen, painter, colors)
     consume_plan(screen)
     paint_overlays(screen, painter, colors, cursor)
 
@@ -288,15 +291,6 @@ def take_full(screen, colors, rects_by_row) -> bool:
     if full:
         full_due(screen, colors, rects_by_row)
     return full
-
-
-def paint_past_grid(screen, painter, colors, region, full) -> None:
-    """The strips the grid does not reach — the fringe below
-    and right of it, the scrollbar's lane among them — filled
-    with the background on a full pass, or when this paint's
-    region reaches into them."""
-    if full or fringe_exposed(screen, region):
-        paint_fringe(screen, painter, colors)
 
 
 def consume_plan(screen) -> None:
@@ -318,18 +312,6 @@ def paint_overlays(screen, painter, colors, cursor) -> None:
     paint_exit_banner(screen, painter)
     if screen.bell_flash:
         paint_bell_flash(screen, painter)
-
-
-def fringe_exposed(screen, region: QRegion) -> bool:
-    """Whether this paint's region reaches past the grid, into
-    the fringe the full pass fills."""
-    if region.isEmpty():
-        return False
-    box = region.boundingRect()
-    return (
-        box.bottom() >= screen.rows * screen.metrics.cell_height
-        or box.right() >= screen.cols * screen.metrics.cell_width
-    )
 
 
 def paint_cells(
