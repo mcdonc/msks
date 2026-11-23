@@ -100,6 +100,11 @@ SHAPE_CASES = [
         ["1000", "--fd", "999999999999", "--", "x"],
         "fd: out",
     ),
+    (
+        "fd below three",
+        ["1000", "--fd", "2", "--", "x"],
+        "fd: 0, 1, and 2 are the standard streams",
+    ),
 ]
 
 

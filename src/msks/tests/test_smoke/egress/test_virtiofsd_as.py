@@ -99,11 +99,14 @@ def owner_account():
 def open_tmp_tree(tmp_path: Path) -> None:
     """Make pytest's tmp tree traversable by the target uid: the
     lane's basetemp is 0700 root-owned, and nobody must walk it to
-    exec the helper and the probe. Stops at /tmp, which keeps its
+    exec the helper and the probe. Checks the tree is under /tmp
+    before loosening anything, and stops at /tmp, which keeps its
     own mode (the sticky bit stays)."""
+    assert tmp_path.is_relative_to("/tmp"), (
+        f"expected a basetemp under /tmp, got {tmp_path}"
+    )
     p = tmp_path
     while p != Path("/tmp"):
-        assert p != p.parent, f"{tmp_path} is not under /tmp"
         os.chmod(p, 0o755)
         p = p.parent
 
@@ -146,27 +149,42 @@ def build_probe(tmp_path: Path) -> Path:
 
 
 def run_as(
-    caller_uid: int, caller_gid: int, target_uid: int, binary: Path, fd: int
+    caller_uid: int,
+    caller_gid: int,
+    target_uid: int,
+    binary: Path,
+    fd: int,
+    *,
+    inh_caps: str | None = None,
 ):
     """One helper invocation as an unprivileged caller through
     setpriv — the setuid bit on the helper is what lifts euid to
     root — targeting ``target_uid``, and carrying a hostile
-    environment nothing of which may cross the exec."""
+    environment nothing of which may cross the exec. ``inh_caps``
+    raises one inheritable capability in the caller (util-linux
+    2.38+): the uid-0 leg uses it to prove the helper's explicit
+    capset, not the caller's empty inheritable set, is what drops
+    the capabilities."""
+    command = [
+        "setpriv",
+        "--reuid",
+        str(caller_uid),
+        "--regid",
+        str(caller_gid),
+        "--clear-groups",
+    ]
+    if inh_caps is not None:
+        command += ["--inh-caps", inh_caps]
+    command += [
+        str(binary),
+        str(target_uid),
+        "--fd",
+        str(fd),
+        "--",
+        "carried-arg",
+    ]
     return subprocess.run(
-        [
-            "setpriv",
-            "--reuid",
-            str(caller_uid),
-            "--regid",
-            str(caller_gid),
-            "--clear-groups",
-            str(binary),
-            str(target_uid),
-            "--fd",
-            str(fd),
-            "--",
-            "carried-arg",
-        ],
+        command,
         pass_fds=[fd],
         capture_output=True,
         text=True,
@@ -200,7 +218,7 @@ def assert_common_drops(evidence_map, uid: int, fd: int) -> None:
     assert evidence_map["uid"] == str(uid)
     assert evidence_map["gid"] == str(uid)
     assert evidence_map["groups"] == ""
-    for key in ("CapEff", "CapPrm", "CapBnd"):
+    for key in ("CapEff", "CapPrm", "CapInh", "CapBnd"):
         assert int(str(evidence_map[key]), 16) == 0, (key, evidence_map[key])
     # Exactly the fixed environment crosses — one PATH, nothing
     # else; no shell sits between exec and environ.
@@ -237,7 +255,11 @@ def test_execs_as_uid_0_with_every_capability_dropped(tmp_path):
     """The uid-0 target — the one case where the kernel keeps the
     capability sets through the uid switch: the helper's explicit
     empty capset is the only thing standing between a root-owner
-    share and a fully privileged virtiofsd."""
+    share and a fully privileged virtiofsd. The caller carries a
+    raised inheritable capability (wake_alarm) into the exec, so
+    an empty capset is the ONLY way the probe reads zeros — a
+    deleted capset leaks the inheritable cap across and fails
+    here, whatever the host session's own capability state."""
     entry = owner_account()
     open_tmp_tree(tmp_path)
     probe = build_probe(tmp_path)
@@ -245,7 +267,9 @@ def test_execs_as_uid_0_with_every_capability_dropped(tmp_path):
     server, client = socket.socketpair()
     fd = server.fileno()
     with server, client:
-        result = run_as(entry.pw_uid, entry.pw_gid, 0, binary, fd)
+        result = run_as(
+            entry.pw_uid, entry.pw_gid, 0, binary, fd, inh_caps="+wake_alarm"
+        )
     assert result.returncode == 0, result.stderr
     assert_common_drops(evidence(result), 0, fd)
 

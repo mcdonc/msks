@@ -152,6 +152,12 @@ int main(int argc, char **argv)
         refuse("usage: virtiofsd-as <uid> --fd <n> -- <argv...>");
     uid = parse_uid(argv[1]);
     fd = parse_fd(argv[3]);
+    /* The listening fd is 3 or above: 0-2 are the standard
+     * streams, and closing them for the named fd would silence
+     * the audit's stderr copy and the daemon's pipes. */
+    if (fd < 3)
+        refuse("fd: 0, 1, and 2 are the standard streams; pass "
+               "the listening fd as 3 or above");
     if (fstat(fd, &st) != 0)
         fail("the listening fd is not open");
     if (!S_ISSOCK(st.st_mode))
@@ -188,7 +194,9 @@ int main(int argc, char **argv)
 
     /* Exactly one fd crosses the exec: everything above the
      * standard three, except the listening fd, closes — no
-     * stray descriptor of the caller's reaches virtiofsd. */
+     * stray descriptor of the caller's reaches virtiofsd. A
+     * kernel without close_range (pre-5.9) refuses here: the
+     * exclusivity is the contract, not a best effort. */
     if (fd > 3 &&
         syscall(SYS_close_range, 3u, (unsigned int)fd - 1u, 0u) != 0)
         fail("cannot close stray fds");
