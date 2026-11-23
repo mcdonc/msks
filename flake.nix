@@ -57,6 +57,17 @@
       guest-image-debian = guestImages.image-archive-debian;
       guest-image-nixos = guestImages.image-archive-nixos;
 
+      # The owner-exec helper's module-shaped build (#1087, #1080
+      # phase 2a): the same expression nix/module.nix builds into
+      # security.wrappers.msks-virtiofsd-as — static musl, the
+      # host's virtiofsd pinned as the exec target. Exposed for
+      # the nix workflow's build gate. The release assets do not
+      # build here: release.yml compiles them with each runner's
+      # native gcc -static on the two runner architectures.
+      virtiofsd-as = pkgs.pkgsStatic.callPackage ./nix/virtiofsd-as.nix {
+        virtiofsd = pkgs.virtiofsd;
+      };
+
       # Eval-only guards (#231): both egress branches of the module
       # evaluate, the unit exists, and the capability grant follows
       # the branch. Evaluated at flake-eval time, asserted in the
@@ -95,6 +106,7 @@
           server
           guest-image-debian
           guest-image-nixos
+          virtiofsd-as
           ;
         default = msksd;
       };
@@ -112,6 +124,12 @@
             tunOn = pkgs.lib.boolToString (hasTun on);
             tunOff = pkgs.lib.boolToString (hasTun off);
             fwdOn = on.boot.kernel.sysctl."net.ipv4.ip_forward" or null;
+            # The owner-exec wrapper (#1087): setuid-root and
+            # root:msksd, the exact privilege contract the daemon's
+            # owner-tracked shares exec through.
+            wrapperSetuid = pkgs.lib.boolToString on.security.wrappers.msks-virtiofsd-as.setuid;
+            wrapperGroup = on.security.wrappers.msks-virtiofsd-as.group;
+            wrapperSource = toString on.security.wrappers.msks-virtiofsd-as.source;
           }
           ''
             test -n "$execOn" && test -n "$execOff" || {
@@ -137,6 +155,12 @@
             test "$tunOn" = "true" || { echo "fail: egress branch missing the tun module"; exit 1; }
             test "$tunOff" = "false" || { echo "fail: vsock-only branch loads the egress modules"; exit 1; }
             test "$fwdOn" = "1" || { echo "fail: egress branch lost ip_forward"; exit 1; }
+            test "$wrapperSetuid" = "true" || {
+              echo "fail: msks-virtiofsd-as wrapper is not setuid"; exit 1; }
+            test "$wrapperGroup" = "msksd" || {
+              echo "fail: msks-virtiofsd-as wrapper is not group msksd"; exit 1; }
+            test -n "$wrapperSource" || {
+              echo "fail: msks-virtiofsd-as wrapper has no source"; exit 1; }
             touch "$out"
           '';
     };

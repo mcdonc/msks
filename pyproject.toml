@@ -109,6 +109,25 @@ msks-setup-macos-host = "msks.server.hostsetup_macos:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/msks/msks"]
+# The helper binary (#1087) is a build artifact the release
+# workflow drops into the tree at wheel-build time; it is
+# git-ignored, so it needs the explicit artifacts opt-in —
+# hatchling's default VCS exclusion would otherwise drop it from
+# the wheel too.
+artifacts = ["src/msks/msks/bin/virtiofsd-as"]
+
+# The owner-exec helper rides the platform wheels only (#1087):
+# the release workflow compiles nix/virtiofsd-as.c per arch into
+# msks/bin/ before building, so the binary ships as package data
+# on a matching host (a pip install prefers the platform wheel
+# over the pure one), while a build without the file present —
+# the pure wheel, every dev and nix build — simply carries no
+# helper. The sdist excludes the directory on purpose: a source
+# distribution is arch-neutral and must never ship a compiled
+# ELF, and the workflow builds the platform wheels with
+# `--wheel` straight from the tree for exactly that reason.
+[tool.hatch.build.targets.sdist]
+exclude = ["src/msks/msks/bin"]
 
 [tool.pytest.ini_options]
 # Library-internal deprecations our code paths cannot fix (last-resort

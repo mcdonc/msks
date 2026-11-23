@@ -82,3 +82,12 @@ jobs:
       # evaluate and the unit carries the right capabilities.
       - name: Build the module eval check
         run: nix build .#checks.x86_64-linux.module
+
+      # The owner-exec helper (#1087): the module-shaped build
+      # (static musl, virtiofsd pinned as the exec target) — the
+      # derivation security.wrappers.msks-virtiofsd-as consumes.
+      # The release's per-arch assets build outside nix
+      # (release.yml compiles them with the runners' native gcc),
+      # so this gate owns the nix half of the helper's build.
+      - name: Build the owner-exec helper
+        run: nix build .#virtiofsd-as

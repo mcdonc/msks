@@ -39,3 +39,8 @@ spikes/ghostling-qt/vendor/*.so
 spikes/ghostling-qt/vendor/*.zip
 spikes/ghostling-qt/vendor/fonts/
 spikes/devenv.lock
+
+# The owner-exec helper's platform-wheel payload (#1087): the
+# release workflow compiles it into the tree at wheel-build time;
+# it never commits.
+/src/msks/msks/bin/
