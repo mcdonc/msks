@@ -124,8 +124,9 @@ def consume_damage(screen, colors, full: bool) -> set[int]:
         gt.RS_ROW_ITERATOR,
         ctypes.c_void_p(screen.row_iterator),
     )
-    if not (ok and iterator.value):
-        return rows
+    if not (ok and iterator.value):  # no state reaches this arm
+        return rows  # pragma: no cover — probed: a state with a
+        # palette always holds its rows
     if full:
         clear_all_rows(screen, iterator)
         return rows

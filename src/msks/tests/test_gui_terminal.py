@@ -823,6 +823,11 @@ def test_paint_without_a_palette_draws_nothing(screen, qt):
         paint_mod.paint_event(
             Paletteless(), painter, qt.QtGui.QRegion(0, 0, 10, 10)
         )  # draws nothing
+        # the plan over the same stub owes nothing either
+        bare = Paletteless()
+        region = paint_mod.plan_paint(bare)
+        assert region.isEmpty()
+        assert bare.repaint_full is False
     finally:
         painter.end()
 
