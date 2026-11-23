@@ -1,10 +1,23 @@
 """The cell painter (phase 4.5 of #924, #952).
 
 Every paint walks the render state's row iterator and draws
-each cell from the library's own answers: the RGB colors, the
-style flags, the cursor rectangle, the scrollbar thumb, the
-exit banner, and the bell flash. The widget keeps no palette
-of its own — what the render state says is what paints.
+each damaged cell from the library's own answers: the RGB
+colors, the style flags, the cursor rectangle, the scrollbar
+thumb, the exit banner, and the bell flash. The widget keeps
+no palette of its own — what the render state says is what
+paints.
+
+The cells paint into an offscreen pixmap — the cell cache
+(#1104) — and every paint blits the cache whole over the
+widget. A typed character repaints its row alone: the damage
+set is the library's per-row dirty flags, consumed as each
+row paints. The blit erases the last frame's overlays, so the
+cursor, the scrollbar, the exit banner, and the bell flash
+draw fresh above it every paint and never age in the cache.
+Three things repaint every row: a cache built for different
+pixels, a viewport that moved (the library flags no rows for
+a viewport scroll, probed), and a find pass whose match
+rectangles moved without the rows changing underneath them.
 """
 
 from __future__ import annotations
@@ -12,7 +25,7 @@ from __future__ import annotations
 import ctypes
 
 from PySide6.QtCore import QPointF, QRect, Qt
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtGui import QColor, QPainter, QPixmap
 
 from .. import ghostty as gt
 from . import find
@@ -45,13 +58,19 @@ def palette(screen):
 
 
 def paint_event(screen, painter: QPainter) -> None:
-    """One full paint of the grid: background, cells, cursor,
-    scrollbar, exit banner, and the bell flash border."""
+    """One paint of the grid: the damaged rows into the cell
+    cache, the cache blitted whole over the widget, and the
+    overlays drawn fresh above the blit."""
     colors = palette(screen)
     if colors is None:
         return
-    painter.fillRect(screen.rect(), rgb(colors.background))
-    paint_cells(screen, painter, colors)
+    rects_by_row = underlay_map(screen)
+    cache = sync_cache(screen, colors, rects_by_row)
+    try:
+        paint_cells(screen, cache, colors, rects_by_row)
+    finally:
+        cache.end()
+    painter.drawPixmap(0, 0, screen.cell_cache)
     paint_cursor(screen, painter, colors)
     paint_scrollbar(screen, painter)
     paint_exit_banner(screen, painter)
@@ -59,11 +78,52 @@ def paint_event(screen, painter: QPainter) -> None:
         paint_bell_flash(screen, painter)
 
 
-def paint_cells(screen, painter: QPainter, colors) -> None:
-    """Walk the rows the render state holds and paint each
-    cell. The walk also records each row's plain text into
-    the URL scan, and paints the find bar's match underlays
-    beneath the cells."""
+def sync_cache(screen, colors, rects_by_row) -> QPainter:
+    """The painter over the cell cache, after deciding how
+    much of it repaints: a cache built for other pixels, a
+    viewport that moved, or a find pass whose rectangles
+    moved each repaint every row; otherwise the damage stays
+    the library's per-row flags alone."""
+    pixels = (screen.width(), screen.height())
+    full = screen.cell_cache is None or screen.cache_pixels != pixels
+    if full:
+        screen.cell_cache = QPixmap(max(1, pixels[0]), max(1, pixels[1]))
+        screen.cell_cache.fill(rgb(colors.background))
+        screen.cache_pixels = pixels
+    offset = scrollbar_offset(screen)
+    if screen.cache_scroll != offset:
+        full = True
+        screen.cache_scroll = offset
+    if screen.cache_underlays != rects_by_row:
+        full = True
+        screen.cache_underlays = rects_by_row
+    screen.cache_full = full
+    screen.painted_rows = []
+    return QPainter(screen.cell_cache)
+
+
+def scrollbar_offset(screen):
+    """The viewport's offset in the scrollback: the number a
+    paint compares against the last paint's number to catch a
+    viewport scroll, which the library's row flags leave
+    clean."""
+    ok, bar = screen.lib.get(
+        screen.lib.terminal_get,
+        screen.terminal,
+        gt.DATA_SCROLLBAR,
+        gt.Scrollbar(),
+    )
+    return bar.offset if ok else None
+
+
+def paint_cells(screen, painter: QPainter, colors, rects_by_row) -> None:
+    """Walk the rows the render state holds and paint the
+    damaged ones into the cache, consuming each painted row's
+    dirty flag. A row outside the damage set keeps both its
+    pixels and its URL spans in the cache. The walk also
+    records each painted row's plain text into the URL scan,
+    and paints the find bar's match underlays beneath the
+    cells."""
     ok, iterator = screen.lib.get(
         screen.lib.render_state_get,
         screen.render_state,
@@ -78,33 +138,88 @@ def paint_cells(screen, painter: QPainter, colors) -> None:
         style = gt.Style()
         style.size = ctypes.sizeof(style)
         codepoints = (ctypes.c_uint32 * CLUSTER_CAP)()
-        rects_by_row = underlay_map(screen)
-        spans: list[list[tuple[int, int, str]]] = []
-        y = 0
-        viewport_row = -1
-        while screen.lib.row_iterator_next(iterator.value):
-            _, cells = screen.lib.get(
-                screen.lib.row_get,
-                iterator.value,
-                gt.ROW_CELLS,
-                ctypes.c_void_p(screen.row_cells),
+        screen.link_spans = walk_rows(
+            screen, painter, colors, style, codepoints, iterator, rects_by_row
+        )
+
+
+def walk_rows(
+    screen, painter, colors, style, codepoints, iterator, rects_by_row
+):
+    """The viewport walk: a row paints when it carries damage
+    or the pass takes every row, and the answer is the trimmed
+    per-row URL span list — a row outside the damage set keeps
+    the spans its cached pixels still show."""
+    spans = screen.link_spans
+    count = 0
+    y = 0
+    while screen.lib.row_iterator_next(iterator.value):
+        _, cells = screen.lib.get(
+            screen.lib.row_get,
+            iterator.value,
+            gt.ROW_CELLS,
+            ctypes.c_void_p(screen.row_cells),
+        )
+        if screen.cache_full or row_dirty(screen, iterator.value):
+            paint_damaged_row(
+                screen,
+                painter,
+                colors,
+                style,
+                codepoints,
+                iterator,
+                cells,
+                spans,
+                rects_by_row,
+                count,
+                y,
             )
-            viewport_row += 1
-            paint_underlays(
-                screen, painter, rects_by_row.get(viewport_row, []), y
-            )
-            spans.append(
-                paint_row(screen, painter, colors, style, codepoints, cells, y)
-            )
-            clean = ctypes.c_bool(False)
-            screen.lib.row_set(iterator, gt.ROW_DIRTY, ctypes.byref(clean))
-            y += screen.metrics.cell_height
-        screen.link_spans = spans
+        count += 1
+        y += screen.metrics.cell_height
+    return spans[:count]
+
+
+def paint_damaged_row(
+    screen,
+    painter,
+    colors,
+    style,
+    codepoints,
+    iterator,
+    cells,
+    spans,
+    rects_by_row,
+    count: int,
+    y: int,
+) -> None:
+    """One damaged row's contribution to the cache: the find
+    underlays beneath it, its cells, its URL span entry, the
+    consumption of its dirty flag, and its place in the paint
+    record the damage pins read."""
+    paint_underlays(screen, painter, rects_by_row.get(count, []), y)
+    while len(spans) <= count:
+        spans.append([])
+    spans[count] = paint_row(
+        screen, painter, colors, style, codepoints, cells, y
+    )
+    clean = ctypes.c_bool(False)
+    screen.lib.row_set(iterator, gt.ROW_DIRTY, ctypes.byref(clean))
+    screen.painted_rows.append(count)
+
+
+def row_dirty(screen, iterator: int) -> bool:
+    """Whether the library flags one viewport row as damaged,
+    read without consuming it."""
+    ok, dirty = screen.lib.get(
+        screen.lib.row_get, iterator, gt.ROW_DIRTY, ctypes.c_bool()
+    )
+    return bool(ok and dirty.value)
 
 
 def underlay_map(screen) -> dict[int, list[tuple[int, int, bool]]]:
     """The find bar's viewport rectangles grouped by row, for
-    painting beneath the cells."""
+    painting beneath the cells and for the cache's comparison
+    against the last paint's map."""
     rects_by_row: dict[int, list[tuple[int, int, bool]]] = {}
     for row, x, width, is_selected in find.viewport_rects(screen):
         rects_by_row.setdefault(row, []).append((x, width, is_selected))

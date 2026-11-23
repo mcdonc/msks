@@ -163,6 +163,20 @@ class TerminalWidget(QWidget):
         self.autoscroll.timeout.connect(self.autoscroll_tick)
         self.link_spans: list[list[tuple[int, int, str]]] = []
         self.hand_cursor = False
+        # The cell cache (#1104): rows painted into an offscreen
+        # pixmap and blitted whole each paint, so a typed
+        # character repaints its row alone. The paint module
+        # owns the policy; these fields are its state on the
+        # screen — the pixmap, the pixels and scrollback offset
+        # it was built for, the last paint's find rectangles,
+        # whether the next paint takes every row, and the rows
+        # the last paint took (the suite's damage pins).
+        self.cell_cache = None
+        self.cache_pixels: tuple[int, int] | None = None
+        self.cache_scroll: int | None = None
+        self.cache_underlays = None
+        self.cache_full = True
+        self.painted_rows: list[int] = []
         self.search = 0
         self.find_edit: QLineEdit | None = None
         self.find_count = None
