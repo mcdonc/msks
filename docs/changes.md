@@ -587,7 +587,6 @@ gui`. The nix package keeps the daemon's closure lean, so on
   still wraps past the viewport's bottom edge answers no
   link, because the rows below the viewport cannot be read to
   tell whether the address continues there.
->>>>>>> a2153f00 (Open wrapped URLs whole from any row in the GUI terminal)
 - **`nix build .#server` on the unstable nixpkgs pin (#1062).**
   The build again completes: the pinned set's filelock, openai,
   and huggingface-hub had moved outside litellm 1.106.2's
