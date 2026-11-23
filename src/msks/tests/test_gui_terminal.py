@@ -420,6 +420,147 @@ def test_painted_text_lands_in_the_right_cells(screen, qt):
     assert top != below, "row 0 carries glyph ink"
 
 
+# --- paint damage (#1104) ------------------------------------------------
+
+
+def test_one_typed_character_repaints_its_row_alone(screen, qt):
+    """The paint's damage set is the library's own row flags
+    (#1104): the first grab builds the cell cache and paints
+    every row, and the next character repaints the row its
+    cursor sits in alone — the whole-grid paint a typed
+    character once paid is the echo lag the issue chased."""
+    vt(screen, b"\x1b[2J\x1b[Hhello\r\nworld")
+    screen.grab()
+    assert screen.painted_rows == list(range(screen.rows))
+    vt(screen, b"x")  # the cursor sits on row 1
+    screen.grab()
+    assert screen.painted_rows == [1]
+
+
+def test_the_cursor_moves_without_row_damage(screen, qt):
+    """A cursor move flags no rows (probed): the paint blits
+    the cache whole — erasing the cursor the last frame drew
+    above it — and draws the cursor at its new cell, with the
+    cells themselves untouched."""
+    vt(screen, b"\x1b[2J\x1b[Hhello")
+    before = screen.grab().toImage()
+    vt(screen, b"\x1b[3C")
+    after = screen.grab().toImage()
+    assert screen.painted_rows == []
+    assert after != before
+
+
+def test_a_viewport_scroll_repaints_every_row(screen, qt):
+    """The library's row flags stay clean through a viewport
+    scroll (probed); the cache compares the scrollbar's
+    offset and repaints every row when the viewport moved —
+    the rows the viewport now shows are different buffer
+    lines."""
+    vt(screen, b"\x1b[2J\x1b[H" + b"line\r\n" * 40)  # history to page into
+    screen.grab()
+    screen.scroll_rows(-3)
+    screen.grab()
+    assert screen.painted_rows == list(range(screen.rows))
+
+
+def test_a_pixel_resize_rebuilds_the_cache(screen, qt):
+    """A resize rebuilds the cache for the new pixels and
+    paints every row into it (the library flags them all,
+    probed): a stale cache would show the old grid's rows
+    beside the new grid's."""
+    vt(screen, b"\x1b[2J\x1b[Hhello")
+    screen.grab()
+    size = screen.size() + qt.QtCore.QSize(120, 40)
+    screen.resize(size)
+    screen.resizeEvent(qt.QtGui.QResizeEvent(size, screen.size()))
+    screen.grab()
+    assert screen.painted_rows == list(range(screen.rows))
+
+
+def test_a_changed_find_pass_repaints_every_row(screen, qt):
+    """The find underlays paint beneath the cells, into the
+    cache (#1104): a search whose rectangles arrive with the
+    rows clean repaints every row, or the tint would age in
+    the cache while the needle steps."""
+    from msks.client.gui.terminal import find
+
+    vt(screen, b"\x1b[2J\x1b[Hneedle here")
+    screen.grab()
+    find.open(screen)
+    find.run(screen, "needle")
+    screen.grab()
+    assert screen.painted_rows == list(range(screen.rows))
+    find.close(screen)
+
+
+def test_a_scheme_flip_repaints_every_row_and_the_pixels(screen, qt):
+    """The scheme flip's own path — ``terminal_set`` of the
+    base colors, what ``colors.apply`` runs — flags every row
+    (probed) and moves the render state's palette: the whole
+    grid repaints, and the cache's base fill takes the new
+    background, so the painted pixels follow — a blank row
+    reads the new scheme's background, not the one the cache
+    was built with (review round one: the rows repainted over
+    a stale base, black-on-black under a light scheme)."""
+    from msks.client.gui.terminal import colors
+
+    vt(screen, b"\x1b[2J\x1b[Hsome text\r\n\r\n\r\nmore")
+    screen.grab()
+    colors.apply(screen, gt.COLOR_SCHEME_LIGHT)
+    image = screen.grab().toImage()
+    assert screen.painted_rows == list(range(screen.rows))
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    pixel = image.pixelColor(cw * 2, ch + ch // 2)  # blank row 1
+    assert (pixel.red(), pixel.green(), pixel.blue()) == (255, 255, 255)
+
+
+def test_a_program_retint_repaints_the_pixels(screen, qt):
+    """A program's own default-color move — OSC 11's background
+    with OSC 10's foreground flushing the sync — moves the
+    render state's palette like the scheme flip does, and the
+    same comparison carries it: every row repaints over a base
+    fill taken from the new background."""
+    vt(screen, b"\x1b[2J\x1b[Hsome text\r\n\r\n\r\nmore")
+    screen.grab()
+    vt(screen, b"\x1b]11;rgb:00/00/cc\x07\x1b]10;rgb:ff/ff/00\x07")
+    image = screen.grab().toImage()
+    assert screen.painted_rows == list(range(screen.rows))
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    pixel = image.pixelColor(cw * 2, ch + ch // 2)  # blank row 1
+    assert (pixel.red(), pixel.green(), pixel.blue()) == (0, 0, 204)
+
+
+def test_a_metrics_change_at_the_same_pixels_rebuilds_the_cache(screen, qt):
+    """A font change at the same widget pixels — the zoom on a
+    maximized window, a hidden tab's ``set_face`` — keeps the
+    cache key's pixel half still, so the key carries the cell
+    metrics too: the cache rebuilds and repaints every row,
+    and the strip below the smaller grid carries the
+    background instead of the old frame's last row (review
+    round one: the rows repainted beside their stale
+    neighbor)."""
+    from msks.client.gui.terminal.paint import palette
+
+    vt(screen, b"\x1b[2J\x1b[Hsome text")
+    size = qt.QtCore.QSize(400, 300)
+    screen.resize(size)
+    screen.resizeEvent(qt.QtGui.QResizeEvent(size, screen.size()))
+    screen.grab()  # the cache builds for this grid and font
+    larger = screen.font.pointSize()
+    screen.set_face(larger - 4)  # smaller cells at the same pixels
+    background = palette(screen).background
+    image = screen.grab().toImage()
+    assert screen.painted_rows == list(range(screen.rows))
+    strip_y = screen.rows * screen.metrics.cell_height + 2
+    assert strip_y < screen.height()  # smaller cells always leave it
+    pixel = image.pixelColor(screen.metrics.cell_width * 2, strip_y)
+    assert (pixel.red(), pixel.green(), pixel.blue()) == (
+        background.r,
+        background.g,
+        background.b,
+    )
+
+
 def test_the_inverse_and_faint_styles_paint(screen, qt):
     """Inverse swaps the cell's colors and faint dims the ink —
     both paint without changing the grid — and an empty cell

@@ -553,6 +553,14 @@ gui`. The nix package keeps the daemon's closure lean, so on
 
 ### Fixed
 
+- **GUI terminal echo lag (#1104).** Typing in a GUI
+  terminal tab now echoes immediately: each paint repairs
+  only the rows the terminal emulator flags as damaged
+  instead of repainting every cell of the grid (a full-grid
+  paint cost ~80 ms per echoed character, and echoes fell
+  further behind while typing). The cells live in an
+  offscreen cache blitted whole each frame, so the cursor,
+  scrollbar, and overlays draw fresh above it.
 - **`nix build .#server` on the unstable nixpkgs pin (#1062).**
   The build again completes: the pinned set's filelock, openai,
   and huggingface-hub had moved outside litellm 1.106.2's
