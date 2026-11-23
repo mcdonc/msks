@@ -157,7 +157,8 @@ jobs:
       - name: Compile the helper into the package
         run: |
           mkdir -p src/msks/msks/bin
-          cc -O2 -Wall -Wextra -Werror -static \
+          cc -O2 -D_FORTIFY_SOURCE=2 -fstack-protector-strong \
+            -Wall -Wextra -Werror -static \
             -o src/msks/msks/bin/virtiofsd-as nix/virtiofsd-as.c
           file src/msks/msks/bin/virtiofsd-as
 

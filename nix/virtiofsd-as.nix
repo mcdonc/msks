@@ -43,7 +43,8 @@ stdenv.mkDerivation {
 
   buildPhase = ''
     runHook preBuild
-    "$CC" -O2 -Wall -Wextra -Werror -static \
+    "$CC" -O2 -D_FORTIFY_SOURCE=2 -fstack-protector-strong \
+      -Wall -Wextra -Werror -static \
       -DVIRTIOFSD_PATH=\""$virtiofsdPath"\" \
       -o virtiofsd-as "$src"
     runHook postBuild
