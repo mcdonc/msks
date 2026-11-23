@@ -11,6 +11,7 @@ states the trap).
 """
 
 import ctypes
+import math
 import os
 import string
 import subprocess
@@ -421,6 +422,70 @@ def test_painted_text_lands_in_the_right_cells(screen, qt):
 
 
 # --- paint damage (#1104) ------------------------------------------------
+
+
+def test_the_cache_carries_the_screens_pixel_ratio(screen, qt, monkeypatch):
+    """The cache pixmap holds device pixels and carries the
+    screen's ratio (#1110): a ratio-1 pixmap on a scaled screen
+    blitted one device pixel for one device pixel, covering
+    only the top-left 1/ratio of the terminal while the rest
+    kept the frames that painted there before — the garbage
+    the scaled-display report chased. The offscreen suite
+    always runs at ratio 1, so the pin drives the seam the
+    paint reads the ratio through."""
+    from msks.client.gui.terminal import paint
+
+    vt(screen, b"\x1b[2J\x1b[Hsome text")
+    screen.grab()
+    assert screen.cell_cache.devicePixelRatio() == 1.0
+    assert screen.cell_cache.size() == screen.size()
+    monkeypatch.setattr(paint, "pixel_ratio", lambda screen: 2.0)
+    screen.grab()
+    assert screen.cell_cache.devicePixelRatio() == 2.0
+    assert screen.cell_cache.width() == screen.width() * 2
+    assert screen.cell_cache.height() == screen.height() * 2
+    assert screen.cache_key[-1] == 2.0
+    assert screen.painted_rows == list(range(screen.rows))
+    monkeypatch.setattr(paint, "pixel_ratio", lambda screen: 1.0)
+    screen.grab()  # a move back to an unscaled display rebuilds
+    assert screen.cell_cache.devicePixelRatio() == 1.0
+    assert screen.cell_cache.size() == screen.size()
+
+
+def test_a_fractional_ratio_covers_every_device_pixel(screen, qt, monkeypatch):
+    """A fractional ratio sizes the cache in whole device
+    pixels, rounded up (review round one): rounding to nearest
+    can round a width's last half device pixel down, and the
+    blit then never paints the terminal's last device row or
+    column — the stale-stripe class #1110 chased, one pixel
+    wide. The pin paints onto a sentinel-filled image at the
+    ratio's device size and answers whether any sentinel
+    survives the blit."""
+    from msks.client.gui.terminal import paint
+
+    vt(screen, b"\x1b[2J\x1b[Hsome text")
+    screen.grab()
+    ratio = 1.25  # 533 x 1.25 rounds down under round(), up under ceil
+    monkeypatch.setattr(paint, "pixel_ratio", lambda screen: ratio)
+    image = qt.QtGui.QImage(
+        math.ceil(screen.width() * ratio),
+        math.ceil(screen.height() * ratio),
+        qt.QtGui.QImage.Format.Format_ARGB32,
+    )
+    image.fill(qt.QtGui.QColor(255, 0, 255))  # the sentinel
+    image.setDevicePixelRatio(ratio)
+    painter = qt.QtGui.QPainter(image)
+    try:
+        paint.paint_event(screen, painter)
+    finally:
+        painter.end()
+    sentinel = qt.QtGui.QColor(255, 0, 255).rgb()
+    survivors = 0
+    for y in range(image.height()):
+        for x in range(image.width()):
+            if image.pixel(x, y) == sentinel:
+                survivors += 1
+    assert survivors == 0
 
 
 def test_one_typed_character_repaints_its_row_alone(screen, qt):

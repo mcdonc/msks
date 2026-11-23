@@ -553,6 +553,16 @@ gui`. The nix package keeps the daemon's closure lean, so on
 
 ### Fixed
 
+- **GUI terminal on scaled displays (#1110).** The cell
+  cache from #1107 built its pixmap at the widget's logical
+  size. On a display with scaling (a device pixel ratio above
+  1), the blit left most of the terminal showing stale
+  frames: stacked prompts, garbage glyphs, and cursor blocks
+  that never cleared. The pixmap now carries the screen's
+  device pixel ratio, so painting stays in logical
+  coordinates and the blit lands one device pixel for one
+  device pixel. A window moved between displays that scale
+  differently rebuilds its cache.
 - **GUI terminal echo lag (#1104).** Typing in a GUI
   terminal tab now echoes immediately: each paint repairs
   only the rows the terminal emulator flags as damaged
