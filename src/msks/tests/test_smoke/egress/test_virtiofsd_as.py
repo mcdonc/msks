@@ -8,6 +8,12 @@ empty capset is the only thing that drops them. Root-only — this
 lane is the suite that runs as root; no guest, no egress, no
 /dev/kvm.
 
+The last test closes the #1088 chain this file's halves leave
+open: the daemon's own spawn path — the real bind, the real
+helper setuid-root with the host's real virtiofsd as its fixed
+exec target, the real serve wait — runs a serving virtiofsd as
+the workspace owner's uid behind the daemon-bound socket.
+
 The probe the helper execs is a compiled C program, not a shell
 script: it dumps its identity, capabilities, environment, and fd
 table to stdout (the pipe survives the exec), so no shell, no
@@ -15,14 +21,26 @@ record file, and no environment but the helper's own is between
 the exec and the assertions.
 """
 
+import asyncio
 import os
 import pwd
 import shutil
 import socket
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
+from msks.microvm.fsdaemons import virtiofsd_meets_floor, virtiofsd_version
+from msks.microvm.local import LocalCloudHypervisor, fs_exit_nudge
+from msks.settings import (
+    MountSettings,
+    Settings,
+    VmmSettings,
+    resolve_virtiofsd,
+)
+from msks.spec.mounts import MountSpec, mount_tag
+from msks.spec.vm import VmSpec
 
 pytestmark = pytest.mark.skipif(
     os.geteuid() != 0,
@@ -313,3 +331,89 @@ def test_a_dropped_exec_failure_names_the_target(tmp_path):
     assert result.returncode != 0
     assert "cannot exec" in result.stderr
     assert "audit:" in result.stderr
+
+
+async def test_the_daemon_chain_serves_a_real_share_as_the_owner(
+    tmp_path,
+):
+    """The whole #1088 chain on one host: the daemon's own spawn
+    path binds the share socket, execs the setuid helper, and the
+    helper execs the host's REAL virtiofsd at its fixed target —
+    a serving daemon behind the daemon-bound socket, running as
+    the workspace owner's uid, killed by the nudge's disconnect
+    exit and cleaned by the daemon's own teardown. The hermetic
+    suite shape-matches this chain; this lane runs it."""
+    entry = owner_account()
+    open_tmp_tree(tmp_path)
+    # The daemon's own resolution rule, environment included: the
+    # smoke lane's packaged virtiofsd answers the bare name, a
+    # NixOS dev host points MSKSD_VIRTIOFSD at the store path.
+    configured = os.environ.get("MSKSD_VIRTIOFSD", "virtiofsd")
+    virtiofsd = Path(resolve_virtiofsd(configured))
+    if not (virtiofsd.is_file() and os.access(virtiofsd, os.X_OK)):
+        pytest.skip("no real virtiofsd on this host")
+    report = subprocess.run(
+        [str(virtiofsd), "--version"], capture_output=True, text=True
+    )
+    if not virtiofsd_meets_floor(virtiofsd_version(report.stdout)):
+        pytest.skip("the host's virtiofsd sits below the 1.13 floor")
+
+    # A shallow state root (the hermetic suite's rule): the
+    # daemon-bound socket must stay under AF_UNIX's limit.
+    state = Path(tempfile.mkdtemp(prefix="msks-smoke-", dir="/tmp"))
+    vm_dir = state / "vms" / "ws-chain"
+    vm_dir.mkdir(parents=True)
+    share = tmp_path / "share"
+    share.mkdir()
+    share.chmod(0o755)  # the owner uid may read what it serves
+    helper = build_helper(tmp_path, virtiofsd)
+
+    class App:
+        pass
+
+    app = App()
+    app.state = type("State", (), {})()
+    app.state.settings = Settings(
+        vmm=VmmSettings(
+            state_dir=state,
+            virtiofsd=str(virtiofsd),
+            virtiofsd_as=str(helper),
+        )
+    )
+    app.state.settings.mounts = MountSettings(host_roots=(str(tmp_path),))
+    driver = LocalCloudHypervisor(app)
+    spec = VmSpec(
+        workspace_id="ws-chain",
+        kernel=Path("/k"),
+        rootfs=Path("/r"),
+        owner_uid=entry.pw_uid,
+        mounts=(MountSpec(host=str(share), guest="/mnt/share"),),
+    )
+    tag = mount_tag(spec.mounts[0])
+    socket_path = vm_dir / f"fs-{tag}.sock"
+    pidfile = vm_dir / f"fs-{tag}.pid"
+    try:
+        entries = await driver._start_fs_daemons(spec, vm_dir)
+        assert entries[0]["tag"] == tag
+        proc = driver._fs_procs["ws-chain"][0]
+        # The serving identity: the real child runs as the
+        # workspace's owner — the whole point of the lane.
+        status = Path(f"/proc/{proc.pid}/status").read_text()
+        assert f"Uid:\t{entry.pw_uid}\t" in status
+        # The daemon-bound socket serves, and the child's argv is
+        # the --fd shape (no socket path anywhere in it).
+        assert socket_path.exists()
+        cmdline = Path(f"/proc/{proc.pid}/cmdline").read_bytes()
+        assert b"--fd" in cmdline
+        assert b"--socket-path" not in cmdline
+        # The nudge's disconnect exit — the lever for a daemon
+        # that cannot signal this child — ends it.
+        fs_exit_nudge(socket_path)
+        await asyncio.wait_for(proc.wait(), 10.0)
+        # The teardown completes and leaves no residue behind.
+        await driver._stop_fs_daemons("ws-chain")
+        assert not socket_path.exists()
+        assert not pidfile.exists()
+    finally:
+        await driver._stop_fs_daemons("ws-chain")
+        shutil.rmtree(state, ignore_errors=True)
