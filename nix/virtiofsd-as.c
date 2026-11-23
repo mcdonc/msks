@@ -74,8 +74,12 @@ static __attribute__((noreturn)) void fail(const char *what)
 
 /* Decimal digits only — no sign, no whitespace, no empty string.
  * The accumulator is 64-bit, so the multiply cannot wrap before
- * the bound check on any Linux (ILP32 included); the bound is
- * uid_t: unsigned 32-bit. */
+ * the bound check on any Linux (ILP32 included). The bound is
+ * uid_t's last usable value, one below the maximum: 4294967295
+ * casts to (uid_t)-1, the kernel's "leave unchanged" sentinel —
+ * setresuid and setresgid would both succeed without changing
+ * a thing, and a setuid-root exec would silently run virtiofsd
+ * as root while the audit named another uid. */
 static unsigned long parse_uid(const char *text)
 {
     uint64_t value = 0;
@@ -85,7 +89,7 @@ static unsigned long parse_uid(const char *text)
         if (*p < '0' || *p > '9')
             refuse("uid: expected a number");
         value = value * 10 + (uint64_t)(*p - '0');
-        if (value > 4294967295u)
+        if (value > 4294967294u)
             refuse("uid: out of range");
     }
     return (unsigned long)value;
@@ -121,19 +125,33 @@ static void drop_capabilities(void)
         fail("cannot drop capabilities");
 }
 
+/* Append text with control bytes replaced: the audit line's
+ * author is this binary, so no argv byte can forge another
+ * journal line under its ident. */
+static void append(char *line, size_t size, int *used, const char *text)
+{
+    for (const char *p = text; *p != '\0' && *used < (int)size - 1; p++) {
+        unsigned char byte = (unsigned char)*p;
+        line[(*used)++] = (byte >= 0x20 && byte != 0x7f) ? *p : '?';
+    }
+}
+
 /* One audit line per exec — to the journal and, mirrored, to
  * stderr (the daemon's spawn log). The passed argv carries the
- * share facts: --shared-dir and --tag ride in it verbatim —
- * control bytes included, so the argv's composer (the daemon,
- * #1088) owns sanitizing what it puts there. */
+ * share facts: --shared-dir and --tag ride in it, with control
+ * bytes replaced by append() so no argv content can forge a
+ * second journal line under this binary's ident. */
 static void audit(unsigned long uid, int fd, int argc, char **argv)
 {
     char line[4096];
     int used = snprintf(line, sizeof(line), "exec uid=%lu fd=%d argv=",
                         uid, fd);
-    for (int i = 5; i < argc && used < (int)sizeof(line) - 1; i++)
-        used += snprintf(line + used, sizeof(line) - (size_t)used, "%s%s",
-                         i > 5 ? " " : "", argv[i]);
+    for (int i = 5; i < argc && used < (int)sizeof(line) - 1; i++) {
+        if (i > 5)
+            append(line, sizeof(line), &used, " ");
+        append(line, sizeof(line), &used, argv[i]);
+    }
+    line[used] = '\0';
     openlog("virtiofsd-as", LOG_PID, LOG_AUTHPRIV);
     syslog(LOG_INFO, "%s", line);
     closelog();
@@ -162,6 +180,10 @@ int main(int argc, char **argv)
         fail("the listening fd is not open");
     if (!S_ISSOCK(st.st_mode))
         refuse("the fd is not a socket");
+    /* The socket itself is not authenticated — the caller picks
+     * the fd, so a compromised caller is the socket's master by
+     * construction. Which socket a share gets is policy, and
+     * policy stays in the daemon. */
     /* The fd must survive the exec even if the caller left the
      * close-on-exec bit set on it. */
     if (fcntl(fd, F_SETFD, 0) != 0)
@@ -188,9 +210,21 @@ int main(int argc, char **argv)
             break; /* past the kernel's last capability */
         fail("cannot drop the capability bounding set");
     }
+    /* The EINVAL above can also come from an inherited seccomp
+     * filter answering ERRNO(EINVAL), which would end the loop
+     * with the bounding set intact — so the drop is verified,
+ * not assumed: capability 0 must read back as absent. */
+    if (prctl(PR_CAPBSET_READ, 0UL, 0UL, 0UL, 0UL) != 0)
+        fail("cannot verify the capability bounding set drop");
     if (setresuid((uid_t)uid, (uid_t)uid, (uid_t)uid) != 0)
         fail("cannot become the owner uid");
     drop_capabilities();
+
+    /* Privilege cannot be re-acquired at the exec: no setuid bit
+     * or file capabilities on the target path can lift the child,
+     * whatever later packaging does to that path. */
+    if (prctl(PR_SET_NO_NEW_PRIVS, 1UL, 0UL, 0UL, 0UL) != 0)
+        fail("cannot set no-new-privileges");
 
     /* Exactly one fd crosses the exec: everything above the
      * standard three, except the listening fd, closes — no

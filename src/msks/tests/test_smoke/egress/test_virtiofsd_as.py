@@ -64,7 +64,8 @@ int main(int argc, char **argv)
     if (status != NULL) {
         char line[256];
         while (fgets(line, sizeof(line), status) != NULL)
-            if (line[0] == 'C' && line[1] == 'a' && line[2] == 'p')
+            if ((line[0] == 'C' && line[1] == 'a' && line[2] == 'p') ||
+                (line[0] == 'N' && line[1] == 'o' && line[2] == 'N'))
                 fputs(line, stdout);
         fclose(status);
     }
@@ -220,6 +221,9 @@ def assert_common_drops(evidence_map, uid: int, fd: int) -> None:
     assert evidence_map["groups"] == ""
     for key in ("CapEff", "CapPrm", "CapInh", "CapBnd"):
         assert int(str(evidence_map[key]), 16) == 0, (key, evidence_map[key])
+    # The exec carries no-new-privileges: nothing about the
+    # target path's packaging can lift the child later.
+    assert evidence_map["NoNewPrivs"] == "1"
     # Exactly the fixed environment crosses — one PATH, nothing
     # else; no shell sits between exec and environ.
     assert evidence_map["env"] == [HELPER_PATH]
