@@ -143,6 +143,11 @@ RS_CURSOR_VIEWPORT_Y = 16
 RS_COLORS = 19
 ROW_CELLS = 3
 ROW_DIRTY = 1
+# Grid-row data selectors (the grid API's row, a plain u64
+# value a ref answers — no handle to free; not the
+# render-state row above): the soft-wrap flag the URL scan
+# stitches wrapped rows with (#1100).
+GRID_ROW_WRAP = 1
 CELLS_STYLE = 2
 CELLS_GRAPHEMES_LEN = 3
 CELLS_GRAPHEMES_BUF = 4
@@ -786,6 +791,15 @@ class Lib:
             ctypes.c_char_p,
             sz,
             ctypes.POINTER(sz),
+        )
+        self.grid_ref_row = self.prototype(
+            "ghostty_grid_ref_row",
+            r,
+            ctypes.POINTER(GridRef),
+            ctypes.POINTER(ctypes.c_uint64),
+        )
+        self.grid_row_get = self.prototype(
+            "ghostty_row_get", r, ctypes.c_uint64, i, v
         )
         self.selection_gesture_new = self.prototype(
             "ghostty_selection_gesture_new", r, v, ctypes.POINTER(v)

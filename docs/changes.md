@@ -578,6 +578,16 @@ gui`. The nix package keeps the daemon's closure lean, so on
   a race a loaded CI runner caught. The report now waits out a
   half-second grace for the child to finish exiting, so the
   real code goes out; a wedged child still reports on time.
+- **Ctrl+Click on a URL wrapped across terminal rows
+  (#1100).** The GUI terminal's URL scan now stitches
+  soft-wrapped rows into one text before matching, and every
+  row a URL touches carries the whole link — a Ctrl+Click on
+  any fragment opens the full URL instead of the piece on the
+  clicked row. A match reaching the last cell of a line that
+  still wraps past the viewport's bottom edge answers no
+  link, because the rows below the viewport cannot be read to
+  tell whether the address continues there.
+>>>>>>> a2153f00 (Open wrapped URLs whole from any row in the GUI terminal)
 - **`nix build .#server` on the unstable nixpkgs pin (#1062).**
   The build again completes: the pinned set's filelock, openai,
   and huggingface-hub had moved outside litellm 1.106.2's
