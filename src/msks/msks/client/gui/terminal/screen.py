@@ -167,12 +167,14 @@ class TerminalWidget(QWidget):
         # pixmap and blitted whole each paint, so a typed
         # character repaints its row alone. The paint module
         # owns the policy; these fields are its state on the
-        # screen — the pixmap, the pixels and scrollback offset
-        # it was built for, the last paint's find rectangles,
-        # whether the next paint takes every row, and the rows
-        # the last paint took (the suite's damage pins).
+        # screen — the pixmap, the pixel-and-grid key and the
+        # palette bytes it was built for, the scrollback offset
+        # and find rectangles the last paint compared, whether
+        # the next paint takes every row, and the rows the last
+        # paint took (the suite's damage pins).
         self.cell_cache = None
-        self.cache_pixels: tuple[int, int] | None = None
+        self.cache_key: tuple[int, ...] | None = None
+        self.cache_palette: bytes | None = None
         self.cache_scroll: int | None = None
         self.cache_underlays = None
         self.cache_full = True

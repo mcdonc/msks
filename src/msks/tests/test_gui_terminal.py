@@ -493,29 +493,54 @@ def test_a_changed_find_pass_repaints_every_row(screen, qt):
     find.close(screen)
 
 
-def test_a_scheme_flip_repaints_every_row(screen, qt):
+def test_a_scheme_flip_repaints_every_row_and_the_pixels(screen, qt):
     """The scheme flip's own path — ``terminal_set`` of the
     base colors, what ``colors.apply`` runs — flags every row
-    (probed): the whole grid repaints with the new colors, and
-    a program's own SGR colors keep their cells' explicit
-    ones. OSC 10/11 asks a different question: their override
-    layer never reaches this render-state ABI at all (the
-    palette and the cells' colors both answer unchanged,
-    probed), so the terminal never showed them — before this
-    change the same full-grid paint filled from the same
-    answers."""
-    import ctypes
+    (probed) and moves the render state's palette: the whole
+    grid repaints, and the cache's base fill takes the new
+    background, so the painted pixels follow — a blank row
+    reads the new scheme's background, not the one the cache
+    was built with (review round one: the rows repainted over
+    a stale base, black-on-black under a light scheme)."""
+    from msks.client.gui.terminal import colors
+
+    vt(screen, b"\x1b[2J\x1b[Hsome text\r\n\r\n\r\nmore")
+    screen.grab()
+    colors.apply(screen, gt.COLOR_SCHEME_LIGHT)
+    image = screen.grab().toImage()
+    assert screen.painted_rows == list(range(screen.rows))
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    pixel = image.pixelColor(cw * 2, ch * 3 + ch // 2)  # blank row 3
+    assert (pixel.red(), pixel.green(), pixel.blue()) == (255, 255, 255)
+
+
+def test_a_metrics_change_at_the_same_pixels_rebuilds_the_cache(screen, qt):
+    """A font change at the same widget pixels — the zoom on a
+    maximized window, a hidden tab's ``set_face`` — keeps the
+    cache key's pixel half still, so the key carries the cell
+    metrics too: the cache rebuilds and repaints every row,
+    and the strip below the smaller grid carries the
+    background instead of the old frame's last row (review
+    round one: the rows repainted beside their stale
+    neighbor)."""
+    from msks.client.gui.terminal.paint import palette
 
     vt(screen, b"\x1b[2J\x1b[Hsome text")
     screen.grab()
-    screen.lib.terminal_set(
-        screen.terminal,
-        gt.OPT_COLOR_BACKGROUND,
-        ctypes.byref(gt.ColorRgb(30, 30, 90)),
-    )
-    screen.refresh()
-    screen.grab()
+    larger = screen.font.pointSize()
+    screen.set_face(larger + 4)  # fit_window refuses: never shown
+    screen.set_face(larger - 4)  # smaller cells leave a strip
+    background = palette(screen).background
+    image = screen.grab().toImage()
     assert screen.painted_rows == list(range(screen.rows))
+    strip_y = screen.rows * screen.metrics.cell_height + 2
+    if strip_y < screen.height():  # the strip exists at this font
+        pixel = image.pixelColor(screen.metrics.cell_width * 2, strip_y)
+        assert (pixel.red(), pixel.green(), pixel.blue()) == (
+            background.r,
+            background.g,
+            background.b,
+        )
 
 
 def test_the_inverse_and_faint_styles_paint(screen, qt):

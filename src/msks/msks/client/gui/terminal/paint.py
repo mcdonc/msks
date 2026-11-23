@@ -14,10 +14,13 @@ set is the library's per-row dirty flags, consumed as each
 row paints. The blit erases the last frame's overlays, so the
 cursor, the scrollbar, the exit banner, and the bell flash
 draw fresh above it every paint and never age in the cache.
-Three things repaint every row: a cache built for different
-pixels, a viewport that moved (the library flags no rows for
-a viewport scroll, probed), and a find pass whose match
-rectangles moved without the rows changing underneath them.
+Four things repaint every row: a cache built for different
+pixels or cell metrics, a changed palette (a scheme flip's
+terminal_set moves the render state's colors; the base fill
+must take them), a viewport that moved (the library flags no
+rows for a viewport scroll, probed), and a find pass whose
+match rectangles moved without the rows changing underneath
+them.
 """
 
 from __future__ import annotations
@@ -80,16 +83,12 @@ def paint_event(screen, painter: QPainter) -> None:
 
 def sync_cache(screen, colors, rects_by_row) -> QPainter:
     """The painter over the cell cache, after deciding how
-    much of it repaints: a cache built for other pixels, a
-    viewport that moved, or a find pass whose rectangles
-    moved each repaint every row; otherwise the damage stays
-    the library's per-row flags alone."""
-    pixels = (screen.width(), screen.height())
-    full = screen.cell_cache is None or screen.cache_pixels != pixels
-    if full:
-        screen.cell_cache = QPixmap(max(1, pixels[0]), max(1, pixels[1]))
-        screen.cell_cache.fill(rgb(colors.background))
-        screen.cache_pixels = pixels
+    much of it repaints: a rebuilt cache (other pixels or
+    cell metrics, or a moved palette), a viewport that moved,
+    or a find pass whose rectangles moved each repaint every
+    row; otherwise the damage stays the library's per-row
+    flags alone."""
+    full = rebuild_cache(screen, colors)
     offset = scrollbar_offset(screen)
     if screen.cache_scroll != offset:
         full = True
@@ -100,6 +99,35 @@ def sync_cache(screen, colors, rects_by_row) -> QPainter:
     screen.cache_full = full
     screen.painted_rows = []
     return QPainter(screen.cell_cache)
+
+
+def rebuild_cache(screen, colors) -> bool:
+    """Whether the cache rebuilds before this paint, leaving
+    a fresh pixmap behind: one built for other pixels or cell
+    metrics (a zoom on a maximized window, a hidden tab's
+    font change), or one whose base fill carries a stale
+    background — a scheme flip's terminal_set moves the
+    render state's palette. The fill is the base the cells
+    without their own background show through, and the fringe
+    below and right of the grid."""
+    key = (
+        screen.width(),
+        screen.height(),
+        screen.metrics.cell_width,
+        screen.metrics.cell_height,
+        screen.cols,
+        screen.rows,
+    )
+    rebuild = screen.cell_cache is None or screen.cache_key != key
+    scheme = bytes(colors)
+    if screen.cache_palette != scheme:
+        screen.cache_palette = scheme
+        rebuild = True  # the base fill carries the new background
+    if rebuild:
+        screen.cell_cache = QPixmap(max(1, key[0]), max(1, key[1]))
+        screen.cell_cache.fill(rgb(colors.background))
+        screen.cache_key = key
+    return rebuild
 
 
 def scrollbar_offset(screen):
@@ -167,7 +195,7 @@ def walk_rows(
                 colors,
                 style,
                 codepoints,
-                iterator,
+                iterator.value,
                 cells,
                 spans,
                 rects_by_row,
@@ -185,7 +213,7 @@ def paint_damaged_row(
     colors,
     style,
     codepoints,
-    iterator,
+    iterator: int,
     cells,
     spans,
     rects_by_row,
