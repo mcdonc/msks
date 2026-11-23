@@ -213,17 +213,25 @@ def test_share_refuses_a_chown_the_membership_does_not_back(
 ) -> None:
     """A chown the daemon's own groups do not back (EPERM on a
     live host) refuses with the remedy named: the account must
-    hold the group."""
+    hold the group. The group database and the chown are stubbed
+    — the branch under test is the refusal's wording, not any
+    host's account database (macOS holds no `users` group to
+    name)."""
     path = shallow_socket_dir / "msks" / "msksd.sock"
     sock = localsocket.bind(path)
 
     def refused(*_args, **_kwargs):
         raise PermissionError(1, "Operation not permitted")
 
+    monkeypatch.setattr(
+        localsocket.grp,
+        "getgrnam",
+        lambda name: SimpleNamespace(gr_gid=54321),
+    )
+    monkeypatch.setattr(localsocket.os, "chown", refused)
     try:
-        monkeypatch.setattr(localsocket.os, "chown", refused)
         with pytest.raises(OSError, match="must hold the group"):
-            localsocket.share_with_group(path, "users")
+            localsocket.share_with_group(path, "any-group")
     finally:
         sock.close()
         localsocket.unlink(path)
