@@ -58,6 +58,14 @@ def is_paging(modifiers, key) -> bool:
 # default three on the hardware at hand.
 WHEEL_ROWS_PER_NOTCH = 6
 
+#: How long the exit report waits for a child the kernel has not
+#: made waitable yet (#1099 follow-up): the slave's fds close
+#: before the process becomes a zombie, so the last-read burst
+#: can arrive first. A child past that grace (wedged in
+#: uninterruptible sleep) reports the 0 placeholder rather than
+#: stalling the GUI on it.
+EXIT_REPORT_GRACE_S = 0.5
+
 
 class TerminalWidget(QWidget):
     """A terminal screen: the emulator, the painter, and the
@@ -237,15 +245,22 @@ class TerminalWidget(QWidget):
         """The exit path, once: disarm the notifier (the
         session closed the master under it), start the reaper,
         and report the status the tab teardown listens for.
-        Later reads on the dead master change nothing."""
+        Later reads on the dead master change nothing.
+
+        The report waits out the window where the child closed
+        its slave fds but the kernel has not made it waitable
+        (#1099 follow-up): a reaped-now status goes out at once,
+        a child still finishing exits inside the grace and its
+        real code goes out, and a wedged one reports the 0
+        placeholder after the grace instead of hanging the
+        report on it."""
         if self._exit_reported:
             return
         self._exit_reported = True
         self.notifier.setEnabled(False)
-        # Reap first when the child is already collectable: the
-        # report carries the real status, not the 0 a missed
-        # WNOHANG would leave.
         self.session.reap()
+        if self.session.exit_status is None:
+            self.session.await_exit(EXIT_REPORT_GRACE_S)
         self.reaper.start(100)
         self.refresh()
         self.process_exited.emit(self.session.exit_status or 0)

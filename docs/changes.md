@@ -561,6 +561,13 @@ gui`. The nix package keeps the daemon's closure lean, so on
   further behind while typing). The cells live in an
   offscreen cache blitted whole each frame, so the cursor,
   scrollbar, and overlays draw fresh above it.
+- **The GUI terminal's exit report (#1099 follow-up).** The
+  kernel closes a child's terminal fds before the child is
+  waitable, and the exit signal could fire in that window with
+  the 0 placeholder instead of the program's real exit code —
+  a race a loaded CI runner caught. The report now waits out a
+  half-second grace for the child to finish exiting, so the
+  real code goes out; a wedged child still reports on time.
 - **`nix build .#server` on the unstable nixpkgs pin (#1062).**
   The build again completes: the pinned set's filelock, openai,
   and huggingface-hub had moved outside litellm 1.106.2's
