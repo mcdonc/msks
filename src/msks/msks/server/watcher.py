@@ -324,7 +324,8 @@ async def retire_expired(app, hub: EventHub, row: dict) -> None:
     audit_id = await model.record_audit("expiry", row)
     # The audit row commits before this publish: a registration in
     # the gap replays the row, and the client's audit-id dedup
-    # drops whichever delivery is second (#305).
+    # drops whichever delivery is second (#305). The frame's
+    # audience is the row's owner (#1090).
     await hub.publish(
         "secret.expiry",
         {
@@ -337,4 +338,5 @@ async def retire_expired(app, hub: EventHub, row: dict) -> None:
             "name": row["name"],
             "ts": time.time(),
         },
+        owner=row["owner_uid"],
     )

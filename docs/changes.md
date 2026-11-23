@@ -8,6 +8,16 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Owner-scoped secret events (#1090).** The live `secret.*`
+  frames on the events websocket now reach the row's owner
+  alone — mint, revoke, unlock, expiry, and the per-request swap
+  and sighting frames publish to the owning uid, so one operator
+  no longer receives another operator's placeholder names,
+  coverage, or destination allowlists on a shared daemon. Root
+  and the daemon's own uid keep receiving every owner's frames,
+  and every non-secret event still broadcasts to every socket.
+  The audit replay and the live tail now agree.
+
 - **Owner-tracked virtiofsd exec (#1088).** Each share's
   virtiofsd now runs as the workspace's owner: the daemon binds
   the share's vhost socket itself and hands the listening socket

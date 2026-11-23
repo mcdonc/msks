@@ -107,10 +107,11 @@ revoke and expiry. A swap or sighting also gives the destination the wire saw;
 a mint gives the allowlist it was minted with; revoke, expiry, and unlock carry
 the identity alone.
 
-The `msks tui` secrets page's audit view (`e` from the page) shows every
-workspace's events newest first, across every owner. The newest hundred recorded
-mints, revokes, expiries, and unlocks replay onto it when the view opens, and
-swaps and sightings stream in live. Each row's time is its local clock. A row
+The `msks tui` secrets page's audit view (`e` from the page) shows the
+caller's own rows' events, newest first. Root and the daemon's user see
+every owner's. The newest hundred recorded mints, revokes, expiries, and
+unlocks replay onto it when the view opens, and swaps and sightings stream
+in live under the same rule. Each row's time is its local clock. A row
 from an earlier day carries its date beside the clock. The off-allowlist
 sighting is highlighted
 as the exfil signal, with a header line stating the detection boundary above.

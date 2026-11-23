@@ -56,6 +56,69 @@ async def test_publish_journals_the_frame(caplog) -> None:
     assert ours[-1].levelname == "INFO"
 
 
+#: Two uids the audience filter keys on (#1090) — the same pair
+#: the owner-filter suite uses, imported here for the hub's own
+#: mechanics: a viewer-scoped subscriber and an unscoped one.
+VIEWER_ONE = 4242
+VIEWER_TWO = 4243
+
+
+async def test_owner_scoped_frames_reach_their_viewer_alone() -> None:
+    """#1090: a uid-scoped subscription receives every unscoped
+    frame beside its own owner's, and never another owner's; an
+    unscoped subscription — the bypass shape the events socket
+    registers for root and the daemon's uid — receives every
+    frame whatever its audience."""
+    hub = EventHub()
+    scoped = hub.subscribe(viewer=VIEWER_ONE)
+    unscoped = hub.subscribe()
+    await hub.publish("workspace.status", {"id": "ws"})
+    await hub.publish("secret.mint", {"name": "mine"}, owner=VIEWER_ONE)
+    await hub.publish("secret.mint", {"name": "theirs"}, owner=VIEWER_TWO)
+
+    def drained(queue: asyncio.Queue) -> list[dict]:
+        frames = []
+        while not queue.empty():
+            frames.append(json.loads(queue.get_nowait()))
+        return frames
+
+    def mints(frames: list[dict]) -> list[str]:
+        return [
+            frame["data"]["name"]
+            for frame in frames
+            if frame["event"] == "secret.mint"
+        ]
+
+    scoped_frames = drained(scoped)
+    unscoped_frames = drained(unscoped)
+    # The unscoped frame reaches both; the owner split follows.
+    assert mints(scoped_frames) == ["mine"]
+    assert mints(unscoped_frames) == ["mine", "theirs"]
+    transition = {"event": "workspace.status", "data": {"id": "ws"}}
+    assert transition in scoped_frames
+    assert transition in unscoped_frames
+    hub.unsubscribe(scoped)
+    hub.unsubscribe(unscoped)
+
+
+async def test_a_frame_no_subscriber_receives_still_journals(caplog) -> None:
+    """#762 beside #1090: the audience filter is a delivery
+    concern — a publish every subscriber filters out still
+    journals its frame, so the daemon's record keeps the owners'
+    lifecycle whatever the sockets hold."""
+    hub = EventHub()
+    scoped = hub.subscribe(viewer=VIEWER_ONE)
+    with caplog.at_level(logging.INFO, logger="msks.events"):
+        await hub.publish("secret.mint", {"name": "x"}, owner=VIEWER_TWO)
+    assert scoped.empty()
+    ours = [r for r in caplog.records if r.name == "msks.events"]
+    assert json.loads(ours[-1].getMessage()) == {
+        "event": "secret.mint",
+        "data": {"name": "x"},
+    }
+    hub.unsubscribe(scoped)
+
+
 async def test_relay_and_close_all() -> None:
     hub = EventHub()
     queue = hub.subscribe()

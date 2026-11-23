@@ -148,6 +148,7 @@ def entry(
         sentinel=sentinel,
         name=name,
         placeholder_id=7,
+        owner_uid=1000,
         dests=dests,
         backend_ref="MSKSWS_WS_A_API",
     )

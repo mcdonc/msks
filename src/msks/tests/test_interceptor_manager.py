@@ -185,6 +185,7 @@ def rows_entry(row) -> PlaceholderEntry:
         sentinel=row["sentinel"],
         name=row["name"],
         placeholder_id=row["id"],
+        owner_uid=row["owner_uid"],
         dests=tuple(row["dests"]),
         backend_ref=row["backend_ref"],
     )

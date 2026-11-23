@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ...events import relay
-from ...model.workspaces import AmbiguousRef
+from ...model.workspaces import AmbiguousRef, sees_all_rows
 from .deps import authed_accept, caller_uid
 
 LOG = logging.getLogger(__name__)
@@ -197,7 +197,15 @@ def router(app, hub) -> APIRouter:
         # zero unlock window's plaintext lives exactly while at
         # least one of these sockets remains open.
         app.state.secrets.plain.operator_connected()
-        queue = hub.subscribe()
+        # The subscriber's owner context (#1090): a bypassing
+        # caller (root, the daemon's own uid — the TCP surface's
+        # mapping) subscribes unscoped and receives every owner's
+        # frames, every other peer subscribes as its uid and
+        # receives its own beside the unscoped ones. The live
+        # tail's filter is the one the audit replay already takes
+        # (#1083), so the two halves of the same screen agree.
+        viewer = caller_uid(socket.scope)
+        queue = hub.subscribe(None if sees_all_rows(viewer) else viewer)
         client_id = id(queue)
         try:
             receiver = asyncio.create_task(

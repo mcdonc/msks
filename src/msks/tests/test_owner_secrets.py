@@ -419,3 +419,123 @@ async def test_the_probe_row_re_arms_under_its_legacy_ref(owners) -> None:
     assert app.state.secrets.plain.read("MSKSDAEMON_PROBE") == (
         PROBE_SECRET_B64
     )
+
+
+def peer_from_header(api):
+    """An ASGI wrapper that stamps the caller's peer credential
+    from an ``x-test-peer`` header (#1090): one client serves
+    every uid — the header picks the peer per call, where
+    :class:`PeerTransport` needs one transport per uid. A request
+    without the header stays the token surface's daemon-uid
+    mapping."""
+
+    async def stamped(scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            uid = dict(scope.get("headers") or []).get(b"x-test-peer")
+            if uid is not None and uid.isdigit():
+                scope["client"] = ("unix", int(uid))
+        await api(scope, receive, send)
+
+    return stamped
+
+
+def test_the_live_tail_scopes_secret_frames_by_owner(
+    tmp_path: Path,
+) -> None:
+    """#1090: the live ``secret.*`` tail takes the owner filter the
+    audit replay already takes — two peers' event sockets and the
+    daemon-uid socket sit side by side while each peer mints and
+    one revokes: each peer's socket receives its own rows' frames
+    alone, and the bypass socket (the token surface's daemon-uid
+    mapping) receives every owner's."""
+    import json
+
+    from fastapi.testclient import TestClient
+    from test_interceptor_manager import FakeMaster
+    from testkeys import mint as mint_key
+
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "own.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=10.0,
+        ),
+    )
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+    app.state.net = AttachedNet({"ws-alice", "ws-bob"})
+    app.state.interceptor = Interceptor(
+        app, master_factory=fake_master_factory()
+    )
+    FakeMaster.built.clear()
+    api = build_api(app)
+    client = TestClient(peer_from_header(api))
+    with client:
+        keys = {uid: mint_key("ed25519")[1] for uid in (ALICE, BOB)}
+        for uid, wid in ((ALICE, "ws-alice"), (BOB, "ws-bob")):
+            created = client.post(
+                "/api/v1/workspaces",
+                json={
+                    "id": wid,
+                    "kernel": "/k",
+                    "rootfs": "/r",
+                    "ssh_pubkey": keys[uid],
+                },
+                headers={**auth(), "x-test-peer": str(uid)},
+            )
+            assert created.status_code == 201, created.text
+        alice_headers = {**auth(), "x-test-peer": str(ALICE)}
+        bob_headers = {**auth(), "x-test-peer": str(BOB)}
+        with (
+            client.websocket_connect(
+                "/api/v1/events", headers=alice_headers
+            ) as alice_ws,
+            client.websocket_connect(
+                "/api/v1/events", headers=bob_headers
+            ) as bob_ws,
+            client.websocket_connect(
+                "/api/v1/events", headers=auth()
+            ) as daemon_ws,
+        ):
+            minted = client.post(
+                "/api/v1/secrets",
+                json=wide_body("alice_token"),
+                headers=alice_headers,
+            )
+            assert minted.status_code == 201, minted.text
+            revoked = client.delete(
+                f"/api/v1/secrets/{minted.json()['id']}",
+                headers=alice_headers,
+            )
+            assert revoked.status_code == 200, revoked.text
+            bobs = client.post(
+                "/api/v1/secrets",
+                json=wide_body("bob_token"),
+                headers=bob_headers,
+            )
+            assert bobs.status_code == 201, bobs.text
+
+            def tail(ws, count: int) -> list[tuple[str, str]]:
+                """The socket's next *count* frames as (event,
+                name) pairs — every secret frame the flow publishes,
+                oldest first."""
+                frames = [json.loads(ws.receive_text()) for _ in range(count)]
+                return [
+                    (frame["event"], frame["data"]["name"]) for frame in frames
+                ]
+
+            # Alice's socket: her mint and revoke alone — bob's row
+            # never lands on it. Bob's: his mint alone. The daemon's
+            # socket (no peer credential): every owner's frames.
+            assert tail(alice_ws, 2) == [
+                ("secret.mint", "alice_token"),
+                ("secret.revoke", "alice_token"),
+            ]
+            assert tail(bob_ws, 1) == [("secret.mint", "bob_token")]
+            assert tail(daemon_ws, 3) == [
+                ("secret.mint", "alice_token"),
+                ("secret.revoke", "alice_token"),
+                ("secret.mint", "bob_token"),
+            ]
