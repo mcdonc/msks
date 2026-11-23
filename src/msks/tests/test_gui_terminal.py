@@ -510,8 +510,24 @@ def test_a_scheme_flip_repaints_every_row_and_the_pixels(screen, qt):
     image = screen.grab().toImage()
     assert screen.painted_rows == list(range(screen.rows))
     cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
-    pixel = image.pixelColor(cw * 2, ch * 3 + ch // 2)  # blank row 3
+    pixel = image.pixelColor(cw * 2, ch + ch // 2)  # blank row 1
     assert (pixel.red(), pixel.green(), pixel.blue()) == (255, 255, 255)
+
+
+def test_a_program_retint_repaints_the_pixels(screen, qt):
+    """A program's own default-color move — OSC 11's background
+    with OSC 10's foreground flushing the sync — moves the
+    render state's palette like the scheme flip does, and the
+    same comparison carries it: every row repaints over a base
+    fill taken from the new background."""
+    vt(screen, b"\x1b[2J\x1b[Hsome text\r\n\r\n\r\nmore")
+    screen.grab()
+    vt(screen, b"\x1b]11;rgb:00/00/cc\x07\x1b]10;rgb:ff/ff/00\x07")
+    image = screen.grab().toImage()
+    assert screen.painted_rows == list(range(screen.rows))
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    pixel = image.pixelColor(cw * 2, ch + ch // 2)  # blank row 1
+    assert (pixel.red(), pixel.green(), pixel.blue()) == (0, 0, 204)
 
 
 def test_a_metrics_change_at_the_same_pixels_rebuilds_the_cache(screen, qt):
@@ -526,21 +542,23 @@ def test_a_metrics_change_at_the_same_pixels_rebuilds_the_cache(screen, qt):
     from msks.client.gui.terminal.paint import palette
 
     vt(screen, b"\x1b[2J\x1b[Hsome text")
-    screen.grab()
+    size = qt.QtCore.QSize(400, 300)
+    screen.resize(size)
+    screen.resizeEvent(qt.QtGui.QResizeEvent(size, screen.size()))
+    screen.grab()  # the cache builds for this grid and font
     larger = screen.font.pointSize()
-    screen.set_face(larger + 4)  # fit_window refuses: never shown
-    screen.set_face(larger - 4)  # smaller cells leave a strip
+    screen.set_face(larger - 4)  # smaller cells at the same pixels
     background = palette(screen).background
     image = screen.grab().toImage()
     assert screen.painted_rows == list(range(screen.rows))
     strip_y = screen.rows * screen.metrics.cell_height + 2
-    if strip_y < screen.height():  # the strip exists at this font
-        pixel = image.pixelColor(screen.metrics.cell_width * 2, strip_y)
-        assert (pixel.red(), pixel.green(), pixel.blue()) == (
-            background.r,
-            background.g,
-            background.b,
-        )
+    assert strip_y < screen.height()  # smaller cells always leave it
+    pixel = image.pixelColor(screen.metrics.cell_width * 2, strip_y)
+    assert (pixel.red(), pixel.green(), pixel.blue()) == (
+        background.r,
+        background.g,
+        background.b,
+    )
 
 
 def test_the_inverse_and_faint_styles_paint(screen, qt):
