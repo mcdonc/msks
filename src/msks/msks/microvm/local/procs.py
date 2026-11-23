@@ -12,6 +12,13 @@ from pathlib import Path
 
 from .config import POLL_INTERVAL_S
 
+#: The hard-stop reap budget (#1088): how long a killed child's
+#: wait() runs before the unwind abandons it — a helper-lane
+#: virtiofsd the daemon cannot signal exits by its client's
+#: disconnect (the stop path's socket nudge fires it), and an
+#: immortal past this budget must not hang the caller.
+KILL_REAP_GRACE_S = 10.0
+
 
 def has_socket_arg(fields: list[bytes], sock: Path) -> bool:
     want_sock = os.fsencode(str(sock))
@@ -126,10 +133,19 @@ async def kill_procs(procs: list) -> None:
 
 async def kill_proc(proc) -> None:
     """One process's hard stop: kill (an already-exited one raises
-    ProcessLookupError, suppressed) and reap."""
-    with contextlib.suppress(ProcessLookupError):
+    ProcessLookupError, suppressed) and reap. A child the daemon
+    cannot signal (#1088's helper lane: the virtiofsd runs as the
+    workspace's owner, an unprivileged daemon holds no
+    CAP_KILL) raises PermissionError on the kill — suppressed
+    too. The reap stays bounded: the wait ends at the child's
+    self-exit (its client's disconnect, the socket nudge, or
+    the pdeathsig the helper armed) or is abandoned past the
+    grace — a parent's wait needs no permission, but an
+    immortal child must not hang the unwind that follows."""
+    with contextlib.suppress(ProcessLookupError, PermissionError):
         proc.kill()
-    await proc.wait()
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(proc.wait(), KILL_REAP_GRACE_S)
 
 
 async def pid_dead_by(pid: int, timeout_s: float) -> bool:
@@ -145,9 +161,13 @@ async def pid_dead_by(pid: int, timeout_s: float) -> bool:
 
 def pid_gone(pid: int) -> bool:
     """Whether a pid no longer answers kill(0) — dead or never
-    was."""
+    was. PermissionError answers alive-but-not-ours (#1088's
+    helper-lane children run as another uid): the signal was
+    refused, not the process absent."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return True
+    except PermissionError:
+        return False
     return False

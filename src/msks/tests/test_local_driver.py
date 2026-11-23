@@ -416,7 +416,7 @@ async def test_launch_reconciles_share_daemons_after_a_self_exit(
 
     monkeypatch.setattr(driver, "_virtiofsd_version", at_floor)
 
-    async def fake_spawn_fs(binary, args, log_path, fd):
+    async def fake_spawn_fs(binary, args, log_path, fd, missing):
         proc = FakeProc()  # alive until terminate, like a daemon
         return proc
 
@@ -456,7 +456,7 @@ async def test_launch_reconciles_untracked_share_daemons_after_a_self_exit(
 
     monkeypatch.setattr(driver, "_virtiofsd_version", at_floor)
 
-    async def fake_spawn_fs(binary, args, log_path, fd):
+    async def fake_spawn_fs(binary, args, log_path, fd, missing):
         return FakeProc()
 
     monkeypatch.setattr(driver, "_spawn_fs", fake_spawn_fs)

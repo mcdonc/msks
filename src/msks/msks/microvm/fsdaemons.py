@@ -185,6 +185,18 @@ def virtiofsd_as_missing_message(configured: str) -> str:
     )
 
 
+def virtiofsd_as_exec_message(path: str) -> str:
+    """The named refusal when the OS refuses the helper's exec
+    (#1088): the resolved path the exec could not run, and the
+    two install facts that make an exec refuse — the setuid bit
+    and the group the 4750 mode gates on."""
+    return (
+        f"the owner-exec helper cannot run: {path} (check the "
+        "setuid bit and the msksd group the mode 4750 gates on; "
+        "MSKSD_VIRTIOFSD_AS names another path)"
+    )
+
+
 #: The owner-exec helper's PATH names across installs (#1087):
 #: the stock name and the NixOS wrapper's.
 VIRTIOFSD_AS_NAMES = ("virtiofsd-as", "msks-virtiofsd-as")

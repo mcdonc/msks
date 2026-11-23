@@ -24,6 +24,7 @@ from ..fsdaemons import (
     helper_lane,
     resolve_virtiofsd_as,
     sandbox_mode,
+    virtiofsd_as_exec_message,
     virtiofsd_as_missing_message,
     virtiofsd_floor_message,
     virtiofsd_meets_floor,
@@ -54,8 +55,12 @@ FS_TERM_GRACE_S = 5.0
 #: named with its log tail. A daemon alive past it is serving;
 #: the bound-before-accept approximation is the one the
 #: --socket-path shape always carried (bind preceded accept
-#: there too).
-FD_SERVE_GRACE_S = 0.5
+#: there too). The budget covers a loaded host's fork+exec of the
+#: helper and the virtiofsd before its main() runs — fast
+#: failures (a refusal, an argument-parse death) land inside the
+#: first 100ms — without taxing every mount-carrying start with
+#: the TERM grace's full span.
+FD_SERVE_GRACE_S = 2.0
 
 #: The version probe's ceiling (#655): the doctor's own probe
 #: answers inside 10s, and a mount start must not hang on an
@@ -112,37 +117,68 @@ def write_fs_pidfile(pidfile: Path, proc) -> None:
 
 
 async def sweep_fs_pidfile(vm_dir: Path, pidfile: Path) -> None:
-    """One untracked daemon's pidfile: a pid nothing wrote is
-    swept alone; a pid the identity pair names is TERM'd,
-    waited, and KILL'd past the grace — a recycled pid never
-    qualifies (#56's guard, the fs shape), and a TERM-ignoring
-    daemon cannot wedge the workspace behind its own live
-    socket. The swept daemon's socket file goes with it: under
-    the --fd contract the child never knew the path, so the
-    daemon that bound it unlinks it."""
+    """One untracked daemon's pidfile: a pid nothing writes is
+    swept alone; a pid the identity pair names is TERM'd, waited,
+    and KILL'd past the grace — a recycled pid never qualifies
+    (#56's guard, the fs shape), and a TERM-ignoring daemon
+    cannot wedge the workspace behind its own live socket. A
+    swept daemon's socket file goes with it (under --fd the
+    child never knew the path); an unidentified pid's socket
+    stays for the spawn's own live check to judge — a live
+    daemon behind it refuses the next start by name, never a
+    silent second bind behind one tag."""
     pid, start = read_fs_identity(pidfile)
-    if pid is not None and fs_pid_serves(
-        pid, start, fs_socket_path(vm_dir, pidfile.stem[3:])
-    ):
-        if not await stop_fs_pid(pid):
-            # A daemon that outlives even SIGKILL (D-state): keep
-            # the pidfile so a later stop can find it — the sweep
-            # never strands the only record of a live daemon.
+    socket = fs_socket_path(vm_dir, pidfile.stem[3:])
+    if pid is not None and fs_pid_serves(pid, start, socket):
+        if not await stop_fs_pid(pid, socket):
+            # A daemon that outlives even the nudge (D-state):
+            # keep the pidfile so a later stop can find it — the
+            # sweep never strands the only record of a live
+            # daemon.
             return
+        socket.unlink(missing_ok=True)
     pidfile.unlink(missing_ok=True)
-    fs_socket_path(vm_dir, pidfile.stem[3:]).unlink(missing_ok=True)
 
 
-async def stop_fs_pid(pid: int) -> bool:
-    """TERM, a short death-wait, then KILL; True when the pid
-    died. An untracked daemon has no process handle to wait on,
-    so the death check polls the pid."""
-    with contextlib.suppress(ProcessLookupError):
+def fs_exit_nudge(socket_path: Path) -> None:
+    """The stop lever on a child the daemon cannot signal (#1088):
+    a helper lane's virtiofsd runs as the workspace's owner, and
+    an unprivileged daemon's TERM and KILL both answer EPERM. But
+    virtiofsd exits when its vhost client's connection closes —
+    the same exit the VMM's own death fires — so the daemon
+    connects to the share's socket and hangs up at once: the
+    child accepts the connection, sees the disconnect, and
+    exits. Nothing serving the path makes the connect refuse —
+    the nudge is a no-op then, and a client still connected (a
+    live VMM) holds the accept, leaving the nudge unread."""
+    try:
+        probe = socket_module.socket(
+            socket_module.AF_UNIX, socket_module.SOCK_STREAM
+        )
+        try:
+            probe.connect(str(socket_path))
+        finally:
+            probe.close()
+    except OSError:
+        pass
+
+
+async def stop_fs_pid(pid: int, socket_path: Path | None = None) -> bool:
+    """TERM, a short death-wait, then KILL, then the socket's
+    disconnect exit; True when the pid died. An untracked daemon
+    has no process handle to wait on, so the death check polls
+    the pid. The signals and the nudge all land best-effort
+    (#1088: a helper-lane child runs as another uid — its
+    daemon's signal answers EPERM, suppressed — and the nudge is
+    the lever that reaches it)."""
+    with contextlib.suppress(ProcessLookupError, PermissionError):
         os.kill(pid, signal.SIGTERM)
     if await pid_dead_by(pid, FS_TERM_GRACE_S):
         return True
-    with contextlib.suppress(ProcessLookupError):
+    with contextlib.suppress(ProcessLookupError, PermissionError):
         os.kill(pid, signal.SIGKILL)
+    if socket_path is not None:
+        fs_exit_nudge(socket_path)
     return await pid_dead_by(pid, FS_TERM_GRACE_S)
 
 
@@ -256,12 +292,27 @@ class FsDaemonMixin:
                 write_fs_pidfile(fs_pidfile_path(vm_dir, tag), proc)
                 sockets[tag] = fs_socket_path(vm_dir, tag)
         except BaseException:
-            await kill_procs(procs)
-            for tag in sockets:
-                fs_socket_path(vm_dir, tag).unlink(missing_ok=True)
+            await self._unwind_fs_daemons(procs, sockets, vm_dir)
             raise
         self._fs_procs[spec.workspace_id] = procs
         return fs_device_entries(sockets)
+
+    async def _unwind_fs_daemons(
+        self, procs: list, sockets: dict[str, Path], vm_dir: Path
+    ) -> None:
+        """A failed start's cleanup (#1088): the nudge first — a
+        launch that fails before the VMM ever connects leaves a
+        helper-lane daemon in accept() with no client to
+        disconnect it, and the daemon's own connect-and-hang-up
+        fires that exit — then the signal sweep (a child the
+        daemon cannot signal answers EPERM, suppressed; the
+        pdeathsig the helper armed is the last resort) and the
+        residue cleanup."""
+        for tag in sockets:
+            fs_exit_nudge(fs_socket_path(vm_dir, tag))
+        await kill_procs(procs)
+        for tag in sockets:
+            fs_socket_path(vm_dir, tag).unlink(missing_ok=True)
 
     def _resolve_helper(self, settings, as_uid: int | None) -> str | None:
         """The helper lane's binary, resolved once per start
@@ -420,6 +471,12 @@ class FsDaemonMixin:
         # setresgid takes the uid's value); the shortcut lane
         # keeps the daemon's own pair, byte for byte today's.
         gid = as_uid if as_uid is not None else os.getgid()
+        # The lane picks the sandbox (#1088): the helper has
+        # dropped every capability and set no-new-privileges by
+        # the exec, so its child can never take a namespace —
+        # even an owner uid 0 — while the shortcut lane keeps
+        # the privilege rule (root's namespace, none otherwise).
+        sandbox = "none" if helper is not None else sandbox_mode(uid)
         args = fs_daemon_args(
             resolved,
             tag,
@@ -429,12 +486,24 @@ class FsDaemonMixin:
             guest_uid=guest_uid,
             guest_gid=guest_gid,
             readonly=readonly,
-            sandbox=sandbox_mode(uid),
+            sandbox=sandbox,
         )
         if helper is None:
-            return await self._spawn_fs(binary, args, log_path, fd)
+            return await self._spawn_fs(
+                binary,
+                args,
+                log_path,
+                fd,
+                virtiofsd_missing_message(binary),
+            )
         argv = [str(as_uid), "--fd", str(fd), "--", *args]
-        return await self._spawn_fs(helper, argv, log_path, fd)
+        return await self._spawn_fs(
+            helper,
+            argv,
+            log_path,
+            fd,
+            virtiofsd_as_exec_message(helper),
+        )
 
     async def _wait_fs_serving(self, proc, share: str, log_path: Path) -> None:
         """Hold the serve grace open for one freshly exec'd
@@ -467,7 +536,12 @@ class FsDaemonMixin:
         return socket
 
     async def _spawn_fs(
-        self, binary: str, args: list[str], log_path: Path, fd: int
+        self,
+        binary: str,
+        args: list[str],
+        log_path: Path,
+        fd: int,
+        missing: str,
     ):
         """One virtiofsd under the VMM's session rules: the
         daemon's death must not kill a serving share (a restarted
@@ -475,7 +549,9 @@ class FsDaemonMixin:
         workspace's teardown takes it with the VMM. The
         listening fd crosses the exec (pass_fds holds its number
         in the child; the helper lane's binary clears the
-        close-on-exec bit itself on the way in)."""
+        close-on-exec bit itself on the way in). *missing* is
+        the named refusal an exec the OS refuses maps to — the
+        lane's own binary, not a generic one."""
         log_file = open(log_path, "wb")
         try:
             return await asyncio.create_subprocess_exec(
@@ -488,7 +564,7 @@ class FsDaemonMixin:
                 pass_fds=(fd,),
             )
         except OSError as exc:
-            raise MicrovmError(virtiofsd_missing_message(binary)) from exc
+            raise MicrovmError(missing) from exc
         finally:
             log_file.close()
 
@@ -496,36 +572,53 @@ class FsDaemonMixin:
         """Tear the workspace's share daemons down (idempotent).
 
         Tracked daemons terminate and wait; a restarted daemon's
-        untracked ones die by pidfile — the pid's command line
-        must name this workspace's socket, so a recycled pid is
-        never killed (#56's guard, the fs shape)."""
+        untracked ones die by pidfile — the identity pair names
+        the very process this daemon spawned, so a recycled pid
+        is never killed (#56's guard, the fs shape). A helper
+        lane's child runs as the workspace's owner (#1088): the
+        signals answer EPERM and the socket's disconnect exit is
+        the lever that reaches it — the stop nudges the sockets
+        beside the TERM."""
         procs = self._fs_procs.pop(workspace_id, None)
         if procs is None:
             await self._kill_untracked_fs_daemons(workspace_id)
             return
+        vm_dir = self._dir(workspace_id)
         for proc in procs:
             self._term_fs_proc(proc)
+        for socket in sorted(vm_dir.glob("fs-*.sock")):
+            fs_exit_nudge(socket)
         await self._wait_fs_procs(procs)
-        await self._unlink_fs_residue(self._dir(workspace_id))
+        await self._unlink_fs_residue(vm_dir)
 
     def _term_fs_proc(self, proc) -> None:
         """One daemon's TERM: a daemon that already died on its
-        own answers ProcessLookupError, suppressed — the stop
-        completes either way."""
+        own answers ProcessLookupError, and a helper lane's
+        owner-uid child answers PermissionError (#1088) — both
+        suppressed, the nudge and the client's own disconnect are
+        the exits that reach it — so the stop completes either
+        way."""
         if proc.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
                 proc.terminate()
 
     async def _wait_fs_procs(self, procs: list) -> None:
         """Wait out the terminated daemons, killing any that hang
-        past the grace."""
+        past the grace; a kill the daemon cannot land (EPERM,
+        #1088's helper lane) is suppressed — the wait ends at
+        the child's self-exit, and the residue the stop unlinks
+        after is what a later sweep judges."""
         for proc in procs:
             if proc.returncode is None:
                 try:
                     await asyncio.wait_for(proc.wait(), FS_TERM_GRACE_S)
                 except TimeoutError:
-                    proc.kill()
-                    await proc.wait()
+                    with contextlib.suppress(
+                        ProcessLookupError, PermissionError
+                    ):
+                        proc.kill()
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(proc.wait(), FS_TERM_GRACE_S)
 
     async def _kill_untracked_fs_daemons(self, workspace_id: str) -> None:
         """The restarted-daemon path: pidfiles under the vm dir name

@@ -41,12 +41,15 @@ from msks.microvm.fsdaemons import (
 )
 from msks.microvm.local import (
     LocalCloudHypervisor,
+    bind_fs_socket,
+    fs_exit_nudge,
     fs_pid_serves,
     proc_start_time,
     read_fs_identity,
+    sweep_fs_pidfile,
     vm_config,
 )
-from msks.microvm.local.procs import start_time_from_stat
+from msks.microvm.local.procs import pid_gone, start_time_from_stat
 from msks.settings import MountSettings, Settings, VmmSettings
 from msks.spec.mounts import MountSpec, mount_tag
 from msks.spec.vm import VmSpec
@@ -635,7 +638,7 @@ def driver_over(
     driver = LocalCloudHypervisor(app)
     spawned: list[tuple[str, list[str], int]] = []
 
-    async def fake_spawn_fs(binary, args, log_path, fd):
+    async def fake_spawn_fs(binary, args, log_path, fd, missing):
         spawned.append((binary, args, fd))
         return FakeProc()
 
@@ -717,7 +720,7 @@ async def test_spawn_failure_unwinds_earlier_daemons(
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, spawned = driver_over(settings)
 
-    async def flaky_spawn(binary, args, log_path, fd):
+    async def flaky_spawn(binary, args, log_path, fd, missing):
         if len(spawned) == 2:
             raise FileNotFoundError("virtiofsd")
         spawned.append((binary, args, fd))
@@ -814,7 +817,9 @@ async def test_the_helper_lane_execs_the_helper_as_the_owner(
     the resolved helper with the owner uid, the listening fd, and
     the virtiofsd argv behind --; the identity squash lands as
     the owner's uid for both uid and gid (the helper's gid-takes-
-    uid contract), and the sandbox follows the exec uid."""
+    uid contract), and the sandbox is always none in this lane —
+    the helper has dropped every capability by the exec, so even
+    an owner uid 0 can never take the namespace sandbox."""
     import msks.microvm.local.fsproc as fsproc_mod
 
     share_dir = tmp_path / "proj"
@@ -826,25 +831,30 @@ async def test_the_helper_lane_execs_the_helper_as_the_owner(
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, spawned = driver_over(settings)
     monkeypatch.setattr(fsproc_mod, "dead_owner_cause", lambda uid: None)
-    spec = VmSpec(
-        workspace_id="ws-helper",
-        kernel=Path("/k"),
-        rootfs=Path("/r"),
-        owner_uid=4242,
-        mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
-    )
-    await driver._start_fs_daemons(spec, vm_dir)
-    binary, args, fd = spawned[0]
-    assert binary == "/fake/virtiofsd-as"
-    # The helper contract: <uid> --fd <n> -- <virtiofsd argv>.
-    assert args[0] == "4242"
-    assert args[1] == "--fd" and args[2] == str(fd)
-    assert args[3] == "--"
-    joined = " ".join(args)
-    assert f"squash-guest:0:4242:{WHOLE_RANGE}" in joined
-    # gid takes the uid's value in the helper lane.
-    assert args.count(f"squash-guest:0:4242:{WHOLE_RANGE}") == 2
-    assert "--sandbox none" in joined
+    for owner in (4242, 0):
+        spawned.clear()
+        spec = VmSpec(
+            workspace_id=f"ws-helper-{owner}",
+            kernel=Path("/k"),
+            rootfs=Path("/r"),
+            owner_uid=owner,
+            mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
+        )
+        await driver._start_fs_daemons(spec, vm_dir)
+        binary, args, fd = spawned[0]
+        assert binary == "/fake/virtiofsd-as"
+        # The helper contract: <uid> --fd <n> -- <virtiofsd argv>.
+        assert args[0] == str(owner)
+        assert args[1] == "--fd" and args[2] == str(fd)
+        assert args[3] == "--"
+        joined = " ".join(args)
+        assert f"squash-guest:0:{owner}:{WHOLE_RANGE}" in joined
+        # gid takes the uid's value in the helper lane.
+        assert args.count(f"squash-guest:0:{owner}:{WHOLE_RANGE}") == 2
+        # The lane, not the uid, picks the sandbox: the helper's
+        # child has no privilege to unshare with, uid 0 included.
+        assert "--sandbox none" in joined
+        assert "--sandbox namespace" not in joined
 
 
 async def test_the_shortcut_lane_execs_directly(tmp_path: Path) -> None:
@@ -936,6 +946,163 @@ async def test_the_seam_refuses_a_dead_owner_race(
     )
     with pytest.raises(MicrovmError, match="owner uid 4242 no longer exists"):
         await driver._start_fs_daemons(spec, vm_dir)
+
+
+# --- the fd, the nudge, and the unsignalable child (#1088) ----
+
+
+def test_bind_fs_socket_hands_a_listening_fd_at_the_path(
+    tmp_path: Path,
+) -> None:
+    """The bind the spawn hands out (#1088): the returned fd is a
+    listening socket bound at exactly the named path — the fd↔path
+    correspondence the argv's --fd number and the teardown's
+    unlink both lean on."""
+    import socket as socket_module
+    import stat as stat_module
+
+    socket_path = tmp_path / "fs-probe.sock"
+    fd = bind_fs_socket(socket_path)
+    try:
+        st = os.fstat(fd)
+        assert stat_module.S_ISSOCK(st.st_mode)
+        assert socket_module_getsockopt(fd) == 1  # SO_ACCEPTCONN: listening
+        probe = socket_module.socket(
+            socket_module.AF_UNIX, socket_module.SOCK_STREAM
+        )
+        try:
+            probe.connect(str(socket_path))  # bound at the path
+        finally:
+            probe.close()
+    finally:
+        os.close(fd)
+
+
+def socket_module_getsockopt(fd: int) -> int:
+    """SO_ACCEPTCONN of one fd: 1 when the socket listens. The
+    wrapper detaches — a socket object owns the fd it wraps, and
+    the test holds it across the probe."""
+    import socket as socket_module
+
+    sock = socket_module.socket(fileno=fd)
+    try:
+        return sock.getsockopt(
+            socket_module.SOL_SOCKET, socket_module.SO_ACCEPTCONN
+        )
+    finally:
+        sock.detach()
+
+
+async def test_the_nudge_exits_a_disconnected_client_server(
+    tmp_path: Path,
+) -> None:
+    """The stop lever on a child the daemon cannot signal (#1088):
+    a virtiofsd-shaped server — it accepts one connection and
+    exits when that connection closes — dies from the daemon's
+    connect-and-hang-up alone, no signal ever reaching it."""
+    import sys as sys_module
+
+    socket_path = tmp_path / "fs-nudge.sock"
+    fd = bind_fs_socket(socket_path)
+    body = (
+        "import os, socket, sys\n"
+        "s = socket.socket(fileno=int(sys.argv[1]))\n"
+        "conn, _ = s.accept()\n"
+        "conn.close()\n"
+        "open(sys.argv[2], 'w').write('done')\n"
+    )
+    ack = tmp_path / "exited"
+    server = await asyncio.create_subprocess_exec(
+        sys_module.executable,
+        "-c",
+        body,
+        str(fd),
+        str(ack),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+        pass_fds=(fd,),
+    )
+    os.close(fd)  # the child holds its own copy
+    try:
+        await asyncio.sleep(0.2)  # the server reaches accept()
+        fs_exit_nudge(socket_path)
+        await asyncio.wait_for(server.wait(), 5.0)
+        assert ack.exists()  # it took the connection and saw it close
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            server.kill()
+        await server.wait()
+
+
+def test_pid_gone_reads_permission_as_alive() -> None:
+    """The unsignalable child's liveness (#1088): a signal the
+    daemon may not send (EPERM) means the process exists — the
+    death poll must not read the refusal as death."""
+    assert pid_gone(1) is False
+
+
+async def test_the_stop_tolerates_an_unsignalable_child(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The helper lane's teardown shape (#1088): a child whose
+    signals all answer EPERM still stops — the TERM is suppressed,
+    the nudge fires the client-disconnect exit, and the death
+    poll reports it — and a TERM-time PermissionError never
+    escapes the tracked stop."""
+    import msks.microvm.local.procs as procs_mod
+
+    real_kill = os.kill
+
+    def eperm_kill(pid, sig):
+        if sig == 0:
+            return real_kill(pid, 0)
+        raise PermissionError(1, "Operation not permitted")
+
+    share_dir = tmp_path / "proj"
+    share_dir.mkdir()
+    vm_dir = short_vm_dir("ws-eperm")
+    settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
+    driver, _spawned = driver_over(settings)
+    spec = VmSpec(
+        workspace_id="ws-eperm",
+        kernel=Path("/k"),
+        rootfs=Path("/r"),
+        mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
+    )
+    await driver._start_fs_daemons(spec, vm_dir)
+
+    class Immortal(FakeProc):
+        """The EPERM shape: terminate and kill both refuse."""
+
+        def terminate(self) -> None:
+            raise PermissionError(1, "Operation not permitted")
+
+        def kill(self) -> None:
+            raise PermissionError(1, "Operation not permitted")
+
+    driver._fs_procs["ws-eperm"][0] = immortal = Immortal()
+    monkeypatch.setattr(procs_mod.os, "kill", eperm_kill)
+    await driver._stop_fs_daemons("ws-eperm")  # no raise, completes
+    assert immortal.terminated is False
+
+
+async def test_the_sweep_unlinks_only_an_identified_daemons_socket(
+    tmp_path: Path,
+) -> None:
+    """An unidentified pidfile's socket stays (#1088): the sweep
+    never deletes a socket file it could not prove a daemon dead
+    behind — the spawn's own live check judges that file, and a
+    live daemon refuses the next start by name."""
+    vm_dir = short_vm_dir("ws-anon")
+    socket = fs_socket_path(vm_dir, "proj")
+    socket.touch()
+    pidfile = fs_pidfile_path(vm_dir, "proj")
+    pidfile.write_text("999999999 7", encoding="utf-8")  # no such pid
+    await sweep_fs_pidfile(vm_dir, pidfile)
+    assert not pidfile.exists()
+    assert socket.exists()  # left for the spawn's stale/live verdict
 
 
 # --- the doctor rows --------------------------------------------------
@@ -1282,7 +1449,7 @@ async def test_stop_is_idempotent_and_kills_a_hang(tmp_path: Path) -> None:
                 await asyncio.sleep(0.02)
             return self.returncode
 
-    async def hang_spawn(binary, args, log_path, fd):
+    async def hang_spawn(binary, args, log_path, fd, missing):
         return HangingProc()
 
     driver._spawn_fs = hang_spawn
@@ -1315,13 +1482,19 @@ async def test_real_spawn_wraps_a_missing_binary(tmp_path: Path) -> None:
     bare.state = type("State", (), {})()
     bare.state.settings = Settings()
     driver = LocalCloudHypervisor(bare)
+    from msks.microvm.fsdaemons import virtiofsd_missing_message
+
     with pytest.raises(
         MicrovmError, match="virtiofsd binary not found or not executable"
     ):
         fd = os.open(os.devnull, os.O_RDONLY)
         try:
             await driver._spawn_fs(
-                "virtiofsd-absent", [], tmp_path / "log", fd
+                "virtiofsd-absent",
+                [],
+                tmp_path / "log",
+                fd,
+                virtiofsd_missing_message("virtiofsd-absent"),
             )
         finally:
             os.close(fd)
@@ -1346,7 +1519,7 @@ async def test_terminate_of_an_external_death_is_tolerated(
         def terminate(self) -> None:
             raise ProcessLookupError
 
-    async def dying_spawn(binary, args, log_path, fd):
+    async def dying_spawn(binary, args, log_path, fd, missing):
         return ExternalDeath()
 
     driver._spawn_fs = dying_spawn
@@ -1400,7 +1573,7 @@ async def test_stop_skips_an_already_exited_daemon(tmp_path: Path) -> None:
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
 
-    async def exited_spawn(binary, args, log_path, fd):
+    async def exited_spawn(binary, args, log_path, fd, missing):
         return FakeProc()
 
     driver._spawn_fs = exited_spawn
@@ -1564,7 +1737,7 @@ async def test_a_daemon_dying_at_exec_names_its_log(tmp_path: Path) -> None:
             super().__init__()
             self.returncode = 1
 
-    async def dead_spawn(binary, args, log_path, fd):
+    async def dead_spawn(binary, args, log_path, fd, missing):
         return DiedAtExec()
 
     driver._spawn_fs = dead_spawn
@@ -1596,7 +1769,7 @@ async def test_a_silent_daemon_passes_as_serving(tmp_path: Path) -> None:
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, spawned = driver_over(settings)
 
-    async def silent_spawn(binary, args, log_path, fd):
+    async def silent_spawn(binary, args, log_path, fd, missing):
         spawned.append((binary, args, fd))
         return FakeProc()  # alive, serves nothing, says nothing
 
@@ -1647,7 +1820,7 @@ async def test_sweep_keeps_a_killproof_daemons_pidfile(tmp_path):
     pidfile = fs_pidfile_path(vm_dir, "proj")
     pidfile.write_text(str(live.pid), encoding="utf-8")
 
-    async def killproof(pid):
+    async def killproof(pid, socket_path=None):
         return False  # survived even SIGKILL
 
     real_stop = local_mod.stop_fs_pid

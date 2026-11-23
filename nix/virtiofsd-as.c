@@ -41,6 +41,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <syslog.h>
+#include <signal.h>
 #include <unistd.h>
 
 #ifndef SYS_close_range
@@ -256,6 +257,20 @@ int main(int argc, char **argv)
      * whatever later packaging does to that path. */
     if (prctl(PR_SET_NO_NEW_PRIVS, 1UL, 0UL, 0UL, 0UL) != 0)
         fail("cannot set no-new-privileges");
+
+    /* The daemon that spawned this exec cannot signal the child
+     * it lands as (#1088): the virtiofsd runs as the workspace's
+     * owner, and the daemon holds no CAP_KILL over another uid's
+     * process. The parent-death signal is the daemon-death half
+     * of that story — a crashed or restarted daemon reaps every
+     * helper-exec'd virtiofsd at once, instead of leaving them
+     * serving sockets no client will ever open again. It
+     * survives the execve; the getppid check closes the race
+     * where the parent died between the fork and this prctl. */
+    if (prctl(PR_SET_PDEATHSIG, SIGTERM, 0UL, 0UL, 0UL) != 0)
+        fail("cannot set the parent-death signal");
+    if (getppid() == 1)
+        refuse("the spawning parent is gone; refusing to linger");
 
     /* Exactly one fd crosses the exec: everything above the
      * standard three, except the listening fd, closes — no
