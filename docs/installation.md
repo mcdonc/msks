@@ -33,10 +33,11 @@ of util-linux `setpriv` carrying file capabilities `cap_net_admin` and
 `cap_net_bind_service`. The daemon's per-VM taps and nftables chains need
 `net_admin`; the egress stack's DHCP (port 67) and DNS (port 53) need
 `net_bind_service`. The wrapper raises both caps ambient, so they flow to
-the daemon and every tool it execs. The grant surface is the wrapper's
-execute permission: any local user able to run it holds the two capabilities
-through it. After installing it the setup runs the wrapper and verifies the
-caps.
+the daemon and every tool it execs. The systemd unit grants the daemon
+its caps natively, so the wrapper serves the dev daemon alone (see
+[Development environment](development.md)): it lands root:`msks` mode
+0750, executable by root and the `msks` group's members. After installing
+it the setup runs the wrapper and verifies the caps.
 
 **The routing kernel.** `/etc/sysctl.d/msks-egress.conf` sets
 `net.ipv4.ip_forward=1` at boot, and the value applies immediately: route
@@ -48,9 +49,12 @@ and the interactive consent queue. A module the kernel tree lacks draws a
 warning naming the kernel package that carries it. Interactive egress
 consent needs its whole module set, and the run's summary names the verdict.
 
-**`/dev/kvm`.** Access arrives through the `kvm` group on the daemon's user.
-The setup adds the executing user to the group when missing. The account
-picks the group up at the next login. An already-running session keeps the
+**`/dev/kvm`.** Access arrives through the `kvm` group. The daemon's
+system unit carries `SupplementaryGroups=msks kvm`, so the daemon account
+reaches the node through the unit itself. The setup also adds the
+executing user to the group when missing, for hand-run daemons (`msks-dev`,
+a bare `msksd`). The account picks the group up at the next login. An
+already-running session keeps the
 old groups until it starts anew.
 
 **The login PATH.** The account that typed the command (the `SUDO_USER`
@@ -59,21 +63,32 @@ appends a guarded block to that account's `~/.profile`, idempotently, so a
 re-run never duplicates it. Debian keeps `nft`, `conntrack`, and the
 e2fsprogs trio in `/usr/sbin`, and a non-root login shell does not carry the
 directory. The block means the operator's next login can type the names the
-daemon execs. A daemon started by the systemd user unit finds the
-directories on its own PATH (the unit manager's default carries them). A
-daemon started by hand (`msks-dev`, a bare `msksd`) inherits the session's
-PATH, so the same login carries the fix to both shapes.
+daemon execs. A daemon under the system unit finds the directories on its
+own PATH (the system manager's default carries them). A daemon started
+by hand (`msks-dev`, a bare `msksd`) inherits the session's PATH, so the
+same login carries the fix to both shapes.
 
-**The systemd user service.** On a host systemd manages, the setup writes
-`~/.config/systemd/user/msksd.service` for the executing user and enables
-it. The unit execs `msksd` through the wrapper, so the file capabilities
-grant it the same posture a root unit would have, so it can spawn VMs. It
-runs with `MSKSD_EGRESS_ENABLED=true` and the uplink interface the setup
-detected, and it creates the unix listener's runtime directory under the
-user's own `$XDG_RUNTIME_DIR` (`RuntimeDirectory=msks`, the client's default
-socket candidate). It restarts the daemon on failure. Finally, `loginctl
-enable-linger` keeps the user manager, and the daemon, running across
-logouts and boots.
+**The accounts.** The setup creates the `msksd` system account — `nologin`,
+home `/var/lib/msksd`, where the daemon's state lives — and the `msks`
+access group. Membership in `msks` is the deliberate grant that gates the
+shared socket: the daemon binds `/run/msks/msksd.sock` and hands it to the
+group, and a member connects with no token and no CA. The setup grants the
+executing user (`$SUDO_USER`) the membership, so the single-user workstation
+needs no further step. The membership applies at the next login.
+
+**The systemd system service.** On a host systemd manages, the setup writes
+`/etc/systemd/system/msksd.service` and enables it. The unit runs the
+daemon under the `msksd` account with `SupplementaryGroups=msks kvm`, and
+grants `cap_net_admin` and `cap_net_bind_service` natively —
+`AmbientCapabilities` and `CapabilityBoundingSet` carry the pair, so no
+wrapper and no setuid path is involved. The unit points the daemon at the
+shared socket (`MSKSD_SOCKET=/run/msks/msksd.sock`, handed to the `msks`
+group) and runs with `MSKSD_EGRESS_ENABLED=true` and the uplink interface
+the setup detected. It restarts the daemon on failure, and it starts at
+boot with no login. Before the unit lands, the setup verifies the resolved
+`msksd` binary is readable and executable by the `msksd` account — a
+deployment whose venv sits behind a permission the account cannot cross
+(a 0700 home) refuses at install time with the cause named.
 
 **Cloud Hypervisor's static release binary**. So guest VMs can be started.
 
@@ -90,9 +105,10 @@ re-points, stale by definition. `--uninstall` removes both.
 **PATH manipulation.** Adds `/usr/sbin` to the sudoing user's `PATH` so various
 binaries can be found.
 
-The run ends with a summary: the wrapper and its caps, the sysctl, the modules
-file, the tools' paths, `/dev/kvm`, the login PATH block, the client links, the
-consent verdict, the detected uplink, and the service line.
+The run ends with a summary: the wrapper and its caps, the account line,
+the sysctl, the modules file, the tools' paths, `/dev/kvm`, the login PATH
+block, the client links, the consent verdict, the detected uplink, and the
+service line.
 
 You will need to log out and back in for `msksd doctor` to return clean after
 using the host installer.
@@ -145,8 +161,8 @@ The run is idempotent: re-run any time, and re-run after a util-linux upgrade
 `msks-setup-fedora-host` is the way to install msksd on Fedora: it contains
 a `HostProfile` (the package map, the probe names, the dnf verbs, the
 `usermod`/`gpasswd` group commands) over the same phases the Debian tool
-runs (the wrapper, the routing kernel settings, the packages, the kvm grant,
-the systemd user service, the `--uninstall` mirror, the VMM download).
+runs (the wrapper, the routing kernel settings, the packages, the accounts,
+the systemd system service, the `--uninstall` mirror, the VMM download).
 
 ```console
 sudo "$(command -v msks-setup-fedora-host)"
@@ -161,16 +177,16 @@ already carries the rest of the probed set (`setpriv`, `setcap`, `ip`,
 names Fedora's own command, `update-ca-trust` (the ca-certificates package),
 where the Debian map probes `update-ca-certificates`.
 
-The kvm membership runs through `usermod -aG kvm`, and the
+The group commands run through `usermod -aG` and `gpasswd -d`, and the
 uninstall summary's removal line is dnf's.
 
 The same pieces land at the same paths for the same reasons
 the Debian section above documents: the wrapper at
 `/usr/local/bin/msks-caps` with the two capabilities, the
-sysctl and modules files under `/etc`, the user unit under
-`~/.config/systemd/user/`, and the cloud-hypervisor static
-release for the host's architecture. `--uninstall` reverses
-the run the same way.
+sysctl and modules files under `/etc`, the `msksd` account and the `msks`
+group, the system unit under `/etc/systemd/system/`, and the
+cloud-hypervisor static release for the host's architecture. `--uninstall`
+reverses the run the same way.
 
 ## The same host by hand (if you'd rather not trust `msks-setup-{debian,fedora}-host`)
 
@@ -206,12 +222,30 @@ sudo -i apt install iproute2 \
 bundle the next step's `curl` to github.com needs for its TLS
 verification.
 
-The capability wrapper is a fresh root-owned copy of `setpriv`, with the two
-capabilities set and read back. A filesystem without capability xattrs takes
-the `setcap` and loses it, so the readback is the proof:
+The accounts come first, because the wrapper lands under the access
+group: the `msksd` system account the unit runs the daemon under, and
+the `msks` access group the shared socket's connect permission gates
+on. Grant your own account the membership — a fresh login picks it up:
 
 ```console
-install -o root -g root -m 0755 "$(command -v setpriv)" /usr/local/bin/msks-caps
+useradd -r --home-dir /var/lib/msksd --shell /usr/sbin/nologin msksd
+groupadd --system msks
+adduser <your-user> msks          # usermod -aG msks <your-user> on Fedora
+usermod -aG kvm <your-user>       # for hand-run daemons (msks-dev)
+```
+
+`/dev/kvm` for the daemon itself arrives through the unit's
+`SupplementaryGroups` below — no membership on the `msksd` account
+is involved.
+
+The capability wrapper is a fresh root-owned copy of `setpriv`, root:`msks`
+0750, with the two capabilities set and read back. A filesystem without
+capability xattrs takes the `setcap` and loses it, so the readback is the
+proof. The system unit grants the daemon its caps natively, so the wrapper
+serves the dev daemon alone:
+
+```console
+install -o root -g msks -m 0750 "$(command -v setpriv)" /usr/local/bin/msks-caps
 setcap cap_net_admin,cap_net_bind_service+ep /usr/local/bin/msks-caps
 getcap /usr/local/bin/msks-caps
 ```
@@ -250,46 +284,47 @@ Interactive egress consent needs `nft_reject`,
 `grep -w <module> /proc/modules` (or `lsmod`) when a load
 landed quietly.
 
-`/dev/kvm` for the daemon's user, picked up at that account's
-next login:
-
-```console
-usermod -aG kvm <the-user-the-daemon-runs-as>
-```
-
-The systemd user service is the daemon user's own piece — leave the root
-shell and run it as that user. Write `~/.config/systemd/user/msksd.service`
-with the unit below. Adjust the `msksd` path to where the install put it,
-and the uplink's default-route interface (default via 192.168.1.1 dev eno4
-proto dhcp src 192.168.1.112 metric 100 gives it):
+Write `/etc/systemd/system/msksd.service` with the unit below. Adjust
+the `msksd` path to where the install put it, and the uplink's
+default-route interface (default via 192.168.1.1 dev eno4 proto dhcp
+src 192.168.1.112 metric 100 gives it):
 
 ```ini
 [Unit]
 Description=msks daemon (workspaces as cloud-hypervisor microvms)
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/msks-caps --inh-caps=+net_admin,+net_bind_service --ambient-caps=+net_admin,+net_bind_service -- /path/to/msksd
+User=msksd
+Group=msksd
+SupplementaryGroups=msks kvm
+AmbientCapabilities=cap_net_admin cap_net_bind_service
+CapabilityBoundingSet=cap_net_admin cap_net_bind_service
+ExecStart=/path/to/msksd
 Environment=MSKSD_EGRESS_ENABLED=true
 Environment=MSKSD_EGRESS_UPLINK=<uplink>
+Environment=MSKSD_SOCKET=/run/msks/msksd.sock
+Environment=MSKSD_SOCKET_GROUP=msks
+StateDirectory=msksd
 RuntimeDirectory=msks
 Restart=always
 RestartSec=1
 TimeoutStopSec=180s
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
 ```
 
-Then enable it, as that user:
+Then enable it:
 
 ```console
-systemctl --user enable --now msksd.service
-loginctl enable-linger <the-user-the-daemon-runs-as>
+systemctl enable --now msksd.service
 ```
 
-`loginctl enable-linger` is the one root command among these —
-it keeps the user manager, and the daemon, running across
-logouts and boots.
+The unit grants the two capabilities natively (`AmbientCapabilities`
+with a matching bounding set), so no wrapper sits on the daemon's path.
+It starts at boot with no login.
 
 The daemon's workspace machinery execs `cloud-hypervisor` (the VMM).
 
@@ -353,15 +388,18 @@ kernel boots deep into first boot, then stalls before ssh answers.
 ## Uninstalling msks
 
 `msks-setup-{debian,fedora,macos}-host --uninstall` reverses the run. It
-stops and disables the `msksd` user service and removes its unit file and
+stops and disables the `msksd` system service and removes its unit file and
 its enablement symlink; the stop lets the daemon finish its shutdown cycle,
-workspaces included. It turns linger off, removes the two `/etc` files the
+workspaces included. It removes the `msksd` account and the `msks` group
+(the executing user's grant leaves with them, and the summary names the
+`adduser` line that restores it). `/var/lib/msksd` stays: the VM overlays,
+images, and secrets there survive by design, and the summary names the kept
+directory. It removes the two `/etc` files the
 run landed, and removes the capability wrapper. It takes the executing user
 out of the `kvm` group; the tool keeps no record of which run added a
-membership, so any member leaves, and the summary names the `adduser` line
-that restores it. It strips the PATH block from `~/.profile` and removes the
-cloud-hypervisor binary. Kernel modules already loaded stay loaded until the
-next reboot.
+membership, so any member leaves. It strips the PATH block from `~/.profile`
+and removes the cloud-hypervisor binary. Kernel modules already loaded stay
+loaded until the next reboot.
 
 After the sysctl file leaves, `sysctl --system` re-applies every remaining
 sysctl.d file, the same set a boot applies. A second owner that wrote its own
@@ -378,7 +416,7 @@ ones whose probes answer present, with a copy-paste `apt-get remove --purge
 
 The uninstall run is idempotent the same way: a piece already gone is a line
 in the summary, not an error, and the first real refusal stops the run: the
-setup run's rule. `--no-service` holds its meaning: the service is left
+setup run's rule. `--no-service` holds its meaning: the unit is left
 alone, every other piece still leaves.
 
 ## The host doctor

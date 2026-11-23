@@ -49,8 +49,9 @@ import subprocess as subprocess  # noqa: F401 — suite seam
 import sys as sys  # noqa: F401 — suite seam
 
 from ...config import load_settings as load_settings
+from ..hostsetup import SYSTEMD_MANAGER as SYSTEMD_MANAGER
 from ..hostsetup import executing_user as executing_user
-from . import checks, hints, kvm, probes, report
+from . import checks, hints, kvm, probes, report, systemd
 from .checks import (
     NFQ_LOAD_PROBE,
     TMUX_MIN_VERSION,
@@ -133,6 +134,18 @@ from .report import (
     result_marker,
     summary_line,
 )
+from .systemd import (
+    ACCESS_GROUP,
+    UNIT_NAME,
+    group_absent_result,
+    msks_group_result,
+    msks_unit_result,
+    no_manager_result,
+    not_a_member_result,
+    session_lacks_group,
+    session_predates_result,
+    shared_socket_result,
+)
 
 _main_module = sys.modules[__name__ + ".main"]  # noqa: E402
 
@@ -142,6 +155,7 @@ SUBMODULES = (
     probes,
     checks,
     kvm,
+    systemd,
     _main_module,
 )
 
@@ -210,6 +224,16 @@ __all__ = [
     "kvm_session_stale",
     "midr_names_apple",
     "module_param_names_nv_mode",
+    "ACCESS_GROUP",
+    "UNIT_NAME",
+    "group_absent_result",
+    "msks_group_result",
+    "msks_unit_result",
+    "no_manager_result",
+    "not_a_member_result",
+    "session_lacks_group",
+    "session_predates_result",
+    "shared_socket_result",
     "add_path_note",
     "default_path_absent",
     "doctor_main",

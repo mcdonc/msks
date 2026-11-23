@@ -444,8 +444,12 @@ secretcache = 4
 # dead-owner cause — the skip word the listing and the start's
 # split share. #1093: the sharing chgrp names its runtime-dir
 # shape — SOCKET_DIR joins the local listener's path-vocabulary
-# statement.
-spec = 54
+# statement. #1094: the system unit and doctor's system-
+# deployment rows name the shared socket's path — the unit's
+# Environment line (hostsetup/unit.py) and the socket row
+# (doctor/systemd.py) are two more statements over
+# spec.sockets, names folded in.
+spec = 59
 # #773: the clone route reads the state-disk floor (create_refusal
 # beside the artifacts' allocated-cost file_cost) before any byte
 # copies.

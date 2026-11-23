@@ -14,10 +14,11 @@ whatever deployment brought it; this tool owns the host only:
    keeps setpriv's own CLI, so the dev daemon's exec line runs
    unchanged (``DEV_CAPS=/usr/local/bin/msks-caps`` relocates it).
    The caps arrive ambient, so they flow to the daemon and every
-   tool it execs. The grant surface is the wrapper's execute
-   permission: any local user able to run it holds the two
-   capabilities through it — the same grant the NixOS dev host's
-   wrapper makes.
+   tool it execs. The system unit grants its caps natively
+   (#1080), so the wrapper is the dev daemon's path alone:
+   root:msks 0750, executable by root and the msks group's
+   members, and no other account — the 0755 shape this replaces
+   handed both caps to every local user.
 2. The routing kernel settings egress verifies or needs
    (docs/networking.md): net.ipv4.ip_forward=1 as a boot-time
    sysctl.d setting — the daemon reads the sysctl at startup and
@@ -25,21 +26,31 @@ whatever deployment brought it; this tool owns the host only:
    reads 0 — and the netfilter/tun modules at boot, mirroring
    nix/module.nix's boot.kernelModules plus the REJECT and NFQUEUE
    pieces the consent chain's rulesets reference.
-3. The systemd user service (#560), on a host systemd manages:
-   the tool writes ``~/.config/systemd/user/msksd.service`` for
-   the executing user — the operator who invoked the tool
-   (``SUDO_USER`` under sudo), whose own state dir, image
-   catalog, and #555 socket identity the service inherits —
-   execs the daemon through the wrapper (the wrapper's file
-   capabilities grant any executor the two caps, so a user unit
-   holds the same posture a root unit would), creates the #555
-   socket's runtime directory under the user's own
-   ``$XDG_RUNTIME_DIR``, and ``loginctl enable-linger`` keeps
-   the user manager — and the daemon — running across logouts
-   and boots. A host without systemd (a container, a non-systemd
-   init), a deployment whose msksd lives elsewhere, or
-   ``--no-service`` keeps today's behavior: every host piece
-   above, no unit.
+3. The system deployment's accounts (#1080): the msksd system
+   account (nologin, /var/lib/msksd — the unit's User= and
+   StateDirectory= pair), the msks access group the shared
+   socket's connect permission gates on (#1093), and the
+   executing user's grant — the deliberate, auditable membership
+   that keeps the single-user workstation at zero new friction.
+   The daemon reaches kvm through the unit's SupplementaryGroups,
+   so the human's kvm membership is never the daemon's path in
+   (the account keeps its own kvm grant for bare runs).
+4. The systemd system service (#560, reshaped by #1080), on a
+   host systemd manages: the tool writes
+   ``/etc/systemd/system/msksd.service`` running the daemon under
+   the msksd account — the shape the NixOS module already ships:
+   User=/Group= msksd, kvm through SupplementaryGroups, the two
+   capabilities ambient and bounded natively, the shared socket's
+   path and group through its Environment lines (#1093), egress
+   enabled against the detected uplink. The binary the unit
+   execs is proven readable and executable by the msksd account
+   before anything lands (a venv behind a 0700 home refuses by
+   name; the /opt/msks venv is the durable answer). A host
+   without systemd (a container, a non-systemd init), a
+   deployment whose msksd lives elsewhere, or ``--no-service``
+   keeps today's behavior: every host piece above, no unit. The
+   developer's own daemon runs through devenv (development.md),
+   not a landed unit.
 
 The plumbing tools the daemon execs (ip, nft, conntrack) install
 through apt when missing — and with #598, so does every other
@@ -61,33 +72,32 @@ GUI-opened window resolves on its own PATH — each pointing at
 the bin sibling this tool's own venv ships, on every login
 PATH; a path already holding a live link or a regular file
 refuses by name, and a dangling link re-points. /dev/kvm access
-arrives through the kvm
-group on the daemon's user, the same supplementary-group grant the
-NixOS unit makes — the tool adds the executing user to the group
-when missing (#560; bare runs and new logins need it on the
-account). A user manager that was already running forked before
-the group write reaches it — the daemon holds the old groups
-until that manager restarts, and the service line says so.
+for the executing user's own bare runs arrives through the kvm
+group on the account — the tool adds the executing user to the
+group when missing (#560; the system unit's daemon reaches kvm
+through its SupplementaryGroups instead).
 Idempotent: re-run any time. Re-run after a util-linux
 upgrade — the setpriv copy under /usr/local keeps running the old
 binary until refreshed.
 
 ``--uninstall`` (#604) is the mirror, in teardown order: the
 service stops first (workspaces included, inside the unit's
-180s stop grace — a user manager that is down runs no stop at
-all, because no manager means no daemon), then the unit file
-and its enablement symlink, the sysctl and
-modules files leave (``sysctl --system`` re-applies every
-remaining sysctl.d file, so a second owner's setting survives),
-the wrapper, the client links, the kvm membership (the tool
-keeps no state, so any member leaves — the line names the
-restore), the ``~/.profile`` block, and the cloud-hypervisor
-binary — while
-the apt packages stay (they are shared Debian packages; the
-summary names the ones present with the ``apt-get`` line that
-removes them). Idempotent the same way: re-run any time; a
-piece already gone is a line in the summary, not a refusal,
-and the first real refusal stops the run, the setup run's rule.
+180s stop grace — a unit file that is gone runs no daemon, so
+no stop call is involved), then the unit file and its
+enablement symlink, the accounts the deployment created (the
+executing user's msks grant, the msksd account, the msks group —
+/var/lib/msksd stays: the VM overlays, images, and secrets
+there survive by design), the sysctl and modules files leave
+(``sysctl --system`` re-applies every remaining sysctl.d file,
+so a second owner's setting survives), the wrapper, the client
+links, the kvm membership (the tool keeps no state, so any
+member leaves — the line names the restore), the ``~/.profile``
+block, and the cloud-hypervisor binary — while the apt packages
+stay (they are shared Debian packages; the summary names the
+ones present with the ``apt-get`` line that removes them).
+Idempotent the same way: re-run any time; a piece already gone
+is a line in the summary, not a refusal, and the first real
+refusal stops the run, the setup run's rule.
 
 The phases are distro-neutral machinery; the per-distro surface
 — the tool's name, the package maps and probe names, the
@@ -182,43 +192,43 @@ from .run import (
     uninstall_summary,
 )
 from .unit import (
-    RETRY_DELAY,
-    RUNTIME_DIR_FMT,
+    SYSTEM_WANTS_PATH,
     SYSTEMD_MANAGER,
-    USER_UNIT_RELATIVE,
+    UNIT_CAPS,
+    UNIT_NAME,
+    UNIT_PATH,
     activate_unit,
-    disable_linger,
-    ensure_unit_parents,
     forget_unit,
     install_service,
-    linger,
     load_unit,
-    manager_running,
     restart_running_unit,
     service_note,
     service_skip_cause,
     start_unit,
     stop_unit,
+    systemctl,
     systemd_manages,
-    teardown_busless_service,
-    teardown_running_service,
     uninstall_service,
-    unit_path,
     unit_text,
-    user_manager_call,
-    user_systemctl,
-    wants_path,
+    verify_daemon_binary,
     write_unit,
 )
 from .users import (
+    ACCESS_GROUP,
+    DAEMON_HOME,
+    DAEMON_USER,
+    NOLOGIN,
+    ensure_accounts,
     ensure_kvm_membership,
     executing_user,
     group_present,
     in_group,
     pwd_getpwnam,
     pwd_getpwuid,
+    remove_accounts,
     remove_kvm_membership,
     uplink,
+    user_present,
 )
 from .util import (
     OS_RELEASE,
@@ -340,13 +350,20 @@ __all__ = [
     "warn_absent_modules",
     "warn_load_failures",
     "ensure_kvm_membership",
+    "ACCESS_GROUP",
+    "DAEMON_HOME",
+    "DAEMON_USER",
+    "NOLOGIN",
+    "ensure_accounts",
     "executing_user",
     "group_present",
     "in_group",
     "pwd_getpwnam",
     "pwd_getpwuid",
+    "remove_accounts",
     "remove_kvm_membership",
     "uplink",
+    "user_present",
     "CLIENT_LINK",
     "CLIENT_LINKS",
     "POPUP_LINK",
@@ -358,32 +375,25 @@ __all__ = [
     "msksd_sibling",
     "place_link",
     "relink_or_refuse",
-    "RETRY_DELAY",
-    "RUNTIME_DIR_FMT",
     "SYSTEMD_MANAGER",
-    "USER_UNIT_RELATIVE",
+    "SYSTEM_WANTS_PATH",
+    "UNIT_CAPS",
+    "UNIT_NAME",
+    "UNIT_PATH",
     "activate_unit",
-    "disable_linger",
-    "ensure_unit_parents",
     "forget_unit",
     "install_service",
-    "linger",
     "load_unit",
-    "manager_running",
     "restart_running_unit",
     "service_note",
     "service_skip_cause",
     "start_unit",
     "stop_unit",
+    "systemctl",
     "systemd_manages",
-    "teardown_busless_service",
-    "teardown_running_service",
     "uninstall_service",
-    "unit_path",
     "unit_text",
-    "user_manager_call",
-    "user_systemctl",
-    "wants_path",
+    "verify_daemon_binary",
     "write_unit",
     "check_root_and_platform",
     "consent_line",

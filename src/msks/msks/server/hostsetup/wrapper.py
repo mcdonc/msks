@@ -2,11 +2,18 @@
 
 A root-owned setpriv copy at ``/usr/local/bin/msks-caps``
 carrying CAP_NET_ADMIN and CAP_NET_BIND_SERVICE — the Debian
-equivalent of the NixOS host's security wrapper (#231).
+equivalent of the NixOS host's security wrapper (#231). The
+system unit grants its caps natively (#1080's decision 7), so
+the wrapper is the dev daemon's path alone: root:msks 0750,
+executable by root and the msks group's members (the deliberate
+grant the account phase makes), and no other account — the
+0755 root:root + setcap shape this replaces handed both caps
+to every local user.
 """
 
 from __future__ import annotations
 
+from .users import ACCESS_GROUP
 from .util import HostSetupError, remove_file, sh, which
 
 WRAPPER = "/usr/local/bin/msks-caps"
@@ -21,8 +28,11 @@ CAPS = "cap_net_admin,cap_net_bind_service"
 
 def install_wrapper() -> None:
     """A fresh copy each run (the util-linux-upgrade note in the
-    module docstring); setcap lands after the copy, because a copy
-    does not carry capability xattrs."""
+    module docstring), root:msks 0750 — the narrowest grant that
+    keeps the dev-daemon chapter working: only root and the
+    account phase's msks members can exec it. setcap lands
+    after the copy, because a copy does not carry capability
+    xattrs."""
     setpriv = which("setpriv")
     if setpriv is None:
         raise HostSetupError("setpriv not found after package install")
@@ -32,9 +42,9 @@ def install_wrapper() -> None:
             "-o",
             "root",
             "-g",
-            "root",
+            ACCESS_GROUP,
             "-m",
-            "0755",
+            "0750",
             setpriv,
             WRAPPER,
         ]
