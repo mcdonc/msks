@@ -148,15 +148,16 @@ def fs_pidfile_path(vm_dir: Path, share: str) -> Path:
 
 
 def sandbox_mode(uid: int) -> str:
-    """The sandbox strength the exec uid can carry (#1088): a
-    virtiofsd running as root gets the namespace sandbox
+    """The sandbox strength the shortcut lane's exec uid can
+    carry: a virtiofsd running as root gets the namespace sandbox
     (mount/pid/net namespaces plus pivot_root — the strongest
     escape guard); any other uid gets ``none``, because both
     isolating modes need privileges that uid does not hold. The
-    uid is the one the daemon execs the share as — the
-    workspace owner's in the helper lane, the daemon's own in
-    the shortcut lane. The share set itself stays operator-
-    chosen either way (#620's trust model)."""
+    uid is the daemon's own — the lane the owner did not move —
+    and the share set stays operator-chosen either way (#620's
+    trust model); the helper lane never reaches this rule (its
+    child execs capability-less, uid 0 included, and composes
+    ``none`` unconditionally)."""
     return "namespace" if uid == 0 else "none"
 
 

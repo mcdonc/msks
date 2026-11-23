@@ -1074,18 +1074,32 @@ async def test_the_stop_tolerates_an_unsignalable_child(
     await driver._start_fs_daemons(spec, vm_dir)
 
     class Immortal(FakeProc):
-        """The EPERM shape: terminate and kill both refuse."""
+        """The EPERM shape: terminate and kill both refuse, and
+        the wait blocks until the abandon window — the stop's
+        kill arm reached with its signal refused."""
 
         def terminate(self) -> None:
             raise PermissionError(1, "Operation not permitted")
 
         def kill(self) -> None:
+            self.killed = True
             raise PermissionError(1, "Operation not permitted")
+
+        async def wait(self) -> int:
+            import asyncio as asyncio_mod
+
+            while self.returncode is None:
+                await asyncio_mod.sleep(0.01)
+            return self.returncode or 0
 
     driver._fs_procs["ws-eperm"][0] = immortal = Immortal()
     monkeypatch.setattr(procs_mod.os, "kill", eperm_kill)
+    import msks.microvm.local.fsproc as fsproc_mod
+
+    monkeypatch.setattr(fsproc_mod, "FS_TERM_GRACE_S", 0.05)
     await driver._stop_fs_daemons("ws-eperm")  # no raise, completes
     assert immortal.terminated is False
+    assert immortal.killed is True  # the kill arm ran, EPERM and all
 
 
 async def test_the_sweep_unlinks_only_an_identified_daemons_socket(

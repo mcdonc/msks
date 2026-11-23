@@ -156,6 +156,10 @@ def fs_exit_nudge(socket_path: Path) -> None:
             socket_module.AF_UNIX, socket_module.SOCK_STREAM
         )
         try:
+            # The stale probe's own bound (console.py's rule): a
+            # full backlog means live, and a wedged pre-accept
+            # daemon must not hold the stop path open on it.
+            probe.settimeout(0.5)
             probe.connect(str(socket_path))
         finally:
             probe.close()
@@ -173,6 +177,12 @@ async def stop_fs_pid(pid: int, socket_path: Path) -> bool:
     the lever that reaches it)."""
     with contextlib.suppress(ProcessLookupError, PermissionError):
         os.kill(pid, signal.SIGTERM)
+    # The nudge lands beside the TERM, not only after the KILL:
+    # a helper-lane child's signals both answer EPERM, and the
+    # disconnect exit is the one lever that reaches it — firing
+    # it up front spares the sweep a grace of polling a pid no
+    # signal was ever going to move. Idempotent either way.
+    fs_exit_nudge(socket_path)
     if await pid_dead_by(pid, FS_TERM_GRACE_S):
         return True
     with contextlib.suppress(ProcessLookupError, PermissionError):
