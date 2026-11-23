@@ -22,13 +22,16 @@ from ..fsdaemons import (
     fs_socket_path,
     guest_user_ids,
     helper_lane,
+    helper_target,
     resolve_virtiofsd_as,
     sandbox_mode,
     virtiofsd_as_exec_message,
     virtiofsd_as_missing_message,
+    virtiofsd_as_target_message,
     virtiofsd_floor_message,
     virtiofsd_meets_floor,
     virtiofsd_missing_message,
+    virtiofsd_target_mismatch_message,
     virtiofsd_version,
 )
 from .config import POLL_INTERVAL_S
@@ -328,11 +331,15 @@ class FsDaemonMixin:
         (#1088): None — the shortcut lane, which needs no helper
         — when the owner is the daemon's own uid; a resolved
         helper path otherwise, refusing by name when the owner
-        is dead or no helper is installed. The dead-owner
-        refusal here is the race arm: the derivation gate
-        (#1088's mount_state) already skipped a dead owner's
-        mounts, and this catches the deletion that lands between
-        that gate and the spawn."""
+        is dead, no helper is installed, or the helper will exec
+        a virtiofsd other than the one the daemon resolved — the
+        compile-time target is the privilege boundary, and this
+        probe is what keeps the floor probe and the exec
+        coherent when an operator's override would drift them
+        apart. The dead-owner refusal here is the race arm: the
+        derivation gate (#1088's mount_state) already skipped a
+        dead owner's mounts, and this catches the deletion that
+        lands between that gate and the spawn."""
         if as_uid is None:
             return None
         dead = dead_owner_cause(as_uid)
@@ -343,7 +350,23 @@ class FsDaemonMixin:
             raise MicrovmError(
                 virtiofsd_as_missing_message(settings.vmm.virtiofsd_as)
             )
+        self._require_helper_coherence(settings, helper)
         return helper
+
+    def _require_helper_coherence(self, settings, helper: str) -> None:
+        """The compile-time target probe (#1088): the helper will
+        exec a virtiofsd path compiled into itself, so a start
+        whose daemon-resolved binary differs refuses by name —
+        the floor probe and the exec stay coherent when an
+        operator's override would drift them apart."""
+        target = helper_target(helper)
+        if target is None:
+            raise MicrovmError(virtiofsd_as_target_message(helper))
+        resolved = os.path.realpath(settings.vmm.virtiofsd)
+        if os.path.realpath(target) != resolved:
+            raise MicrovmError(
+                virtiofsd_target_mismatch_message(target, resolved)
+            )
 
     async def _require_virtiofsd_floor(self, binary: str) -> None:
         """The version floor at mount start (#655): a below-floor

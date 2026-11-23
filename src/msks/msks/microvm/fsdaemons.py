@@ -35,6 +35,7 @@ the number (the daemon's own uid reads as the image's built-in
 import os
 import re
 import shutil
+import subprocess
 from pathlib import Path
 
 #: One queue of 1024 descriptors per daemon: a microvm's mount
@@ -196,6 +197,59 @@ def virtiofsd_as_exec_message(path: str) -> str:
         "setuid bit and the msksd group the mode 4750 gates on; "
         "MSKSD_VIRTIOFSD_AS names another path)"
     )
+
+
+def virtiofsd_as_target_message(helper: str) -> str:
+    """The named refusal when the helper answers no target
+    (#1088): the probe's own evidence, and the two shapes that
+    produce it — an older helper without the arm, a path that is
+    not the helper at all."""
+    return (
+        f"the owner-exec helper did not report its virtiofsd "
+        f"target: {helper} (--print-target answered nothing; an "
+        "older helper, or a path that is not the helper? "
+        "MSKSD_VIRTIOFSD_AS names another)"
+    )
+
+
+def virtiofsd_target_mismatch_message(
+    helper_target: str, resolved: str
+) -> str:
+    """The named refusal when the helper will exec a virtiofsd
+    other than the one the daemon resolved (#1088): the two
+    paths, and the rule — the override reaches only the shares
+    the daemon runs as itself."""
+    return (
+        f"the helper's virtiofsd target is {helper_target}, but "
+        f"the daemon resolved {resolved}; MSKSD_VIRTIOFSD reaches "
+        "only the shares the daemon runs as itself — point "
+        "MSKSD_VIRTIOFSD_AS at a helper built with the same "
+        "virtiofsd, or clear the override"
+    )
+
+
+def helper_target(helper: str, timeout_s: float = 5.0) -> str | None:
+    """The fixed virtiofsd path one helper binary will exec
+    (#1088): the helper's ``--print-target`` answer — one line,
+    no privilege, no exec behind it. None when it answers
+    nothing: the caller refuses the cross-owner share by name
+    instead of letting a drifted target fail downstream at
+    virtiofsd's argument parsing."""
+    try:
+        result = subprocess.run(
+            [helper, "--print-target"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return None
+    if result.returncode != 0:
+        return None
+    lines = result.stdout.strip().splitlines()
+    if len(lines) != 1 or not lines[0].strip():
+        return None
+    return lines[0].strip()
 
 
 #: The owner-exec helper's PATH names across installs (#1087):

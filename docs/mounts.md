@@ -94,6 +94,14 @@ directly. When the owner is another account, the daemon execs through the
 mode 4750; `MSKSD_VIRTIOFSD_AS` names another path) and every exec writes one
 journal line under the helper's ident: the uid, the fd, and the argv.
 
+The helper execs a virtiofsd path compiled into itself — the privilege
+boundary, since a caller-supplied path would let a setuid-root exec aim at
+any binary. `virtiofsd-as --print-target` reports it without privilege. The
+daemon compares that target against its own resolved virtiofsd at every
+cross-owner start: a helper built against a different virtiofsd than the
+daemon resolved refuses the start by name, and `MSKSD_VIRTIOFSD` reaches
+only the shares the daemon runs as itself.
+
 ## Coherence between guests
 
 A host tree attaches read-write to any number of workspaces at once, and every

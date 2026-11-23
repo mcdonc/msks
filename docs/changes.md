@@ -18,7 +18,11 @@ tagged `vX.Y.Z`.
   does not — the dev daemon and single-user installs keep their
   shape. A workspace whose owner uid no account holds skips its
   mounts with the named cause `owner uid N no longer exists` and
-  still starts.
+  still starts. The helper execs a virtiofsd path compiled into
+  itself; a cross-owner start whose resolved virtiofsd differs
+  from that target refuses by name, so the `MSKSD_VIRTIOFSD`
+  override never drifts a cross-owner share onto a binary the
+  daemon did not probe.
 
 - **The `virtiofsd-as` owner-exec helper (#1087).** The repo
   carries the helper's C source: `virtiofsd-as <uid> --fd <n> --

@@ -831,6 +831,13 @@ async def test_the_helper_lane_execs_the_helper_as_the_owner(
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, spawned = driver_over(settings)
     monkeypatch.setattr(fsproc_mod, "dead_owner_cause", lambda uid: None)
+    # The target probe answers the daemon's own resolved binary —
+    # the coherence the compile-time pin buys, faked hermetically.
+    monkeypatch.setattr(
+        fsproc_mod,
+        "helper_target",
+        lambda helper: settings.vmm.virtiofsd,
+    )
     for owner in (4242, 0):
         spawned.clear()
         spec = VmSpec(
@@ -1117,6 +1124,97 @@ async def test_the_sweep_unlinks_only_an_identified_daemons_socket(
     await sweep_fs_pidfile(vm_dir, pidfile)
     assert not pidfile.exists()
     assert socket.exists()  # left for the spawn's stale/live verdict
+
+
+async def test_the_helper_lane_refuses_a_drifted_target(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The coherence probe (#1088): a helper whose compile-time
+    virtiofsd target differs from the daemon's resolved binary
+    refuses by name — the override reaches only the shares the
+    daemon runs as itself, and the drift never reaches virtiofsd's
+    argument parsing as an anonymous log tail."""
+    import msks.microvm.local.fsproc as fsproc_mod
+
+    share_dir = tmp_path / "proj"
+    share_dir.mkdir()
+    vm_dir = short_vm_dir("ws-drift")
+    settings = Settings(
+        vmm=VmmSettings(
+            state_dir=tmp_path,
+            virtiofsd="/srv/virtiofsd-1.15",
+            virtiofsd_as="/fake/virtiofsd-as",
+        )
+    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
+    driver, _spawned = driver_over(settings)
+    monkeypatch.setattr(fsproc_mod, "dead_owner_cause", lambda uid: None)
+    monkeypatch.setattr(
+        fsproc_mod, "helper_target", lambda helper: "/srv/virtiofsd-1.10"
+    )
+    spec = VmSpec(
+        workspace_id="ws-drift",
+        kernel=Path("/k"),
+        rootfs=Path("/r"),
+        owner_uid=4242,
+        mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
+    )
+    with pytest.raises(
+        MicrovmError,
+        match=r"target is /srv/virtiofsd-1.10, but the daemon resolved",
+    ):
+        await driver._start_fs_daemons(spec, vm_dir)
+
+
+async def test_the_helper_lane_refuses_a_target_probe_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A helper that answers no target — an older binary without
+    the arm, a path that is not the helper at all — refuses the
+    cross-owner share by name (#1088)."""
+    import msks.microvm.local.fsproc as fsproc_mod
+
+    share_dir = tmp_path / "proj"
+    share_dir.mkdir()
+    vm_dir = short_vm_dir("ws-probe")
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path, virtiofsd_as="/fake/virtiofsd-as")
+    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
+    driver, _spawned = driver_over(settings)
+    monkeypatch.setattr(fsproc_mod, "dead_owner_cause", lambda uid: None)
+    monkeypatch.setattr(fsproc_mod, "helper_target", lambda helper: None)
+    spec = VmSpec(
+        workspace_id="ws-probe",
+        kernel=Path("/k"),
+        rootfs=Path("/r"),
+        owner_uid=4242,
+        mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
+    )
+    with pytest.raises(MicrovmError, match="did not report its virtiofsd"):
+        await driver._start_fs_daemons(spec, vm_dir)
+
+
+def test_helper_target_parses_one_line(tmp_path: Path) -> None:
+    """The probe's answer is one non-empty line, or nothing: a
+    stub that echoes parses, a nonzero exit, a garbage answer,
+    and a missing binary all read as None — the caller refuses by
+    name."""
+    from msks.microvm.fsdaemons import helper_target
+
+    echo = tmp_path / "helper-echo"
+    echo.write_text("#!/bin/sh\necho /srv/virtiofsd-1.15\n")
+    echo.chmod(0o755)
+    assert helper_target(str(echo)) == "/srv/virtiofsd-1.15"
+    refuse = tmp_path / "helper-refuse"
+    refuse.write_text("#!/bin/sh\nexit 2\n")
+    refuse.chmod(0o755)
+    assert helper_target(str(refuse)) is None
+    garbage = tmp_path / "helper-garbage"
+    garbage.write_text("#!/bin/sh\necho one\necho two\n")
+    garbage.chmod(0o755)
+    assert helper_target(str(garbage)) is None
+    assert helper_target(str(tmp_path / "helper-absent")) is None
 
 
 # --- the doctor rows --------------------------------------------------
