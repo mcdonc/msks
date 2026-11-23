@@ -470,17 +470,24 @@ class TerminalWidget(QWidget):
         first, with a ``ShortcutOverride`` event, whether the
         matching shortcut should yield. The accept keeps the
         press for the terminal: it reaches the encoder like
-        every other key, and the shell reads its Esc. Only the
-        unmodified Esc is claimed — a modified one matches no
-        terminal key the page steals, and the zoom keys and
-        every other shortcut keep their answers, the refusal
-        here names one key and one shortcut. This is Esc's
-        sibling of Tab's own refusal (#1066,
-        :meth:`focusNextPrevChild`): Qt's machinery answers
-        before the encoder, so the interception stands before
-        the machinery."""
+        every other key, and the shell reads its Esc. An
+        override a focused child ignores — the find bar's
+        edit — propagates here too, and the accept serves it
+        the same way: the shortcut stays quiet and the edit's
+        own Esc handler answers instead of the page's Back.
+        Unlike Tab's refusal (#1066, :meth:`focusNextPrevChild`)
+        the accept is not gated on ``hasFocus`` for exactly
+        that reason.
+
+        The claim names the bare Esc alone — a modified one
+        or another key passes to the base, so the zoom keys
+        and every other shortcut keep their answers."""
         if event.type() == QEvent.Type.ShortcutOverride:
             key = event.key()
+            # Belt-and-braces: Qt only delivers the override
+            # when a shortcut matches the press, and the page's
+            # is unmodified — the mask answers a future
+            # modified-Esc shortcut, not today's key.
             claimed = (
                 Qt.KeyboardModifier.ControlModifier
                 | Qt.KeyboardModifier.ShiftModifier

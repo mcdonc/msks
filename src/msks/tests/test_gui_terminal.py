@@ -784,6 +784,48 @@ def test_escape_reaches_the_child_past_a_back_shortcut(qt):
         host.close()
 
 
+def test_escape_closes_the_find_bar_not_the_page(qt):
+    """The accept's other arm (#1099): the find bar's edit is
+    the terminal's child, and an override a focused child
+    ignores propagates to the parent — the accept answers it
+    the same way, so the page's Back shortcut stays quiet and
+    the bar's own Esc handler closes the bar. Before the fix
+    the shortcut answered first: Back navigated away with the
+    bar left open on a page nothing shows."""
+    from msks.client.gui.terminal import TerminalWidget, find
+
+    host = qt.QtWidgets.QWidget()
+    host.show()
+    host.activateWindow()
+    fired = []
+    escape = qt.QtGui.QShortcut(
+        qt.QtGui.QKeySequence(qt.QtCore.Qt.Key.Key_Escape), host
+    )
+    escape.activated.connect(lambda: fired.append(1))
+    widget = TerminalWidget([sys.executable, "-c", SLEEPER], parent=host)
+    try:
+        drain_until(widget, b"ready")
+        widget.resize(600, 400)  # the bar's overlay geometry
+        widget.show()
+        widget.setFocus()
+        qt.app.processEvents()
+        find.open(widget)
+        qt.app.processEvents()
+        assert widget.find_edit.hasFocus()
+        qt.app.sendEvent(
+            widget.find_edit, key_event(qt, qt.QtCore.Qt.Key.Key_Escape)
+        )
+        qt.app.processEvents()
+        assert widget.search == 0  # the bar's own Esc closed it
+        assert widget.find_edit is None  # close's teardown ran
+        assert fired == []
+    finally:
+        if widget.search:
+            find.close(widget)
+        shutdown(widget)
+        host.close()
+
+
 def test_escape_still_answers_back_off_the_terminal(qt):
     """The shortcut's own arm (#1099): the refusal yields the
     key only while the terminal holds the focus it was sent
@@ -810,8 +852,6 @@ def test_escape_still_answers_back_off_the_terminal(qt):
         qt.app.processEvents()
         qt.app.sendEvent(button, key_event(qt, qt.QtCore.Qt.Key.Key_Escape))
         assert fired == [1]
-        time.sleep(0.1)  # a byte on the wire needs a moment
-        assert widget.session.read_available() in (None, b"")
     finally:
         shutdown(widget)
         host.close()

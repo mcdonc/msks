@@ -566,6 +566,11 @@ def test_escape_answers_back_on_the_chrome_not_the_terminal(qt) -> None:
 
     # The Shells tab shows a shell: its terminal holds the
     # keyboard, and the press reaches the encoder instead.
+    # The window must be the app's active one — a window
+    # shortcut answers only there, and without the activation
+    # this arm would pass with the fix removed.
+    window.activateWindow()
+    qt.app.processEvents()
     session = page.hub.find("ws-a", 1)
     page.anchor_focus()
     assert window.focusWidget() is session.widget
