@@ -562,6 +562,18 @@ gui`. The nix package keeps the daemon's closure lean, so on
 
 ### Fixed
 
+- **GUI terminal rendering on scaled and Wayland displays
+  (#1113).** The terminal's cells now paint straight onto the
+  widget, one damaged row at a time over its own background
+  fill, with no offscreen pixmap kept between paints. The
+  pixmap design broke twice on display scaling — a stale
+  band below the blit on KDE Wayland fractional scaling
+  (the window at 1.5 while the backing store rendered at the
+  screen's integer 2.0), and ghosted, overprinted glyphs
+  under fast-scrolling output — and both classes are gone
+  with the pixmap. The scrollbar now draws in a small lane
+  reserved right of the grid, so its thumb never covers a
+  cell.
 - **GUI terminal on scaled displays (#1110).** The cell
   cache from #1107 built its pixmap at the widget's logical
   size. On a display with scaling (a device pixel ratio above

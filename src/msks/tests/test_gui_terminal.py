@@ -183,6 +183,36 @@ def vt(widget, data: bytes) -> None:
     widget.refresh()
 
 
+def paint_planned(screen, qt):
+    """Drive the paint the plan asked for (#1113): the rows
+    and the region refresh() named, painted straight onto a
+    fresh image — the offscreen suite's grab always asks for
+    the whole widget, so the planned paints drive their own
+    device here. Answers the image it painted."""
+    from msks.client.gui.terminal import paint
+
+    colors = paint.palette(screen)
+    background = (
+        qt.QtGui.QColor(
+            colors.background.r, colors.background.g, colors.background.b
+        )
+        if colors is not None
+        else qt.QtGui.QColor(0, 0, 0)
+    )
+    image = qt.QtGui.QImage(
+        screen.width(),
+        screen.height(),
+        qt.QtGui.QImage.Format.Format_ARGB32,
+    )
+    image.fill(background)
+    painter = qt.QtGui.QPainter(image)
+    try:
+        paint.paint_event(screen, painter, screen.repaint_region)
+    finally:
+        painter.end()
+    return image
+
+
 def scrollbar(widget) -> tuple[int, int, int]:
     """The terminal's scrollbar (total, viewport, offset)."""
     ok, bar = widget.lib.get(
@@ -421,52 +451,28 @@ def test_painted_text_lands_in_the_right_cells(screen, qt):
     assert top != below, "row 0 carries glyph ink"
 
 
-# --- paint damage (#1104) ------------------------------------------------
+# --- paint damage (#1104, #1113) -----------------------------------------
 
 
-def test_the_cache_carries_the_screens_pixel_ratio(screen, qt, monkeypatch):
-    """The cache pixmap holds device pixels and carries the
-    screen's ratio (#1110): a ratio-1 pixmap on a scaled screen
-    blitted one device pixel for one device pixel, covering
-    only the top-left 1/ratio of the terminal while the rest
-    kept the frames that painted there before — the garbage
-    the scaled-display report chased. The offscreen suite
-    always runs at ratio 1, so the pin drives the seam the
-    paint reads the ratio through."""
+def test_a_paint_covers_a_device_whose_ratio_differs_from_the_widgets(
+    screen, qt
+):
+    """A paint holds no offscreen pixmap (#1113): the rows
+    paint in logical coordinates onto whatever device the
+    painter carries, so a device whose ratio disagrees with
+    the widget's own devicePixelRatioF — KDE Wayland
+    fractional scaling's split, the window carrying 1.5
+    while the backing store rendered at the screen's integer
+    2.0 — is Qt's own mapping, and every device pixel of the
+    pane receives the row that belongs there. The offscreen
+    suite's widget answers 1, so the pin drives the split
+    itself: a sentinel-filled ratio-2 device."""
     from msks.client.gui.terminal import paint
 
     vt(screen, b"\x1b[2J\x1b[Hsome text")
     screen.grab()
-    assert screen.cell_cache.devicePixelRatio() == 1.0
-    assert screen.cell_cache.size() == screen.size()
-    monkeypatch.setattr(paint, "pixel_ratio", lambda screen: 2.0)
-    screen.grab()
-    assert screen.cell_cache.devicePixelRatio() == 2.0
-    assert screen.cell_cache.width() == screen.width() * 2
-    assert screen.cell_cache.height() == screen.height() * 2
-    assert screen.cache_key[-1] == 2.0
-    assert screen.painted_rows == list(range(screen.rows))
-    monkeypatch.setattr(paint, "pixel_ratio", lambda screen: 1.0)
-    screen.grab()  # a move back to an unscaled display rebuilds
-    assert screen.cell_cache.devicePixelRatio() == 1.0
-    assert screen.cell_cache.size() == screen.size()
-
-
-def test_a_fractional_ratio_covers_every_device_pixel(screen, qt, monkeypatch):
-    """A fractional ratio sizes the cache in whole device
-    pixels, rounded up (review round one): rounding to nearest
-    can round a width's last half device pixel down, and the
-    blit then never paints the terminal's last device row or
-    column — the stale-stripe class #1110 chased, one pixel
-    wide. The pin paints onto a sentinel-filled image at the
-    ratio's device size and answers whether any sentinel
-    survives the blit."""
-    from msks.client.gui.terminal import paint
-
-    vt(screen, b"\x1b[2J\x1b[Hsome text")
-    screen.grab()
-    ratio = 1.25  # 533 x 1.25 rounds down under round(), up under ceil
-    monkeypatch.setattr(paint, "pixel_ratio", lambda screen: ratio)
+    assert screen.devicePixelRatioF() == 1.0  # the split the pin drives
+    ratio = 2.0
     image = qt.QtGui.QImage(
         math.ceil(screen.width() * ratio),
         math.ceil(screen.height() * ratio),
@@ -475,8 +481,9 @@ def test_a_fractional_ratio_covers_every_device_pixel(screen, qt, monkeypatch):
     image.fill(qt.QtGui.QColor(255, 0, 255))  # the sentinel
     image.setDevicePixelRatio(ratio)
     painter = qt.QtGui.QPainter(image)
+    whole = qt.QtGui.QRegion(0, 0, screen.width(), screen.height())
     try:
-        paint.paint_event(screen, painter)
+        paint.paint_event(screen, painter, whole)
     finally:
         painter.end()
     sentinel = qt.QtGui.QColor(255, 0, 255).rgb()
@@ -488,39 +495,116 @@ def test_a_fractional_ratio_covers_every_device_pixel(screen, qt, monkeypatch):
     assert survivors == 0
 
 
+def test_a_fractional_device_ratio_covers_every_device_pixel(screen, qt):
+    """A fractional device ratio — the scaled-display case
+    #1110 chased — leaves no device pixel of the pane
+    unpainted: the rows paint in logical coordinates and Qt
+    maps them onto the device's own pixels, with no offscreen
+    pixmap to size in device pixels at all. The pin paints the
+    whole widget's region onto a sentinel-filled image at
+    ratio 1.25 and answers whether any sentinel survives."""
+    from msks.client.gui.terminal import paint
+
+    vt(screen, b"\x1b[2J\x1b[Hsome text")
+    screen.grab()
+    ratio = 1.25
+    # the device extent the widget's logical width names exactly:
+    # a wider image holds pixels outside the widget, and its
+    # sentinels are the image's, not the paint's
+    image = qt.QtGui.QImage(
+        int(screen.width() * ratio),
+        int(screen.height() * ratio),
+        qt.QtGui.QImage.Format.Format_ARGB32,
+    )
+    image.fill(qt.QtGui.QColor(255, 0, 255))  # the sentinel
+    image.setDevicePixelRatio(ratio)
+    painter = qt.QtGui.QPainter(image)
+    whole = qt.QtGui.QRegion(0, 0, screen.width(), screen.height())
+    try:
+        paint.paint_event(screen, painter, whole)
+    finally:
+        painter.end()
+    sentinel = qt.QtGui.QColor(255, 0, 255).rgb()
+    survivors = 0
+    for y in range(image.height()):
+        for x in range(image.width()):
+            if image.pixel(x, y) == sentinel:
+                survivors += 1
+    assert survivors == 0
+
+
+def test_a_scrolled_flood_paints_the_same_pixels_as_one_whole_pass(screen, qt):
+    """Output that scrolls the grid many times leaves none of
+    the earlier frames in the rows (#1113's flood report, the
+    ls -alR garble): a taken row paints its background first,
+    so the incremental paints after each line land exactly the
+    pixels one whole-grid pass of the settled state paints."""
+    from msks.client.gui.terminal import paint
+
+    vt(screen, b"\x1b[2J\x1b[H")
+    incremental = None
+    for i in range(screen.rows * 4):
+        vt(screen, f"line {i:03d} {'x' * 30}\r\n".encode())
+        incremental = paint_planned(screen, qt)
+    assert incremental is not None
+    whole = incremental.copy()
+    whole.fill(qt.QtGui.QColor(0, 0, 0))
+    painter = qt.QtGui.QPainter(whole)
+    full = qt.QtGui.QRegion(0, 0, screen.width(), screen.height())
+    try:
+        paint.paint_event(screen, painter, full)
+    finally:
+        painter.end()
+    assert incremental == whole
+
+
+def test_the_bell_flashs_end_takes_a_full_pass(screen, qt):
+    """The flash's border paints above the rows, and nothing
+    blits it away: the timer's end sets the sticky full pass,
+    and the next paint repaints every row — the border cannot
+    stay on the widget (#1113)."""
+    vt(screen, b"\x1b[2J\x1b[Hsome text")
+    paint_planned(screen, qt)
+    screen.flash()
+    flashing = paint_planned(screen, qt)
+    screen.bell_off()
+    after = paint_planned(screen, qt)
+    assert screen.painted_rows == list(range(screen.rows))
+    assert after != flashing
+
+
 def test_one_typed_character_repaints_its_row_alone(screen, qt):
     """The paint's damage set is the library's own row flags
-    (#1104): the first grab builds the cell cache and paints
-    every row, and the next character repaints the row its
-    cursor sits in alone — the whole-grid paint a typed
-    character once paid is the echo lag the issue chased."""
+    (#1104): the first planned paint takes every row, and the
+    next character repaints the row its cursor sits in alone
+    — the whole-grid paint a typed character once paid is the
+    echo lag the issue chased."""
     vt(screen, b"\x1b[2J\x1b[Hhello\r\nworld")
-    screen.grab()
+    paint_planned(screen, qt)
     assert screen.painted_rows == list(range(screen.rows))
     vt(screen, b"x")  # the cursor sits on row 1
-    screen.grab()
+    paint_planned(screen, qt)
     assert screen.painted_rows == [1]
 
 
-def test_the_cursor_moves_without_row_damage(screen, qt):
-    """A cursor move flags no rows (probed): the paint blits
-    the cache whole — erasing the cursor the last frame drew
-    above it — and draws the cursor at its new cell, with the
-    cells themselves untouched."""
+def test_the_cursor_move_repaints_the_row_it_covers(screen, qt):
+    """A cursor move flags no rows (probed); the plan names
+    the rows the translucent cursor covers — the one it left
+    and the one it takes — so the block redraws over fresh
+    pixels and never compounds on itself (#1113)."""
     vt(screen, b"\x1b[2J\x1b[Hhello")
-    before = screen.grab().toImage()
+    before = paint_planned(screen, qt)
     vt(screen, b"\x1b[3C")
-    after = screen.grab().toImage()
-    assert screen.painted_rows == []
+    after = paint_planned(screen, qt)
+    assert screen.painted_rows == [0]  # the row it left and takes
     assert after != before
 
 
 def test_a_viewport_scroll_repaints_every_row(screen, qt):
     """The library's row flags stay clean through a viewport
-    scroll (probed); the cache compares the scrollbar's
-    offset and repaints every row when the viewport moved —
-    the rows the viewport now shows are different buffer
-    lines."""
+    scroll (probed); the plan compares the scrollbar's offset
+    and repaints every row when the viewport moved — the rows
+    the viewport now shows are different buffer lines."""
     vt(screen, b"\x1b[2J\x1b[H" + b"line\r\n" * 40)  # history to page into
     screen.grab()
     screen.scroll_rows(-3)
@@ -528,10 +612,10 @@ def test_a_viewport_scroll_repaints_every_row(screen, qt):
     assert screen.painted_rows == list(range(screen.rows))
 
 
-def test_a_pixel_resize_rebuilds_the_cache(screen, qt):
-    """A resize rebuilds the cache for the new pixels and
-    paints every row into it (the library flags them all,
-    probed): a stale cache would show the old grid's rows
+def test_a_pixel_resize_repaints_every_row(screen, qt):
+    """A resize re-derives the grid and repaints every row
+    (the geometry changed, and the library flags them all,
+    probed): a stale row would show the old grid's lines
     beside the new grid's."""
     vt(screen, b"\x1b[2J\x1b[Hhello")
     screen.grab()
@@ -543,10 +627,11 @@ def test_a_pixel_resize_rebuilds_the_cache(screen, qt):
 
 
 def test_a_changed_find_pass_repaints_every_row(screen, qt):
-    """The find underlays paint beneath the cells, into the
-    cache (#1104): a search whose rectangles arrive with the
-    rows clean repaints every row, or the tint would age in
-    the cache while the needle steps."""
+    """The find underlays paint beneath the cells, over the
+    row's own background fill (#1104): a search whose
+    rectangles arrive with the rows clean repaints every
+    row, or the tint would age on the widget while the
+    needle steps."""
     from msks.client.gui.terminal import find
 
     vt(screen, b"\x1b[2J\x1b[Hneedle here")
@@ -562,11 +647,10 @@ def test_a_scheme_flip_repaints_every_row_and_the_pixels(screen, qt):
     """The scheme flip's own path — ``terminal_set`` of the
     base colors, what ``colors.apply`` runs — flags every row
     (probed) and moves the render state's palette: the whole
-    grid repaints, and the cache's base fill takes the new
-    background, so the painted pixels follow — a blank row
-    reads the new scheme's background, not the one the cache
-    was built with (review round one: the rows repainted over
-    a stale base, black-on-black under a light scheme)."""
+    grid repaints over each row's fresh background fill, so
+    the painted pixels follow — a blank row reads the new
+    scheme's background (review round one: the rows repainted
+    over a stale base, black-on-black under a light scheme)."""
     from msks.client.gui.terminal import colors
 
     vt(screen, b"\x1b[2J\x1b[Hsome text\r\n\r\n\r\nmore")
@@ -583,8 +667,8 @@ def test_a_program_retint_repaints_the_pixels(screen, qt):
     """A program's own default-color move — OSC 11's background
     with OSC 10's foreground flushing the sync — moves the
     render state's palette like the scheme flip does, and the
-    same comparison carries it: every row repaints over a base
-    fill taken from the new background."""
+    same comparison carries it: every row repaints over the
+    fresh background fill."""
     vt(screen, b"\x1b[2J\x1b[Hsome text\r\n\r\n\r\nmore")
     screen.grab()
     vt(screen, b"\x1b]11;rgb:00/00/cc\x07\x1b]10;rgb:ff/ff/00\x07")
@@ -595,15 +679,14 @@ def test_a_program_retint_repaints_the_pixels(screen, qt):
     assert (pixel.red(), pixel.green(), pixel.blue()) == (0, 0, 204)
 
 
-def test_a_metrics_change_at_the_same_pixels_rebuilds_the_cache(screen, qt):
+def test_a_metrics_change_at_the_same_pixels_repaints_every_row(screen, qt):
     """A font change at the same widget pixels — the zoom on a
-    maximized window, a hidden tab's ``set_face`` — keeps the
-    cache key's pixel half still, so the key carries the cell
-    metrics too: the cache rebuilds and repaints every row,
-    and the strip below the smaller grid carries the
-    background instead of the old frame's last row (review
-    round one: the rows repainted beside their stale
-    neighbor)."""
+    maximized window, a hidden tab's ``set_face`` — changes
+    the cell metrics, and the plan's geometry comparison
+    carries them: every row repaints, and the strip below the
+    smaller grid carries the background instead of the old
+    frame's last row (review round one: the rows repainted
+    beside their stale neighbor)."""
     from msks.client.gui.terminal.paint import palette
 
     vt(screen, b"\x1b[2J\x1b[Hsome text")
@@ -737,7 +820,9 @@ def test_paint_without_a_palette_draws_nothing(screen, qt):
 
     painter = qt.QtGui.QPainter(screen)
     try:
-        paint_mod.paint_event(Paletteless(), painter)  # draws nothing
+        paint_mod.paint_event(
+            Paletteless(), painter, qt.QtGui.QRegion(0, 0, 10, 10)
+        )  # draws nothing
     finally:
         painter.end()
 
@@ -1470,7 +1555,9 @@ def test_a_resize_reaches_the_child(qt):
 def test_a_resize_event_recomputes_the_grid(screen, qt):
     """A window resize re-derives the grid from the pixels —
     the event arrives through Qt's own delivery when shown,
-    and directly here for the deterministic pin."""
+    and directly here for the deterministic pin. The
+    scrollbar's lane sits right of the grid, so the columns
+    derive from the pixels less the lane (#1113)."""
     size = qt.QtCore.QSize(
         screen.metrics.cell_width * 40,
         screen.metrics.cell_height * 10,
@@ -1478,7 +1565,7 @@ def test_a_resize_event_recomputes_the_grid(screen, qt):
     old = qt.QtCore.QSize(screen.width(), screen.height())
     screen.resize(size)
     screen.resizeEvent(qt.QtGui.QResizeEvent(size, old))
-    assert (screen.cols, screen.rows) == (40, 10)
+    assert (screen.cols, screen.rows) == (39, 10)
 
 
 def test_the_widget_holds_no_font_keys(screen, qt):

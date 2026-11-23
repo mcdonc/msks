@@ -30,6 +30,7 @@ from PySide6.QtGui import (
     QKeyEvent,
     QMouseEvent,
     QPainter,
+    QRegion,
     QResizeEvent,
     QWheelEvent,
 )
@@ -117,6 +118,26 @@ class TerminalWidget(QWidget):
         self.selection_gesture = self.lib.new_handle(
             self.lib.selection_gesture_new
         )
+        # The paint plan (#1113): the rows the next paint takes
+        # and the region it asked to update, set by the plan the
+        # emulator sync computes and consumed by the paint —
+        # the pixel-and-grid comparison answers, the scroll
+        # offset and find rectangles the last paint compared,
+        # whether the next paint takes every row, and the rows
+        # the last paint took (the suite's damage pins). The
+        # paint module owns the policy; these fields are its
+        # state on the screen, and they exist before the first
+        # refresh the constructor's apply_metrics runs.
+        self.repaint_full = True
+        self.repaint_rows: set[int] = set()
+        self.repaint_region = QRegion()
+        self.planned = False
+        self.last_palette: bytes | None = None
+        self.last_scroll: int | None = None
+        self.last_underlays = None
+        self.last_geometry: tuple[int, ...] | None = None
+        self.last_cursor = None
+        self.painted_rows: list[int] = []
         self.apply_metrics()
         # The pty pair opened and sized before the fork, the
         # child exec'ed onto it — the session contract (#951).
@@ -176,25 +197,15 @@ class TerminalWidget(QWidget):
         # rows stitch across the cached texts.
         self.link_rows: list[list[str]] = []
         self.hand_cursor = False
-        # The cell cache (#1104): rows painted into an offscreen
-        # pixmap and blitted whole each paint, so a typed
-        # character repaints its row alone. The paint module
-        # owns the policy; these fields are its state on the
-        # screen — the pixmap, the pixel-and-grid key and the
-        # palette bytes it was built for, the scrollback offset
-        # and find rectangles the last paint compared, whether
-        # the next paint takes every row, and the rows the last
-        # paint took (the suite's damage pins).
-        self.cell_cache = None
-        self.cache_key: tuple[float, ...] | None = None
-        self.cache_palette: bytes | None = None
-        self.cache_scroll: int | None = None
-        self.cache_underlays = None
-        self.cache_full = True
-        self.painted_rows: list[int] = []
+        self.link_spans: list[list[tuple[int, int, str]]] = []
         self.search = 0
         self.find_edit: QLineEdit | None = None
         self.find_count = None
+        # The paint state is whole now: the plan may read the
+        # find and session fields it touches. The constructor's
+        # own apply_metrics refresh ran before they existed and
+        # asked for the whole widget instead.
+        self.planned = True
 
     # --- lifecycle ----------------------------------------------------
 
@@ -267,6 +278,8 @@ class TerminalWidget(QWidget):
         if self.session.exit_status is None:
             self.session.await_exit(EXIT_REPORT_GRACE_S)
         self.reaper.start(100)
+        self.repaint_full = True  # the exit banner's strip
+        self.update()
         self.refresh()
         self.process_exited.emit(self.session.exit_status or 0)
 
@@ -285,9 +298,15 @@ class TerminalWidget(QWidget):
 
     def refresh(self) -> None:
         """Sync the render state with the emulator and
-        schedule a paint."""
+        schedule the paint of the rows the plan names. The
+        constructor's own apply_metrics refresh lands before
+        the find and session fields exist, and asks for the
+        whole widget."""
         self.lib.render_state_update(self.render_state, self.terminal)
-        self.update()
+        if self.planned:
+            self.update(paint.plan_paint(self))
+        else:
+            self.update()
 
     def flash(self) -> None:
         """The visual bell: a brief orange border flash; a
@@ -328,14 +347,17 @@ class TerminalWidget(QWidget):
             )
 
     def bell_off(self) -> None:
-        """The flash's timer end: the border goes dark."""
+        """The flash's timer end: the border goes dark, and
+        the full pass that erases it follows."""
         self.bell_flash = False
+        self.repaint_full = True
         self.update()
 
     # --- geometry and fonts -------------------------------------------
 
     def sizeHint(self) -> QSize:  # noqa: N802
-        return QSize(*self.metrics.size(self.cols, self.rows))
+        width, height = self.metrics.size(self.cols, self.rows)
+        return QSize(width + paint.LANE_W, height)
 
     def apply_metrics(self) -> None:
         """Measure the face and push the pixel metrics into the
@@ -410,6 +432,14 @@ class TerminalWidget(QWidget):
             self._fitting = False
             self.land_grid(entered)
 
+    def derived_grid(self) -> tuple[int, int]:
+        """The grid the widget's current pixels name (#1113):
+        the scrollbar's lane sits right of the grid, so the
+        columns derive from the width less the lane."""
+        cols = max(1, (self.width() - paint.LANE_W) // self.metrics.cell_width)
+        rows = max(1, self.height() // self.metrics.cell_height)
+        return cols, rows
+
     def land_grid(self, entered: tuple[int, int]) -> None:
         """Land the grid the fit left (#976): the passes' own
         resize events were held off, and the settled pixels
@@ -420,8 +450,7 @@ class TerminalWidget(QWidget):
         with whole."""
         if (self.width(), self.height()) == entered:
             return
-        cols = max(1, self.width() // self.metrics.cell_width)
-        rows = max(1, self.height() // self.metrics.cell_height)
+        cols, rows = self.derived_grid()
         if (cols, rows) != (self.cols, self.rows):
             self.resize_grid(cols, rows)
 
@@ -449,7 +478,9 @@ class TerminalWidget(QWidget):
         window carries no layout that moves the widget — a
         second pass would add the same delta to the window
         again and reach nothing."""
-        width = self.metrics.cell_width * self.cols - self.width()
+        width = (
+            self.metrics.cell_width * self.cols + paint.LANE_W - self.width()
+        )
         height = self.metrics.cell_height * self.rows - self.height()
         if not (width or height):
             return False
@@ -483,8 +514,7 @@ class TerminalWidget(QWidget):
         # terminal the library already freed.
         if not self._closed:
             if not self._fitting:  # the window fit holds its grid
-                cols = max(1, self.width() // self.metrics.cell_width)
-                rows = max(1, self.height() // self.metrics.cell_height)
+                cols, rows = self.derived_grid()
                 if (cols, rows) != (self.cols, self.rows):
                     self.resize_grid(cols, rows)
             find.layout(self)
@@ -494,7 +524,7 @@ class TerminalWidget(QWidget):
 
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
-        paint.paint_event(self, painter)
+        paint.paint_event(self, painter, event.region())
         painter.end()
 
     # --- keyboard -----------------------------------------------------
