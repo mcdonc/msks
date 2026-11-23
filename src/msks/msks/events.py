@@ -7,14 +7,13 @@ socket receives them. Same listener/port as HTTPS — one surface.
 The subscription carries the subscriber's owner context (#1090):
 a socket registered for one uid receives the owner-scoped frames
 its uid owns beside every unscoped one, while a socket registered
-without a uid (the daemon's internal subscribers, root, the
-daemon's own uid — the bypass rule #1082 resolves before the
-subscribe) receives everything. The audience lands on the
-publish: a frame that names its owning uid reaches that owner
-and the unscoped subscribers alone, and every other frame
-broadcasts. The scoping is the hub's own shape, not a mask the
-relay applies: the payload a subscriber never sees never spends
-a slot in its queue.
+without a uid — the bypass shape #1082's rule resolves to before
+the subscribe (root, the daemon's own uid) — receives everything.
+The audience lands on the publish: a frame that names its owning
+uid reaches that owner and the unscoped subscribers alone, and
+every other frame broadcasts. The scoping is the hub's own
+shape, not a mask the relay applies: the payload a subscriber
+never sees never spends a slot in its queue.
 
 Every publish also writes one INFO line (#762): the daemon's
 journal is the record of events, visible after the subscribers
@@ -62,9 +61,9 @@ class EventHub:
         """A bounded queue that will receive every published event
         the *viewer* may see (#1090): ``None`` is the unscoped
         subscription — every frame, the shape a bypassing caller
-        (root, the daemon's own uid) and the daemon's internal
-        subscribers take — and a uid receives the unscoped frames
-        beside the owner-scoped frames it owns.
+        (root, the daemon's own uid) takes — and a uid receives
+        the unscoped frames beside the owner-scoped frames it
+        owns.
 
         Subscribing requires a running loop — the queue's wakeups
         are scheduled onto it, and the hub remembers it as the home
