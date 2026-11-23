@@ -46,6 +46,7 @@ from msks.microvm.local import (
     read_fs_identity,
     vm_config,
 )
+from msks.microvm.local.procs import start_time_from_stat
 from msks.settings import MountSettings, Settings, VmmSettings
 from msks.spec.mounts import MountSpec, mount_tag
 from msks.spec.vm import VmSpec
@@ -449,6 +450,19 @@ async def test_fs_pid_serves_matches_the_socket(tmp_path: Path) -> None:
     process whose command line names this workspace's socket dies
     by pidfile — a real process whose argv carries the socket
     qualifies, the same pid queried for another socket does not."""
+
+    # The parse's defensive arms first (#1088): a stat line that
+    # is not one reads as unreadable, never as a number.
+    assert start_time_from_stat(b"no-parens-at-all") is None
+    assert start_time_from_stat(b"1 (sh) S 1") is None
+    assert start_time_from_stat(b"1 (sh) S " + b"x " * 19 + b"99") is None
+    assert (
+        start_time_from_stat(
+            b"123 (a name with spaces) R 1 2 3 4 5 6 7 8 9 10 11 "
+            b"12 13 14 15 16 17 18 4242"
+        )
+        == 4242
+    )
 
     socket = Path("/unique/fs-probe.sock")
     proc = await socket_sleeper(socket, tmp_path / "sleeper-up")

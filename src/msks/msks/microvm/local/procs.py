@@ -95,11 +95,21 @@ def proc_start_time(pid: int) -> int | None:
         stat = Path(f"/proc/{pid}/stat").read_bytes()
     except OSError:
         return None
+    return start_time_from_stat(stat)
+
+
+def start_time_from_stat(stat: bytes) -> int | None:
+    """The start time from one /proc stat read: the fields after
+    the last ``)`` (the comm can carry spaces and parens of its
+    own), starttime at index 19 — state(3) through starttime(22)
+    is 20 fields. None for anything a kernel stat line is not:
+    no closing paren, too few fields, a non-decimal starttime —
+    the caller treats it as unreadable and falls back."""
     tail = stat.rsplit(b")", 1)
     if len(tail) != 2:
         return None
     fields = tail[1].split()
-    if len(fields) < 20:  # state(3)..starttime(22) is 20 fields
+    if len(fields) < 20:
         return None
     try:
         return int(fields[19])

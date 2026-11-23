@@ -12,6 +12,7 @@ import pytest
 from ext4tools import realtools  # noqa: F401 — the tools stay real here
 from msks.app import build_app
 from msks.server.api import build_api
+from msks.server.api.rows import dead_owner_issues
 from msks.settings import (
     MountSettings,
     NetSettings,
@@ -437,6 +438,22 @@ async def test_a_dead_owners_mounts_skip_but_the_workspace_boots(
             "detail": f"owner uid {ALICE} no longer exists",
         }
     ]
+    # The live-owner arm: the same row under an account that
+    # resolves derives no dead-owner skip — the gate fires on
+    # the uid's disappearance alone, never on the row. The fake
+    # lookup resolves ALICE where the host's real one cannot
+    # (4242 is the uid no account here holds).
+    monkeypatch.setattr(
+        pwd, "getpwuid", lambda uid: SimpleNamespace(pw_uid=ALICE)
+    )
+    fresh = (
+        await peer(ROOT).get("/api/v1/workspaces", headers=auth())
+    ).json()[0]
+    assert fresh["mount_issues"] == []
+    # A row without an owner (a spec-shaped dict from outside the
+    # model's rows) skips nothing at this gate — the None owner is
+    # the shortcut lane's, not a dead owner's.
+    assert dead_owner_issues({}, ()) == ()
 
 
 async def test_each_owner_resolves_their_own_name(daemon) -> None:

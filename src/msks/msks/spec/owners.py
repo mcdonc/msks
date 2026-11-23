@@ -26,14 +26,15 @@ AMBIGUOUS_WORKSPACE = "ambiguous_workspace"
 AMBIGUOUS_CLOSE = 4405
 
 
-def dead_owner_cause(uid: int, getpwuid=pwd.getpwuid) -> str | None:
+def dead_owner_cause(uid: int) -> str | None:
     """The named skip cause a uid no account holds (#1088): the
     mounts derivation and the spawn seam share the spelling, so
     the row's standing marker and a start's refusal read the
     same word. None when the account exists — no cause, no
-    skip."""
+    skip. The lookup is read at call time (``pwd.getpwuid`` by
+    attribute), so a test's patch of the module reaches it."""
     try:
-        getpwuid(uid)
+        pwd.getpwuid(uid)
     except KeyError:
         return f"owner uid {uid} no longer exists"
     return None
