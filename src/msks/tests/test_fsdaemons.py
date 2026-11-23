@@ -974,23 +974,28 @@ def test_bind_fs_socket_hands_a_listening_fd_at_the_path(
     try:
         st = os.fstat(fd)
         assert stat_module.S_ISSOCK(st.st_mode)
-        assert socket_module_getsockopt(fd) == 1  # SO_ACCEPTCONN: listening
+        # SO_ACCEPTCONN names listening where the platform
+        # answers it; the connect below proves it everywhere
+        assert socket_module_getsockopt(fd) in (1, None)
         assert not os.get_inheritable(fd)  # close-on-exec, portably
         probe = socket_module.socket(
             socket_module.AF_UNIX, socket_module.SOCK_STREAM
         )
         try:
-            probe.connect(str(socket_path))  # bound at the path
+            probe.connect(str(socket_path))  # listening, bound at the path
         finally:
             probe.close()
     finally:
         os.close(fd)
 
 
-def socket_module_getsockopt(fd: int) -> int:
-    """SO_ACCEPTCONN of one fd: 1 when the socket listens. The
-    wrapper detaches — a socket object owns the fd it wraps, and
-    the test holds it across the probe."""
+def socket_module_getsockopt(fd: int) -> int | None:
+    """SO_ACCEPTCONN of one fd: 1 when the socket listens, or
+    None where the platform cannot answer — darwin's getsockopt
+    raises ENOPROTOOPT for it (#1105). The wrapper detaches — a
+    socket object owns the fd it wraps, and the test holds it
+    across the probe."""
+    import errno as errno_module
     import socket as socket_module
 
     sock = socket_module.socket(fileno=fd)
@@ -998,6 +1003,13 @@ def socket_module_getsockopt(fd: int) -> int:
         return sock.getsockopt(
             socket_module.SOL_SOCKET, socket_module.SO_ACCEPTCONN
         )
+    except OSError as exc:  # pragma: no cover — darwin's
+        # getsockopt answers ENOPROTOOPT for SO_ACCEPTCONN, a
+        # platform surface the Linux suite cannot reach (#691's
+        # rule); the dispatched macOS run is its coverage
+        if exc.errno != errno_module.ENOPROTOOPT:
+            raise
+        return None
     finally:
         sock.detach()
 
