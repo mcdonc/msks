@@ -790,8 +790,8 @@ def test_escape_closes_the_find_bar_not_the_page(qt):
     ignores propagates to the parent — the accept answers it
     the same way, so the page's Back shortcut stays quiet and
     the bar's own Esc handler closes the bar. Before the fix
-    the shortcut answered first: Back navigated away with the
-    bar left open on a page nothing shows."""
+    the shortcut answered first, and Back navigated away with
+    the bar still open."""
     from msks.client.gui.terminal import TerminalWidget, find
 
     host = qt.QtWidgets.QWidget()
@@ -830,9 +830,7 @@ def test_escape_still_answers_back_off_the_terminal(qt):
     """The shortcut's own arm (#1099): the refusal yields the
     key only while the terminal holds the focus it was sent
     to. A press that lands on the chrome — the Back button
-    the page anchors — still fires the shortcut, and the
-    terminal's pty reads nothing: the press never became a
-    terminal key."""
+    the page anchors — still fires the shortcut."""
     from msks.client.gui.terminal import TerminalWidget
 
     host = qt.QtWidgets.QWidget()
