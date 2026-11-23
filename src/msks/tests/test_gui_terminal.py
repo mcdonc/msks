@@ -445,6 +445,48 @@ def test_the_cache_carries_the_screens_pixel_ratio(screen, qt, monkeypatch):
     assert screen.cell_cache.height() == screen.height() * 2
     assert screen.cache_key[-1] == 2.0
     assert screen.painted_rows == list(range(screen.rows))
+    monkeypatch.setattr(paint, "pixel_ratio", lambda screen: 1.0)
+    screen.grab()  # a move back to an unscaled display rebuilds
+    assert screen.cell_cache.devicePixelRatio() == 1.0
+    assert screen.cell_cache.size() == screen.size()
+
+
+def test_a_fractional_ratio_covers_every_device_pixel(screen, qt, monkeypatch):
+    """A fractional ratio sizes the cache in whole device
+    pixels, rounded up (review round one): rounding to nearest
+    can round a width's last half device pixel down, and the
+    blit then never paints the terminal's last device row or
+    column — the stale-stripe class #1110 chased, one pixel
+    wide. The pin paints onto a sentinel-filled image at the
+    ratio's device size and answers whether any sentinel
+    survives the blit."""
+    from msks.client.gui.terminal import paint
+
+    vt(screen, b"\x1b[2J\x1b[Hsome text")
+    screen.grab()
+    ratio = 1.5
+    monkeypatch.setattr(paint, "pixel_ratio", lambda screen: ratio)
+    import math
+
+    image = qt.QtGui.QImage(
+        math.ceil(screen.width() * ratio),
+        math.ceil(screen.height() * ratio),
+        qt.QtGui.QImage.Format.Format_ARGB32,
+    )
+    image.fill(qt.QtGui.QColor(255, 0, 255))  # the sentinel
+    image.setDevicePixelRatio(ratio)
+    painter = qt.QtGui.QPainter(image)
+    try:
+        paint.paint_event(screen, painter)
+    finally:
+        painter.end()
+    sentinel = qt.QtGui.QColor(255, 0, 255).rgb()
+    survivors = 0
+    for y in range(image.height()):
+        for x in range(image.width()):
+            if image.pixel(x, y) == sentinel:
+                survivors += 1
+    assert survivors == 0
 
 
 def test_one_typed_character_repaints_its_row_alone(screen, qt):

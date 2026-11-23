@@ -26,6 +26,7 @@ them.
 from __future__ import annotations
 
 import ctypes
+import math
 
 from PySide6.QtCore import QPointF, QRect, Qt
 from PySide6.QtGui import QColor, QPainter, QPixmap
@@ -116,7 +117,11 @@ def rebuild_cache(screen, colors) -> bool:
     and the blit lands one device pixel for one device pixel
     — a ratio-1 pixmap on a scaled screen would cover only
     the top-left 1/ratio of the terminal with the rest
-    showing the frames that painted there before."""
+    showing the frames that painted there before. The size
+    rounds up, so the pixmap's last device row and column
+    always paint and the blit's overhang clips: rounding to
+    nearest could leave a fractional ratio's last stripe
+    showing the frame that painted there before."""
     ratio = pixel_ratio(screen)
     key = (
         screen.width(),
@@ -134,8 +139,8 @@ def rebuild_cache(screen, colors) -> bool:
         rebuild = True  # the base fill carries the new background
     if rebuild:
         screen.cell_cache = QPixmap(
-            max(1, round(screen.width() * ratio)),
-            max(1, round(screen.height() * ratio)),
+            max(1, math.ceil(screen.width() * ratio)),
+            max(1, math.ceil(screen.height() * ratio)),
         )
         screen.cell_cache.setDevicePixelRatio(ratio)
         screen.cell_cache.fill(rgb(colors.background))

@@ -173,7 +173,7 @@ class TerminalWidget(QWidget):
         # the next paint takes every row, and the rows the last
         # paint took (the suite's damage pins).
         self.cell_cache = None
-        self.cache_key: tuple[int, ...] | None = None
+        self.cache_key: tuple[float, ...] | None = None
         self.cache_palette: bytes | None = None
         self.cache_scroll: int | None = None
         self.cache_underlays = None
