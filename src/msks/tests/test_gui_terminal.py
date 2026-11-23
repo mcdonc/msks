@@ -185,29 +185,49 @@ def vt(widget, data: bytes) -> None:
 
 def paint_planned(screen, qt):
     """Drive the paint the plan asked for (#1113): the rows
-    and the region refresh() named, painted straight onto a
-    fresh image — the offscreen suite's grab always asks for
-    the whole widget, so the planned paints drive their own
-    device here. Answers the image it painted."""
+    and the region refresh() named, painted onto one kept
+    image — the backing store the widget's own pixels play,
+    so a row that skips its background fill shows the frame
+    before it (review round one: fresh images per paint let
+    the flood pin pass with the fill deleted). The kept image
+    starts as a contrasting sentinel. Answers the image it
+    painted."""
     from msks.client.gui.terminal import paint
 
-    colors = paint.palette(screen)
-    background = (
-        qt.QtGui.QColor(
-            colors.background.r, colors.background.g, colors.background.b
+    image = getattr(screen, "_planned_backing", None)
+    if image is None or image.size() != screen.size():
+        image = qt.QtGui.QImage(
+            screen.width(),
+            screen.height(),
+            qt.QtGui.QImage.Format.Format_ARGB32,
         )
-        if colors is not None
-        else qt.QtGui.QColor(0, 0, 0)
-    )
+        image.fill(qt.QtGui.QColor(255, 0, 255))
+        screen._planned_backing = image
+    painter = qt.QtGui.QPainter(image)
+    try:
+        paint.paint_event(screen, painter, screen.repaint_region)
+    finally:
+        painter.end()
+    return image
+
+
+def paint_whole(screen, qt):
+    """Drive one paint of the whole widget's region — the
+    exposure the window system delivers after an un-minimize
+    or a screen move, and the harness for overlays that draw
+    above whatever the plan named."""
+    from msks.client.gui.terminal import paint
+
     image = qt.QtGui.QImage(
         screen.width(),
         screen.height(),
         qt.QtGui.QImage.Format.Format_ARGB32,
     )
-    image.fill(background)
+    image.fill(qt.QtGui.QColor(255, 0, 255))
     painter = qt.QtGui.QPainter(image)
+    whole = qt.QtGui.QRegion(0, 0, screen.width(), screen.height())
     try:
-        paint.paint_event(screen, painter, screen.repaint_region)
+        paint.paint_event(screen, painter, whole)
     finally:
         painter.end()
     return image
@@ -539,7 +559,6 @@ def test_a_scrolled_flood_paints_the_same_pixels_as_one_whole_pass(screen, qt):
     ls -alR garble): a taken row paints its background first,
     so the incremental paints after each line land exactly the
     pixels one whole-grid pass of the settled state paints."""
-    from msks.client.gui.terminal import paint
 
     vt(screen, b"\x1b[2J\x1b[H")
     incremental = None
@@ -547,15 +566,12 @@ def test_a_scrolled_flood_paints_the_same_pixels_as_one_whole_pass(screen, qt):
         vt(screen, f"line {i:03d} {'x' * 30}\r\n".encode())
         incremental = paint_planned(screen, qt)
     assert incremental is not None
-    whole = incremental.copy()
-    whole.fill(qt.QtGui.QColor(0, 0, 0))
-    painter = qt.QtGui.QPainter(whole)
-    full = qt.QtGui.QRegion(0, 0, screen.width(), screen.height())
-    try:
-        paint.paint_event(screen, painter, full)
-    finally:
-        painter.end()
-    assert incremental == whole
+    whole = paint_whole(screen, qt)
+    # the grid's pixels alone: the fringe below it repaints only
+    # on a full pass, and the comparison is about the rows
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    grid = qt.QtCore.QRect(0, 0, screen.cols * cw, screen.rows * ch)
+    assert incremental.copy(grid) == whole.copy(grid)
 
 
 def test_the_bell_flashs_end_takes_a_full_pass(screen, qt):
@@ -566,9 +582,9 @@ def test_the_bell_flashs_end_takes_a_full_pass(screen, qt):
     vt(screen, b"\x1b[2J\x1b[Hsome text")
     paint_planned(screen, qt)
     screen.flash()
-    flashing = paint_planned(screen, qt)
+    flashing = paint_whole(screen, qt)  # the border draws
     screen.bell_off()
-    after = paint_planned(screen, qt)
+    after = paint_whole(screen, qt)  # the sticky full erases it
     assert screen.painted_rows == list(range(screen.rows))
     assert after != flashing
 
@@ -593,7 +609,7 @@ def test_the_cursor_move_repaints_the_row_it_covers(screen, qt):
     and the one it takes — so the block redraws over fresh
     pixels and never compounds on itself (#1113)."""
     vt(screen, b"\x1b[2J\x1b[Hhello")
-    before = paint_planned(screen, qt)
+    before = paint_planned(screen, qt).copy()  # the kept image mutates
     vt(screen, b"\x1b[3C")
     after = paint_planned(screen, qt)
     assert screen.painted_rows == [0]  # the row it left and takes
@@ -606,9 +622,12 @@ def test_a_viewport_scroll_repaints_every_row(screen, qt):
     and repaints every row when the viewport moved — the rows
     the viewport now shows are different buffer lines."""
     vt(screen, b"\x1b[2J\x1b[H" + b"line\r\n" * 40)  # history to page into
-    screen.grab()
+    paint_planned(screen, qt)
     screen.scroll_rows(-3)
-    screen.grab()
+    # the plan itself must name the whole widget, not the rows
+    # the exposure would paint anyway
+    assert screen.repaint_region.boundingRect().height() == screen.height()
+    paint_planned(screen, qt)
     assert screen.painted_rows == list(range(screen.rows))
 
 
@@ -618,11 +637,12 @@ def test_a_pixel_resize_repaints_every_row(screen, qt):
     probed): a stale row would show the old grid's lines
     beside the new grid's."""
     vt(screen, b"\x1b[2J\x1b[Hhello")
-    screen.grab()
+    paint_planned(screen, qt)
     size = screen.size() + qt.QtCore.QSize(120, 40)
     screen.resize(size)
     screen.resizeEvent(qt.QtGui.QResizeEvent(size, screen.size()))
-    screen.grab()
+    assert screen.repaint_region.boundingRect().height() == screen.height()
+    paint_planned(screen, qt)
     assert screen.painted_rows == list(range(screen.rows))
 
 
@@ -635,10 +655,11 @@ def test_a_changed_find_pass_repaints_every_row(screen, qt):
     from msks.client.gui.terminal import find
 
     vt(screen, b"\x1b[2J\x1b[Hneedle here")
-    screen.grab()
+    paint_planned(screen, qt)
     find.open(screen)
     find.run(screen, "needle")
-    screen.grab()
+    assert screen.repaint_region.boundingRect().height() == screen.height()
+    paint_planned(screen, qt)
     assert screen.painted_rows == list(range(screen.rows))
     find.close(screen)
 
@@ -1682,10 +1703,7 @@ def test_a_fit_that_cannot_reach_lands_the_pixels_grid(screen, qt):
         held = (widget.cols, widget.rows)
         widget.apply_font_size(widget.font.pointSize() + 2)
         qt.app.processEvents()
-        landed = (
-            max(1, widget.width() // widget.metrics.cell_width),
-            max(1, widget.height() // widget.metrics.cell_height),
-        )
+        landed = widget.derived_grid()
         assert landed[1] < held[1]  # the cap held the fit short
         assert (widget.cols, widget.rows) == landed  # one grid everywhere
     finally:
