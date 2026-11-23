@@ -134,6 +134,12 @@ class MountsTab(QtWidgets.QWidget):
         self.flight_key = ""
         self.table = read_only_table(MOUNT_COLUMNS, MOUNT_CONTENT_COLUMNS)
         self.table.itemSelectionChanged.connect(self.sync_buttons)
+        # A right-click on a row reaches the same actions
+        # (#1098): Edit and Remove, the paths the buttons drive.
+        self.table.setContextMenuPolicy(
+            QtCore.Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self.table.customContextMenuRequested.connect(self.menu_requested)
         self.add_button = QtWidgets.QPushButton("Add")
         self.add_button.clicked.connect(self.add)
         self.edit_button = QtWidgets.QPushButton("Edit")
@@ -288,6 +294,32 @@ class MountsTab(QtWidgets.QWidget):
         if index < 0:
             return
         self.change(removed_mount(self.working, index))
+
+    @QtCore.Slot(QtCore.QPoint)
+    def menu_requested(self, pos: QtCore.QPoint) -> None:
+        """A right-click on a row opens its menu (#1098): the
+        clicked row takes the selection first — the entries
+        read the row the pointer named, the buttons' own paths.
+        A press on no row opens nothing."""
+        row = self.table.rowAt(pos.y())
+        if row < 0:
+            return
+        self.table.selectRow(row)
+        self.row_menu(row).popup(self.table.viewport().mapToGlobal(pos))
+
+    def row_menu(self, row: int) -> QtWidgets.QMenu | None:
+        """The row's menu (#1098) — ``None`` for a row the table
+        does not hold. Edit and Remove drive the buttons' own
+        paths with the buttons' own gating — a flight already
+        out disables both, and Add stays on the button row."""
+        if not 0 <= row < self.table.rowCount():
+            return None
+        menu = QtWidgets.QMenu(self.table)
+        edit = menu.addAction("Edit", self.edit)
+        remove = menu.addAction("Remove", self.remove)
+        edit.setEnabled(self.edit_button.isEnabled())
+        remove.setEnabled(self.remove_button.isEnabled())
+        return menu
 
     def change(self, mounts: list) -> None:
         """One composed list to the daemon (#987): the snapshot

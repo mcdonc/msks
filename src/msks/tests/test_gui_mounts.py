@@ -78,21 +78,23 @@ def qt(tmp_path):
     os.environ["FONTCONFIG_FILE"] = str(fonts)
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     from msks.client.gui import mounts as mounts_mod
-    from PySide6 import QtWidgets
+    from PySide6 import QtCore, QtWidgets
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
         ["msks-test"]
     )
     ns = SimpleNamespace(
-        app=app, QtWidgets=QtWidgets, keep=[], mounts=mounts_mod
+        app=app,
+        QtWidgets=QtWidgets,
+        QtCore=QtCore,
+        keep=[],
+        mounts=mounts_mod,
     )
     yield ns
     del ns.keep[:]
     for widget in app.topLevelWidgets():
         widget.close()
         widget.deleteLater()
-    from PySide6 import QtCore
-
     QtCore.QCoreApplication.sendPostedEvents(
         None, QtCore.QEvent.Type.DeferredDelete
     )
@@ -323,6 +325,71 @@ def test_an_edit_and_a_remove_run_through_the_bridge(qt, monkeypatch) -> None:
             "set_mounts",
             ("ws-a", [daemon_row()["mounts"][0]]),
         )
+    ]
+
+
+def test_the_row_menu_carries_edit_and_remove(qt) -> None:
+    """A right-click on a row opens its menu (#1098): Edit and
+    Remove — the buttons' own paths, the clicked row taking the
+    selection first — with Add staying on the button row. A
+    press below every row opens nothing."""
+    tab, bridge = make_tab(qt)
+    assert tab.row_menu(99) is None  # a row the table does not hold
+    before = tab.findChildren(qt.QtWidgets.QMenu)
+    tab.menu_requested(qt.QtCore.QPoint(2, 10_000))  # below every row
+    assert tab.findChildren(qt.QtWidgets.QMenu) == before  # nothing popped
+    row = 1
+    pos = qt.QtCore.QPoint(2, tab.table.rowViewportPosition(row) + 2)
+    tab.menu_requested(pos)
+    assert tab.selected() == row  # the click took the selection
+    menu = tab.findChildren(qt.QtWidgets.QMenu)[-1]
+    assert [action.text() for action in menu.actions()] == [
+        "Edit",
+        "Remove",
+    ]
+    menu.actions()[1].trigger()  # Remove: the clicked row's slot drops
+    assert bridge.calls == [
+        (
+            tab.flight_key,
+            "set_mounts",
+            ("ws-a", [daemon_row()["mounts"][0]]),
+        )
+    ]
+
+
+def test_the_row_menus_edit_runs_the_buttons_own_path(qt, monkeypatch) -> None:
+    """The menu's Edit (#1098): the form seeded with the
+    clicked row's mount — the selection the click took — and an
+    accepted entry taking its slot, the whole list posting
+    through the bridge, the button's own path."""
+    tab, bridge = make_tab(qt)
+    entry = {"host": "/srv/changed", "guest": "/mnt/ok", "mode": "ro"}
+    fake_dialog(monkeypatch, qt, entry)
+    pos = qt.QtCore.QPoint(2, tab.table.rowViewportPosition(0) + 2)
+    tab.menu_requested(pos)
+    menu = tab.findChildren(qt.QtWidgets.QMenu)[-1]
+    menu.actions()[0].trigger()  # Edit: the clicked row's slot takes it
+    assert bridge.calls == [
+        (
+            tab.flight_key,
+            "set_mounts",
+            ("ws-a", [entry, daemon_row()["mounts"][1]]),
+        )
+    ]
+
+
+def test_a_flight_gates_the_row_menu_like_the_buttons(qt) -> None:
+    """The menu's gating (#1098): a flight already out disables
+    both entries — the buttons' own rule — and a press on a row
+    still opens the menu, its actions dark."""
+    tab, _bridge = make_tab(qt)
+    tab.change(added_mount(tab.working, {"host": "/x", "guest": "/y"}))
+    pos = qt.QtCore.QPoint(2, tab.table.rowViewportPosition(0) + 2)
+    tab.menu_requested(pos)
+    menu = tab.findChildren(qt.QtWidgets.QMenu)[-1]
+    assert [action.isEnabled() for action in menu.actions()] == [
+        False,
+        False,
     ]
 
 
