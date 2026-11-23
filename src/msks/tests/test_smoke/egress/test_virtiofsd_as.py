@@ -200,7 +200,9 @@ def evidence(result) -> dict[str, str | list[str]]:
     env: list[str] = []
     fds: list[str] = []
     for line in result.stdout.splitlines():
-        if line.startswith("Cap") and ":" in line:
+        if (
+            line.startswith("Cap") or line.startswith("NoNewPrivs")
+        ) and ":" in line:
             key, _, value = line.partition(":")
             facts[key.strip()] = value.strip()
         elif line.startswith("env:"):
