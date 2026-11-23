@@ -372,6 +372,9 @@ class ShellTabs(QtWidgets.QTabWidget):
         place — only a shell tab renames — and the open
         editor's Escape closes it as a cancel."""
         if obj is self.editor:
+            if self.editor_override(event):
+                event.accept()
+                return True
             if self.editor_escape(obj, event):
                 self.cancel_rename()
                 return True
@@ -379,6 +382,21 @@ class ShellTabs(QtWidgets.QTabWidget):
         if self.tab_double_click(event):
             return True
         return super().eventFilter(obj, event)
+
+    def editor_override(self, event) -> bool:
+        """Whether this event is the question that hands the
+        open editor's Escape to a matching shortcut (#1099):
+        the page stands one on the bare key — its Back — and
+        the dispatch consumes the press before the filter's
+        cancel arm below reads it. The accept yields the
+        shortcut and keeps the press for the cancel, the same
+        claim the terminal's widget makes for its program
+        inside. The override arrives only for a press the
+        shortcut matched, so the bare key names it."""
+        return (
+            event.type() == QtCore.QEvent.Type.ShortcutOverride
+            and event.key() == QtCore.Qt.Key.Key_Escape
+        )
 
     def editor_escape(self, obj, event) -> bool:
         """Whether this event is the open editor's Escape."""

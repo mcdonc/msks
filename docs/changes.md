@@ -568,6 +568,14 @@ gui`. The nix package keeps the daemon's closure lean, so on
   reads, and Shift+Tab sends the shifted tab (the
   reverse-completion sequence). Before, both moved the
   keyboard focus to the next widget in the window.
+- **Esc in a GUI shell terminal (#1099).** Pressing Esc while
+  a workspace shell's terminal holds focus no longer leaves
+  the workspace page: the key reaches the program inside the
+  terminal (canceling a vim search, leaving a `less` view).
+  The find bar's Esc closes the bar instead of navigating
+  Back, and a standing tab rename's Esc cancels the edit the
+  same way. Esc still goes Back while the page's own controls
+  hold the keyboard focus.
 - **The secrets audit rows' time labels (#1064).** The audit
   rows in the GUI's Secrets tab and in the TUI's audit views
   show the local clock for a row from the viewer's own day,

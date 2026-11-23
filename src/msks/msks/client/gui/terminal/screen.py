@@ -463,6 +463,42 @@ class TerminalWidget(QWidget):
 
     # --- keyboard -----------------------------------------------------
 
+    def event(self, event: QEvent) -> bool:  # noqa: N802
+        """The bare Esc belongs to the program inside (#1099):
+        the workspace page stands a widget-scoped shortcut on
+        the key — Esc goes Back — and Qt asks the focus widget
+        first, with a ``ShortcutOverride`` event, whether the
+        matching shortcut should yield. The accept keeps the
+        press for the terminal: it reaches the encoder like
+        every other key, and the shell reads its Esc. An
+        override a focused child ignores — the find bar's
+        edit — propagates here too, and the accept serves it
+        the same way: the shortcut stays quiet and the edit's
+        own Esc handler answers instead of the page's Back.
+        Unlike Tab's refusal (#1066, :meth:`focusNextPrevChild`)
+        the accept is not gated on ``hasFocus`` for exactly
+        that reason.
+
+        The claim names the bare Esc alone — a modified one
+        or another key passes to the base, so the zoom keys
+        and every other shortcut keep their answers."""
+        if event.type() == QEvent.Type.ShortcutOverride:
+            key = event.key()
+            # Belt-and-braces: Qt only delivers the override
+            # when a shortcut matches the press, and the page's
+            # is unmodified — the mask answers a future
+            # modified-Esc shortcut, not today's key.
+            claimed = (
+                Qt.KeyboardModifier.ControlModifier
+                | Qt.KeyboardModifier.ShiftModifier
+                | Qt.KeyboardModifier.AltModifier
+                | Qt.KeyboardModifier.MetaModifier
+            )
+            if key == Qt.Key.Key_Escape and not event.modifiers() & claimed:
+                event.accept()
+                return True
+        return super().event(event)
+
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         if self.handle_shortcut(event):
             return
