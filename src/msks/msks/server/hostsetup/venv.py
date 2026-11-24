@@ -98,8 +98,12 @@ def run_uv(
     cmd: list[str], error: type[Exception], env: dict[str, str] | None = None
 ) -> str:
     """One uv (or venv-building) child through the ``sh`` seam,
-    its stderr tail the named refusal's cause."""
-    rc, _out, err = sh(cmd, env=env)
+    its stderr tail the named refusal's cause. The timeout is
+    the packages phase's own allowance: these children download
+    (uv itself, the managed CPython, the wheel and its
+    dependencies), and ``sh``'s 10-second default would kill a
+    slow link's install at the first phase."""
+    rc, _out, err = sh(cmd, timeout=600.0, env=env)
     if rc != 0:
         raise error(f"{cmd[0]} failed: {err.strip() or 'no output'}")
     return err
@@ -150,16 +154,20 @@ def create_venv(uv: list[str], error: type[Exception], tell: Tell) -> None:
     """``/opt/msks/venv`` through uv: the managed 3.14
     (provisioned on demand into ``/opt/msks/python``), a fresh
     venv over it, and the provisioned word printed. A venv whose
-    probe failed is replaced whole — uv recreates the directory."""
+    probe failed is replaced whole — ``--clear`` says so in
+    uv's own vocabulary (uv 0.11 refuses a replace without it,
+    and the pin does not govern PATH's own uv)."""
     run_uv(
-        [*uv, "venv", "--python", PY_VERSION, VENV_DIR],
+        [*uv, "venv", "--clear", "--python", PY_VERSION, VENV_DIR],
         error,
         env=os.environ | uv_env(),
     )
     tell(f"{VENV_DIR}: {python_word()} (uv-managed, {PYTHON_INSTALL_DIR})")
 
 
-def install_wheel(uv: list[str], wheel: str | None, error) -> None:
+def install_wheel(
+    uv: list[str], wheel: str | None, error: type[Exception]
+) -> None:
     """The wheel into the venv: the file ``--wheel`` named, or
     the PyPI release pinned to the tool's own version."""
     spec = os.path.abspath(wheel) if wheel else f"msks=={tool_version()}"
@@ -232,9 +240,12 @@ def refresh_venv(wheel: str | None, error: type[Exception], tell: Tell) -> str:
     """The shared middle of the phase: the equal-state answer
     (the #546 contract — a re-run at the same version runs no uv
     command at all), the create-or-refresh, and the landing
-    proof. Returns the summary's venv line."""
+    proof. A named wheel always installs: the operator asserted
+    new state at the same version (a rebuild in hand), and the
+    equal-state skip is the unnamed release's alone. Returns the
+    summary's venv line."""
     held = installed_version()
-    if held == tool_version():
+    if held == tool_version() and wheel is None:
         return f"{VENV_DIR}: already msks {held} ({python_word()})"
     if held is not None:
         tell(

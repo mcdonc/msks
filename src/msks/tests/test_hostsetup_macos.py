@@ -2196,7 +2196,7 @@ def test_the_host_venv_lands_the_shared_install(
     ]
     uv = host_venv.UV_BIN
     assert [c for c in procs.calls if c[0] == uv] == [
-        [uv, "venv", "--python", "3.14", host_venv.VENV_DIR],
+        [uv, "venv", "--clear", "--python", "3.14", host_venv.VENV_DIR],
         [
             uv,
             "pip",

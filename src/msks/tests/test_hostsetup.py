@@ -96,6 +96,11 @@ class Host:
         self.uv_bin = "/opt/msks/uv/bin/uv"
         self.venv_dir = Path("/opt/msks/venv")
         self.command_envs: list[dict | None] = []
+        self.command_timeouts: list[float] = []
+        # The wheel's console scripts the fake's uv install lands
+        # — a client-only wheel ships none, and the service phase
+        # stands down over the empty resolution (#1118).
+        self.venv_scripts = ("python", "msks", "msksd", "msks-term-popup")
         # The failure dials: a wheel install whose probe never
         # answers (the verify refusal), and a venv interpreter
         # that will not speak its version (the unreadable word).
@@ -105,6 +110,7 @@ class Host:
     def sh(self, cmd, timeout=10.0, env=None):
         self.commands.append(cmd)
         self.command_envs.append(env)
+        self.command_timeouts.append(timeout)
         head = cmd[0]
         if head == "getcap":
             return 0, self.getcap_answer, ""
@@ -173,7 +179,7 @@ class Host:
             if cmd[1:2] == ["pip"]:
                 bindir = self.venv_dir / "bin"
                 bindir.mkdir(parents=True, exist_ok=True)
-                for name in ("python", "msks", "msksd", "msks-term-popup"):
+                for name in self.venv_scripts:
                     (bindir / name).write_text("#!/bin/sh\n")
                 if self.venv_install_lands:
                     self.installed_msks = hostsetup.tool_version()
@@ -218,6 +224,17 @@ class Host:
         for cmd, env in zip(self.commands, self.command_envs, strict=True):
             if cmd[0] == head:
                 return env
+        return None
+
+    def timeout_of(self, head: str) -> float | None:
+        """The timeout the first command under *head* ran with
+        (#1118 review: the uv children download, so the 10-second
+        default would kill a slow link's install)."""
+        for cmd, timeout in zip(
+            self.commands, self.command_timeouts, strict=True
+        ):
+            if cmd[0] == head:
+                return timeout
         return None
 
 
@@ -758,6 +775,7 @@ def test_the_venv_phase_lands_the_shared_venv(
     assert uv[0] == [
         "/usr/bin/uv",
         "venv",
+        "--clear",
         "--python",
         "3.14",
         hostsetup.VENV_DIR,
@@ -774,6 +792,11 @@ def test_the_venv_phase_lands_the_shared_venv(
     assert env is not None
     assert env["UV_PYTHON_INSTALL_DIR"] == hostsetup.PYTHON_INSTALL_DIR
     assert env["UV_PYTHON_PREFERENCE"] == "only-managed"
+    # The downloads' allowance: the uv children fetch (uv itself,
+    # the managed CPython, the wheel and its dependencies), so
+    # they carry the packages phase's own timeout, not sh's
+    # 10-second default (#1118 review).
+    assert debian_host.timeout_of("/usr/bin/uv") == 600.0
     # The phase's effects: the venv the later phases resolve
     # against — the marker, the console scripts, the summary's
     # word for the interpreter.
@@ -831,6 +854,34 @@ def test_an_equal_state_rerun_runs_no_uv_command(
         f"venv:       {hostsetup.VENV_DIR}: already msks "
         f"{hostsetup.tool_version()} (Python 3.14.10)" in out.out
     )
+
+
+def test_a_named_wheel_installs_at_the_same_version(
+    debian_host: Host, tmp_path: Path
+) -> None:
+    """A wheel the operator named is state he asserted (#1118
+    review): the equal-state skip is the unnamed release's alone,
+    so a rebuild in hand at the same version installs over the
+    venv's build instead of silently standing pat."""
+    debian_host.installed_msks = hostsetup.tool_version()
+    wheel = tmp_path / f"msks-{hostsetup.tool_version()}-py3-none-any.whl"
+    wheel.write_bytes(b"PK")
+    assert main(["--wheel", str(wheel)]) == 0
+    uv = debian_host.ran("/usr/bin/uv")
+    assert len(uv) == 1
+    assert uv[0][1:3] == ["pip", "install"]
+    assert uv[0][-1] == str(wheel)
+
+
+def test_uninstall_takes_no_wheel(
+    debian_host: Host, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The flags refuse together, by name: the uninstall removes
+    the tree the wheel would install into."""
+    wheel = tmp_path / f"msks-{hostsetup.tool_version()}-py3-none-any.whl"
+    wheel.write_bytes(b"PK")
+    assert main(["--uninstall", "--wheel", str(wheel)]) == 1
+    assert "--uninstall takes no --wheel" in capsys.readouterr().err
 
 
 def test_a_newer_tool_refreshes_the_wheel(
@@ -2030,13 +2081,15 @@ def test_the_binary_the_msksd_account_cannot_exec_refuses(
 def test_service_skips_when_no_msksd_beside_the_tool(
     debian_host: Host, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A deployment whose msksd lives elsewhere — no venv and no
-    bin sibling, the resolution's both arms empty — keeps a
-    working host: the skip names the cause, no unit is written,
-    systemctl never runs."""
+    """A deployment whose msksd lives elsewhere — the resolution's
+    both arms genuinely empty — keeps a working host: a
+    client-only wheel ships no msksd into the venv, the tool's
+    own bin dir ships none beside it, the skip names the cause,
+    no unit is written, systemctl never runs."""
     Path(hostsetup.sys.argv[0]).parent.joinpath("msksd").unlink()
-    patch_phase(monkeypatch, "bin_sibling", lambda name: None)
+    debian_host.venv_scripts = ("python", "msks", "msks-term-popup")
     assert main() == 0
+    assert not (Path(hostsetup.VENV_BIN) / "msksd").exists()
     assert unit_writes(debian_host) == {}
     assert debian_host.ran("systemctl") == []
 

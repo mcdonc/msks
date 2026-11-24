@@ -357,6 +357,11 @@ def main(
     """The console entry: 0 on success, 1 on a named refusal."""
     args = parse_args(argv, profile)
     try:
+        if args.uninstall and args.wheel:
+            raise HostSetupError(
+                "--uninstall takes no --wheel; the venv leaves with "
+                "the /opt/msks tree"
+            )
         if args.uninstall:
             run_uninstall(service=not args.no_service, profile=profile)
         else:
