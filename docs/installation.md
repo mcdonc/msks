@@ -182,9 +182,9 @@ removes both.
 **The owner-exec helper.** The platform wheel bundles the
 `virtiofsd-as` binary inside the package, so the venv carries it. A
 cross-owner share execs its virtiofsd through the helper as the
-workspace's owner. The helper needs a setuid-root install
-(root:msksd, mode 4750) to serve that. The NixOS host performs the
-install through `security.wrappers`. The setup tools' install is
+workspace's owner. The helper needs an install as root:msksd, mode
+4750, to serve that. The NixOS host performs the install through
+`security.wrappers`. The setup tools' install is
 part of #1080's remaining work. The [mounts chapter](mounts.md)
 documents the helper's contract.
 

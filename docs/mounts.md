@@ -90,12 +90,13 @@ itself and hands the listening socket to virtiofsd across the exec, so the
 owning account needs no access to the daemon's state. When the owner is the
 daemon's own account (the dev daemon, a single-user install), virtiofsd execs
 directly. When the owner is another account, the daemon execs through the
-`virtiofsd-as` setuid helper. The helper's install shape is root:msksd
-mode 4750 (the setuid bit plus the `msksd` group gate every exec). The
-NixOS host installs it through `security.wrappers`. The setup tools'
-install is #1080's remaining work. `MSKSD_VIRTIOFSD_AS` points at
-another path. Every exec writes one
-journal line under the helper's ident: the uid, the fd, and the argv.
+`virtiofsd-as` setuid helper. The helper's install shape is root:msksd,
+mode 4750. The setuid bit makes every exec privileged, and the `msksd`
+group limits who can exec. The NixOS host installs it through
+`security.wrappers`. The setup tools' install is #1080's remaining
+work. `MSKSD_VIRTIOFSD_AS` points at another path. Every exec writes
+one journal line under the helper's ident: the uid, the fd, and the
+argv.
 
 The helper execs a virtiofsd path compiled into itself — the privilege
 boundary, since a caller-supplied path would let a setuid-root exec aim at
