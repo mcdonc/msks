@@ -191,7 +191,9 @@ def router(app, hub) -> APIRouter:
         # A running workspace takes the listener at once; a stopped
         # one records the row and its next start brings it up.
         live = await app.state.proxies.start_one(
-            created, app.state.net.attachment(workspace_id)
+            created,
+            app.state.net.attachment(workspace_id),
+            row["owner_uid"],
         )
         # The frame's audience is the workspace's owner (#1095)
         # — the route's resolved row carries it.
@@ -292,7 +294,9 @@ def router(app, hub) -> APIRouter:
             # The row left between the read and the write (a
             # remove landing inside the exchange).
             raise HTTPException(status_code=404, detail="no such proxy")
-        live = await app.state.proxies.start_one(updated, attachment)
+        live = await app.state.proxies.start_one(
+            updated, attachment, row["owner_uid"]
+        )
         await hub.publish(
             "proxy.updated",
             {

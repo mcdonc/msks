@@ -415,7 +415,9 @@ async def test_publish_skips_a_hubless_app() -> None:
     from types import SimpleNamespace
 
     manager = ProxyManager(SimpleNamespace(state=SimpleNamespace(hub=None)))
-    await manager.publish({"workspace_id": "ws", "id": 1}, "proxy.listening")
+    await manager.publish(
+        {"workspace_id": "ws", "id": 1}, "proxy.listening", None, None
+    )
 
 
 def test_bind_point_shapes() -> None:
@@ -537,20 +539,25 @@ async def test_stop_one_is_bounded_by_grace(monkeypatch) -> None:
         await asyncio.wait_for(task, timeout=1.0)
 
 
-async def test_a_stop_after_the_workspace_row_vanished_broadcasts(
+async def test_a_stop_after_the_workspace_row_vanished_stays_scoped(
     proxies,
 ) -> None:
-    """#1095: the manager reads the frame's owner off the
-    workspace row at publish. A row already gone names no owner,
-    so the close broadcasts unscoped — the journal still records
-    the transition, the deletion race leaks nothing an owner
-    filter would have hidden."""
-    manager, model, _net, queue, _app = proxies
+    """#1095: the owner captured at bind outlives the workspace
+    row. A forward proxy on a never-started workspace holds its
+    listener past the row's deletion until the shutdown sweep
+    closes it — the close frame still reaches the captured
+    owner's subscribers alone, and the owner-side subscriber
+    queue receives it beside the unscoped one."""
+    manager, model, _net, queue, app = proxies
     row = await create_forward_row(model, await free_port())
-    await manager.start_one(row, None)
+    alice_q = app.state.hub.subscribe(viewer=4242)
+    await manager.start_one(row, None, 4242)
     assert (await next_event(queue))[0] == "proxy.listening"
+    assert json.loads(alice_q.get_nowait())["event"] == "proxy.listening"
     await model.delete_workspace("ws-a")
     await manager.stop_one(row["id"])
     event, data = await next_event(queue)
     assert event == "proxy.closed"
     assert data["id"] == "ws-a"
+    closed = json.loads(alice_q.get_nowait())
+    assert closed["event"] == "proxy.closed"
