@@ -34,7 +34,7 @@ from ...spec.failures import MicrovmError
 from ...spec.vm import VmStatus
 from ...storage import create_refusal, file_cost
 from .boot import mint_workspace_id
-from .deps import require_token
+from .deps import authed_caller, scoped_caller
 from .rows import (
     HOME_FREE_STATUSES,
     host_mismatch,
@@ -87,14 +87,20 @@ def router(app) -> APIRouter:
     """The clone route."""
     api = APIRouter()
 
-    @api.post(
-        "/api/v1/workspaces/{workspace_id}/clone",
-        dependencies=[Depends(require_token)],
-    )
+    @api.post("/api/v1/workspaces/{workspace_id}/clone")
     async def clone_workspace(
-        workspace_id: str, body: WorkspaceClone
+        workspace_id: str,
+        body: WorkspaceClone,
+        caller: int = Depends(authed_caller),
+        viewer: int = Depends(scoped_caller),
     ) -> Response:
-        source = await workspace_or_404(app, workspace_id)
+        # Two dependencies on purpose (#1084): the source resolves
+        # through the request's owner scope (a scoped "clone the
+        # build alice holds" addresses her row by the bare name),
+        # while the clone itself is the caller's own create — the
+        # new row's owner and the name pre-check stay on the raw
+        # caller, exactly the unscoped create's rule.
+        source = await workspace_or_404(app, workspace_id, viewer)
         source_id = source["id"]
         clone_guard(app, source)
         vmm = app.state.settings.vmm
@@ -103,15 +109,20 @@ def router(app) -> APIRouter:
         async with await serialize_create(app, body.name):
             # The name re-check under the lock, the create route's
             # own race story: the loser answers the 409, never a
-            # same-name insert.
-            if await app.state.model.get_workspace(body.name) is not None:
+            # same-name insert. The caller's view since #1082 — a
+            # name another non-bypassed owner holds is free.
+            if body.name is not None and (
+                await app.state.model.create_ref_blocked(body.name, caller)
+            ):
                 raise HTTPException(status_code=409, detail="workspace exists")
             # The source's move-lock for the whole copy: a boot or
             # a volume move of the source would mutate the disks
             # underneath the reader, so the pair orders against
             # every other exchange the source serves.
             async with move_lock(app, source_id):
-                source = await app.state.model.get_workspace(source_id)
+                source = await app.state.model.get_workspace(
+                    source_id, viewer=viewer
+                )
                 if source is None:
                     raise HTTPException(
                         status_code=404, detail="no such workspace"
@@ -237,6 +248,7 @@ def router(app) -> APIRouter:
                         image_hash=source.get("image_hash"),
                         host=owner_host(app),
                         name=body.name,
+                        owner_uid=caller,
                     )
                 except IntegrityError:
                     # The insert lost the name race: the artifacts
@@ -275,9 +287,11 @@ def router(app) -> APIRouter:
         row["mount_issues"] = issue_payloads(await row_mount_issues(app, row))
         # The clone is a create (#1019): the listing's clients
         # learn the row from the same frame the create route
-        # publishes.
+        # publishes, to the creating owner (#1095).
         await app.state.hub.publish(
-            "workspace.created", {"id": row["id"], "name": row.get("name")}
+            "workspace.created",
+            {"id": row["id"], "name": row.get("name")},
+            owner=row["owner_uid"],
         )
         return Response(
             status_code=201,

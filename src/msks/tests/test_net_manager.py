@@ -21,6 +21,7 @@ from msks.settings import (
     VmmSettings,
 )
 from netstubs import NFT_FAIL_AT, NFT_STDERR, log_lines, stub_ip, stub_nft
+from test_proxies import FakeBridge
 
 
 def patch_phase(
@@ -101,6 +102,7 @@ async def net_app(tmp_path: Path, monkeypatch):
         vmm=VmmSettings(state_dir=tmp_path / "state"),
     )
     app = build_app(settings)
+    app.state.bridge = FakeBridge()
     patch_phase(monkeypatch, "verify_forwarding", lambda path=None: None)
     manager = NetManager(
         app, dhcp_factory=FakeService, dns_factory=FakeService
@@ -767,6 +769,7 @@ async def gated_app(tmp_path: Path, monkeypatch):
         vmm=VmmSettings(state_dir=tmp_path / "state"),
     )
     app = build_app(settings)
+    app.state.bridge = FakeBridge()
     patch_phase(monkeypatch, "verify_forwarding", lambda path=None: None)
     consumers: list[FakeConsumer] = []
 
@@ -1517,6 +1520,7 @@ async def llm_seamed_net_app(tmp_path: Path, monkeypatch, listeners: dict):
         vmm=VmmSettings(state_dir=tmp_path / "state"),
     )
     app = build_app(settings)
+    app.state.bridge = FakeBridge()
     patch_phase(monkeypatch, "verify_forwarding", lambda path=None: None)
 
     def factory(attachment):
@@ -1597,6 +1601,7 @@ async def test_a_refused_llm_bind_leaves_the_boot_alive(
         llm=LlmSettings(models=("*:http://up.stream/v1:sk-x",)),
     )
     app = build_app(settings)
+    app.state.bridge = FakeBridge()
     patch_phase(monkeypatch, "verify_forwarding", lambda path=None: None)
     manager = NetManager(
         app,
@@ -1713,7 +1718,8 @@ async def test_apply_policy_out_of_interactive_fail_closes_and_unbinds(
     from msks.spec.egress import EgressPolicy
 
     request = await held_request(app, "ws-i", "203.0.113.9")
-    hold = app.state.consent.register_hold(request)
+    owner = (await app.state.model.get_workspace("ws-i"))["owner_uid"]
+    hold = app.state.consent.register_hold(request, owner)
     switched = await app.state.net.apply_policy(
         "ws-i", EgressPolicy("ws-i", "allow", ())
     )
@@ -2284,3 +2290,42 @@ async def test_admission_failure_never_fails_the_boot(
     assert "admission refresh failed" in reason
     # The forward row beside them bound and took no note.
     assert app.state.proxies.status(rows[2]) == ("listening", None)
+
+
+async def test_stop_bridge_without_a_manager_is_quiet(tmp_path) -> None:
+    """The detach hook's bridge step is idempotent against a state
+    that carries no bridge manager at all (#1102)."""
+    app = build_app(Settings(net=NetSettings(enabled=False)))
+    app.state.bridge = None
+    manager = NetManager(app)
+    await manager.stop_bridge("ws-a")
+
+
+async def test_stop_bridge_closes_the_holders_websockets(tmp_path) -> None:
+    """The detach hook closes each holder's websocket: the holding
+    clients exit with theirs (#1102)."""
+
+    class Socket:
+        closed = None
+
+        async def close(self, code=1000):
+            self.closed = code
+
+    class Holder:
+        def __init__(self):
+            self.socket = Socket()
+
+    class Hub:
+        def __init__(self, holders):
+            self.holders = holders
+
+        def close_workspace(self, workspace_id):
+            return self.holders.pop(workspace_id)
+
+    app = build_app(Settings(net=NetSettings(enabled=False)))
+    holders = [Holder(), Holder()]
+    hub = Hub({"ws-a": holders})
+    app.state.bridge = hub
+    manager = NetManager(app)
+    await manager.stop_bridge("ws-a")
+    assert [h.socket.closed for h in holders] == [1000, 1000]

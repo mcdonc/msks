@@ -19,10 +19,12 @@ import time
 import types
 from pathlib import Path
 
+import msks.microvm.fsdaemons as fsdaemons_module
 import pytest
 from msks.microvm.errors import MicrovmError
 from msks.microvm.fsdaemons import (
     QUEUE_SIZE,
+    VIRTIOFSD_AS_LOCATIONS,
     VIRTIOFSD_FLOOR,
     WHOLE_RANGE,
     XATTRMAP,
@@ -31,20 +33,55 @@ from msks.microvm.fsdaemons import (
     fs_pidfile_path,
     fs_socket_path,
     guest_user_ids,
+    helper_lane,
+    resolve_virtiofsd_as,
     sandbox_mode,
     virtiofsd_floor_message,
     virtiofsd_version,
 )
 from msks.microvm.local import (
     LocalCloudHypervisor,
+    bind_fs_socket,
+    fs_exit_nudge,
     fs_pid_serves,
-    read_fs_pid,
+    proc_start_time,
+    read_fs_identity,
+    sweep_fs_pidfile,
     vm_config,
 )
+from msks.microvm.local.procs import pid_gone, start_time_from_stat
 from msks.settings import MountSettings, Settings, VmmSettings
 from msks.spec.mounts import MountSpec, mount_tag
 from msks.spec.vm import VmSpec
 from test_api import auth, client  # noqa: F401 (fixture)
+
+# The shallow vm-dir roots this module's short_vm_dir() made —
+# swept after each test however it ended.
+_SHORT_ROOTS: list[Path] = []
+
+
+@pytest.fixture(autouse=True)
+def sweep_short_roots():
+    """Drop the shallow roots short_vm_dir() made, after every
+    test however it ended."""
+    yield
+    for root in _SHORT_ROOTS:
+        shutil.rmtree(root, ignore_errors=True)
+    _SHORT_ROOTS.clear()
+
+
+def short_vm_dir(name: str) -> Path:
+    """A vm directory under a shallow mkdtemp in /tmp (the
+    local_driver env fixture's rule, the login-user test's
+    above): the daemon binds each share's vhost socket itself
+    (#1088), and under pytest-xdist the worker's basetemp gains
+    a popen-gwN component that pushes a deep per-test tree past
+    AF_UNIX's 108-byte path limit."""
+    root = Path(tempfile.mkdtemp(prefix="msks-fs-", dir="/tmp"))
+    _SHORT_ROOTS.append(root)
+    vm_dir = root / name
+    vm_dir.mkdir(parents=True)
+    return vm_dir
 
 
 async def socket_sleeper(
@@ -171,18 +208,19 @@ async def test_the_spawn_presents_as_the_login_user(
         shutil.rmtree(state_dir, ignore_errors=True)
 
 
-def test_fs_daemon_args_carry_the_contracts(tmp_path: Path) -> None:
+def test_fs_daemon_args_carry_the_contracts() -> None:
     """One daemon's argument vector: cache never (the coherence
-    contract), whole-range uid/gid squash to the daemon's own
-    identity in both directions — writes from the guest land as
-    the daemon's user, reads present as the workspace user's
-    guest identity (#631) — the xattr prefix map, the sandbox,
-    and --readonly exactly when the attach is read-only."""
-    socket = tmp_path / "fs-share.sock"
+    contract), whole-range uid/gid squash to the exec identity
+    in both directions — writes from the guest land as the uid
+    the daemon execs the share as (#1088: the workspace owner's
+    in the helper lane, the daemon's own in the shortcut lane),
+    reads present as the workspace user's guest identity (#631)
+    — the xattr prefix map, the sandbox, the listening fd, and
+    --readonly exactly when the attach is read-only."""
     args = fs_daemon_args(
         "/srv/share",
         "share",
-        socket,
+        7,
         uid=1000,
         gid=100,
         guest_uid=1001,
@@ -191,8 +229,11 @@ def test_fs_daemon_args_carry_the_contracts(tmp_path: Path) -> None:
         sandbox="none",
     )
     joined = " ".join(args)
-    assert "--socket-path" in args and str(socket) in args
-    assert "--shared-dir /srv/share" in joined
+    # The listening fd the daemon bound itself (#1088): the
+    # socket is the child's by descriptor, never by path.
+    assert "--fd" in args and args[args.index("--fd") + 1] == "7"
+    assert "--socket-path" not in args
+    assert "/srv/share" in args
     assert "--tag share" in joined
     assert "--sandbox none" in joined
     assert "--cache never" in joined
@@ -209,7 +250,7 @@ def test_fs_daemon_args_carry_the_contracts(tmp_path: Path) -> None:
     ro = fs_daemon_args(
         "/srv/share",
         "share",
-        socket,
+        9,
         uid=0,
         gid=0,
         guest_uid=1000,
@@ -219,6 +260,87 @@ def test_fs_daemon_args_carry_the_contracts(tmp_path: Path) -> None:
     )
     assert "--sandbox namespace" in " ".join(ro)
     assert "--readonly" in ro
+
+
+def test_helper_lane_picks_the_exec_uid() -> None:
+    """The lane rule (#1088): an owner other than the daemon's
+    own uid execs through the helper as that uid; the daemon's
+    own uid — and a spec without an owner, the shape built
+    outside the row path — execs directly, no helper anywhere in
+    the process tree."""
+    assert helper_lane(4242, 1000) == 4242
+    assert helper_lane(1000, 1000) is None
+    assert helper_lane(None, 1000) is None
+    assert helper_lane(0, 1000) == 0
+
+
+def test_resolve_virtiofsd_as_passes_named_paths_through() -> None:
+    """A value with a slash is the operator's own path (#1088):
+    used exactly as named, whatever PATH and the known locations
+    carry."""
+    assert (
+        resolve_virtiofsd_as(
+            "/opt/virtiofsd-as", lambda n: "/usr/bin/x", lambda p: True
+        )
+        == "/opt/virtiofsd-as"
+    )
+
+
+def test_resolve_virtiofsd_as_tries_both_names_then_locations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare name resolves on PATH under either install name
+    (#1088) — the stock virtiofsd-as first, then the NixOS
+    wrapper's msks-virtiofsd-as — then the wheel's bundled
+    binary, then the setup tools' install location."""
+    monkeypatch.setattr(fsdaemons_module, "BUNDLED_VIRTIOFSD_AS", Path("/no"))
+    assert (
+        resolve_virtiofsd_as(
+            "virtiofsd-as",
+            lambda n: "/usr/bin/virtiofsd-as" if n == "virtiofsd-as" else None,
+            lambda p: False,
+        )
+        == "/usr/bin/virtiofsd-as"
+    )
+    assert (
+        resolve_virtiofsd_as(
+            "virtiofsd-as",
+            lambda n: (
+                "/run/wrappers/bin/msks-virtiofsd-as"
+                if n == "msks-virtiofsd-as"
+                else None
+            ),
+            lambda p: False,
+        )
+        == "/run/wrappers/bin/msks-virtiofsd-as"
+    )
+    assert (
+        resolve_virtiofsd_as(
+            "virtiofsd-as",
+            lambda n: None,
+            lambda p: p == VIRTIOFSD_AS_LOCATIONS[0],
+        )
+        == VIRTIOFSD_AS_LOCATIONS[0]
+    )
+    assert (
+        resolve_virtiofsd_as("virtiofsd-as", lambda n: None, lambda p: False)
+        is None
+    )
+
+
+def test_resolve_virtiofsd_as_finds_the_bundled_binary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The platform wheel's bundled helper (#1087, #1088): the
+    binary inside the package answers before the install
+    locations, and nothing on PATH needs to carry it."""
+    bundled = tmp_path / "bundled-virtiofsd-as"
+    bundled.write_bytes(b"#!bin\n")
+    bundled.chmod(0o755)
+    monkeypatch.setattr(fsdaemons_module, "BUNDLED_VIRTIOFSD_AS", bundled)
+    assert resolve_virtiofsd_as(
+        "virtiofsd-as", lambda n: None, lambda p: True
+    ) == str(bundled)
 
 
 def test_xattrmap_denies_security_capability() -> None:
@@ -306,16 +428,24 @@ def test_pidfile_helpers(tmp_path: Path) -> None:
     assert fs_pidfile_path(tmp_path, "data") == tmp_path / "fs-data.pid"
 
 
-def test_read_fs_pid_tolerates_garbage(tmp_path: Path) -> None:
-    """A pidfile that holds nothing a daemon wrote reads as None —
-    swept, never trusted enough to kill."""
+def test_read_fs_identity_tolerates_garbage(tmp_path: Path) -> None:
+    """A pidfile's identity pair (#1088): the pid and its start
+    time when the daemon wrote both, the bare pid (a pre-#1088
+    pidfile) as the legacy arm, and (None, None) for anything no
+    daemon wrote — swept, never trusted enough to kill."""
     good = tmp_path / "fs-good.pid"
-    good.write_text("4242\n", encoding="utf-8")
-    assert read_fs_pid(good) == 4242
+    good.write_text("4242 987654\n", encoding="utf-8")
+    assert read_fs_identity(good) == (4242, 987654)
+    legacy = tmp_path / "fs-legacy.pid"
+    legacy.write_text("4242\n", encoding="utf-8")
+    assert read_fs_identity(legacy) == (4242, None)
     bad = tmp_path / "fs-bad.pid"
     bad.write_text("not-a-pid", encoding="utf-8")
-    assert read_fs_pid(bad) is None
-    assert read_fs_pid(tmp_path / "fs-gone.pid") is None
+    assert read_fs_identity(bad) == (None, None)
+    torn = tmp_path / "fs-torn.pid"
+    torn.write_text("4242 not-a-start\n", encoding="utf-8")
+    assert read_fs_identity(torn) == (None, None)
+    assert read_fs_identity(tmp_path / "fs-gone.pid") == (None, None)
 
 
 async def test_fs_pid_serves_matches_the_socket(tmp_path: Path) -> None:
@@ -324,12 +454,39 @@ async def test_fs_pid_serves_matches_the_socket(tmp_path: Path) -> None:
     by pidfile — a real process whose argv carries the socket
     qualifies, the same pid queried for another socket does not."""
 
+    # The parse's defensive arms first (#1088): a stat line that
+    # is not one reads as unreadable, never as a number.
+    assert start_time_from_stat(b"no-parens-at-all") is None
+    assert start_time_from_stat(b"1 (sh) S 1") is None
+    assert start_time_from_stat(b"1 (sh) S " + b"x " * 19 + b"99") is None
+    assert (
+        start_time_from_stat(
+            b"123 (a name with spaces) R 1 2 3 4 5 6 7 8 9 10 11 "
+            b"12 13 14 15 16 17 18 4242"
+        )
+        == 4242
+    )
+
     socket = Path("/unique/fs-probe.sock")
     proc = await socket_sleeper(socket, tmp_path / "sleeper-up")
     try:
-        assert fs_pid_serves(proc.pid, socket) is True
-        assert fs_pid_serves(proc.pid, Path("/other/fs.sock")) is False
-        assert fs_pid_serves(proc.pid + 1_000_000, socket) is False
+        # The legacy arm (#56's cmdline guard, the pre-#1088
+        # pidfile's): a process whose argv carries the socket.
+        assert fs_pid_serves(proc.pid, None, socket) is True
+        assert fs_pid_serves(proc.pid, None, Path("/other/fs.sock")) is False
+        assert fs_pid_serves(proc.pid + 1_000_000, None, socket) is False
+        # The identity arm (#1088): a start time that matches is
+        # the very process — whatever its argv now names — and a
+        # start time that does not never is, recycled pid or no.
+        # procfs is the Linux-only surface (#691): a darwin dev
+        # host reads no start time and keeps the legacy arm.
+        if sys.platform != "linux":
+            pytest.skip("the identity arm reads /proc (Linux-only)")
+        start = proc_start_time(proc.pid)
+        assert start is not None
+        assert fs_pid_serves(proc.pid, start, Path("/anywhere")) is True
+        assert fs_pid_serves(proc.pid, start + 1, Path("/anywhere")) is False
+        assert fs_pid_serves(proc.pid + 1_000_000, start, socket) is False
     finally:
         proc.kill()
         await proc.wait()
@@ -370,9 +527,9 @@ async def test_start_skips_a_gate_refused_host_path(  # noqa: F811
     published = []
     real_publish = app.state.hub.publish
 
-    async def spy_publish(event: str, data: dict) -> None:
+    async def spy_publish(event: str, data: dict, owner=None) -> None:
         published.append((event, data))
-        await real_publish(event, data)
+        await real_publish(event, data, owner=owner)
 
     app.state.hub.publish = spy_publish
     started = await http.post(
@@ -439,11 +596,6 @@ async def test_start_passes_only_attachable_mounts(client, tmp_path):  # noqa: F
 # --- the daemon lifecycle ---------------------------------------------
 
 
-def socket_from_args(args: list[str]) -> Path:
-    """The --socket-path value of one fake spawn's args."""
-    return Path(args[args.index("--socket-path") + 1])
-
-
 class FakeProc:
     """A virtiofsd-shaped process double: returncode None until
     terminate, then 0 — the tracked-teardown path's shape."""
@@ -474,7 +626,8 @@ def driver_over(
     and a spawn seam that records instead of exec'ing; the
     version seam reports at the floor by default (#655), so the
     lifecycle tests run hermetically — the real probe execs the
-    host's virtiofsd."""
+    host's virtiofsd. The serve grace runs at milliseconds
+    (#1088): the wait is real, the budget is the suite's."""
 
     class App:
         pass
@@ -483,14 +636,14 @@ def driver_over(
     app.state = type("State", (), {})()
     app.state.settings = settings
     driver = LocalCloudHypervisor(app)
-    spawned: list[tuple[str, list[str]]] = []
+    spawned: list[tuple[str, list[str], int]] = []
 
-    async def fake_spawn_fs(binary, args, log_path):
-        spawned.append((binary, args))
-        socket_from_args(args).touch()
+    async def fake_spawn_fs(binary, args, log_path, fd, missing):
+        spawned.append((binary, args, fd))
         return FakeProc()
 
     driver._spawn_fs = fake_spawn_fs
+    driver.serve_grace_s = 0.01
 
     async def fake_version(binary):
         return version
@@ -507,8 +660,7 @@ async def test_fs_daemons_spawn_and_stop(tmp_path: Path) -> None:
     share_dir.mkdir()
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    vm_dir = tmp_path / "vms" / "ws1"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws1")
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path),
     )
@@ -527,16 +679,28 @@ async def test_fs_daemons_spawn_and_stop(tmp_path: Path) -> None:
     tags = [mount_tag(m) for m in spec.mounts]
     assert sorted(entry["tag"] for entry in entries) == sorted(tags)
     assert len(spawned) == 2
-    binary, args = spawned[0]
+    binary, args, fd = spawned[0]
     assert binary == "virtiofsd"
     assert str(share_dir) in args
+    # The listening fd the daemon bound itself (#1088) is the
+    # one the argv names — the socket is the child's by
+    # descriptor, never by path.
+    assert args[args.index("--fd") + 1] == str(fd)
+    assert "--socket-path" not in args
     assert fs_pidfile_path(vm_dir, mount_tag(spec.mounts[0])).is_file()
     assert fs_pidfile_path(vm_dir, mount_tag(spec.mounts[1])).is_file()
+    # The daemon-bound socket files exist while the shares run
+    # (#1088) and leave with the teardown — the child never
+    # knew the path, so the daemon unlinks it.
+    first_tag = mount_tag(spec.mounts[0])
+    assert fs_socket_path(vm_dir, first_tag).exists()
     procs = driver._fs_procs["ws1"]
     await driver._stop_fs_daemons("ws1")
     assert [proc.terminated for proc in procs] == [True, True]
     assert not fs_pidfile_path(vm_dir, "proj").exists()
     assert not fs_pidfile_path(vm_dir, "data").exists()
+    assert not fs_socket_path(vm_dir, "proj").exists()
+    assert not fs_socket_path(vm_dir, "data").exists()
     assert "ws1" not in driver._fs_procs
 
 
@@ -549,19 +713,17 @@ async def test_spawn_failure_unwinds_earlier_daemons(
     proj.mkdir()
     data = tmp_path / "data"
     data.mkdir()
-    vm_dir = tmp_path / "vms" / "ws2"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws2")
     settings = Settings()
     docs = tmp_path / "docs"
     docs.mkdir()
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, spawned = driver_over(settings)
 
-    async def flaky_spawn(binary, args, log_path):
+    async def flaky_spawn(binary, args, log_path, fd, missing):
         if len(spawned) == 2:
             raise FileNotFoundError("virtiofsd")
-        spawned.append((binary, args))
-        socket_from_args(args).touch()
+        spawned.append((binary, args, fd))
         return FakeProc()
 
     driver._spawn_fs = flaky_spawn
@@ -588,8 +750,7 @@ async def test_restarted_daemon_kills_by_pidfile(tmp_path: Path) -> None:
     either way."""
     import asyncio
 
-    vm_dir = tmp_path / "vms" / "ws3"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws3")
     settings = Settings()
     driver, _spawned = driver_over(settings)
     socket = fs_socket_path(vm_dir, "proj")
@@ -609,6 +770,465 @@ async def test_restarted_daemon_kills_by_pidfile(tmp_path: Path) -> None:
         await asyncio.sleep(0.05)
     else:
         pytest.fail("the serving daemon survived its pidfile kill")
+
+
+async def test_restarted_daemon_kills_by_identity(tmp_path: Path) -> None:
+    """The untracked teardown's #1088 arm: a pidfile carrying the
+    pid and its kernel start time identifies the daemon whatever
+    its argv now names — the --fd shape's cmdline names no socket
+    path — and the sweep kills it and unlinks the socket beside
+    the pidfile (the child never knew the path)."""
+    import asyncio
+
+    import msks.microvm.local.procs as procs_mod
+
+    if not Path("/proc").exists():
+        pytest.skip("the identity arm reads /proc (Linux-only)")
+    vm_dir = short_vm_dir("ws-ident")
+    driver, _spawned = driver_over(Settings())
+    socket = fs_socket_path(vm_dir, "proj")
+    socket.touch()
+    pidfile = fs_pidfile_path(vm_dir, "proj")
+    # The sleeper carries a decoy argv: nothing names the socket.
+    decoy = tmp_path / "decoy-argv"
+    serving = await socket_sleeper(decoy, tmp_path / "sleeper-up")
+    start = procs_mod.proc_start_time(serving.pid)
+    assert start is not None
+    pidfile.write_text(f"{serving.pid} {start}", encoding="utf-8")
+    driver._dir = lambda workspace_id: vm_dir  # type: ignore[method-assign]
+    await driver._kill_untracked_fs_daemons("ws-ident")
+    assert not pidfile.exists()
+    assert not socket.exists()
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        try:
+            os.kill(serving.pid, 0)
+        except ProcessLookupError:
+            break
+        await asyncio.sleep(0.05)
+    else:
+        pytest.fail("the identity-matched daemon survived its pidfile kill")
+
+
+async def test_the_helper_lane_execs_the_helper_as_the_owner(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """#1088's helper lane: a workspace owned by another uid execs
+    the resolved helper with the owner uid, the listening fd, and
+    the virtiofsd argv behind --; the identity squash lands as
+    the owner's uid for both uid and gid (the helper's gid-takes-
+    uid contract), and the sandbox is always none in this lane —
+    the helper has dropped every capability by the exec, so even
+    an owner uid 0 can never take the namespace sandbox."""
+    import msks.microvm.local.fsproc as fsproc_mod
+
+    share_dir = tmp_path / "proj"
+    share_dir.mkdir()
+    vm_dir = short_vm_dir("ws-helper")
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path, virtiofsd_as="/fake/virtiofsd-as")
+    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
+    driver, spawned = driver_over(settings)
+    monkeypatch.setattr(fsproc_mod, "dead_owner_cause", lambda uid: None)
+    # The target probe answers the daemon's own resolved binary —
+    # the coherence the compile-time pin buys, faked hermetically.
+    monkeypatch.setattr(
+        fsproc_mod,
+        "helper_target",
+        lambda helper: settings.vmm.virtiofsd,
+    )
+    for owner in (4242, 0):
+        spawned.clear()
+        spec = VmSpec(
+            workspace_id=f"ws-helper-{owner}",
+            kernel=Path("/k"),
+            rootfs=Path("/r"),
+            owner_uid=owner,
+            mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
+        )
+        await driver._start_fs_daemons(spec, vm_dir)
+        binary, args, fd = spawned[0]
+        assert binary == "/fake/virtiofsd-as"
+        # The helper contract: <uid> --fd <n> -- <virtiofsd argv>.
+        assert args[0] == str(owner)
+        assert args[1] == "--fd" and args[2] == str(fd)
+        assert args[3] == "--"
+        joined = " ".join(args)
+        assert f"squash-guest:0:{owner}:{WHOLE_RANGE}" in joined
+        # gid takes the uid's value in the helper lane.
+        assert args.count(f"squash-guest:0:{owner}:{WHOLE_RANGE}") == 2
+        # The lane, not the uid, picks the sandbox: the helper's
+        # child has no privilege to unshare with, uid 0 included.
+        assert "--sandbox none" in joined
+        assert "--sandbox namespace" not in joined
+
+
+async def test_the_shortcut_lane_execs_directly(tmp_path: Path) -> None:
+    """#1088's shortcut lane: a workspace owned by the daemon's
+    own uid (and a spec with no owner) execs the virtiofsd binary
+    directly — no helper token anywhere in the argv — with the
+    daemon's own uid and gid exactly as before."""
+    share_dir = tmp_path / "proj"
+    share_dir.mkdir()
+    vm_dir = short_vm_dir("ws-direct")
+    settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
+    driver, spawned = driver_over(settings)
+    daemon_uid = os.getuid()
+    for owner in (daemon_uid, None):
+        await driver._start_fs_daemons(
+            VmSpec(
+                workspace_id=f"ws-direct-{owner}",
+                kernel=Path("/k"),
+                rootfs=Path("/r"),
+                owner_uid=owner,
+                mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
+            ),
+            vm_dir,
+        )
+    for binary, args, _fd in spawned:
+        assert binary == "virtiofsd"
+        # No helper tokens: the direct argv begins with the fd.
+        assert args[0] == "--fd"
+        joined = " ".join(args)
+        assert f"squash-guest:0:{daemon_uid}:{WHOLE_RANGE}" in joined
+        assert f"squash-guest:0:{os.getgid()}:{WHOLE_RANGE}" in joined
+
+
+async def test_the_helper_lane_refuses_without_a_helper(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A cross-owner share with no helper installed refuses by
+    name (#1088) — the message names the configured setting and
+    the override — never an exec of a path that is not there."""
+    import msks.microvm.local.fsproc as fsproc_mod
+
+    share_dir = tmp_path / "proj"
+    share_dir.mkdir()
+    vm_dir = short_vm_dir("ws-nohelper")
+    settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
+    driver, _spawned = driver_over(settings)
+    monkeypatch.setattr(fsproc_mod, "dead_owner_cause", lambda uid: None)
+    monkeypatch.setattr(fsproc_mod, "resolve_virtiofsd_as", lambda name: None)
+    spec = VmSpec(
+        workspace_id="ws-nohelper",
+        kernel=Path("/k"),
+        rootfs=Path("/r"),
+        owner_uid=4242,
+        mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
+    )
+    with pytest.raises(MicrovmError, match="owner-exec helper"):
+        await driver._start_fs_daemons(spec, vm_dir)
+
+
+async def test_the_seam_refuses_a_dead_owner_race(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The race arm (#1088): the owner deleted between the
+    derivation gate and the spawn refuses with the named cause —
+    the same word the row's skip marker carries."""
+    import msks.microvm.local.fsproc as fsproc_mod
+
+    share_dir = tmp_path / "proj"
+    share_dir.mkdir()
+    vm_dir = short_vm_dir("ws-race")
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path, virtiofsd_as="/fake/virtiofsd-as")
+    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
+    driver, _spawned = driver_over(settings)
+    monkeypatch.setattr(
+        fsproc_mod,
+        "dead_owner_cause",
+        lambda uid: f"owner uid {uid} no longer exists",
+    )
+    spec = VmSpec(
+        workspace_id="ws-race",
+        kernel=Path("/k"),
+        rootfs=Path("/r"),
+        owner_uid=4242,
+        mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
+    )
+    with pytest.raises(MicrovmError, match="owner uid 4242 no longer exists"):
+        await driver._start_fs_daemons(spec, vm_dir)
+
+
+# --- the fd, the nudge, and the unsignalable child (#1088) ----
+
+
+def test_bind_fs_socket_hands_a_listening_fd_at_the_path(
+    tmp_path: Path,
+) -> None:
+    """The bind the spawn hands out (#1088): the returned fd is a
+    listening socket bound at exactly the named path — the fd↔path
+    correspondence the argv's --fd number and the teardown's
+    unlink both lean on. The fd stays close-on-exec on every
+    platform (#1105): the daemon's own execs never leak it."""
+    import socket as socket_module
+    import stat as stat_module
+
+    socket_path = tmp_path / "fs-probe.sock"
+    fd = bind_fs_socket(socket_path)
+    try:
+        st = os.fstat(fd)
+        assert stat_module.S_ISSOCK(st.st_mode)
+        # SO_ACCEPTCONN names listening where the platform
+        # answers it; the connect below proves it everywhere
+        assert socket_module_getsockopt(fd) in (1, None)
+        assert not os.get_inheritable(fd)  # close-on-exec, portably
+        probe = socket_module.socket(
+            socket_module.AF_UNIX, socket_module.SOCK_STREAM
+        )
+        try:
+            probe.connect(str(socket_path))  # listening, bound at the path
+        finally:
+            probe.close()
+    finally:
+        os.close(fd)
+
+
+def socket_module_getsockopt(fd: int) -> int | None:
+    """SO_ACCEPTCONN of one fd: 1 when the socket listens, or
+    None where the platform cannot answer — darwin's getsockopt
+    raises ENOPROTOOPT for it (#1105). The wrapper detaches — a
+    socket object owns the fd it wraps, and the test holds it
+    across the probe."""
+    import errno as errno_module
+    import socket as socket_module
+
+    sock = socket_module.socket(fileno=fd)
+    try:
+        return sock.getsockopt(
+            socket_module.SOL_SOCKET, socket_module.SO_ACCEPTCONN
+        )
+    except OSError as exc:  # pragma: no cover — darwin's
+        # getsockopt answers ENOPROTOOPT for SO_ACCEPTCONN, a
+        # platform surface the Linux suite cannot reach (#691's
+        # rule); the dispatched macOS run is its coverage
+        if exc.errno != errno_module.ENOPROTOOPT:
+            raise
+        return None
+    finally:
+        sock.detach()
+
+
+async def test_the_nudge_exits_a_disconnected_client_server(
+    tmp_path: Path,
+) -> None:
+    """The stop lever on a child the daemon cannot signal (#1088):
+    a virtiofsd-shaped server — it accepts one connection and
+    exits when that connection closes — dies from the daemon's
+    connect-and-hang-up alone, no signal ever reaching it."""
+    import sys as sys_module
+
+    socket_path = tmp_path / "fs-nudge.sock"
+    fd = bind_fs_socket(socket_path)
+    body = (
+        "import os, socket, sys\n"
+        "s = socket.socket(fileno=int(sys.argv[1]))\n"
+        "conn, _ = s.accept()\n"
+        "conn.close()\n"
+        "open(sys.argv[2], 'w').write('done')\n"
+    )
+    ack = tmp_path / "exited"
+    server = await asyncio.create_subprocess_exec(
+        sys_module.executable,
+        "-c",
+        body,
+        str(fd),
+        str(ack),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+        pass_fds=(fd,),
+    )
+    os.close(fd)  # the child holds its own copy
+    try:
+        await asyncio.sleep(0.2)  # the server reaches accept()
+        fs_exit_nudge(socket_path)
+        await asyncio.wait_for(server.wait(), 5.0)
+        assert ack.exists()  # it took the connection and saw it close
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            server.kill()
+        await server.wait()
+
+
+def test_pid_gone_reads_permission_as_alive() -> None:
+    """The unsignalable child's liveness (#1088): a signal the
+    daemon may not send (EPERM) means the process exists — the
+    death poll must not read the refusal as death."""
+    assert pid_gone(1) is False
+
+
+async def test_the_stop_tolerates_an_unsignalable_child(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The helper lane's teardown shape (#1088): a child whose
+    signals all answer EPERM still stops — the TERM is suppressed,
+    the nudge fires the client-disconnect exit, and the death
+    poll reports it — and a TERM-time PermissionError never
+    escapes the tracked stop."""
+    import msks.microvm.local.procs as procs_mod
+
+    real_kill = os.kill
+
+    def eperm_kill(pid, sig):
+        if sig == 0:
+            return real_kill(pid, 0)
+        raise PermissionError(1, "Operation not permitted")
+
+    share_dir = tmp_path / "proj"
+    share_dir.mkdir()
+    vm_dir = short_vm_dir("ws-eperm")
+    settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
+    driver, _spawned = driver_over(settings)
+    spec = VmSpec(
+        workspace_id="ws-eperm",
+        kernel=Path("/k"),
+        rootfs=Path("/r"),
+        mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
+    )
+    await driver._start_fs_daemons(spec, vm_dir)
+
+    class Immortal(FakeProc):
+        """The EPERM shape: terminate and kill both refuse, and
+        the wait blocks until the abandon window — the stop's
+        kill arm reached with its signal refused."""
+
+        def terminate(self) -> None:
+            raise PermissionError(1, "Operation not permitted")
+
+        def kill(self) -> None:
+            self.killed = True
+            raise PermissionError(1, "Operation not permitted")
+
+        async def wait(self) -> int:
+            import asyncio as asyncio_mod
+
+            while self.returncode is None:
+                await asyncio_mod.sleep(0.01)
+            return self.returncode or 0
+
+    driver._fs_procs["ws-eperm"][0] = immortal = Immortal()
+    monkeypatch.setattr(procs_mod.os, "kill", eperm_kill)
+    import msks.microvm.local.fsproc as fsproc_mod
+
+    monkeypatch.setattr(fsproc_mod, "FS_TERM_GRACE_S", 0.05)
+    await driver._stop_fs_daemons("ws-eperm")  # no raise, completes
+    assert immortal.terminated is False
+    assert immortal.killed is True  # the kill arm ran, EPERM and all
+
+
+async def test_the_sweep_unlinks_only_an_identified_daemons_socket(
+    tmp_path: Path,
+) -> None:
+    """An unidentified pidfile's socket stays (#1088): the sweep
+    never deletes a socket file it could not prove a daemon dead
+    behind — the spawn's own live check judges that file, and a
+    live daemon refuses the next start by name."""
+    vm_dir = short_vm_dir("ws-anon")
+    socket = fs_socket_path(vm_dir, "proj")
+    socket.touch()
+    pidfile = fs_pidfile_path(vm_dir, "proj")
+    pidfile.write_text("999999999 7", encoding="utf-8")  # no such pid
+    await sweep_fs_pidfile(vm_dir, pidfile)
+    assert not pidfile.exists()
+    assert socket.exists()  # left for the spawn's stale/live verdict
+
+
+async def test_the_helper_lane_refuses_a_drifted_target(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The coherence probe (#1088): a helper whose compile-time
+    virtiofsd target differs from the daemon's resolved binary
+    refuses by name — the override reaches only the shares the
+    daemon runs as itself, and the drift never reaches virtiofsd's
+    argument parsing as an anonymous log tail."""
+    import msks.microvm.local.fsproc as fsproc_mod
+
+    share_dir = tmp_path / "proj"
+    share_dir.mkdir()
+    vm_dir = short_vm_dir("ws-drift")
+    settings = Settings(
+        vmm=VmmSettings(
+            state_dir=tmp_path,
+            virtiofsd="/srv/virtiofsd-1.15",
+            virtiofsd_as="/fake/virtiofsd-as",
+        )
+    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
+    driver, _spawned = driver_over(settings)
+    monkeypatch.setattr(fsproc_mod, "dead_owner_cause", lambda uid: None)
+    monkeypatch.setattr(
+        fsproc_mod, "helper_target", lambda helper: "/srv/virtiofsd-1.10"
+    )
+    spec = VmSpec(
+        workspace_id="ws-drift",
+        kernel=Path("/k"),
+        rootfs=Path("/r"),
+        owner_uid=4242,
+        mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
+    )
+    with pytest.raises(
+        MicrovmError,
+        match=r"target is /srv/virtiofsd-1.10, but the daemon resolved",
+    ):
+        await driver._start_fs_daemons(spec, vm_dir)
+
+
+async def test_the_helper_lane_refuses_a_target_probe_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A helper that answers no target — an older binary without
+    the arm, a path that is not the helper at all — refuses the
+    cross-owner share by name (#1088)."""
+    import msks.microvm.local.fsproc as fsproc_mod
+
+    share_dir = tmp_path / "proj"
+    share_dir.mkdir()
+    vm_dir = short_vm_dir("ws-probe")
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path, virtiofsd_as="/fake/virtiofsd-as")
+    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
+    driver, _spawned = driver_over(settings)
+    monkeypatch.setattr(fsproc_mod, "dead_owner_cause", lambda uid: None)
+    monkeypatch.setattr(fsproc_mod, "helper_target", lambda helper: None)
+    spec = VmSpec(
+        workspace_id="ws-probe",
+        kernel=Path("/k"),
+        rootfs=Path("/r"),
+        owner_uid=4242,
+        mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
+    )
+    with pytest.raises(MicrovmError, match="did not report its virtiofsd"):
+        await driver._start_fs_daemons(spec, vm_dir)
+
+
+def test_helper_target_parses_one_line(tmp_path: Path) -> None:
+    """The probe's answer is one non-empty line, or nothing: a
+    stub that echoes parses, a nonzero exit, a garbage answer,
+    and a missing binary all read as None — the caller refuses by
+    name."""
+    from msks.microvm.fsdaemons import helper_target
+
+    echo = tmp_path / "helper-echo"
+    echo.write_text("#!/bin/sh\necho /srv/virtiofsd-1.15\n")
+    echo.chmod(0o755)
+    assert helper_target(str(echo)) == "/srv/virtiofsd-1.15"
+    refuse = tmp_path / "helper-refuse"
+    refuse.write_text("#!/bin/sh\nexit 2\n")
+    refuse.chmod(0o755)
+    assert helper_target(str(refuse)) is None
+    garbage = tmp_path / "helper-garbage"
+    garbage.write_text("#!/bin/sh\necho one\necho two\n")
+    garbage.chmod(0o755)
+    assert helper_target(str(garbage)) is None
+    assert helper_target(str(tmp_path / "helper-absent")) is None
 
 
 # --- the doctor rows --------------------------------------------------
@@ -731,8 +1351,7 @@ async def test_the_start_refuses_a_below_floor_virtiofsd(
 
     shared = tmp_path / "share"
     shared.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-old"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-old")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     spec = VmSpec(
@@ -850,9 +1469,9 @@ async def test_missing_share_path_skips_at_start(client, tmp_path):  # noqa: F81
     published = []
     real_publish = app.state.hub.publish
 
-    async def spy_publish(event: str, data: dict) -> None:
+    async def spy_publish(event: str, data: dict, owner=None) -> None:
         published.append((event, data))
-        await real_publish(event, data)
+        await real_publish(event, data, owner=owner)
 
     app.state.hub.publish = spy_publish
     started = await http.post(
@@ -873,8 +1492,7 @@ async def test_spawn_guards_name_every_refusal(tmp_path: Path) -> None:
     name."""
     from msks.microvm.errors import MicrovmError
 
-    vm_dir = tmp_path / "vms" / "ws-g"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-g")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
@@ -940,8 +1558,7 @@ async def test_stop_is_idempotent_and_kills_a_hang(tmp_path: Path) -> None:
     local_mod.fsproc.FS_TERM_GRACE_S = 0.1
     share_dir = tmp_path / "proj"
     share_dir.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-h"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-h")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
@@ -958,8 +1575,7 @@ async def test_stop_is_idempotent_and_kills_a_hang(tmp_path: Path) -> None:
                 await asyncio.sleep(0.02)
             return self.returncode
 
-    async def hang_spawn(binary, args, log_path):
-        socket_from_args(args).touch()
+    async def hang_spawn(binary, args, log_path, fd, missing):
         return HangingProc()
 
     driver._spawn_fs = hang_spawn
@@ -992,10 +1608,22 @@ async def test_real_spawn_wraps_a_missing_binary(tmp_path: Path) -> None:
     bare.state = type("State", (), {})()
     bare.state.settings = Settings()
     driver = LocalCloudHypervisor(bare)
+    from msks.microvm.fsdaemons import virtiofsd_missing_message
+
     with pytest.raises(
         MicrovmError, match="virtiofsd binary not found or not executable"
     ):
-        await driver._spawn_fs("virtiofsd-absent", [], tmp_path / "log")
+        fd = os.open(os.devnull, os.O_RDONLY)
+        try:
+            await driver._spawn_fs(
+                "virtiofsd-absent",
+                [],
+                tmp_path / "log",
+                fd,
+                virtiofsd_missing_message("virtiofsd-absent"),
+            )
+        finally:
+            os.close(fd)
 
 
 async def test_terminate_of_an_external_death_is_tolerated(
@@ -1006,8 +1634,7 @@ async def test_terminate_of_an_external_death_is_tolerated(
     completes."""
     share_dir = tmp_path / "proj"
     share_dir.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-e"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-e")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
@@ -1018,8 +1645,7 @@ async def test_terminate_of_an_external_death_is_tolerated(
         def terminate(self) -> None:
             raise ProcessLookupError
 
-    async def dying_spawn(binary, args, log_path):
-        socket_from_args(args).touch()
+    async def dying_spawn(binary, args, log_path, fd, missing):
         return ExternalDeath()
 
     driver._spawn_fs = dying_spawn
@@ -1039,8 +1665,7 @@ async def test_untracked_sweep_tolerates_garbage_pidfiles(
     """The restarted-daemon sweep: a garbage pidfile reads as None
     and is swept beside a serving one's kill, and the second
     sweep over an empty directory is a no-op."""
-    vm_dir = tmp_path / "vms" / "ws-u"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-u")
     driver, _spawned = driver_over(Settings())
     socket = fs_socket_path(vm_dir, "proj")
     garbage = fs_pidfile_path(vm_dir, "junk")
@@ -1069,22 +1694,13 @@ async def test_stop_skips_an_already_exited_daemon(tmp_path: Path) -> None:
     and skips it, the stop completes."""
     share_dir = tmp_path / "proj"
     share_dir.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-x"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-x")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
 
-    class ExitedProc(FakeProc):
-        """Died on its own before the teardown looked."""
-
-        def __init__(self) -> None:
-            super().__init__()
-            self.returncode = 0
-
-    async def exited_spawn(binary, args, log_path):
-        socket_from_args(args).touch()
-        return ExitedProc()
+    async def exited_spawn(binary, args, log_path, fd, missing):
+        return FakeProc()
 
     driver._spawn_fs = exited_spawn
     spec = VmSpec(
@@ -1094,6 +1710,10 @@ async def test_stop_skips_an_already_exited_daemon(tmp_path: Path) -> None:
         mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
     )
     await driver._start_fs_daemons(spec, vm_dir)
+    # The daemon died on its own between the registry and the
+    # teardown (an exited-at-spawn proc is the serve wait's
+    # refusal now, not this path).
+    driver._fs_procs["ws-x"][0].returncode = 0
     await driver._stop_fs_daemons("ws-x")
 
 
@@ -1149,8 +1769,7 @@ async def test_untracked_sweep_escalates_to_kill(tmp_path: Path) -> None:
     real_grace = local_mod.fsproc.FS_TERM_GRACE_S
     local_mod.fsproc.FS_TERM_GRACE_S = 0.2
     try:
-        vm_dir = tmp_path / "vms" / "ws-imm"
-        vm_dir.mkdir(parents=True)
+        vm_dir = short_vm_dir("ws-imm")
         driver, _spawned = driver_over(Settings())
         socket = fs_socket_path(vm_dir, "proj")
         immortal = await socket_sleeper(socket, vm_dir / "sleeper-up")
@@ -1186,8 +1805,7 @@ async def test_untracked_sweep_kills_a_term_ignoring_daemon(
     real_grace = local_mod.fsproc.FS_TERM_GRACE_S
     local_mod.fsproc.FS_TERM_GRACE_S = 0.2
     try:
-        vm_dir = tmp_path / "vms" / "ws-imm2"
-        vm_dir.mkdir(parents=True)
+        vm_dir = short_vm_dir("ws-imm2")
         driver, _spawned = driver_over(Settings())
         socket = fs_socket_path(vm_dir, "proj")
         stubborn = await socket_sleeper(
@@ -1235,8 +1853,7 @@ async def test_a_daemon_dying_at_exec_names_its_log(tmp_path: Path) -> None:
 
     share_dir = tmp_path / "proj"
     share_dir.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-dead"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-dead")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
@@ -1246,7 +1863,7 @@ async def test_a_daemon_dying_at_exec_names_its_log(tmp_path: Path) -> None:
             super().__init__()
             self.returncode = 1
 
-    async def dead_spawn(binary, args, log_path):
+    async def dead_spawn(binary, args, log_path, fd, missing):
         return DiedAtExec()
 
     driver._spawn_fs = dead_spawn
@@ -1261,50 +1878,40 @@ async def test_a_daemon_dying_at_exec_names_its_log(tmp_path: Path) -> None:
     assert "ws-dead" not in driver._fs_procs
 
 
-async def test_a_silent_daemon_refuses_past_the_grace(tmp_path: Path) -> None:
-    """The readiness wait's second shape: a proc that lives but
-    never serves its socket refuses past the grace, naming the
-    log."""
-    import msks.microvm.local as local_mod
-    from msks.microvm.errors import MicrovmError
-
+async def test_a_silent_daemon_passes_as_serving(tmp_path: Path) -> None:
+    """The readiness signal's #1088 shape: a proc alive past the
+    serve grace is serving — under the --fd contract the socket
+    file exists from the daemon's own bind, so no later signal
+    can distinguish a serving daemon from a silent one at spawn
+    time, and a start that would have refused on the missing
+    socket file now registers the share (a wedged daemon is
+    runtime state, the stop path's to handle — the same
+    approximation the --socket-path shape carried, where bind
+    always preceded accept)."""
     share_dir = tmp_path / "proj"
     share_dir.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-silent"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-silent")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(host_roots=(str(tmp_path),))
-    driver, _spawned = driver_over(settings)
-    refused: list[FakeProc] = []
+    driver, spawned = driver_over(settings)
 
-    async def silent_spawn(binary, args, log_path):
-        proc = FakeProc()  # alive, socket never appears
-        refused.append(proc)
-        return proc
+    async def silent_spawn(binary, args, log_path, fd, missing):
+        spawned.append((binary, args, fd))
+        return FakeProc()  # alive, serves nothing, says nothing
 
     driver._spawn_fs = silent_spawn
-    real_grace = local_mod.fsproc.FS_TERM_GRACE_S
-    local_mod.fsproc.FS_TERM_GRACE_S = 0.2
-    try:
-        with pytest.raises(MicrovmError, match="never served"):
-            await driver._start_fs_daemons(
-                VmSpec(
-                    workspace_id="ws-silent",
-                    kernel=Path("/k"),
-                    rootfs=Path("/r"),
-                    mounts=(
-                        MountSpec(host=str(share_dir), guest="/mnt/proj"),
-                    ),
-                ),
-                vm_dir,
-            )
-        assert "ws-silent" not in driver._fs_procs
-        # The refused daemon dies inside the refusal (round 2's
-        # fix, pinned): no untracked survivor behind a failed
-        # start.
-        assert [proc.killed for proc in refused] == [True]
-    finally:
-        local_mod.fsproc.FS_TERM_GRACE_S = real_grace
+    entries = await driver._start_fs_daemons(
+        VmSpec(
+            workspace_id="ws-silent",
+            kernel=Path("/k"),
+            rootfs=Path("/r"),
+            mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
+        ),
+        vm_dir,
+    )
+    assert len(entries) == 1
+    assert len(spawned) == 1
+    assert "ws-silent" in driver._fs_procs
 
 
 async def test_stop_fs_pid_takes_the_term_fast_path() -> None:
@@ -1320,7 +1927,10 @@ async def test_stop_fs_pid_takes_the_term_fast_path() -> None:
         stderr=asyncio.subprocess.DEVNULL,
     )
     try:
-        assert await local_mod.stop_fs_pid(sleeper.pid) is True
+        assert (
+            await local_mod.stop_fs_pid(sleeper.pid, Path("/no/such.sock"))
+            is True
+        )
     finally:
         with contextlib.suppress(ProcessLookupError):
             sleeper.kill()
@@ -1333,14 +1943,13 @@ async def test_sweep_keeps_a_killproof_daemons_pidfile(tmp_path):
     daemon."""
     import msks.microvm.local as local_mod
 
-    vm_dir = tmp_path / "vms" / "ws-dstate"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-dstate")
     socket = fs_socket_path(vm_dir, "proj")
     live = await socket_sleeper(socket, vm_dir / "sleeper-up")
     pidfile = fs_pidfile_path(vm_dir, "proj")
     pidfile.write_text(str(live.pid), encoding="utf-8")
 
-    async def killproof(pid):
+    async def killproof(pid, socket_path=None):
         return False  # survived even SIGKILL
 
     real_stop = local_mod.stop_fs_pid
@@ -1368,8 +1977,7 @@ async def test_a_host_mount_spawns_under_its_derived_tag(
     and pidfile carry the hs- tag — never a share lookup."""
     shared = tmp_path / "code"
     shared.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-h"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-h")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(
         host_mode="identity", host_roots=(str(tmp_path),)
@@ -1386,7 +1994,7 @@ async def test_a_host_mount_spawns_under_its_derived_tag(
     assert tag.startswith("hs-")
     assert (vm_dir / f"fs-{tag}.pid").exists()
     await driver._stop_fs_daemons("ws-h")
-    binary, args = spawned[0]
+    binary, args, _fd = spawned[0]
     assert args[args.index("--tag") + 1] == tag
     assert args[args.index("--shared-dir") + 1] == str(shared)
     assert "--readonly" not in args
@@ -1401,8 +2009,7 @@ async def test_a_host_mount_spawn_refuses_an_ungated_path(
     tree the operator closed."""
     shared = tmp_path / "code"
     shared.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-x"
-    vm_dir.mkdir(parents=True)
+    vm_dir = short_vm_dir("ws-x")
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
     settings.mounts = MountSettings(
         host_mode="identity", host_roots=(str(tmp_path / "other"),)

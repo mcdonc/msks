@@ -32,10 +32,9 @@ from .input import cell_at, mode_enabled, mouse_tracking
 MULTI_CLICK_MS = 400
 
 
-def ref_under(screen, position: QPointF):
-    """The grid ref under a viewport pixel position, when the
-    library resolves one."""
-    col, row = cell_at(screen, position)
+def cell_ref(screen, col: int, row: int):
+    """The grid ref at a viewport cell, when the library
+    resolves one."""
     point = gt.Point(
         tag=gt.POINT_VIEWPORT,
         value=gt.PointValue(coordinate=gt.PointCoordinate(x=col, y=row)),
@@ -51,6 +50,13 @@ def ref_under(screen, position: QPointF):
     ):
         return None
     return ref
+
+
+def ref_under(screen, position: QPointF):
+    """The grid ref under a viewport pixel position, when the
+    library resolves one."""
+    col, row = cell_at(screen, position)
+    return cell_ref(screen, col, row)
 
 
 def selection(screen):

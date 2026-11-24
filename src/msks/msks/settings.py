@@ -130,6 +130,13 @@ class VmmSettings:
     # The virtiofs daemon behind host mounts (#620, part #622):
     # the platform's own binary, exec'd once per attached share.
     virtiofsd: str = "virtiofsd"
+    # The owner-exec helper behind cross-owner shares (#1087,
+    # #1088): the setuid binary the daemon execs a share's
+    # virtiofsd through as the workspace's owner, resolved by
+    # resolve_virtiofsd_as. The shortcut lane (owner == the
+    # daemon's own uid) never touches it, so a dev daemon
+    # without one stays fully functional.
+    virtiofsd_as: str = "virtiofsd-as"
     state_dir: Path = field(
         default_factory=lambda: Path("~/.local/state/msksd").expanduser()
     )
@@ -221,6 +228,14 @@ class ServerSettings:
     # SIGHUP reload naming a new path changes nothing until a
     # restart.
     socket: str | None = None
+    # The group the bound local listener is handed to (#1080):
+    # after the bind, the daemon chgrps the socket's runtime
+    # directory and the socket file to this group (0750/0660),
+    # so the group's members connect with no token — the #555
+    # policy's group gate. None keeps the bind's own group (the
+    # same-user deployment's shape). Startup-bound: a reload
+    # naming a new group changes nothing until a restart.
+    socket_group: str | None = None
     db_path: Path = field(
         default_factory=lambda: Path(
             "~/.local/state/msksd/msks.db"
@@ -530,6 +545,7 @@ def vmm_settings_from_env(
         virtiofsd=resolve_virtiofsd(
             _env(env, "MSKSD_VIRTIOFSD", cls.virtiofsd)
         ),
+        virtiofsd_as=_env(env, "MSKSD_VIRTIOFSD_AS", cls.virtiofsd_as),
         state_dir=Path(
             _env(env, "MSKSD_STATE_DIR", str(cls().state_dir))
         ).expanduser(),
@@ -930,6 +946,7 @@ def _server_settings_from_env(
         tls_cert=optional_env(env, "MSKSD_TLS_CERT"),
         tls_key=optional_env(env, "MSKSD_TLS_KEY"),
         socket=socket_setting,
+        socket_group=optional_env(env, "MSKSD_SOCKET_GROUP"),
         db_path=state / "msks.db",
         event_poll_s=poll,
         bootstrap_token=bootstrap,

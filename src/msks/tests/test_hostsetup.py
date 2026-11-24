@@ -10,7 +10,6 @@ did; CI has no consumer of the retired script.
 
 import os
 import subprocess
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -66,24 +65,52 @@ class Host:
             "        libnfnetlink.so.0 "
             "(libc6,x86-64) => /lib/x86_64-linux-gnu/libnfnetlink.so.0\n"
         )
-        # The service phase's dials (#560): is-active's answer, the
-        # systemctl subcommands a run must fail on, and adduser's.
+        # The service phase's dials (#560, reshaped by #1080):
+        # is-active's answer, the systemctl subcommands a run
+        # must fail on, the account commands', and the binary
+        # verification's.
         self.is_active = 0
         self.fail_systemctl: set[str] = set()
-        self.loginctl_rc = 0
         self.adduser_rc = 0
         self.deluser_rc = 0
+        self.useradd_rc = 0
+        self.groupadd_rc = 0
+        self.userdel_rc = 0
+        self.groupdel_rc = 0
+        self.verify_rc = 0
         self.sysctl_rc = 0
-        self.bus_fails = 0
         # The uninstall phases' dials (#604): the landed files the
         # existence probe answers, the removals a run performed,
         # and the paths whose unlink refuses.
         self.files: set[str] = set()
         self.removals: list[str] = []
         self.fail_remove: set[str] = set()
+        # The venv phase's dials (#1118): the version the shared
+        # venv's probe answers (None answers absent or broken),
+        # and the paths the fixture relocates under tmp_path —
+        # the uv commands' effects land on the same tree the
+        # phase reads back through bin_sibling().
+        self.installed_msks: str | None = None
+        self.venv_python = "/opt/msks/venv/bin/python"
+        self.uv_python = "/opt/msks/uv/bin/python"
+        self.uv_bin = "/opt/msks/uv/bin/uv"
+        self.venv_dir = Path("/opt/msks/venv")
+        self.command_envs: list[dict | None] = []
+        self.command_timeouts: list[float] = []
+        # The wheel's console scripts the fake's uv install lands
+        # — a client-only wheel ships none, and the service phase
+        # stands down over the empty resolution (#1118).
+        self.venv_scripts = ("python", "msks", "msksd", "msks-term-popup")
+        # The failure dials: a wheel install whose probe never
+        # answers (the verify refusal), and a venv interpreter
+        # that will not speak its version (the unreadable word).
+        self.venv_install_lands = True
+        self.venv_python_answers = True
 
     def sh(self, cmd, timeout=10.0, env=None):
         self.commands.append(cmd)
+        self.command_envs.append(env)
+        self.command_timeouts.append(timeout)
         head = cmd[0]
         if head == "getcap":
             return 0, self.getcap_answer, ""
@@ -108,18 +135,59 @@ class Host:
         if head == "adduser":
             if self.adduser_rc != 0:
                 return self.adduser_rc, "", "adduser: refused\n"
-        if head == "loginctl":
-            if self.loginctl_rc != 0:
-                return self.loginctl_rc, "", "loginctl: refused\n"
-        if head == "runuser":
-            sub = cmd[cmd.index("systemctl") + 2]
-            if sub == "daemon-reload" and self.bus_fails > 0:
-                self.bus_fails -= 1
-                return 1, "", "Failed to connect to bus: ...\n"
+        if head == "systemctl":
+            sub = cmd[1]
             if sub in self.fail_systemctl:
-                return 1, "", f"systemctl --user {sub}: refused\n"
+                return 1, "", f"systemctl {sub}: refused\n"
             if sub == "is-active":
-                return self.is_active, "", ""
+                state = "inactive" if self.is_active else "active"
+                return self.is_active, f"{state}\n", ""
+        if head == "useradd":
+            if self.useradd_rc != 0:
+                return self.useradd_rc, "", "useradd: refused\n"
+        if head == "groupadd":
+            if self.groupadd_rc != 0:
+                return self.groupadd_rc, "", "groupadd: refused\n"
+        if head == "userdel":
+            if self.userdel_rc != 0:
+                return self.userdel_rc, "", "userdel: refused\n"
+        if head == "groupdel":
+            if self.groupdel_rc != 0:
+                return self.groupdel_rc, "", "groupdel: refused\n"
+        if head == "setpriv":
+            # The binary verification's drop to the msksd account.
+            if self.verify_rc != 0:
+                return self.verify_rc, "", "test: Permission denied\n"
+        if head == self.venv_python:
+            # The venv phase's probes (#1118): the installed msks
+            # the venv holds, and the interpreter's own word.
+            if "importlib.metadata" in cmd[-1]:
+                if self.installed_msks is None:
+                    return 1, "", f"{head}: no module named msks\n"
+                return 0, f"{self.installed_msks}\n", ""
+            if not self.venv_python_answers:
+                return 1, "", f"{head}: bad interpreter\n"
+            return 0, "Python 3.14.10\n", ""
+        if Path(head).name == "uv":
+            # The uv calls' effects (PATH's own or the bootstrap
+            # one): the venv skeleton, then the console scripts
+            # the wheel's install lands — the same tree the
+            # later phases resolve against.
+            if "venv" in cmd:
+                self.venv_dir.mkdir(parents=True, exist_ok=True)
+                (self.venv_dir / "pyvenv.cfg").write_text("home = /python\n")
+            if cmd[1:2] == ["pip"]:
+                bindir = self.venv_dir / "bin"
+                bindir.mkdir(parents=True, exist_ok=True)
+                for name in self.venv_scripts:
+                    (bindir / name).write_text("#!/bin/sh\n")
+                if self.venv_install_lands:
+                    self.installed_msks = hostsetup.tool_version()
+        if head == self.uv_python:
+            # The bootstrap uv's install (#1118): the pin lands at
+            # the path the phase drives afterwards.
+            Path(self.uv_bin).parent.mkdir(parents=True, exist_ok=True)
+            Path(self.uv_bin).write_text("#!/bin/sh\n")
         return 0, "", ""
 
     def write(self, path: str, text: str) -> None:
@@ -149,6 +217,51 @@ class Host:
     def ran(self, head: str) -> list[list[str]]:
         return [c for c in self.commands if c[0] == head]
 
+    def env_of(self, head: str) -> dict | None:
+        """The environment the first command under *head* ran with
+        (#1118: the uv calls carry the managed-interpreter
+        variables)."""
+        for cmd, env in zip(self.commands, self.command_envs, strict=True):
+            if cmd[0] == head:
+                return env
+        return None
+
+    def timeout_of(self, head: str) -> float | None:
+        """The timeout the first command under *head* ran with
+        (#1118 review: the uv children download, so the 10-second
+        default would kill a slow link's install)."""
+        for cmd, timeout in zip(
+            self.commands, self.command_timeouts, strict=True
+        ):
+            if cmd[0] == head:
+                return timeout
+        return None
+
+
+def patch_venv_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, host: Host
+) -> None:
+    """Relocate the venv phase's paths under tmp_path (#1118):
+    the phase's uv calls, probes, and the uninstall's rmtree
+    never touch the host's real /opt/msks, and the fake's
+    effects land on the same tree the later phases read."""
+    root = tmp_path / "opt" / "msks"
+    patch_phase(monkeypatch, "VENV_ROOT", str(root))
+    patch_phase(monkeypatch, "VENV_DIR", str(root / "venv"))
+    patch_phase(monkeypatch, "VENV_BIN", str(root / "venv" / "bin"))
+    patch_phase(
+        monkeypatch, "VENV_PYTHON", str(root / "venv" / "bin" / "python")
+    )
+    patch_phase(monkeypatch, "VENV_MARKER", str(root / "venv" / "pyvenv.cfg"))
+    patch_phase(monkeypatch, "UV_VENV", str(root / "uv"))
+    patch_phase(monkeypatch, "UV_PYTHON", str(root / "uv" / "bin" / "python"))
+    patch_phase(monkeypatch, "UV_BIN", str(root / "uv" / "bin" / "uv"))
+    patch_phase(monkeypatch, "PYTHON_INSTALL_DIR", str(root / "python"))
+    host.venv_python = str(root / "venv" / "bin" / "python")
+    host.uv_python = str(root / "uv" / "bin" / "python")
+    host.uv_bin = str(root / "uv" / "bin" / "uv")
+    host.venv_dir = root / "venv"
+
 
 @pytest.fixture()
 def debian_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -157,7 +270,8 @@ def debian_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     release.write_text('ID="debian"\n')
     # The deployment's venv: the tool and its msksd sibling share
     # a bin dir, the systemd manager probe finds a live manager,
-    # and the service runs as a fixed executing user (#560).
+    # and the system unit runs under the dedicated msksd account
+    # (#1080).
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "msksd").write_text("#!/bin/sh\n")
@@ -169,7 +283,11 @@ def debian_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     manager = tmp_path / "systemd"
     manager.mkdir()
     patch_phase(monkeypatch, "SYSTEMD_MANAGER", str(manager))
+    # A fresh host: the kvm group came with the KVM stack, the
+    # deployment's own account and group have not landed, and
+    # the executing user holds neither.
     patch_phase(monkeypatch, "group_present", lambda name: name == "kvm")
+    patch_phase(monkeypatch, "user_present", lambda name: False)
     patch_phase(monkeypatch, "in_group", lambda user, name: False)
     home = tmp_path / "home" / "chrism"
     home.mkdir(parents=True)
@@ -177,13 +295,6 @@ def debian_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         monkeypatch,
         "executing_user",
         lambda: ("chrism", 1000, 1000, str(home)),
-    )
-    # The user manager is up by default (the login-session shape);
-    # the stale-manager tests point this at a missing path.
-    runtime = tmp_path / "run-user-1000"
-    runtime.mkdir()
-    patch_phase(
-        monkeypatch, "RUNTIME_DIR_FMT", str(runtime.parent / "run-user-{}")
     )
     # chown is root-only; the seam records the handovers instead.
     chowns: list[tuple[str, int, int]] = []
@@ -193,7 +304,6 @@ def debian_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         lambda path, uid, gid: chowns.append((str(path), uid, gid)),
     )
     host.chowns = chowns
-    patch_phase(monkeypatch, "RETRY_DELAY", 0.0)
     patch_phase(monkeypatch, "sh", host.sh)
     patch_phase(monkeypatch, "write_file", host.write)
     patch_phase(monkeypatch, "read_file", host.read)
@@ -224,6 +334,10 @@ def debian_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         ),
     )
     (tmp_path / "client").mkdir()
+    # The venv phase's paths (#1118): under tmp_path like the
+    # links', so the phase's uv calls and the uninstall's rmtree
+    # never reach the host's real /opt/msks.
+    patch_venv_paths(monkeypatch, tmp_path, host)
     patch_phase(monkeypatch, "OS_RELEASE", str(release))
     monkeypatch.setattr(hostsetup.os, "geteuid", lambda: 0)
     patch_phase(monkeypatch, "which", lambda tool: f"/usr/bin/{tool}")
@@ -344,7 +458,27 @@ def test_happy_path_lands_every_piece(
     assert main() == 0
     # No tool was missing: apt never ran.
     assert debian_host.ran("apt-get") == []
-    # The wrapper: fresh copy, caps set, read back, ambient proof.
+    # The account phase (#1080): the msksd system account, the
+    # msks access group, the executing user's grant — in that
+    # order, before the wrapper (which lands root:msks).
+    assert debian_host.ran("useradd") == [
+        [
+            "useradd",
+            "-r",
+            "--home-dir",
+            "/var/lib/msksd",
+            "--shell",
+            "/usr/sbin/nologin",
+            "msksd",
+        ]
+    ]
+    assert debian_host.ran("groupadd") == [["groupadd", "--system", "msks"]]
+    assert debian_host.ran("adduser") == [
+        ["adduser", "chrism", "msks"],
+        ["adduser", "chrism", "kvm"],
+    ]
+    # The wrapper: fresh copy, root:msks 0750, caps set, read
+    # back, ambient proof.
     install = debian_host.ran("install")
     assert install == [
         [
@@ -352,9 +486,9 @@ def test_happy_path_lands_every_piece(
             "-o",
             "root",
             "-g",
-            "root",
+            "msks",
             "-m",
-            "0755",
+            "0750",
             "/usr/bin/setpriv",
             WRAPPER,
         ]
@@ -378,6 +512,8 @@ def test_happy_path_lands_every_piece(
     assert "consent:    interactive egress consent available" in out
     assert "wrapper:    /usr/local/bin/msks-caps" in out
     assert "dev-daemon use: DEV_CAPS=/usr/local/bin/msks-caps msks-dev" in out
+    assert "the msksd system account created" in out
+    assert "chrism added to msks" in out
     assert (
         "uplink:" in out
         and "MSKSD_EGRESS_UPLINK, or DEV_UPLINK for msks-dev" in out
@@ -621,6 +757,456 @@ def test_a_missing_profile_is_created(
     assert debian_host.writes[f"{home}/.profile.msks-new"].startswith(
         hostsetup.PROFILE_MARKER
     )
+
+
+# --- the venv phase (#1118) ----------------------------------------
+
+
+def test_the_venv_phase_lands_the_shared_venv(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """The first phase (#1118): uv provisions the managed 3.14
+    and the wheel installs from PyPI pinned to the tool's own
+    version, every uv call carrying the managed-interpreter
+    variables, and the summary's venv row names the landing."""
+    assert main() == 0
+    venv = Path(hostsetup.VENV_DIR)
+    uv = debian_host.ran("/usr/bin/uv")
+    assert uv[0] == [
+        "/usr/bin/uv",
+        "venv",
+        "--clear",
+        "--python",
+        "3.14",
+        hostsetup.VENV_DIR,
+    ]
+    assert uv[1] == [
+        "/usr/bin/uv",
+        "pip",
+        "install",
+        "--python",
+        hostsetup.VENV_PYTHON,
+        f"msks=={hostsetup.tool_version()}",
+    ]
+    env = debian_host.env_of("/usr/bin/uv")
+    assert env is not None
+    assert env["UV_PYTHON_INSTALL_DIR"] == hostsetup.PYTHON_INSTALL_DIR
+    assert env["UV_PYTHON_PREFERENCE"] == "only-managed"
+    # The downloads' allowance: the uv children fetch (uv itself,
+    # the managed CPython, the wheel and its dependencies), so
+    # they carry the packages phase's own timeout, not sh's
+    # 10-second default (#1118 review).
+    assert debian_host.timeout_of("/usr/bin/uv") == 600.0
+    # The phase's effects: the venv the later phases resolve
+    # against — the marker, the console scripts, the summary's
+    # word for the interpreter.
+    assert (venv / "pyvenv.cfg").is_file()
+    for name in ("msks", "msksd", "msks-term-popup"):
+        assert (venv / "bin" / name).is_file()
+    out = capsys.readouterr().out
+    assert "Python 3.14.10 (uv-managed," in out
+    assert (
+        f"venv:       {hostsetup.VENV_DIR}: Python 3.14.10, "
+        f"msks {hostsetup.tool_version()}" in out
+    )
+
+
+def test_no_uv_on_the_host_provisions_it(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The by-hand shape: no uv on PATH, so the phase builds the
+    bootstrap venv at /opt/msks/uv with the tool's own
+    interpreter and installs the pin into it, then drives that
+    uv for the landing."""
+    real_which = hostsetup.which
+
+    def without_uv(tool):
+        return None if tool == "uv" else real_which(tool)
+
+    patch_phase(monkeypatch, "which", without_uv)
+    assert main() == 0
+    assert hostsetup.sys.executable in [c[0] for c in debian_host.commands]
+    bootstrap = debian_host.ran(hostsetup.UV_PYTHON)
+    assert bootstrap == [
+        [
+            hostsetup.UV_PYTHON,
+            "-m",
+            "pip",
+            "install",
+            "-q",
+            f"uv=={hostsetup.UV_PIN}",
+        ]
+    ]
+    assert debian_host.ran(hostsetup.UV_BIN)
+
+
+def test_an_equal_state_rerun_runs_no_uv_command(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """#546's contract over the new phase: a re-run at the same
+    version probes the venv, answers already, and runs no uv
+    command at all."""
+    debian_host.installed_msks = hostsetup.tool_version()
+    assert main() == 0
+    assert debian_host.ran("/usr/bin/uv") == []
+    out = capsys.readouterr()
+    assert (
+        f"venv:       {hostsetup.VENV_DIR}: already msks "
+        f"{hostsetup.tool_version()} (Python 3.14.10)" in out.out
+    )
+
+
+def test_a_named_wheel_installs_at_the_same_version(
+    debian_host: Host, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A wheel the operator named is state he asserted (#1118
+    review): the equal-state skip is the unnamed release's alone,
+    so a rebuild in hand at the same version installs over the
+    venv's build instead of silently standing pat."""
+    debian_host.installed_msks = hostsetup.tool_version()
+    wheel = tmp_path / f"msks-{hostsetup.tool_version()}-py3-none-any.whl"
+    wheel.write_bytes(b"PK")
+    assert main(["--wheel", str(wheel)]) == 0
+    uv = debian_host.ran("/usr/bin/uv")
+    assert len(uv) == 1
+    assert uv[0][1:3] == ["pip", "install"]
+    assert uv[0][-1] == str(wheel)
+    # The progress line names the overwrite, not a version
+    # change that is not there.
+    assert (
+        f"installing the named wheel over msks "
+        f"{hostsetup.tool_version()}" in capsys.readouterr().out
+    )
+
+
+def test_uninstall_takes_no_wheel(
+    debian_host: Host, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The flags refuse together, by name: the uninstall removes
+    the tree the wheel would install into."""
+    wheel = tmp_path / f"msks-{hostsetup.tool_version()}-py3-none-any.whl"
+    wheel.write_bytes(b"PK")
+    assert main(["--uninstall", "--wheel", str(wheel)]) == 1
+    assert "--uninstall takes no --wheel" in capsys.readouterr().err
+
+
+def test_a_newer_tool_refreshes_the_wheel(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """The upgrade story (#1118): a re-run whose tool version
+    moved past the venv's installs the new release into the
+    existing venv — no recreation, no uv venv — and says the
+    refresh."""
+    debian_host.installed_msks = "0.9.1"
+    assert main() == 0
+    uv = debian_host.ran("/usr/bin/uv")
+    assert len(uv) == 1
+    assert uv[0][1:3] == ["pip", "install"]
+    assert uv[0][-1] == f"msks=={hostsetup.tool_version()}"
+    assert "refreshing the wheel" in capsys.readouterr().out
+
+
+def test_wheel_flag_installs_the_named_file(
+    debian_host: Host, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--wheel: the file the operator named installs in place of
+    the fetched release, by absolute path."""
+    wheel = tmp_path / f"msks-{hostsetup.tool_version()}-py3-none-any.whl"
+    wheel.write_bytes(b"PK")
+    assert main(["--wheel", str(wheel)]) == 0
+    uv = debian_host.ran("/usr/bin/uv")
+    assert uv[1][-1] == str(wheel)
+
+
+def test_a_missing_wheel_file_refuses(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    assert main(["--wheel", "/no/such/wheel.whl"]) == 1
+    assert "--wheel /no/such/wheel.whl: no such file" in (
+        capsys.readouterr().err
+    )
+    assert debian_host.ran("/usr/bin/uv") == []
+
+
+def test_a_wheel_with_the_wrong_version_refuses(
+    debian_host: Host, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The skew guard, converged on the macOS tool's spelling: a
+    wheel that disagrees with the tool's version refuses with
+    the --wheel remedy and both versions named, before any side
+    effect."""
+    wheel = tmp_path / "msks-0.9.1-py3-none-any.whl"
+    wheel.write_bytes(b"PK")
+    assert main(["--wheel", str(wheel)]) == 1
+    err = capsys.readouterr().err
+    assert "the wheel at" in err and "msks 0.9.1" in err
+    assert (
+        f"not this tool's {hostsetup.tool_version()} — pass --wheel "
+        "with a build of this tree" in err
+    )
+    assert debian_host.ran("/usr/bin/uv") == []
+
+
+def test_a_wheel_whose_name_carries_no_version_refuses(
+    debian_host: Host, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A file that is not the project's wheel shape (the name
+    carries no msks-version pair) refuses the same way."""
+    wheel = tmp_path / "wheel-latest.whl"
+    wheel.write_bytes(b"PK")
+    assert main(["--wheel", str(wheel)]) == 1
+    assert "a name that carries no version" in capsys.readouterr().err
+
+
+def test_a_dev_build_without_a_wheel_refuses(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """#704's shape on the Linux tools: a dev build has no release
+    to install, and the refusal names the flag before any side
+    effect — the packages, the accounts, nothing else runs."""
+    patch_phase(monkeypatch, "tool_version", lambda: "9.9.9.dev0")
+    assert main() == 1
+    assert (
+        "this tool is a development build (9.9.9.dev0); the venv "
+        "installs a release from PyPI or a wheel in hand — build one "
+        "(uv build) and pass --wheel" in capsys.readouterr().err
+    )
+    assert debian_host.commands == []
+
+
+def test_a_landing_that_holds_the_wrong_version_refuses(
+    debian_host: Host, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """The landing proof: an install whose probe answers anything
+    but the tool's version refuses with the --wheel spelling —
+    a resolution that landed a stale same-numbered release never
+    reaches the phases that build on the venv."""
+    wheel = tmp_path / f"msks-{hostsetup.tool_version()}-py3-none-any.whl"
+    wheel.write_bytes(b"PK")
+    debian_host.venv_install_lands = False
+    assert main(["--wheel", str(wheel)]) == 1
+    assert (
+        f"the venv holds msks nothing, not this tool's "
+        f"{hostsetup.tool_version()} — pass --wheel with a build of "
+        "this tree" in capsys.readouterr().err
+    )
+
+
+def test_a_venv_creation_failure_refuses(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    real_sh = debian_host.sh
+
+    def failing(cmd, timeout=10.0, env=None):
+        if cmd[:2] == ["/usr/bin/uv", "venv"]:
+            return 1, "", "uv: no managed python\n"
+        return real_sh(cmd, timeout, env=env)
+
+    patch_phase(monkeypatch, "sh", failing)
+    assert main() == 1
+    assert "uv failed: uv: no managed python" in capsys.readouterr().err
+
+
+def test_a_wheel_install_failure_refuses(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    real_sh = debian_host.sh
+
+    def failing(cmd, timeout=10.0, env=None):
+        if cmd[:2] == ["/usr/bin/uv", "pip"]:
+            return 1, "", "uv: network is unreachable\n"
+        return real_sh(cmd, timeout, env=env)
+
+    patch_phase(monkeypatch, "sh", failing)
+    assert main() == 1
+    assert "uv failed: uv: network is unreachable" in (capsys.readouterr().err)
+
+
+def test_a_uv_provisioning_failure_refuses(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """The bootstrap venv's two steps each name their failure —
+    the venv build and the pin's install."""
+    real_which = hostsetup.which
+
+    def without_uv(tool):
+        return None if tool == "uv" else real_which(tool)
+
+    patch_phase(monkeypatch, "which", without_uv)
+    real_sh = debian_host.sh
+
+    def failing(cmd, timeout=10.0, env=None):
+        if cmd[0] == hostsetup.sys.executable:
+            return 1, "", "python: ensurepip missing\n"
+        return real_sh(cmd, timeout, env=env)
+
+    patch_phase(monkeypatch, "sh", failing)
+    assert main() == 1
+    assert "python failed: python: ensurepip missing" in (
+        capsys.readouterr().err
+    )
+
+
+def test_a_uv_pin_install_failure_refuses(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    real_which = hostsetup.which
+
+    def without_uv(tool):
+        return None if tool == "uv" else real_which(tool)
+
+    patch_phase(monkeypatch, "which", without_uv)
+    real_sh = debian_host.sh
+
+    def failing(cmd, timeout=10.0, env=None):
+        if cmd[0] == hostsetup.UV_PYTHON:
+            return 1, "", "pip: no index\n"
+        return real_sh(cmd, timeout, env=env)
+
+    patch_phase(monkeypatch, "sh", failing)
+    assert main() == 1
+    assert f"{hostsetup.UV_PYTHON} failed: pip: no index" in (
+        capsys.readouterr().err
+    )
+
+
+def test_an_unwritable_opt_refuses(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """The root the phase cannot create is a named refusal, not
+    a traceback."""
+
+    def refusing(path, mode=0o755, exist_ok=False):
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr(hostsetup.os, "makedirs", refusing)
+    assert main() == 1
+    assert (
+        f"cannot create {hostsetup.VENV_ROOT} "
+        "([Errno 13] Permission denied)" in capsys.readouterr().err
+    )
+
+
+def test_an_unreadable_venv_python_names_itself(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The summary's word degrades, never refuses: an interpreter
+    that will not speak its version reads unreadable."""
+    debian_host.venv_python_answers = False
+    note = hostsetup.install_venv(None)
+    assert "an unreadable Python" in note
+
+
+def test_bin_sibling_resolves_the_venv_first(debian_host: Host) -> None:
+    """#1118: the shared venv's bin answers before the tool's own
+    sibling — and the sibling remains the fallback when the venv
+    holds nothing."""
+    venv = Path(hostsetup.VENV_BIN)
+    venv.mkdir(parents=True, exist_ok=True)
+    (venv / "msksd").write_text("#!/bin/sh\n")
+    assert hostsetup.bin_sibling("msksd") == str(venv / "msksd")
+    (venv / "msksd").unlink()
+    fallback = Path(hostsetup.sys.argv[0]).resolve().parent / "msksd"
+    assert hostsetup.bin_sibling("msksd") == str(fallback)
+
+
+def test_wheel_version_reads_the_name() -> None:
+    assert (
+        hostsetup.wheel_version("/builds/msks-0.9.2-py3-none-any.whl")
+        == "0.9.2"
+    )
+    assert hostsetup.wheel_version("/builds/other-1.0.whl") is None
+    assert hostsetup.wheel_version("/builds/msks.whl") is None
+
+
+def test_parse_args_gains_the_wheel_flag() -> None:
+    args = hostsetup.parse_args(["--wheel", "/builds/w.whl"])
+    assert args.wheel == "/builds/w.whl"
+    assert not args.uninstall and not args.no_service
+    assert hostsetup.parse_args([]).wheel is None
+
+
+def test_drop_venv_removes_the_shared_tree(
+    debian_host: Host, tmp_path: Path
+) -> None:
+    marker = Path(hostsetup.VENV_MARKER)
+    marker.parent.mkdir(parents=True)
+    marker.write_text("home = /python\n")
+    (Path(hostsetup.VENV_ROOT) / "python" / "cpython").mkdir(parents=True)
+    note = hostsetup.drop_venv()
+    assert not Path(hostsetup.VENV_ROOT).exists()
+    assert note == (
+        f"{hostsetup.VENV_ROOT} removed (the venv, the provisioned Python, uv)"
+    )
+
+
+def test_drop_venv_leaves_a_strangers_root_alone(
+    debian_host: Host, tmp_path: Path
+) -> None:
+    stranger = Path(hostsetup.VENV_ROOT)
+    stranger.mkdir(parents=True)
+    (stranger / "mine.txt").write_text("not yours\n")
+    assert hostsetup.drop_venv() == (
+        f"{hostsetup.VENV_ROOT} holds no venv (left as-is)"
+    )
+    assert (stranger / "mine.txt").is_file()
+
+
+def test_drop_venv_names_an_absent_root(debian_host: Host) -> None:
+    assert hostsetup.drop_venv() == f"{hostsetup.VENV_ROOT} already absent"
+
+
+def test_drop_venv_refuses_a_failing_rmtree(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker = Path(hostsetup.VENV_MARKER)
+    marker.parent.mkdir(parents=True)
+    marker.write_text("home = /python\n")
+
+    def refusing(path):
+        raise OSError(1, "Operation not permitted")
+
+    monkeypatch.setattr(hostsetup.venv, "rmtree", refusing)
+    with pytest.raises(hostsetup.HostSetupError, match="cannot remove"):
+        hostsetup.drop_venv()
+
+
+def test_human_size_names_each_unit() -> None:
+    assert hostsetup.human_size(0) == "0 B"
+    assert hostsetup.human_size(512) == "512 B"
+    assert hostsetup.human_size(1024) == "1.0 KiB"
+    assert hostsetup.human_size(5 * 1024 * 1024) == "5.0 MiB"
+    assert hostsetup.human_size(3 * 1024**3) == "3.0 GiB"
+    assert hostsetup.human_size(2 * 1024**4) == "2.0 TiB"
+    assert hostsetup.human_size(7 * 1024**5) == "7168.0 TiB"
+
+
+def test_tree_size_walks_the_tree(tmp_path: Path) -> None:
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "one").write_bytes(b"12345")
+    (tmp_path / "sub" / "two").write_bytes(b"1234567890")
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "one")
+    # The files' own bytes plus the symlink's own size (its
+    # target string, never the target's bytes).
+    expected = 15 + len(os.readlink(link))
+    assert hostsetup.tree_size(str(tmp_path)) == expected
+    # A walk that cannot read counts what it could; a missing
+    # tree is empty.
+    assert hostsetup.tree_size(str(tmp_path / "nope")) == 0
+
+
+def test_kept_state_note_names_the_size_and_the_repair(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    state = tmp_path / "msksd"
+    (state / "images" / "debian13").mkdir(parents=True)
+    (state / "images" / "debian13" / "root.img").write_bytes(b"x" * 2048)
+    patch_phase(monkeypatch, "DAEMON_HOME", str(state))
+    note = hostsetup.kept_state_note()
+    assert note.startswith(f"{state} stays (2.0 KiB): ")
+    assert "remove it by hand" in note
+    assert "chown -R msksd:msksd" in note
 
 
 def test_cloud_hypervisor_lands_from_upstream_when_absent(
@@ -1030,8 +1616,9 @@ def test_install_failure_refuses(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
 ) -> None:
-    def failing(cmd, timeout=10.0):
+    def failing(cmd, timeout=10.0, env=None):
         debian_host.commands.append(cmd)
+        debian_host.command_envs.append(env)
         if cmd[0] == "install":
             return 1, "", "no space left"
         return debian_host.sh(cmd, timeout)
@@ -1048,8 +1635,9 @@ def test_setcap_failure_refuses(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
 ) -> None:
-    def failing(cmd, timeout=10.0):
+    def failing(cmd, timeout=10.0, env=None):
         debian_host.commands.append(cmd)
+        debian_host.command_envs.append(env)
         if cmd[0] == "setcap":
             return 1, "", "operation not supported"
         return debian_host.sh(cmd, timeout)
@@ -1066,8 +1654,9 @@ def test_wrapper_proof_command_failure_refuses(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
 ) -> None:
-    def failing(cmd, timeout=10.0):
+    def failing(cmd, timeout=10.0, env=None):
         debian_host.commands.append(cmd)
+        debian_host.command_envs.append(env)
         if cmd[0] == WRAPPER:
             return 1, "", "setpriv: capset failed"
         return debian_host.sh(cmd, timeout)
@@ -1161,12 +1750,12 @@ def test_apt_install_runs_noninteractive(
     """The script's guarantee, kept: the install env carries
     DEBIAN_FRONTEND=noninteractive so debconf never reaches for
     the terminal."""
-    seen: list[dict | None] = []
+    seen: list[tuple[list[str], dict | None]] = []
     real_sh = debian_host.sh
 
     def recording(cmd, timeout=10.0, env=None):
-        seen.append(env)
-        return real_sh(cmd, timeout)
+        seen.append((cmd, env))
+        return real_sh(cmd, timeout, env=env)
 
     patch_phase(monkeypatch, "sh", recording)
     release = Path(hostsetup.OS_RELEASE)
@@ -1175,12 +1764,13 @@ def test_apt_install_runs_noninteractive(
     patch_phase(
         monkeypatch,
         "which",
-        lambda tool: None if tool == "nft" else "/usr/bin/x",
+        lambda tool: None if tool == "nft" else f"/usr/bin/{tool}",
     )
     assert main() == 0
-    installs = [e for e in seen if e is not None]
+    installs = [e for cmd, e in seen if cmd[:2] == ["apt-get", "install"]]
     assert installs and all(
-        e.get("DEBIAN_FRONTEND") == "noninteractive" for e in installs
+        e is not None and e.get("DEBIAN_FRONTEND") == "noninteractive"
+        for e in installs
     )
 
 
@@ -1237,9 +1827,13 @@ def test_a_fresh_landing_adds_the_executing_user_to_kvm(
     """Bare runs and new logins need the kvm group on the account
     itself (#560): the tool adds the executing user when the
     group is missing from their membership, and the summary names
-    the fresh-login fact."""
+    the fresh-login fact. The msks grant landed first — the
+    account phase's own adduser."""
     assert main() == 0
-    assert debian_host.ran("adduser") == [["adduser", "chrism", "kvm"]]
+    assert debian_host.ran("adduser") == [
+        ["adduser", "chrism", "msks"],
+        ["adduser", "chrism", "kvm"],
+    ]
     out = capsys.readouterr().out
     assert (
         "/dev/kvm:   added chrism to kvm — a fresh login picks the group up"
@@ -1250,15 +1844,30 @@ def test_a_fresh_landing_adds_the_executing_user_to_kvm(
 def test_an_existing_kvm_membership_is_left_alone(
     debian_host: Host, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    patch_phase(monkeypatch, "in_group", lambda user, name: True)
+    def holds_kvm(user, name):
+        return name == "kvm"
+
+    patch_phase(monkeypatch, "in_group", holds_kvm)
     assert main() == 0
-    assert debian_host.ran("adduser") == []
+    assert debian_host.ran("adduser") == [["adduser", "chrism", "msks"]]
 
 
 def test_adduser_kvm_failure_refuses(
-    debian_host: Host, capsys: pytest.CaptureFixture
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
 ) -> None:
-    debian_host.adduser_rc = 1
+    """The kvm adduser's failure refuses by name; the msks grant
+    landed before it (the account phase runs first), so the dial
+    must miss only the kvm call."""
+
+    def failing_adduser(cmd, timeout=10.0, env=None):
+        debian_host.commands.append(cmd)
+        if cmd[:2] == ["adduser", "chrism"] and cmd[2] == "kvm":
+            return 1, "", "adduser: refused\n"
+        return debian_host.sh(cmd, timeout=timeout, env=env)
+
+    patch_phase(monkeypatch, "sh", failing_adduser)
     assert main() == 1
     assert "adduser chrism kvm failed" in capsys.readouterr().err
 
@@ -1320,17 +1929,40 @@ def test_in_group_reads_membership_and_primary_group(
     assert hostsetup.in_group("chrism", "kvm") is False
 
 
-def fixture_unit_path(host: Host) -> str:
-    """The unit path the fixture's executing user lands."""
-    return hostsetup.unit_path(hostsetup.executing_user()[3])
+def test_user_present_degrades_to_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An account database that answers nothing says no — the
+    same degrade group_present takes — and a carried account
+    says yes."""
+
+    def missing(name):
+        raise KeyError(name)
+
+    patch_phase(monkeypatch, "pwd_getpwnam", missing)
+    assert hostsetup.user_present("msksd") is False
+
+    def broken(name):
+        raise OSError("nss unavailable")
+
+    patch_phase(monkeypatch, "pwd_getpwnam", broken)
+    assert hostsetup.user_present("msksd") is False
+
+    patch_phase(
+        monkeypatch,
+        "pwd_getpwnam",
+        lambda name: FakeEntry(name, 999, "/var/lib/msksd"),
+    )
+    assert hostsetup.user_present("msksd") is True
 
 
 def unit_writes(host: Host) -> dict[str, str]:
-    """The unit file(s) a run wrote (any path under .config)."""
+    """The unit file(s) a run wrote (any path ending in the
+    system unit's name)."""
     return {
         path: text
         for path, text in host.writes.items()
-        if path.endswith(hostsetup.USER_UNIT_RELATIVE)
+        if path.endswith(hostsetup.UNIT_NAME)
     }
 
 
@@ -1345,83 +1977,84 @@ def test_chown_path_runs_the_real_chown(tmp_path: Path) -> None:
 
 
 def systemctl_ran(host: Host, sub: str) -> list[list[str]]:
-    """The systemctl --user calls a run issued for one subcommand,
-    as the runuser command lines carry them."""
-    out = []
-    for cmd in host.ran("runuser"):
-        args = cmd[cmd.index("systemctl") + 2 :]
-        if args[0] == sub:
-            out.append(cmd)
-    return out
+    """The systemctl calls a run issued for one subcommand."""
+    return [cmd for cmd in host.ran("systemctl") if cmd[1] == sub]
 
 
-def user_unit_path() -> str:
-    """The unit path the fixture's executing user carries."""
-    return hostsetup.unit_path("/tmp/fake-home/chrism")
-
-
-def test_service_lands_the_unit_as_the_executing_user(
+def test_service_lands_the_system_unit(
     debian_host: Host,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
 ) -> None:
-    """The service phase (#560): a user unit under the executing
-    operator's own config — no User=/Group= lines (the user manager
-    is the account), the wrapper raising the caps ambient (file
-    capabilities grant any executor), the #555 socket's runtime
-    directory under the user's $XDG_RUNTIME_DIR, egress pointed at
-    the detected uplink — plus linger, so the daemon survives
-    logout. First landing starts the service and does not restart
-    it."""
+    """The service phase (#560, reshaped by #1080): a system
+    unit at /etc/systemd/system under the dedicated msksd
+    account — the shape the NixOS module ships — with kvm
+    through the unit's own supplementary groups, the two caps
+    ambient and bounded natively, and the shared socket's path
+    and group (#1093) through its Environment lines. The binary
+    is proven readable and executable by the msksd account
+    before the unit lands; no runuser, no linger, no bus-race
+    retry. First landing starts the service and does not
+    restart it."""
 
     def strict_unit_read(path):
         # The real read_file raises on a missing file; the fake
         # answers "" — drive the real shape for the unit path.
-        if path.endswith(hostsetup.USER_UNIT_RELATIVE):
+        if path == hostsetup.UNIT_PATH:
             raise FileNotFoundError(path)
         return debian_host.read(path)
 
     patch_phase(monkeypatch, "read_file", strict_unit_read)
     assert main() == 0
-    home = Path(hostsetup.executing_user()[3])
-    path = hostsetup.unit_path(str(home))
-    text = debian_host.writes[path]
-    msksd = str(Path(hostsetup.sys.argv[0]).resolve().parent / "msksd")
-    assert path.startswith(str(home))
-    assert "User=" not in text
-    assert "Group=" not in text
-    assert "Environment=HOME=" not in text
-    assert (
-        "ExecStart=/usr/local/bin/msks-caps "
-        "--inh-caps=+net_admin,+net_bind_service "
-        "--ambient-caps=+net_admin,+net_bind_service "
-        f'-- "{msksd}"' in text
-    )
-    assert "WantedBy=default.target" in text
-    assert "RuntimeDirectory=msks" in text
+    text = debian_host.writes[hostsetup.UNIT_PATH]
+    # #1118: the venv phase landed first, so ExecStart resolves
+    # the shared venv's msksd — not the tool's own bin sibling.
+    msksd = f"{hostsetup.VENV_BIN}/msksd"
+    assert text.startswith("# Generated by msks-setup-debian-host")
+    assert "User=msksd" in text
+    assert "Group=msksd" in text
+    assert "SupplementaryGroups=msks kvm" in text
+    assert "AmbientCapabilities=cap_net_admin cap_net_bind_service" in text
+    assert "CapabilityBoundingSet=cap_net_admin cap_net_bind_service" in text
+    assert f'ExecStart="{msksd}"' in text
     assert "Environment=MSKSD_EGRESS_ENABLED=true" in text
     assert "Environment=MSKSD_EGRESS_UPLINK=eno4" in text
-    assert debian_host.ran("loginctl") == [
-        ["loginctl", "enable-linger", "chrism"]
+    assert "Environment=MSKSD_SOCKET=/run/msks/msksd.sock" in text
+    assert "Environment=MSKSD_SOCKET_GROUP=msks" in text
+    # The state dir env line pins the daemon's tree to the
+    # unit's StateDirectory — without it the daemon nests under
+    # the account home's own default ($HOME/.local/state/msksd).
+    assert "Environment=MSKSD_STATE_DIR=/var/lib/msksd" in text
+    assert "StateDirectory=msksd" in text
+    assert "RuntimeDirectory=msks" in text
+    assert "WantedBy=multi-user.target" in text
+    # The landing proof: setpriv drops to the msksd account for
+    # the read/execute test over the resolved binary.
+    verify = debian_host.ran("setpriv")
+    assert verify[0][1:4] == [
+        "--reuid=msksd",
+        "--regid=msksd",
+        "--clear-groups",
     ]
-
-    def run(args):
-        return hostsetup.user_systemctl("chrism", 1000, args)
-
+    assert verify[0][4] == "test" and msksd in verify[0]
+    # The activation: reload, enable --now, no restart.
     assert systemctl_ran(debian_host, "daemon-reload") == [
-        run(["daemon-reload"])
+        ["systemctl", "daemon-reload"]
     ]
     assert systemctl_ran(debian_host, "enable") == [
-        run(["enable", "--now", "msksd.service"])
+        ["systemctl", "enable", "--now", "msksd.service"]
     ]
     assert systemctl_ran(debian_host, "is-active") == []
     assert systemctl_ran(debian_host, "restart") == []
     out = capsys.readouterr().out
     assert (
-        "service:    user service msksd.service "
-        "(chrism, enabled, started, lingering)" in out
+        "service:    system unit msksd.service "
+        "(enabled, started, running as msksd)" in out
     )
-    assert "token-free (#555): $XDG_RUNTIME_DIR/msks/msksd.sock" in out
+    assert (
+        "members of the msks group connect token-free "
+        "(#1093): /run/msks/msksd.sock" in out
+    )
 
 
 def test_unit_text_omits_the_uplink_when_none_was_found(
@@ -1432,19 +2065,39 @@ def test_unit_text_omits_the_uplink_when_none_was_found(
     text = hostsetup.unit_text("/opt/my msks/msksd", uplink_name="")
     assert "MSKSD_EGRESS_UPLINK" not in text
     assert "RuntimeDirectory=msks" in text
-    assert '-- "/opt/my msks/msksd"' in text
+    assert 'ExecStart="/opt/my msks/msksd"' in text
+
+
+def test_the_binary_the_msksd_account_cannot_exec_refuses(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """A deployment whose daemon lives behind a permission the
+    msksd account cannot cross (a venv under a 0700 home) is a
+    named refusal at install time, not a crash loop at boot —
+    nothing lands."""
+    debian_host.verify_rc = 1
+    assert main() == 1
+    err = capsys.readouterr().err
+    assert "the msksd account cannot read and execute" in err
+    assert "0700 home" in err
+    assert hostsetup.UNIT_PATH not in debian_host.writes
+    assert systemctl_ran(debian_host, "daemon-reload") == []
 
 
 def test_service_skips_when_no_msksd_beside_the_tool(
     debian_host: Host, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A deployment whose msksd lives elsewhere (no bin sibling)
-    keeps a working host: the skip names the cause, no unit is
-    written, systemctl never runs."""
+    """A deployment whose msksd lives elsewhere — the resolution's
+    both arms genuinely empty — keeps a working host: a
+    client-only wheel ships no msksd into the venv, the tool's
+    own bin dir ships none beside it, the skip names the cause,
+    no unit is written, systemctl never runs."""
     Path(hostsetup.sys.argv[0]).parent.joinpath("msksd").unlink()
+    debian_host.venv_scripts = ("python", "msks", "msks-term-popup")
     assert main() == 0
+    assert not (Path(hostsetup.VENV_BIN) / "msksd").exists()
     assert unit_writes(debian_host) == {}
-    assert debian_host.ran("runuser") == []
+    assert debian_host.ran("systemctl") == []
 
 
 def test_service_skips_without_a_systemd_manager(
@@ -1455,8 +2108,7 @@ def test_service_skips_without_a_systemd_manager(
     patch_phase(monkeypatch, "SYSTEMD_MANAGER", "/no/such/manager-dir")
     assert main() == 0
     assert unit_writes(debian_host) == {}
-    assert debian_host.ran("runuser") == []
-    assert debian_host.ran("loginctl") == []
+    assert debian_host.ran("systemctl") == []
 
 
 def test_no_service_flag_keeps_today_s_behavior(
@@ -1466,8 +2118,26 @@ def test_no_service_flag_keeps_today_s_behavior(
     deployment that runs msksd its own way)."""
     assert main(["--no-service"]) == 0
     assert unit_writes(debian_host) == {}
-    assert debian_host.ran("runuser") == []
+    assert debian_host.ran("systemctl") == []
     assert "service:    skipped (--no-service)" in capsys.readouterr().out
+
+
+def test_service_skips_without_a_kvm_group(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """The unit's SupplementaryGroups names kvm, and a start with
+    an unresolvable group fails inside systemd with no cause this
+    tool can name — the phase stands down with the KVM-stack fix
+    instead (#1094 review)."""
+    patch_phase(monkeypatch, "group_present", lambda name: False)
+    assert main() == 0
+    assert unit_writes(debian_host) == {}
+    assert debian_host.ran("systemctl") == []
+    out = capsys.readouterr().out
+    assert "skipped (the kvm group is absent" in out
+    assert "qemu-kvm" in out
 
 
 def test_a_rerun_with_an_unchanged_unit_does_not_restart(
@@ -1488,19 +2158,13 @@ def test_a_changed_unit_restarts_a_running_daemon(
     """A re-run that rewrites the unit (a refreshed ExecStart, a
     new uplink) restarts the daemon when it is running, so the
     change takes effect."""
-    debian_host.writes[fixture_unit_path(debian_host)] = (
-        "ExecStart=/old/msksd\n"
-    )
+    debian_host.writes[hostsetup.UNIT_PATH] = "ExecStart=/old/msksd\n"
     assert main() == 0
-
-    def run(args):
-        return hostsetup.user_systemctl("chrism", 1000, args)
-
     assert systemctl_ran(debian_host, "is-active") == [
-        run(["is-active", "--quiet", "msksd.service"])
+        ["systemctl", "is-active", "--quiet", "msksd.service"]
     ]
     assert systemctl_ran(debian_host, "restart") == [
-        run(["restart", "msksd.service"])
+        ["systemctl", "restart", "msksd.service"]
     ]
 
 
@@ -1509,9 +2173,7 @@ def test_a_changed_unit_leaves_a_stopped_daemon_alone(
 ) -> None:
     """A stopped service (the daemon crashed out, the host just
     booted) needs no restart — enable --now starts it."""
-    debian_host.writes[fixture_unit_path(debian_host)] = (
-        "ExecStart=/old/msksd\n"
-    )
+    debian_host.writes[hostsetup.UNIT_PATH] = "ExecStart=/old/msksd\n"
     debian_host.is_active = 1
     assert main() == 0
     assert systemctl_ran(debian_host, "restart") == []
@@ -1522,7 +2184,7 @@ def test_daemon_reload_failure_refuses(
 ) -> None:
     debian_host.fail_systemctl = {"daemon-reload"}
     assert main() == 1
-    assert "systemctl --user daemon-reload failed" in capsys.readouterr().err
+    assert "systemctl daemon-reload failed" in capsys.readouterr().err
 
 
 def test_enable_failure_refuses_and_points_at_the_journal(
@@ -1531,20 +2193,8 @@ def test_enable_failure_refuses_and_points_at_the_journal(
     debian_host.fail_systemctl = {"enable"}
     assert main() == 1
     err = capsys.readouterr().err
-    assert "systemctl --user enable --now msksd.service failed" in err
-    assert "journalctl --user -u msksd names the cause" in err
-
-
-def test_linger_failure_refuses(
-    debian_host: Host, capsys: pytest.CaptureFixture
-) -> None:
-    """Without linger the daemon dies at the operator's logout —
-    a failure to arm it is a named refusal, not a warning."""
-    debian_host.loginctl_rc = 1
-    assert main() == 1
-    err = capsys.readouterr().err
-    assert "loginctl enable-linger chrism failed" in err
-    assert "stop at the operator's logout" in err
+    assert "systemctl enable --now msksd.service failed" in err
+    assert "journalctl -u msksd names the cause" in err
 
 
 class FakeEntry:
@@ -1649,176 +2299,63 @@ def test_group_present_degrades_to_false(
     assert hostsetup.group_present("kvm") is True
 
 
-def test_the_units_parent_chain_lands_user_owned(
-    debian_host: Host, tmp_path: Path
+def test_account_failures_refuse_by_name(
+    debian_host: Host, capsys: pytest.CaptureFixture
 ) -> None:
-    """A fresh Debian account ships no ~/.config, and write_file's
-    mkdir would leave root-owned parents there — the user
-    manager's enable symlink (written as the user) gets refused
-    forever. Every missing level is created and handed to the
-    executing user; the re-run finds them and chowns nothing."""
-    home = Path(hostsetup.executing_user()[3])
-    chain = [home / ".config", home / ".config" / "systemd"]
-    chain.append(chain[-1] / "user")
-    for level in chain:
-        assert not level.exists()
+    """Each account command's failure is a named refusal that
+    stops the run: useradd, groupadd, and the executing user's
+    grant."""
+    for dial, command, needle in (
+        ("useradd_rc", "useradd", "useradd -r --home-dir"),
+        ("groupadd_rc", "groupadd", "groupadd --system msks failed"),
+        ("adduser_rc", "adduser", "adduser chrism msks failed"),
+    ):
+        setattr(debian_host, dial, 1)
+        assert main() == 1
+        assert needle in capsys.readouterr().err
+        setattr(debian_host, dial, 0)
+
+
+def test_the_account_phase_is_idempotent(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A re-run over an already-landed account, group, and grant
+    runs no account command and the summary names each piece
+    already present (#1080)."""
     assert main() == 0
-    for level in chain:
-        assert level.is_dir()
-    # The profile handover (#601) rides first; the unit's parent
-    # chain follows.
-    home = hostsetup.executing_user()[3]
-    assert debian_host.chowns[0] == (f"{home}/.profile", 1000, 1000)
-    assert debian_host.chowns[1:] == [
-        (str(level), 1000, 1000) for level in chain
-    ]
-    # The no-op replace seam leaves the text under the temp's
-    # key; mirror the rename, then the re-run chowns nothing (the
-    # marker answers) and writes nothing.
-    debian_host.writes[f"{home}/.profile"] = debian_host.writes.pop(
-        f"{home}/.profile.msks-new"
-    )
+    assert debian_host.ran("useradd") and debian_host.ran("groupadd")
     debian_host.commands.clear()
-    debian_host.chowns.clear()
-    assert main() == 0
-    assert debian_host.chowns == []
+    patch_phase(monkeypatch, "user_present", lambda name: True)
+    patch_phase(monkeypatch, "group_present", lambda name: True)
 
+    def holds_own(user, name):
+        return name in {"msks", "kvm"}
 
-def test_kvm_joined_under_a_running_manager_names_the_restart(
-    debian_host: Host, capsys: pytest.CaptureFixture
-) -> None:
-    """The manager a login session already started forked before
-    this run's adduser, so the just-started daemon holds the old
-    supplementary groups — the service line names the symptom, the
-    manager restart that hands the group over, and what that
-    restart really stops."""
+    patch_phase(monkeypatch, "in_group", holds_own)
     assert main() == 0
+    assert debian_host.ran("useradd") == []
+    assert debian_host.ran("groupadd") == []
+    assert debian_host.ran("adduser") == []
     out = capsys.readouterr().out
-    assert "the manager may predate the kvm membership" in out
-    assert "sudo systemctl restart user@1000.service" in out
-    assert "login sessions survive" in out
+    assert "already present" in out
+    assert "the msks group already present" in out
+    assert "chrism holds msks" in out
 
 
-def test_kvm_note_survives_a_member_rerun(
-    debian_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture,
-) -> None:
-    """The round-2 wash-out: run one added kvm under a running
-    manager; a re-run finds the membership present and the unit
-    unchanged — and still prints the note, because the running
-    daemon's manager cannot be proven to postdate the membership
-    it already carries."""
-    patch_phase(monkeypatch, "in_group", lambda user, name: True)
-    assert main() == 0
-    out = capsys.readouterr().out
-    assert "the manager may predate the kvm membership" in out
-
-
-def test_kvm_joined_before_the_manager_started_needs_no_restart(
-    debian_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture,
-) -> None:
-    """Linger started the manager after the adduser, so the fresh
-    manager — and the daemon it forks — already carry kvm: the
-    service line carries no restart note."""
-    patch_phase(monkeypatch, "RUNTIME_DIR_FMT", str(tmp_path / "absent-{}"))
-    assert main() == 0
-    out = capsys.readouterr().out
-    assert "user@1000.service" not in out
-    assert "(chrism, enabled, started, lingering)" in out
-
-
-def test_the_first_user_manager_call_retries_the_bus_race(
-    debian_host: Host,
-) -> None:
-    """enable-linger returns after logind enqueues the user
-    manager; the first systemctl --user can beat the bus into
-    existence. A "Failed to connect to bus" answer retries — a
-    transient miss recovers, the run stays one shot."""
-    debian_host.bus_fails = 2
-    assert main() == 0
-    assert len(systemctl_ran(debian_host, "daemon-reload")) == 3
-
-
-def test_an_unyielding_bus_race_refuses(
-    debian_host: Host, capsys: pytest.CaptureFixture
-) -> None:
-    """A bus that never comes up is a named refusal, not an
-    idempotent-silent one."""
-    debian_host.bus_fails = 99
-    assert main() == 1
-    assert "systemctl --user daemon-reload failed" in capsys.readouterr().err
-
-
-def test_restart_failure_refuses(
+def test_service_restart_failure_refuses(
     debian_host: Host, capsys: pytest.CaptureFixture
 ) -> None:
     """The restart a changed unit triggers is waited out (the
     daemon stops workspaces first) and its failure is named — a
     crash-looping unit must not print as started."""
-    debian_host.writes[fixture_unit_path(debian_host)] = "ExecStart=/old\n"
+    debian_host.writes[hostsetup.UNIT_PATH] = "ExecStart=/old\n"
     debian_host.fail_systemctl = {"restart"}
     assert main() == 1
     err = capsys.readouterr().err
-    assert "systemctl --user restart msksd.service failed" in err
-    assert "journalctl --user -u msksd" in err
-
-
-def test_a_missing_home_is_a_named_refusal(
-    debian_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture,
-) -> None:
-    """Round-3 blocking: the parent-chain walk over a home that
-    does not exist raises inside the wrap — the operator reads a
-    named refusal, never a traceback out of main."""
-    home = tmp_missing_home(monkeypatch, debian_host)
-    assert main() == 1
-    assert "landing the user unit failed" in capsys.readouterr().err
-    assert home  # the failing home was the one under test
-
-
-def tmp_missing_home(monkeypatch, debian_host):
-    import tempfile
-
-    home = Path(tempfile.mkdtemp()) / "ghost"
-    patch_phase(
-        monkeypatch, "executing_user", lambda: ("ghost", 1042, 1042, str(home))
-    )
-    return home
-
-
-def test_a_config_that_is_a_file_is_a_named_refusal(
-    debian_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture,
-) -> None:
-    """~/.config as a regular file (a leftover, a mistaken
-    redirect) refuses by name too — the round-3 live repro's
-    second shape."""
-    real_home = Path(hostsetup.executing_user()[3])
-    (real_home / ".config").write_text("not a directory\n")
-    assert main() == 1
-    assert "landing the user unit failed" in capsys.readouterr().err
-
-
-def test_the_kvm_note_needs_a_kvm_group(
-    debian_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture,
-) -> None:
-    """A host with no kvm group has no membership the manager
-    could predate — the note stays off and the kvm line names the
-    stack to install."""
-    patch_phase(monkeypatch, "group_present", lambda name: False)
-    assert main() == 0
-    out = capsys.readouterr().out
-    assert "the manager may predate" not in out
-    assert "the kvm group is absent" in out
+    assert "systemctl restart msksd.service failed" in err
+    assert "journalctl -u msksd" in err
 
 
 def test_a_unit_read_error_is_a_named_refusal(
@@ -1831,32 +2368,53 @@ def test_a_unit_read_error_is_a_named_refusal(
     refusal, never a traceback out of main."""
 
     def broken_unit_read(path):
-        if path.endswith(hostsetup.USER_UNIT_RELATIVE):
+        if path == hostsetup.UNIT_PATH:
             raise IsADirectoryError(path)
         return debian_host.read(path)
 
     patch_phase(monkeypatch, "read_file", broken_unit_read)
     assert main() == 1
-    assert "landing the user unit failed" in capsys.readouterr().err
+    assert "landing the system unit failed" in capsys.readouterr().err
 
 
-def landed_host(debian_host: Host) -> Host:
+def landed_host(debian_host: Host, monkeypatch: pytest.MonkeyPatch) -> Host:
     """A host the install run finished on: every landed piece in
-    the fake filesystem, the kvm membership on the account."""
+    the fake filesystem, the deployment's account, group, and
+    grant present, and the kvm membership off the account (the
+    install tests' own fresh-login shape)."""
     home = hostsetup.executing_user()[3]
     debian_host.files.update(
         {
-            hostsetup.unit_path(home),
-            hostsetup.wants_path(home),
+            hostsetup.UNIT_PATH,
+            hostsetup.SYSTEM_WANTS_PATH,
             SYSCTL_FILE,
             hostsetup.MODULES_FILE,
             WRAPPER,
             hostsetup.CLOUD_HYPERVISOR_BIN,
         }
     )
+    # The venv phase's landing (#1118), in the fake's own shape:
+    # the shared tree the uninstall's rmtree mirror reads — the
+    # fake records commands, and the venv mirror reads the real
+    # tmp tree, so the landing is seeded here the same way the
+    # uv arm seeds it.
+    venv_bin = debian_host.venv_dir / "bin"
+    venv_bin.mkdir(parents=True, exist_ok=True)
+    (debian_host.venv_dir / "pyvenv.cfg").write_text("home = /python\n")
+    for name in ("python", "msks", "msksd", "msks-term-popup"):
+        (venv_bin / name).write_text("#!/bin/sh\n")
     debian_host.writes[f"{home}/.profile"] = (
         "export EDITOR=vi\n" + hostsetup.PROFILE_PATH_BLOCK
     )
+    patch_phase(monkeypatch, "user_present", lambda name: True)
+    patch_phase(
+        monkeypatch, "group_present", lambda name: name in {"kvm", "msks"}
+    )
+
+    def holds(user, name):
+        return name == "msks"
+
+    patch_phase(monkeypatch, "in_group", holds)
     return debian_host
 
 
@@ -1866,33 +2424,40 @@ def test_uninstall_removes_every_piece(
     capsys: pytest.CaptureFixture,
 ) -> None:
     """#604: the mirror takes down the service (stop, disable,
-    unit file, linger), the kernel and networking files, the
-    wrapper, the VMM, the kvm membership, and the profile block —
-    and the summary names the apt line for the packages that
-    stay."""
-    host = landed_host(debian_host)
+    both files, reload), the accounts it ran under (the grant,
+    the msksd account, the msks group — /var/lib/msksd named as
+    kept), the kernel and networking files, the wrapper, the VMM,
+    the kvm membership, and the profile block — and the summary
+    names the apt line for the packages that stay."""
+    host = landed_host(debian_host, monkeypatch)
     patch_phase(monkeypatch, "in_group", lambda user, name: True)
+    # The kept-state line's evidence: a rigged walk answers a
+    # known tree, so the row pins the human word (#1118).
+    patch_phase(monkeypatch, "tree_size", lambda path: 13_000_000_000)
     assert main(["--uninstall"]) == 0
     home = hostsetup.executing_user()[3]
     # The service teardown, in order: disable --now (waited out),
-    # the unit file, daemon-reload, linger off.
-
-    def run(args):
-        return hostsetup.user_systemctl("chrism", 1000, args)
-
+    # then — after both files leave — daemon-reload.
     assert systemctl_ran(host, "disable") == [
-        run(["disable", "--now", "msksd.service"])
+        ["systemctl", "disable", "--now", "msksd.service"]
     ]
-    assert systemctl_ran(host, "daemon-reload") == [run(["daemon-reload"])]
-    assert host.ran("loginctl") == [["loginctl", "disable-linger", "chrism"]]
-    # The kvm membership and the sysctl reload follow.
-    assert host.ran("deluser") == [["deluser", "chrism", "kvm"]]
+    assert systemctl_ran(host, "daemon-reload") == [
+        ["systemctl", "daemon-reload"]
+    ]
+    # The account mirror: the grant first, then the account, then
+    # the group — before the sysctl reload and the kvm mirror.
+    assert host.ran("deluser") == [
+        ["deluser", "chrism", "msks"],
+        ["deluser", "chrism", "kvm"],
+    ]
+    assert host.ran("userdel") == [["userdel", "msksd"]]
+    assert host.ran("groupdel") == [["groupdel", "msks"]]
     assert host.ran("sysctl") == [["sysctl", "--system"]]
     # Every landed file, in the run's teardown order — the unit
     # and its enablement symlink, then the host pieces.
     assert host.removals == [
-        hostsetup.unit_path(home),
-        hostsetup.wants_path(home),
+        hostsetup.UNIT_PATH,
+        hostsetup.SYSTEM_WANTS_PATH,
         SYSCTL_FILE,
         hostsetup.MODULES_FILE,
         WRAPPER,
@@ -1904,10 +2469,23 @@ def test_uninstall_removes_every_piece(
     assert hostsetup.PROFILE_MARKER not in fresh
     out = capsys.readouterr().out
     assert (
-        "service:    user service msksd.service stopped, disabled, "
-        "and removed (chrism; lingering off — loginctl "
-        "enable-linger chrism restores it)" in out
+        "service:    system unit msksd.service stopped, disabled, "
+        "and removed" in out
     )
+    assert (
+        "account:    removed chrism from msks (adduser chrism msks "
+        "restores it); the msksd account removed; the msks group "
+        "removed" in out
+    )
+    assert (
+        "state:      /var/lib/msksd stays (12.1 GiB): the VM "
+        "overlays, images, and secrets survive the uninstall by "
+        "design; remove it by hand when you want it gone (a "
+        "reinstall that draws a new system uid repairs the "
+        "ownership: chown -R msksd:msksd /var/lib/msksd)" in out
+    )
+    assert f"venv:       {hostsetup.VENV_ROOT} removed" in out
+    assert "(the venv, the provisioned Python, uv)" in out
     assert f"wrapper:    {WRAPPER} removed" in out
     assert f"VMM:        {hostsetup.CLOUD_HYPERVISOR_BIN} removed" in out
     assert "removed chrism from kvm (adduser chrism kvm restores it)" in out
@@ -1931,19 +2509,24 @@ def test_uninstall_without_anything_landed_is_all_lines(
     debian_host: Host, capsys: pytest.CaptureFixture
 ) -> None:
     """The idempotent re-run: a host with none of the pieces (or a
-    second --uninstall) is all summary lines, no commands, and the
-    service line names linger's by-hand fix — the tool never
-    removes state it cannot see."""
+    second --uninstall) is all summary lines, no commands, and
+    each line names its piece absent — the tool never removes
+    state it cannot see."""
     assert main(["--uninstall"]) == 0
     host = debian_host
-    assert host.ran("runuser") == []
-    assert host.ran("loginctl") == []
+    assert host.ran("systemctl") == []
     assert host.ran("deluser") == []
+    assert host.ran("userdel") == []
+    assert host.ran("groupdel") == []
     assert host.ran("sysctl") == []
     assert host.removals == []
     out = capsys.readouterr().out
     home = hostsetup.executing_user()[3]
-    assert f"no msksd.service under {home} — lingering may remain" in out
+    assert "no msksd.service — nothing to remove" in out
+    assert "chrism holds no msks membership" in out
+    assert "the msksd account is absent" in out
+    assert "the msks group is absent" in out
+    assert "/var/lib/msksd stays" in out
     assert f"{SYSCTL_FILE} already absent" in out
     assert f"{hostsetup.MODULES_FILE} already absent" in out
     assert f"{WRAPPER} already absent" in out
@@ -1953,17 +2536,18 @@ def test_uninstall_without_anything_landed_is_all_lines(
 
 
 def test_uninstall_no_service_flag_skips_the_service(
-    debian_host: Host, capsys: pytest.CaptureFixture
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """--no-service holds its install meaning on the way out: the
-    service is left alone, every other piece still leaves."""
-    host = landed_host(debian_host)
-    home = hostsetup.executing_user()[3]
-    unit = hostsetup.unit_path(home)
+    unit is left alone, every other piece (the account mirror
+    included) still leaves."""
+    host = landed_host(debian_host, monkeypatch)
     assert main(["--uninstall", "--no-service"]) == 0
-    assert host.ran("runuser") == []
-    assert host.ran("loginctl") == []
-    assert unit in host.files
+    assert host.ran("systemctl") == []
+    assert hostsetup.UNIT_PATH in host.files
+    assert host.ran("userdel") == [["userdel", "msksd"]]
     assert SYSCTL_FILE in host.removals
     assert "service:    skipped (--no-service)" in capsys.readouterr().out
 
@@ -1975,13 +2559,14 @@ def test_uninstall_service_skips_without_a_systemd_manager(
 ) -> None:
     """A container or another init: the manager probe answers no
     and the phase stands down, naming it — the unit file on disk
-    stays, dead text either way."""
-    host = landed_host(debian_host)
+    stays, dead text either way, while the account mirror still
+    leaves."""
+    host = landed_host(debian_host, monkeypatch)
     patch_phase(monkeypatch, "SYSTEMD_MANAGER", "/no/such/manager")
     assert main(["--uninstall"]) == 0
-    assert host.ran("runuser") == []
-    home = hostsetup.executing_user()[3]
-    assert hostsetup.unit_path(home) in host.files
+    assert host.ran("systemctl") == []
+    assert hostsetup.UNIT_PATH in host.files
+    assert host.ran("userdel") == [["userdel", "msksd"]]
     assert "service:    skipped (no systemd manager" in (
         capsys.readouterr().out
     )
@@ -1995,12 +2580,12 @@ def test_uninstall_disable_failure_refuses(
     """A service that will not stop is a named refusal naming the
     journal — and the run stops there: the pieces behind the
     service stay."""
-    host = landed_host(debian_host)
+    host = landed_host(debian_host, monkeypatch)
     host.fail_systemctl = {"disable"}
     assert main(["--uninstall"]) == 1
     err = capsys.readouterr().err
     assert "disable --now msksd.service failed" in err
-    assert "journalctl --user -u msksd" in err
+    assert "journalctl -u msksd" in err
     assert host.removals == []
     assert SYSCTL_FILE in host.files
 
@@ -2013,36 +2598,46 @@ def test_uninstall_daemon_reload_failure_refuses(
     """The manager that cannot forget the unit is a named refusal
     — the unit file is already gone, and the refusal names the
     step that failed."""
-    host = landed_host(debian_host)
+    host = landed_host(debian_host, monkeypatch)
     host.fail_systemctl = {"daemon-reload"}
     assert main(["--uninstall"]) == 1
     assert "daemon-reload failed" in capsys.readouterr().err
-    home = hostsetup.executing_user()[3]
-    assert hostsetup.unit_path(home) in host.removals
+    assert hostsetup.UNIT_PATH in host.removals
 
 
-def test_uninstall_linger_failure_refuses(
+def test_uninstall_account_failures_refuse_by_name(
     debian_host: Host,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
 ) -> None:
-    """A linger the manager will not drop is a named refusal that
-    says what keeps running."""
-    host = landed_host(debian_host)
-    host.loginctl_rc = 1
+    """Each account-mirror command's failure is a named refusal:
+    the grant's removal, the account's, and the group's."""
+    host = landed_host(debian_host, monkeypatch)
+    host.deluser_rc = 1
     assert main(["--uninstall"]) == 1
-    assert "loginctl disable-linger chrism failed" in capsys.readouterr().err
+    assert "deluser chrism msks failed" in capsys.readouterr().err
+    host.deluser_rc = 0
+    host.userdel_rc = 1
+    assert main(["--uninstall"]) == 1
+    err = capsys.readouterr().err
+    assert "userdel msksd failed" in err
+    assert "stop the daemon first" in err
+    host.userdel_rc = 0
+    host.groupdel_rc = 1
+    assert main(["--uninstall"]) == 1
+    assert "groupdel msks failed" in capsys.readouterr().err
 
 
 def test_uninstall_sysctl_reload_failure_is_a_warning(
     debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
 ) -> None:
     """The boot-time file leaves; a --system run that trips on
     some other file's keys is a warning naming the boot that
     applies them, not a refusal — the rest of sysctl.d is not
     this tool's."""
-    host = landed_host(debian_host)
+    host = landed_host(debian_host, monkeypatch)
     host.sysctl_rc = 1
     assert main(["--uninstall"]) == 0
     captured = capsys.readouterr()
@@ -2055,49 +2650,55 @@ def test_uninstall_sysctl_reload_failure_is_a_warning(
     assert hostsetup.MODULES_FILE in host.removals
 
 
-def test_uninstall_with_the_unit_gone_takes_the_symlink_and_linger(
-    debian_host: Host, capsys: pytest.CaptureFixture
-) -> None:
-    """A unit file removed by hand still leaves the tool's
-    enablement symlink and linger — the teardown takes both by
-    path, and the manager that is up hears the reload so it
-    forgets the unit; no stop call is involved."""
-    host = landed_host(debian_host)
-    home = hostsetup.executing_user()[3]
-    host.files.discard(hostsetup.unit_path(home))
-    assert main(["--uninstall"]) == 0
-    assert systemctl_ran(host, "daemon-reload") == [
-        hostsetup.user_systemctl("chrism", 1000, ["daemon-reload"])
-    ]
-    assert systemctl_ran(host, "disable") == []
-    assert hostsetup.wants_path(home) in host.removals
-    assert host.ran("loginctl") == [["loginctl", "disable-linger", "chrism"]]
-    out = capsys.readouterr().out
-    assert "unit file was already gone; the enablement symlink is removed" in (
-        out
-    )
-
-
-def test_uninstall_deluser_failure_refuses(
+def test_uninstall_with_the_unit_gone_takes_the_symlink(
     debian_host: Host,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
 ) -> None:
-    """A membership the group database will not give up is a named
-    refusal, adduser's own failure text included."""
-    host = landed_host(debian_host)
-    patch_phase(monkeypatch, "in_group", lambda user, name: True)
+    """A unit file removed by hand still leaves the tool's
+    enablement symlink — the teardown takes it by path, and the
+    manager hears the reload so it forgets the unit; no stop
+    call is involved (a unit file that is gone runs no daemon)."""
+    host = landed_host(debian_host, monkeypatch)
+    host.files.discard(hostsetup.UNIT_PATH)
+    assert main(["--uninstall"]) == 0
+    assert systemctl_ran(host, "daemon-reload") == [
+        ["systemctl", "daemon-reload"]
+    ]
+    assert systemctl_ran(host, "disable") == []
+    assert hostsetup.SYSTEM_WANTS_PATH in host.removals
+    out = capsys.readouterr().out
+    assert "unit file was already gone; its enablement symlink is removed" in (
+        out
+    )
+
+
+def test_uninstall_kvm_deluser_failure_refuses(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A kvm membership the group database will not give up is a
+    named refusal, adduser's own failure text included."""
+    host = landed_host(debian_host, monkeypatch)
+
+    def kvm_only(user, name):
+        return name == "kvm"
+
+    patch_phase(monkeypatch, "in_group", kvm_only)
     host.deluser_rc = 1
     assert main(["--uninstall"]) == 1
     assert "deluser chrism kvm failed" in capsys.readouterr().err
 
 
 def test_uninstall_remove_failure_refuses(
-    debian_host: Host, capsys: pytest.CaptureFixture
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """A file the tool cannot remove is a named refusal; the run
     stops there (the first-refusal rule the install run carries)."""
-    host = landed_host(debian_host)
+    host = landed_host(debian_host, monkeypatch)
     host.fail_remove = {WRAPPER}
     assert main(["--uninstall"]) == 1
     assert f"cannot remove {WRAPPER}" in capsys.readouterr().err
@@ -2120,12 +2721,14 @@ def test_uninstall_kvm_group_absent_names_it(
 
 
 def test_uninstall_edited_profile_block_stays(
-    debian_host: Host, capsys: pytest.CaptureFixture
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """A block the operator edited inside stays put with the
     by-hand fix named — the tool never rewrites a profile it
     cannot recognize."""
-    host = landed_host(debian_host)
+    host = landed_host(debian_host, monkeypatch)
     home = hostsetup.executing_user()[3]
     edited = hostsetup.PROFILE_MARKER + "\n# hand-edited\n"
     host.writes[f"{home}/.profile"] = edited
@@ -2143,7 +2746,7 @@ def test_uninstall_names_only_the_present_packages(
     """The apt line names the packages whose probes answer present
     — a tool the host lost (or a soname the cache lost) keeps its
     package off the line."""
-    host = landed_host(debian_host)
+    host = landed_host(debian_host, monkeypatch)
     real_which = hostsetup.which
 
     def lacking(tool):
@@ -2211,38 +2814,15 @@ def test_the_remove_seams_touch_the_filesystem(
     assert hostsetup.remove_file(str(tmp_path / "never-there")) is False
 
 
-def test_uninstall_with_the_user_manager_down_needs_no_stop(
+def test_uninstall_removes_a_profile_that_held_only_the_block(
     debian_host: Host,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
 ) -> None:
-    """A user manager that is down runs no systemctl calls at all
-    (the daemon was a user unit — no manager, no daemon), while
-    the unit file and the linger still leave: a down manager must
-    not block the whole uninstall behind a bus the run can never
-    reach."""
-    host = landed_host(debian_host)
-    patch_phase(monkeypatch, "RUNTIME_DIR_FMT", "/no/such/run-user-{}")
-    assert main(["--uninstall"]) == 0
-    assert host.ran("runuser") == []
-    assert host.ran("loginctl") == [["loginctl", "disable-linger", "chrism"]]
-    home = hostsetup.executing_user()[3]
-    assert hostsetup.unit_path(home) in host.removals
-    assert hostsetup.wants_path(home) in host.removals
-    out = capsys.readouterr().out
-    assert (
-        "user manager was down — no daemon was running; lingering off" in out
-    )
-    assert SYSCTL_FILE in host.removals
-
-
-def test_uninstall_removes_a_profile_that_held_only_the_block(
-    debian_host: Host, capsys: pytest.CaptureFixture
-) -> None:
     """A ~/.profile the tool itself created (nothing but the
     block in it) goes whole instead of leaving an empty file
     behind."""
-    host = landed_host(debian_host)
+    host = landed_host(debian_host, monkeypatch)
     home = hostsetup.executing_user()[3]
     profile = f"{home}/.profile"
     host.writes[profile] = hostsetup.PROFILE_PATH_BLOCK
@@ -2274,8 +2854,12 @@ def test_install_uninstall_install_round_trip(
 
     patch_phase(monkeypatch, "replace_file", moving_replace)
     home = hostsetup.executing_user()[3]
-    unit = hostsetup.unit_path(home)
-    pieces = {SYSCTL_FILE, hostsetup.MODULES_FILE, unit, f"{home}/.profile"}
+    pieces = {
+        SYSCTL_FILE,
+        hostsetup.MODULES_FILE,
+        hostsetup.UNIT_PATH,
+        f"{home}/.profile",
+    }
 
     assert main() == 0
     assert pieces <= host.files
@@ -2291,7 +2875,7 @@ def test_install_uninstall_install_round_trip(
 
 
 def test_uninstall_sweeps_the_part_sibling(
-    debian_host: Host, tmp_path: Path
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The `.part` a killed download leaves goes with the binary —
     best-effort (_silent_unlink, the install refusal paths' own
@@ -2300,7 +2884,7 @@ def test_uninstall_sweeps_the_part_sibling(
     against the suite's own tree, never the host's /usr/local/bin."""
     partial = Path(hostsetup.CLOUD_HYPERVISOR_BIN + ".part")
     partial.write_text("half a download\n")
-    host = landed_host(debian_host)
+    host = landed_host(debian_host, monkeypatch)
     assert main(["--uninstall"]) == 0
     assert not partial.exists()
     assert hostsetup.CLOUD_HYPERVISOR_BIN in host.removals
@@ -2316,13 +2900,14 @@ def test_the_client_link_lands_idempotently(
     assert main() == 0
     link = Path(hostsetup.CLIENT_LINK)
     popup = Path(hostsetup.POPUP_LINK)
+    # #1118: the links point into the shared venv's bin — the
+    # same tree the venv phase landed, what a second user's
+    # `msks` runs through.
+    venv_bin = Path(hostsetup.VENV_BIN)
     assert link.is_symlink()
-    assert link.resolve() == Path(sys.argv[0]).resolve().parent / "msks"
+    assert link.resolve() == venv_bin / "msks"
     assert popup.is_symlink()
-    assert (
-        popup.resolve()
-        == Path(sys.argv[0]).resolve().parent / "msks-term-popup"
-    )
+    assert popup.resolve() == venv_bin / "msks-term-popup"
     out = capsys.readouterr().out
     assert "client:    " in out and "-> " in out
     assert main() == 0
@@ -2349,11 +2934,8 @@ def test_the_client_link_repoints_a_dangling_link(
     popup = Path(hostsetup.POPUP_LINK)
     popup.symlink_to("/no/such/venv/bin/msks-term-popup")
     assert main() == 0
-    assert link.resolve() == Path(sys.argv[0]).resolve().parent / "msks"
-    assert (
-        popup.resolve()
-        == Path(sys.argv[0]).resolve().parent / "msks-term-popup"
-    )
+    assert link.resolve() == Path(hostsetup.VENV_BIN) / "msks"
+    assert popup.resolve() == Path(hostsetup.VENV_BIN) / "msks-term-popup"
 
 
 def test_a_foreign_thing_at_the_link_path_refuses(

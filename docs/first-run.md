@@ -1,6 +1,6 @@
 # First run
 
-After the installation process has resulted in a running `msksd` systemd user
+After the installation process has resulted in a running `msksd` system
 service, it's almost ready to use. But you need to supply your ssh keypair and
 import at least one image used as a base for workspace creation before you can
 successfully create one.
@@ -9,12 +9,12 @@ successfully create one.
 
 Before trying to connect to `msksd` via the client, make sure it's running.
 
-On Linux, to see status and log output from the account the daemon runs as
-(the service is a systemd user unit):
+On Linux, to see status and log output (the daemon runs under the `msksd`
+account as a systemd system service):
 
 ```bash
-  systemctl --user status msksd
-  journalctl --user -u msksd -f          # follow the daemon's log
+  systemctl status msksd
+  sudo journalctl -u msksd -f            # follow the daemon's log
 ```
 
 On macOS, do the following (the daemon runs inside the Lima VM, as a
@@ -26,17 +26,19 @@ systemd system unit):
 ```
 
 When msksd is first started on Linux (or within the Lima VM that runs Linux on
-Mac), it creates a state dir (`~/.local/state/msksd`). The `msksd.yaml` config
-file is generated within it as a commented template (see
+Mac), it creates a state dir (`~/.local/state/msksd` under the daemon account's
+home on a dev daemon; `/var/lib/msksd` under the system unit). The
+`msksd.yaml` config file is generated within it as a commented template (see
 [Configuration](config.md)).
 
-The unix listener binds `$XDG_RUNTIME_DIR/msks/msksd.sock`. Same-host Linux
-clients connect through it on peer-credential authentication. A remote can, if
+The unix listener binds `/run/msks/msksd.sock` under the system unit. Same-host
+clients in the `msks` group connect through it on peer-credential
+authentication, with no token. A remote can, if
 configured, contact a TLS/https listener with a bearer token. That's how it
 works on macOS.
 
-With the host prepared, the service lingered, and an image imported, invoking
-the `msks` (the client) on the same account will find the socket.
+With the host prepared and an image imported, invoking
+the `msks` (the client) as a member of the `msks` group will find the socket.
 
 ## The key files
 

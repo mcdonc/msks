@@ -47,7 +47,7 @@ from msks.settings import (
 from msks.spec.mounts import MountSpec, mount_tag
 from msks.spec.vm import DEFAULT_CMDLINE, VmStatus
 from netstubs import stub_ip, stub_nft
-from test_fsdaemons import FakeProc, socket_from_args, socket_sleeper
+from test_fsdaemons import FakeProc, socket_sleeper
 from test_net_manager import FakeService
 
 from msks import persist
@@ -416,9 +416,8 @@ async def test_launch_reconciles_share_daemons_after_a_self_exit(
 
     monkeypatch.setattr(driver, "_virtiofsd_version", at_floor)
 
-    async def fake_spawn_fs(binary, args, log_path):
+    async def fake_spawn_fs(binary, args, log_path, fd, missing):
         proc = FakeProc()  # alive until terminate, like a daemon
-        socket_from_args(args).touch()  # serving its socket at once
         return proc
 
     monkeypatch.setattr(driver, "_spawn_fs", fake_spawn_fs)
@@ -457,8 +456,7 @@ async def test_launch_reconciles_untracked_share_daemons_after_a_self_exit(
 
     monkeypatch.setattr(driver, "_virtiofsd_version", at_floor)
 
-    async def fake_spawn_fs(binary, args, log_path):
-        socket_from_args(args).touch()  # serving its socket at once
+    async def fake_spawn_fs(binary, args, log_path, fd, missing):
         return FakeProc()
 
     monkeypatch.setattr(driver, "_spawn_fs", fake_spawn_fs)
@@ -479,7 +477,7 @@ async def test_launch_reconciles_untracked_share_daemons_after_a_self_exit(
     await app.state.microvm.launch(mounted)
     assert await local_mod.pid_dead_by(daemon.pid, 5.0)  # swept, not orphaned
     pidfile = fs_pidfile_path(vm_dir, tag)
-    assert pidfile.read_text().strip() == str(  # names the fresh daemon
+    assert pidfile.read_text().split()[0] == str(  # names the fresh daemon
         driver._fs_procs[WID][0].pid
     )
     assert (await app.state.microvm.info(WID)).status is VmStatus.RUNNING

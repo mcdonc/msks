@@ -30,6 +30,7 @@ from PySide6.QtGui import (
     QKeyEvent,
     QMouseEvent,
     QPainter,
+    QRegion,
     QResizeEvent,
     QWheelEvent,
 )
@@ -57,6 +58,14 @@ def is_paging(modifiers, key) -> bool:
 # Wheel rows per notch — six felt right next to Konsole's
 # default three on the hardware at hand.
 WHEEL_ROWS_PER_NOTCH = 6
+
+#: How long the exit report waits for a child the kernel has not
+#: made waitable yet (#1099 follow-up): the slave's fds close
+#: before the process becomes a zombie, so the last-read burst
+#: can arrive first. A child past that grace (wedged in
+#: uninterruptible sleep) reports the 0 placeholder rather than
+#: stalling the GUI on it.
+EXIT_REPORT_GRACE_S = 0.5
 
 
 class TerminalWidget(QWidget):
@@ -109,6 +118,26 @@ class TerminalWidget(QWidget):
         self.selection_gesture = self.lib.new_handle(
             self.lib.selection_gesture_new
         )
+        # The paint plan (#1113): the rows the next paint takes
+        # and the region it asked to update, set by the plan the
+        # emulator sync computes and consumed by the paint —
+        # the pixel-and-grid comparison answers, the scroll
+        # offset and find rectangles the last paint compared,
+        # whether the next paint takes every row, and the rows
+        # the last paint took (the suite's damage pins). The
+        # paint module owns the policy; these fields are its
+        # state on the screen, and they exist before the first
+        # refresh the constructor's apply_metrics runs.
+        self.repaint_full = True
+        self.repaint_rows: set[int] = set()
+        self.repaint_region = QRegion()
+        self.planned = False
+        self.last_palette: bytes | None = None
+        self.last_scroll: int | None = None
+        self.last_underlays = None
+        self.last_geometry: tuple[int, ...] | None = None
+        self.last_cursor = None
+        self.painted_rows: list[int] = []
         self.apply_metrics()
         # The pty pair opened and sized before the fork, the
         # child exec'ed onto it — the session contract (#951).
@@ -162,10 +191,21 @@ class TerminalWidget(QWidget):
         self.autoscroll.setInterval(50)
         self.autoscroll.timeout.connect(self.autoscroll_tick)
         self.link_spans: list[list[tuple[int, int, str]]] = []
+        # The URL scan's row cache (#1100): each viewport row's
+        # per-cell text, refreshed when the painter paints that
+        # row and read whole by the scan each paint — soft-wrapped
+        # rows stitch across the cached texts.
+        self.link_rows: list[list[str]] = []
         self.hand_cursor = False
+        self.link_spans: list[list[tuple[int, int, str]]] = []
         self.search = 0
         self.find_edit: QLineEdit | None = None
         self.find_count = None
+        # The paint state is whole now: the plan may read the
+        # find and session fields it touches. The constructor's
+        # own apply_metrics refresh ran before they existed and
+        # asked for the whole widget instead.
+        self.planned = True
 
     # --- lifecycle ----------------------------------------------------
 
@@ -221,16 +261,25 @@ class TerminalWidget(QWidget):
         """The exit path, once: disarm the notifier (the
         session closed the master under it), start the reaper,
         and report the status the tab teardown listens for.
-        Later reads on the dead master change nothing."""
+        Later reads on the dead master change nothing.
+
+        The report waits out the window where the child closed
+        its slave fds but the kernel has not made it waitable
+        (#1099 follow-up): a reaped-now status goes out at once,
+        a child still finishing exits inside the grace and its
+        real code goes out, and a wedged one reports the 0
+        placeholder after the grace instead of hanging the
+        report on it."""
         if self._exit_reported:
             return
         self._exit_reported = True
         self.notifier.setEnabled(False)
-        # Reap first when the child is already collectable: the
-        # report carries the real status, not the 0 a missed
-        # WNOHANG would leave.
         self.session.reap()
+        if self.session.exit_status is None:
+            self.session.await_exit(EXIT_REPORT_GRACE_S)
         self.reaper.start(100)
+        self.repaint_full = True  # the exit banner's strip
+        self.update()
         self.refresh()
         self.process_exited.emit(self.session.exit_status or 0)
 
@@ -249,9 +298,15 @@ class TerminalWidget(QWidget):
 
     def refresh(self) -> None:
         """Sync the render state with the emulator and
-        schedule a paint."""
+        schedule the paint of the rows the plan names. The
+        constructor's own apply_metrics refresh lands before
+        the find and session fields exist, and asks for the
+        whole widget."""
         self.lib.render_state_update(self.render_state, self.terminal)
-        self.update()
+        if self.planned:
+            self.update(paint.plan_paint(self))
+        else:
+            self.update()
 
     def flash(self) -> None:
         """The visual bell: a brief orange border flash; a
@@ -292,14 +347,17 @@ class TerminalWidget(QWidget):
             )
 
     def bell_off(self) -> None:
-        """The flash's timer end: the border goes dark."""
+        """The flash's timer end: the border goes dark, and
+        the full pass that erases it follows."""
         self.bell_flash = False
+        self.repaint_full = True
         self.update()
 
     # --- geometry and fonts -------------------------------------------
 
     def sizeHint(self) -> QSize:  # noqa: N802
-        return QSize(*self.metrics.size(self.cols, self.rows))
+        width, height = self.metrics.size(self.cols, self.rows)
+        return QSize(width + paint.LANE_W, height)
 
     def apply_metrics(self) -> None:
         """Measure the face and push the pixel metrics into the
@@ -374,6 +432,14 @@ class TerminalWidget(QWidget):
             self._fitting = False
             self.land_grid(entered)
 
+    def derived_grid(self) -> tuple[int, int]:
+        """The grid the widget's current pixels name (#1113):
+        the scrollbar's lane sits right of the grid, so the
+        columns derive from the width less the lane."""
+        cols = max(1, (self.width() - paint.LANE_W) // self.metrics.cell_width)
+        rows = max(1, self.height() // self.metrics.cell_height)
+        return cols, rows
+
     def land_grid(self, entered: tuple[int, int]) -> None:
         """Land the grid the fit left (#976): the passes' own
         resize events were held off, and the settled pixels
@@ -384,8 +450,7 @@ class TerminalWidget(QWidget):
         with whole."""
         if (self.width(), self.height()) == entered:
             return
-        cols = max(1, self.width() // self.metrics.cell_width)
-        rows = max(1, self.height() // self.metrics.cell_height)
+        cols, rows = self.derived_grid()
         if (cols, rows) != (self.cols, self.rows):
             self.resize_grid(cols, rows)
 
@@ -413,7 +478,9 @@ class TerminalWidget(QWidget):
         window carries no layout that moves the widget — a
         second pass would add the same delta to the window
         again and reach nothing."""
-        width = self.metrics.cell_width * self.cols - self.width()
+        width = (
+            self.metrics.cell_width * self.cols + paint.LANE_W - self.width()
+        )
         height = self.metrics.cell_height * self.rows - self.height()
         if not (width or height):
             return False
@@ -447,8 +514,7 @@ class TerminalWidget(QWidget):
         # terminal the library already freed.
         if not self._closed:
             if not self._fitting:  # the window fit holds its grid
-                cols = max(1, self.width() // self.metrics.cell_width)
-                rows = max(1, self.height() // self.metrics.cell_height)
+                cols, rows = self.derived_grid()
                 if (cols, rows) != (self.cols, self.rows):
                     self.resize_grid(cols, rows)
             find.layout(self)
@@ -458,10 +524,46 @@ class TerminalWidget(QWidget):
 
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
-        paint.paint_event(self, painter)
+        paint.paint_event(self, painter, event.region())
         painter.end()
 
     # --- keyboard -----------------------------------------------------
+
+    def event(self, event: QEvent) -> bool:  # noqa: N802
+        """The bare Esc belongs to the program inside (#1099):
+        the workspace page stands a widget-scoped shortcut on
+        the key — Esc goes Back — and Qt asks the focus widget
+        first, with a ``ShortcutOverride`` event, whether the
+        matching shortcut should yield. The accept keeps the
+        press for the terminal: it reaches the encoder like
+        every other key, and the shell reads its Esc. An
+        override a focused child ignores — the find bar's
+        edit — propagates here too, and the accept serves it
+        the same way: the shortcut stays quiet and the edit's
+        own Esc handler answers instead of the page's Back.
+        Unlike Tab's refusal (#1066, :meth:`focusNextPrevChild`)
+        the accept is not gated on ``hasFocus`` for exactly
+        that reason.
+
+        The claim names the bare Esc alone — a modified one
+        or another key passes to the base, so the zoom keys
+        and every other shortcut keep their answers."""
+        if event.type() == QEvent.Type.ShortcutOverride:
+            key = event.key()
+            # Belt-and-braces: Qt only delivers the override
+            # when a shortcut matches the press, and the page's
+            # is unmodified — the mask answers a future
+            # modified-Esc shortcut, not today's key.
+            claimed = (
+                Qt.KeyboardModifier.ControlModifier
+                | Qt.KeyboardModifier.ShiftModifier
+                | Qt.KeyboardModifier.AltModifier
+                | Qt.KeyboardModifier.MetaModifier
+            )
+            if key == Qt.Key.Key_Escape and not event.modifiers() & claimed:
+                event.accept()
+                return True
+        return super().event(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         if self.handle_shortcut(event):

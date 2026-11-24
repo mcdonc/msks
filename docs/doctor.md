@@ -58,7 +58,17 @@ Some fixes are not distro packages. Where that is so, the hint
 gives the real source: cloud-hypervisor installs from the
 upstream static release.
 
-The run ends with a tally (`14 passed`, or `12 passed, 1
+On Linux, three more rows read the system deployment's own
+state. `msks-group` checks that the `msks` access group exists
+and that the account running doctor holds it (root passes
+without holding it). `msksd-unit` checks that the `msksd`
+system unit is active. `shared-socket` checks that
+`/run/msks/msksd.sock` names a socket a serving daemon left
+behind. All three are warning grade: a daemon serving TCP alone
+(the dev daemon, a remote deployment) keeps a green report
+without them.
+
+The run ends with a tally (`20 passed`, or `18 passed, 1
 error, 1 warning`). When anything failed, a closing block
 repeats every miss with its fix. The exit code is 0 when every
 check passes or only warns, and 1 when any check errors.

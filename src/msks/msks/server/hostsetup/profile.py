@@ -28,15 +28,6 @@ from .util import (
 
 TOOL = "msks-setup-debian-host"
 
-# The service phase's names (#560): the user unit's location
-# under the executing user's home, and the directory whose
-# presence says systemd is the manager (the same probe systemctl
-# itself gates on; a container or another init leaves it absent).
-# The service is a user service of the executing user — their
-# state dir, image catalog, and #555 socket identity carry over —
-# so no system unit, no User=/Group= lines, and no state
-# relocation are involved.
-
 # Root's login PATH carries /usr/sbin on Debian; a sudo invocation
 # can arrive with a stripped PATH, and setcap/nft/conntrack/modprobe
 # live there.
@@ -185,7 +176,7 @@ class HostProfile:
     kernel_package: Callable[[str, str], str]
     group_add: Callable[[str, str], list[str]]
     group_remove: Callable[[str, str], list[str]]
-    group_restore: Callable[[str], str]
+    group_restore: Callable[[str, str], str]
 
 
 DEBIAN_PROFILE = HostProfile(
@@ -223,7 +214,7 @@ DEBIAN_PROFILE = HostProfile(
     kernel_package=kernel_package,
     group_add=lambda user, group: ["adduser", user, group],
     group_remove=lambda user, group: ["deluser", user, group],
-    group_restore=lambda user: f"adduser {user} kvm",
+    group_restore=lambda user, group: f"adduser {user} {group}",
 )
 
 

@@ -159,8 +159,9 @@ placeholders within HTTP headers bound for external sites are swapped on the
 wire sent to actual secret values. The [secrets chapter](secrets.md)
 explains this in detail.
 
-The **secrets page** lists every placeholder the daemon holds, in columns:
-coverage (`*` for the daemon-wide row, otherwise its workspace ids), name,
+The **secrets page** lists the caller's placeholders (root and the daemon's user see
+every owner's), in columns:
+coverage (`*` for the owner-wide row, otherwise its workspace ids), name,
 destinations, remaining lifetime, and created date.
 
 ![The secrets page: the placeholder list](screens/secrets-page.svg)
@@ -176,7 +177,7 @@ Picking one extends the row in place.
 
 `c` opens the mint form. The name field comes first, then repeatable
 destinations: an exact host or a label-anchored suffix, comma-separated
-in one field. Coverage follows: the daemon-wide row, or a multi-select
+in one field. Coverage follows: the owner-wide row, or a multi-select
 fed by the tree's workspace list.
 
 The lifetime field offers `unbounded` by default, with an hour to thirty days

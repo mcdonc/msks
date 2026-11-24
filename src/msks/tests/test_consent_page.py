@@ -19,6 +19,7 @@ from types import SimpleNamespace
 import pytest
 import websockets
 from msks.client import env as env_mod
+from msks.client.bridge import ReHolder
 from msks.client.tui import consent_ui
 from msks.client.tui.consent_ui import (
     ConsentPage,
@@ -234,6 +235,10 @@ class PageData:
         self.modes: list[tuple] = []
         self.fail: set[str] = set()
         self.refusal = "daemon away"
+        # The bridge re-hold watch's surface (#1127): the consent
+        # page's fake spawns nothing and defers nothing — the
+        # pages these tests build carry no proxy rows.
+        self.reholder = ReHolder(spawn=lambda ws: False)
 
     async def workspaces(self) -> list[dict]:
         return [dict(PAGE_ROW)]

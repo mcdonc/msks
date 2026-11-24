@@ -12,11 +12,12 @@ import os
 from pathlib import Path
 
 from ...spec.version import __version__
+from ..hostsetup.venv import UV_PIN
+from ..hostsetup.venv import refuse_dev_build as shared_refuse_dev_build
 from .base import (
     CH_SHA256,
     CH_URL,
     TOOL,
-    UV_PIN,
     VM_CONF,
     VM_NAME,
     VM_PACKAGES,
@@ -190,13 +191,9 @@ def refuse_dev_build(wheel: str | None) -> None:
     (the crash-loop shape). The refusal preflights the run, after
     the platform gate and before the mutating phases — the VM
     creation that follows would otherwise spend minutes building
-    a machine a rerun cannot finish."""
-    if wheel is None and ".dev" in vm_version():
-        raise MacSetupError(
-            f"this tool is a development build ({vm_version()}); the "
-            "VM installs a release from PyPI or a wheel in hand — "
-            "build one (uv build) and pass --wheel"
-        )
+    a machine a rerun cannot finish. The message is the shared
+    one (#1118: the three tools converge on the vocabulary)."""
+    shared_refuse_dev_build(wheel, MacSetupError)
 
 
 def bootstrap_vm(wheel: str | None, home: str) -> None:

@@ -475,6 +475,7 @@ KEY_CASES = [
     ("host", "0.0.0.0", "server.host", "0.0.0.0"),
     ("port", 9000, "server.port", 9000),
     ("socket", "/custom/msksd.sock", "server.socket", "/custom/msksd.sock"),
+    ("socket_group", "msks", "server.socket_group", "msks"),
     ("tls_cert", "/c.pem", "server.tls_cert", "/c.pem"),
     ("tls_key", "/k.pem", "server.tls_key", "/k.pem"),
     ("event_poll_s", 2.5, "server.event_poll_s", 2.5),
@@ -493,6 +494,15 @@ KEY_CASES = [
         "/usr/local/bin/virtiofsd",
         "vmm.virtiofsd",
         "/usr/local/bin/virtiofsd",
+    ),
+    # #1088: the helper's name stays raw at load — the spawn
+    # resolves it (PATH names, the wheel's bundled binary, the
+    # install location) when a cross-owner share needs it.
+    (
+        "virtiofsd_as",
+        "msks-virtiofsd-as",
+        "vmm.virtiofsd_as",
+        "msks-virtiofsd-as",
     ),
     (
         "mount_host_mode",
@@ -944,3 +954,21 @@ def test_an_empty_socket_export_disables_through_a_file(
     path = dump_config(tmp_path, {"port": 9015})
     settings = load_settings(path)
     assert settings.server.socket == ""
+
+
+def test_the_socket_group_reads_env_and_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """MSKSD_SOCKET_GROUP names the access group the bound socket
+    is handed to at startup (#1080); the file key socket_group
+    carries the same value through the one derivation rule, and
+    an empty export is the unset form (the group has no
+    empty-string spelling — the socket path's disable is its
+    own)."""
+    monkeypatch.setenv("MSKSD_SOCKET_GROUP", "msks")
+    assert Settings.from_env().server.socket_group == "msks"
+    monkeypatch.setenv("MSKSD_SOCKET_GROUP", "")
+    assert Settings.from_env().server.socket_group is None
+    monkeypatch.delenv("MSKSD_SOCKET_GROUP")
+    path = dump_config(tmp_path, {"socket_group": "msks"})
+    assert load_settings(path).server.socket_group == "msks"

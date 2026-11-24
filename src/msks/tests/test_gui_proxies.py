@@ -191,9 +191,9 @@ def test_the_cells_read_the_row() -> None:
 def test_the_parse_reads_the_clis_own_words() -> None:
     """The form's parse (#988): the CLI's own parsers for the
     picked direction — whole bodies landing, a blank spec saying
-    itself, a shape refusal in the command's words, the forward
-    host field held to the loopback spellings the daemon
-    accepts."""
+    itself, a shape refusal in the command's words, and the
+    forward host field passing through for the far end to
+    resolve (#1102)."""
     body, error = parsed_body(FORWARD_CHOICE, "8080:localhost:80")
     assert error == ""
     assert body is not None and body["listen_port"] == 8080
@@ -203,7 +203,8 @@ def test_the_parse_reads_the_clis_own_words() -> None:
     )
     assert parsed_body(FORWARD_CHOICE, "ssh")[0] is None
     assert "refused:" in parsed_body(FORWARD_CHOICE, "ssh")[1]
-    assert parsed_body(FORWARD_CHOICE, "8080:example.com:80")[0] is None
+    foreign, _error = parsed_body(FORWARD_CHOICE, "8080:example.com:80")
+    assert foreign is not None and foreign["target_host"] == "example.com"
     remote, _error = parsed_body(REMOTE_CHOICE, "2222:127.0.0.1:22")
     assert remote is not None and remote["direction"] == "remote"
 

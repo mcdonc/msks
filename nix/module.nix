@@ -87,6 +87,15 @@ let
     litellm = msksdPkgs.python314.pkgs.callPackage ./litellm-pkg.nix { };
   };
 
+  # The owner-exec helper (#1087, #1080 phase 2a), built from the
+  # in-repo source against a musl static stdenv (a setuid binary
+  # ships best with no interpreter and no libraries at exec), the
+  # host's own virtiofsd pinned as the exec target — the binary
+  # behind security.wrappers.msks-virtiofsd-as below.
+  virtiofsdAs = pkgs.pkgsStatic.callPackage ./virtiofsd-as.nix {
+    virtiofsd = pkgs.virtiofsd;
+  };
+
   # The generated msksd.yaml (docs/config.md is the key reference):
   # the appliance's msks-boot file, minus the appliance paths, plus
   # the tools that file's PATH carried (the #184 resize pair, the
@@ -275,6 +284,20 @@ in
       group = "msksd";
       home = cfg.stateDir;
       shell = "/run/current-system/sw/bin/nologin";
+    };
+
+    # The owner-exec helper's wrapper (#1087, #1080 phase 2a):
+    # setuid-root, executable by the daemon's group alone — the
+    # privilege boundary the daemon execs a share's virtiofsd
+    # through as the workspace's owner uid (the daemon-side wiring
+    # is #1088). Built from the in-repo source, so no generation
+    # ships a helper that drifted from the source.
+    security.wrappers.msks-virtiofsd-as = {
+      source = "${virtiofsdAs}/bin/virtiofsd-as";
+      owner = "root";
+      group = "msksd";
+      setuid = true;
+      permissions = "u=rwx,g=rx";
     };
 
     # The egress prerequisites (the appliance loaded these at boot;

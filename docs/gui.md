@@ -71,7 +71,14 @@ flashes on the status line.
 A failed refresh flashes the status line at the top of the page.
 A refusal clears itself after four seconds. A daemon outage
 stands on the line until an answer resolves it, and the rows
-already on screen stand the whole time.
+already on screen stand the whole time. While the daemon is
+down, the events feed's retry message flashes over the outage
+on every failed connection. The outage's text returns when each
+flash ends. A window opened while the daemon is down recovers by
+itself when the daemon comes up. The events feed reconnects
+within five seconds, and every connection it makes re-reads the
+page. The status line then says `daemon back — listing resumed`
+once.
 
 The strip at the bottom reads the held row's quick facts: the
 name, id, image, cpu count, memory, egress mode, mounts marker,
@@ -168,6 +175,11 @@ the spec beside the state the daemon derived, in five columns:
 HOST, GUEST, MODE, STATE, REASON. **Add** opens the form, **Edit**
 changes the selected row, and **Remove** drops it. Every change
 posts the whole list to the daemon.
+
+A right-click on a row selects it and opens its menu with
+**Edit** and **Remove**. The entries take the buttons' own
+paths and act on the selection, with the buttons' gating. A
+press below the rows opens nothing.
 
 The daemon owns the rules. A host path outside the allowed roots
 is refused with the remedy stated, and the refusal appears on
@@ -268,7 +280,12 @@ page's re-reads.
 
 A dropped events feed flashes the page while it is open. The
 page re-reads whole when the feed serves again, so the gap
-between the drop and the recovery lands on screen.
+between the drop and the recovery lands on screen. A daemon
+outage keeps its text on the status line between the feed's
+retry flashes. The first answered read after it says
+`daemon back — images resumed` once. An action's answer also ends
+the outage. The status line shows the action's result, not the
+recovery line.
 
 ## The Secrets tab
 
@@ -276,7 +293,7 @@ between the drop and the recovery lands on screen.
 
 The third top-level tab manages the daemon's secret
 placeholders. The **Placeholders** group lists every row with its
-coverage (the daemon-wide `*` or its workspace ids), name,
+coverage (the owner-wide `*` or its workspace ids), name,
 destinations, remaining lifetime, created label, and lock state.
 The lifetime cell is a live countdown, repainted every second.
 An unbounded row reads `never`.
@@ -287,7 +304,7 @@ pre-selected), and Revoke…, which asks first. A revoked row
 retires everywhere at once.
 
 **Mint** opens the mint form: name, comma-separated destinations,
-coverage (daemon-wide, or scoped to a workspace multi-select),
+coverage (owner-wide, or scoped to a workspace multi-select),
 the TTL choice, and the value. A landed mint closes the form and
 the listing refreshes. The GUI shows no sentinel panel: the flash
 reports the minted row, and the sentinel itself reads back
@@ -316,7 +333,12 @@ batch.
 
 A dropped events feed flashes the page while it is open. The
 page re-reads whole when the feed serves again, so the gap
-between the drop and the recovery lands on screen.
+between the drop and the recovery lands on screen. A daemon
+outage keeps its text on the status line between the feed's
+retry flashes. The first answered read after it says
+`daemon back — secrets resumed` once. An action's answer also ends
+the outage. The status line shows the action's result, not the
+recovery line.
 
 ## The zoom keys
 

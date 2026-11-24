@@ -84,7 +84,9 @@ async def scan_workspace(app, hub: EventHub, row: dict) -> bool:
         return False
     if in_flight_hold(app, row["id"], row["status"], status):
         return False
-    return await publish_transition(app, hub, row["id"], status)
+    return await publish_transition(
+        app, hub, row["id"], status, row.get("owner_uid")
+    )
 
 
 def steady_state(row_status: str, seam_status: str) -> bool:
@@ -141,13 +143,17 @@ def in_flight_hold(
 
 
 async def publish_transition(
-    app, hub: EventHub, workspace_id: str, status: str
+    app, hub: EventHub, workspace_id: str, status: str, owner: int | None
 ) -> bool:
-    """Write the new status and announce it; False when the row vanished."""
+    """Write the new status and announce it; False when the row
+    vanished. The frame's audience is the workspace's owner
+    (#1095) — the scan's row carries it."""
     if not await app.state.model.set_status(workspace_id, status):
         return False
     await hub.publish(
-        "workspace.status", {"id": workspace_id, "status": status}
+        "workspace.status",
+        {"id": workspace_id, "status": status},
+        owner=owner,
     )
     return True
 
@@ -284,7 +290,7 @@ async def sweep_expired_placeholders(app, hub: EventHub) -> int:
 async def refresh_disarmed(app, expired: list[dict]) -> None:
     """Stand each expired row's redirects down (#199, #339): the
     rows are already gone, so every refresh reads the new state.
-    Every attached workspace re-evaluates — the daemon-wide row
+    Every attached workspace re-evaluates — the owner-wide row
     disarms the workspaces it armed, and every armed table drops
     the sentinel from its detection half. One workspace's failure
     defers only its own stand-down — the next watch interval
@@ -324,7 +330,8 @@ async def retire_expired(app, hub: EventHub, row: dict) -> None:
     audit_id = await model.record_audit("expiry", row)
     # The audit row commits before this publish: a registration in
     # the gap replays the row, and the client's audit-id dedup
-    # drops whichever delivery is second (#305).
+    # drops whichever delivery is second (#305). The frame's
+    # audience is the row's owner (#1090).
     await hub.publish(
         "secret.expiry",
         {
@@ -337,4 +344,5 @@ async def retire_expired(app, hub: EventHub, row: dict) -> None:
             "name": row["name"],
             "ts": time.time(),
         },
+        owner=row["owner_uid"],
     )

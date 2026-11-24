@@ -13,11 +13,12 @@ The actual secret lives in msksd's **secret store** (the
 database's per-recipient age-encrypted blobs) and in the daemon's unlock cache
 during its window. The secret store is encrypted using the ssh identity.
 
-A mint covers **workspaces**. With no target it is the **daemon-wide
-placeholder** valid on every workspace's tap. An operator running several
-workspaces against one daemon mints the credential once and distributes the
-same sentinel everywhere. A workspace target scopes the row to only
-those workspaces.
+A mint covers **workspaces**. With no target it is the **owner-wide
+placeholder**: the row belongs to the user who minted it and is valid on
+every workspace that user owns. An operator running several workspaces
+mints the credential once and distributes the same sentinel to all of
+them. Another user's workspaces never see it. A workspace target scopes
+the row to only those workspaces.
 
 The in-flight swap itself is the **egress interceptor**; the next section
 documents it. If you don't care much about how this works, you can safely skip
@@ -27,8 +28,8 @@ it.
 
 A workspace covered by at least one live placeholder is **armed**. A live
 placeholder is minted, unrevoked, and unexpired; the coverage is the
-workspace's own scoped placeholders, or any daemon-wide placeholder while the
-workspace accepts one.
+workspace's own scoped placeholders, or any owner-wide placeholder its
+owner minted while the workspace accepts one.
 
 When armed, the daemon redirects that workspace's TCP flows toward ports 80 and
 443 into an in-process HTTPS/HTTP proxy, and the swap happens there. The proxy
@@ -61,8 +62,8 @@ What each request gets:
   allowlist misses (while another placeholder decrypts the
   flow) passes through unrewritten and publishes a
   `secret.sighting` event on the events channel. The same is
-  true for a sentinel a workspace holds no covering row for. A
-  daemon-wide sentinel used from a workspace scoped against it,
+  true for a sentinel a workspace holds no covering row for. An
+  owner-wide sentinel used from a workspace scoped against it,
   or another workspace's scoped sentinel, reads as an
   off-allowlist sighting: the cross-workspace leak is announced,
   never serviced. A revoked or expired sentinel passes through
@@ -106,15 +107,16 @@ revoke and expiry. A swap or sighting also gives the destination the wire saw;
 a mint gives the allowlist it was minted with; revoke, expiry, and unlock carry
 the identity alone.
 
-The `msks tui` secrets page's audit view (`e` from the page) shows every
-workspace's events newest first, daemon-wide. The newest hundred recorded
-mints, revokes, expiries, and unlocks replay onto it when the view opens, and
-swaps and sightings stream in live. Each row's time is its local clock. A row
+The `msks tui` secrets page's audit view (`e` from the page) shows the
+caller's own rows' events, newest first. Root and the daemon's user see
+every owner's. The newest hundred recorded mints, revokes, expiries, and
+unlocks replay onto it when the view opens, and swaps and sightings stream
+in live under the same rule. Each row's time is its local clock. A row
 from an earlier day carries its date beside the clock. The off-allowlist
 sighting is highlighted
 as the exfil signal, with a header line stating the detection boundary above.
-Kind and workspace filters narrow the view; a daemon-wide row's events cover
-every workspace, a scoped row's its members.
+Kind and workspace filters narrow the view; an owner-wide row's events
+cover its owner's workspaces, a scoped row's its members.
 
 We fail-closed on the swap path. A secret the store cannot serve,
 or a row the database cannot read answers the request locally
@@ -146,7 +148,8 @@ brings, never a code change.
 ## The seeded probe placeholder
 
 A fresh daemon seeds one placeholder itself at first-time
-startup: the daemon-wide row named **`probe`**, allowlisting
+startup: the owner-wide row named **`probe`** (owned by the
+daemon's own user), allowlisting
 `secretprobe.msks`, carrying the fixed credential blob
 `bXNrczptc2tz` as its secret. It exists so an operator can
 verify interception from inside a workspace with zero minting
@@ -167,7 +170,8 @@ TLS splice, leaf mint, and the sentinel-to-secret swap.
 
 The daemon seeds the machinery itself at first-time startup, and the
 interception CA is installed at first boot. The seeded placeholder is the
-daemon-wide row named `probe`, whose secret is the base64 of the whole
+owner-wide row named `probe`, owned by the daemon's own user, whose
+secret is the base64 of the whole
 credential `bXNrczptc2tz`. Nothing is left to
 do by hand. The verification:
 
@@ -203,7 +207,7 @@ seeded row's sentinel is served back over the token-gated API
 (`GET /api/v1/probe`): a token holder already owns the daemon.
 
 Two reachability notes. The probe answers only while the workspace is
-**armed**. A workspace scoped against daemon-wide placeholders (no covering row
+**armed**. A workspace scoped against owner-wide placeholders (no covering row
 of its own) never arms. Its direct connection to `secretprobe.msks:443` finds nothing
 admitted and times out. That posture is the documented way to opt a workspace
 out of interception entirely.
@@ -251,19 +255,20 @@ sentinel: mskssec2_9Jm3...kQ
   or that carries no identity key at all, refuses the mint with
   the workspace named.
 - The mint above carries no workspace target: it is the
-  **daemon-wide** mint: one row, one `mskssec2_` sentinel, valid
-  on every workspace's tap toward the minted destinations. A
-  workspace created later is covered from its first boot;
-  coverage acts as policy, not as a snapshot of the workspace
-  set at mint time.
+  **owner-wide** mint: one row, one `mskssec2_` sentinel, valid on
+  every workspace the minting user owns, toward the minted
+  destinations. A workspace that user creates later is covered
+  from its first boot; coverage acts as policy, not as a snapshot
+  of the workspace set at mint time. Another user's workspaces
+  are never covered by it.
 - `--workspace` scopes the mint: `--workspace myws` (exactly
   today's single-workspace placeholder), or a comma list
   (`--workspace ci,deploy`) for several: one row, one
   `mskssec1_` sentinel, one coverage set either way. A mint
-  produces a single sentinel whether it targets every workspace
-  or a set of one or several; the same label can live on the
-  daemon-wide row and on scoped rows beside it, one row per
-  label per coverage set.
+  produces a single sentinel whether it targets the owner's whole
+  workspace set or a set of one or several; the same label can
+  live on the owner-wide row and on scoped rows beside it, one
+  row per label per owner per coverage set.
 - `--dest` repeats: an exact host (`api.github.com`) binds the
   swap to that host; a suffix (`.github.com`) binds it to every
   host under that domain. A placeholder carries one coverage
@@ -285,7 +290,7 @@ sentinel: mskssec2_9Jm3...kQ
 ## TUI minting
 
 The `msks tui` secrets page mints too. `c` opens the form:
-name, repeatable destinations, coverage (the daemon-wide row,
+name, repeatable destinations, coverage (the owner-wide row,
 or a multi-select of the workspaces the tree's own list
 offers), the lifetime (`unbounded` by default, an hour to
 thirty days beside it), and the value.
@@ -308,22 +313,24 @@ after. Closing the panel clears its text.
 
 The TUI allows this via "x".
 
-`msks secret revoke --name github_api` retires the daemon-wide
+`msks secret revoke --name github_api` retires the owner-wide
 row of that label everywhere at once. `msks secret revoke
 --workspace myws --name github_api` retires the scoped row
 whose coverage is exactly that set. The targeting mirrors the
 mint's, and `msks secret renew` selects its row the same way.
-`msks secret ls` lists every row with its coverage (`*` for the
-daemon-wide row, the workspace list scoped).
+`msks secret ls` lists the caller's rows with their coverage
+(`*` for the owner-wide row, the workspace list scoped); root
+sees every owner's rows.
 
-A workspace can exempt itself from daemon-wide placeholders:
+A workspace can exempt itself from owner-wide placeholders:
 `msks create --secret-coverage scoped` (or `msks secret
 coverage myws scoped` later) means only placeholders minted
-directly at that workspace arm it. A daemon-wide sentinel used
+directly at that workspace arm it. An owner-wide sentinel used
 from a scoped workspace publishes an off-allowlist sighting and
-swaps nothing. Every new workspace accepts daemon-wide coverage
+swaps nothing. Every new workspace accepts owner-wide coverage
 unless its own setting says scoped, and flipping the setting
-back to `all` arms it with any live daemon-wide row.
+back to `all` arms it with any live owner-wide row its owner
+holds.
 
 ## The unlock window
 
@@ -440,8 +447,8 @@ and the blob's recipient list is exactly the row's coverage.
 ## The audit trail
 
 Mint, revoke, expiry, and unlock append a row to the daemon
-database: the placeholder's coverage (the daemon-wide row, or
-the workspace list), name, destination allowlist, and a
+database: the placeholder's owner, its coverage (the owner-wide
+row, or the workspace list), name, destination allowlist, and a
 timestamp (`msks secret ls` lists placeholders; the audit view
 is `/api/v1/secrets/audit`).
 

@@ -29,7 +29,7 @@ from ...persist import (
     import_home_volume as import_home_volume_from_stream,
 )
 from ...storage import create_refusal
-from .deps import require_token
+from .deps import authed_caller, scoped_caller
 from .rows import (
     home_volume_guard,
     host_mismatch,
@@ -124,18 +124,21 @@ def volume_teardown(fd: int, lock: asyncio.Lock):
     return teardown
 
 
-async def locked_export(app, hub, workspace_id: str, home: Path) -> Response:
+async def locked_export(
+    app, hub, workspace_id: str, home: Path, caller: int
+) -> Response:
     """The export under the workspace's move-lock (#80).
 
     The lock spans the re-check and the open and rides the response
     through the stream: a boot that arrives mid-download waits it
     out instead of attaching a volume whose bytes are leaving. The
     size comes from the open fd, so the served length always
-    matches the body it yields.
+    matches the body it yields. The re-check carries the owner
+    filter (#1082): the caller the route's resolve proved.
     """
     lock = await acquire_move_lock(app, workspace_id)
     try:
-        await rechecked_row(app, workspace_id)
+        row = await rechecked_row(app, workspace_id, caller)
         try:
             fd, size = await asyncio.to_thread(open_sized, home)
         except OSError:
@@ -151,7 +154,7 @@ async def locked_export(app, hub, workspace_id: str, home: Path) -> Response:
         lock.release()
         raise
     return HoldingStreamingResponse(
-        export_body(hub, workspace_id, fd),
+        export_body(hub, workspace_id, fd, row.get("owner_uid")),
         teardown=volume_teardown(fd, lock),
         media_type="application/octet-stream",
         headers={
@@ -163,15 +166,23 @@ async def locked_export(app, hub, workspace_id: str, home: Path) -> Response:
     )
 
 
-async def export_body(hub, workspace_id: str, fd: int) -> AsyncIterator[bytes]:
+async def export_body(
+    hub, workspace_id: str, fd: int, owner: int | None
+) -> AsyncIterator[bytes]:
     """The streamed half: the volume's windows. The completion event
     fires only on a clean end of file — a client that disconnects
-    mid-download cancelled no export."""
+    mid-download cancelled no export. The frame's audience is the
+    workspace's owner (#1095), resolved under the lock the stream
+    carries the closure over."""
     moved = 0
     async for window in read_volume(fd):
         moved += len(window)
         yield window
-    await hub.publish("home.exported", {"id": workspace_id, "bytes": moved})
+    await hub.publish(
+        "home.exported",
+        {"id": workspace_id, "bytes": moved},
+        owner=owner,
+    )
 
 
 async def installed_volume(
@@ -200,18 +211,23 @@ async def installed_volume(
 
 
 async def locked_import(
-    app, hub, workspace_id: str, request: Request
+    app, hub, workspace_id: str, request: Request, caller: int
 ) -> Response:
     """The upload under the workspace's move-lock (#80).
 
     The row and seam re-read under the lock plus the lock itself
     close the boot race: a start either finished (the re-read
     refuses) or is waiting (the boot opens the installed volume).
+    The re-read carries the owner filter (#1082).
     """
-    await rechecked_row(app, workspace_id)
+    row = await rechecked_row(app, workspace_id, caller)
     state_dir = app.state.settings.vmm.state_dir
     total = await installed_volume(state_dir, workspace_id, request)
-    await hub.publish("home.imported", {"id": workspace_id, "bytes": total})
+    await hub.publish(
+        "home.imported",
+        {"id": workspace_id, "bytes": total},
+        owner=row.get("owner_uid"),
+    )
     return Response(
         status_code=200,
         content=json.dumps({"id": workspace_id, "bytes": total}),
@@ -223,12 +239,11 @@ def router(app, hub) -> APIRouter:
     """The volume routes: resize and the two byte streams."""
     api = APIRouter()
 
-    @api.post(
-        "/api/v1/workspaces/{workspace_id}/resize",
-        dependencies=[Depends(require_token)],
-    )
+    @api.post("/api/v1/workspaces/{workspace_id}/resize")
     async def resize_workspace(
-        workspace_id: str, body: WorkspaceResize
+        workspace_id: str,
+        body: WorkspaceResize,
+        caller: int = Depends(scoped_caller),
     ) -> dict:
         """Move a stopped workspace's sizes (#184) and topology
         (#277): the home volume grows or shrinks, the overlay grows,
@@ -240,7 +255,7 @@ def router(app, hub) -> APIRouter:
         speaks here — a resize writes MiBs of filesystem metadata,
         and a shrink gives bytes back.
         """
-        row = await workspace_or_404(app, workspace_id)
+        row = await workspace_or_404(app, workspace_id, caller)
         # The ref (name or id) resolved: everything keyed below uses
         # the row's immutable id (#246).
         workspace_id = row["id"]
@@ -260,7 +275,7 @@ def router(app, hub) -> APIRouter:
                 ),
             )
         async with move_lock(app, workspace_id):
-            row = await rechecked_row(app, workspace_id)
+            row = await rechecked_row(app, workspace_id, caller)
             vmm = app.state.settings.vmm
             state_dir = vmm.state_dir
             home = home_volume_path(state_dir, workspace_id)
@@ -385,7 +400,9 @@ def router(app, hub) -> APIRouter:
                 await app.state.model.set_topology(
                     workspace_id, body.cpus, body.mem_mib
                 )
-            updated = await app.state.model.get_workspace(workspace_id)
+            updated = await app.state.model.get_workspace(
+                workspace_id, viewer=caller
+            )
             if updated is None:
                 # The row vanished under the move-lock (a concurrent
                 # delete won it): answer 404, not a None crash.
@@ -406,6 +423,7 @@ def router(app, hub) -> APIRouter:
                     "mem_mib": updated["mem_mib"],
                     "changes": moved,
                 },
+                owner=updated["owner_uid"],
             )
             return {**updated, "changes": moved}
 
@@ -413,33 +431,31 @@ def router(app, hub) -> APIRouter:
     # migration, import to restore or seed. Both refuse a workspace
     # the guard names, and both hold the workspace's move-lock for
     # their whole exchange — see home_volume_lock.
-    @api.get(
-        "/api/v1/workspaces/{workspace_id}/home",
-        dependencies=[Depends(require_token)],
-    )
-    async def export_home_volume(workspace_id: str) -> Response:
+    @api.get("/api/v1/workspaces/{workspace_id}/home")
+    async def export_home_volume(
+        workspace_id: str, caller: int = Depends(authed_caller)
+    ) -> Response:
         """Stream the workspace's /home volume out (#80): the volume
         file's bytes, verbatim."""
-        row = await workspace_or_404(app, workspace_id)
+        row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
         guard = home_volume_guard(app, row)
         if guard is not None:
             raise HTTPException(*guard)
         state_dir = app.state.settings.vmm.state_dir
         home = home_volume_path(state_dir, workspace_id)
-        return await locked_export(app, hub, workspace_id, home)
+        return await locked_export(app, hub, workspace_id, home, caller)
 
-    @api.put(
-        "/api/v1/workspaces/{workspace_id}/home",
-        dependencies=[Depends(require_token)],
-    )
+    @api.put("/api/v1/workspaces/{workspace_id}/home")
     async def import_home_volume(
-        workspace_id: str, request: Request
+        workspace_id: str,
+        request: Request,
+        caller: int = Depends(authed_caller),
     ) -> Response:
         """Replace the workspace's /home volume with the request body
         (#80): the uploaded ext4 image lands atomically — a failed or
         refused upload leaves the old volume in place."""
-        row = await workspace_or_404(app, workspace_id)
+        row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
         guard = home_volume_guard(app, row)
         if guard is not None:
@@ -462,6 +478,6 @@ def router(app, hub) -> APIRouter:
         if refusal is not None:
             raise HTTPException(status_code=507, detail=refusal)
         async with move_lock(app, workspace_id):
-            return await locked_import(app, hub, workspace_id, request)
+            return await locked_import(app, hub, workspace_id, request, caller)
 
     return api

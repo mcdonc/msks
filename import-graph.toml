@@ -80,6 +80,11 @@ facades = [
   # groupcommands, invoke); cliapp is the leaf the command groups
   # decorate onto and the jsonio seam the groups share.
   "msks.client.cli.cliapp",
+  # #1084: the workspace command module split into a package
+  # (listing, lifecycle) at the lines gate; the CLI layers, the
+  # GUI and TUI mounts editors, and the suites keep importing
+  # the names through msks.client.workspaces.
+  "msks.client.workspaces",
   # #874: the workspace page split into a package (lines, actions,
   # screen); the main screen and app keep importing the page's
   # surface through the package root.
@@ -124,6 +129,10 @@ hostshares = 1
 identity = 0
 llm = 0
 msks = 0
+# #1102: the bridge hub — the holders registry the composer, the
+# proxy subsystem (by attribute), and the holder route reach; it
+# sits above the spec leaf for its wire vocabulary.
+bridge = 1
 # #808: the workspace proxy subsystem — the persisted forward and
 # remote TCP listeners the daemon owns; a root leaf the composer
 # and the net manager (by attribute) reach.
@@ -151,7 +160,16 @@ conformance = 5
 # Exact cross-package import-statement counts, per pair. A count
 # that grows or shrinks fails until this file is updated in the
 # same commit — re-coupling is always a deliberate edit.
+[snapshot.bridge]
+# #1102: the holder wire vocabulary — the framing and control
+# names the hub and the client holder both speak.
+spec = 5
+
 [snapshot.app]
+# #1102: the bridge subsystem's composition seam — the manager
+# the detach hook and the relay route reach (module edge + the
+# BridgeManager name).
+bridge = 2
 consent = 4
 events = 2
 # #808: the proxy subsystem's composition seam — the manager the
@@ -200,7 +218,15 @@ identity = 2
 # module-edge-plus-name +2 the TUI's reads take.
 # #1007: the macOS menu bar's About box names the client's own
 # version word — the same module-edge-plus-name +2.
-spec = 15
+# #1084: the ambiguity vocabulary (spec.owners) — the kind word
+# the exit table branches on (jsonio), the owner phrase the error
+# line renders (rest, the kind word beside it on one statement
+# since the review round), and the close code the console and
+# forward clients label (console, forward): four statements.
+# #1102: the bridge relay client joins both leaves — the owners'
+# close code it labels (edge + name) and the relay's own wire
+# vocabulary (edge + the five framing/control names).
+spec = 31
 
 [snapshot.config]
 configio = 3
@@ -260,8 +286,11 @@ persist = 12
 # module it already owns. #672: one more name — mount_tag, the
 # device name both mount forms attach as. #874: the local driver
 # split into a package — the vm vocabulary imports spread from
-# the one module to its config and driver submodules.
-spec = 22
+# the one module to its config and driver submodules. #1088:
+# the spawn seam reads the dead-owner cause (spec.owners) —
+# the race refusal naming the same word the derivation gate's
+# skip carries.
+spec = 24
 
 [snapshot.model]
 # #514: the blob staleness hash moved to the crypto leaf with the
@@ -325,6 +354,10 @@ hostshares = 2
 # root's suite seam.
 config = 6
 events = 4
+# #1102: the relay route reads the bridge manager's own refusal
+# class (rows' websocket resolver answers the model's ambiguity
+# for it) — module edge beside the name.
+bridge = 2
 # #481: the console endpoint's identity-validation gate went with
 # the prelude. #486: the create route's mint went with the daemon
 # mint — one fewer identity import. #500: LEGACY_LOGIN_USER
@@ -347,7 +380,26 @@ imagestore = 26
 microvm = 16
 # #514 retirement: the routes dropped the manifest's
 # placeholder_refs read and the seed's ref probe.
-model = 5
+# #1082: the owner filter — the auth/caller seam reads the
+# daemon-uid vocabulary (deps), the 404/ambiguity mapping reads
+# the ownership policy's refusal class (rows, events, and the
+# console/forward dials' ambiguity closes), the proxies and
+# storage listings read the bypass rule for their row filters,
+# and the token routes gate on it (tokens); six statements, each
+# the module edge beside its name.
+# #1083: the secrets package records the minting owner — the
+# owner mask reads the bypass rule (views) and the probe seed
+# reads the daemon-uid spelling (probe), one statement each in
+# the split submodules.
+# #1084: the owner scope — deps' scope dependency reads the bypass
+# rule and builds the scope wrapper beside the daemon-uid mapping
+# (two more names on the same statement).
+# #1090: the events websocket's subscribe takes the bypass rule
+# beside the ambiguity class — the viewer the socket registers
+# as (one more name on the events statement).
+# #1102: the dial routes' plural-name closes moved behind rows'
+# websocket resolver — the forward dial's own statement went.
+model = 24
 # #808: the proxy routes read the two direction-shaped bind and
 # target defaults the create path applies (module edge + both
 # names).
@@ -361,7 +413,11 @@ persist = 18
 # itself is gone with it). #514: the mint's blob helpers joined
 # the statement (blob_recipients, eligible_recipients), and the
 # probe re-arm's skip-unchanged check added recipient_hashes.
-secretstore = 7
+# #1083: the api secrets module split into a package (routes,
+# blobs, probe, views); each submodule carries its own statement
+# over the store's vocabulary, so the per-statement count grew
+# with the split.
+secretstore = 13
 # #464: doctor's Settings import (env-plus-defaults fallback when
 # a config will not load). #643: the host-setup probe resolves
 # virtiofsd through the shared resolver — the package installs
@@ -369,8 +425,10 @@ secretstore = 7
 # name).
 settings = 6
 # #514: the mint's named refusal and the lock indicators read
-# the cache leaf's error vocabulary (module + name).
-secretcache = 2
+# the cache leaf's error vocabulary (module + name). #1083: the
+# api secrets split into a package — the routes and the blobs
+# submodule each carry the refusal's statement.
+secretcache = 4
 # spec grew by one statement: the secret routes seed and serve the
 # probe placeholder (#424); #555 adds two more — the local
 # listener's path vocabulary (server.localsocket) and its
@@ -397,7 +455,29 @@ secretcache = 2
 # #874: the mac setup split into a package — the __version__ the
 # bootstrap script prints and the ordering the skew row's remedy
 # reads now import from their own submodules.
-spec = 44
+# #1083: the api secrets split into a package (routes, blobs,
+# probe, views); the probe vocabulary's statements spread across
+# the routes and probe submodules.
+# #1084: the ambiguity vocabulary (spec.owners) — the 409's kind
+# word, the close code both dial routes take, and the owner
+# phrase, all on the rows statement (module edge beside the
+# three names); the console and forward dials reach it through
+# rows' close helper. #1088: the same statement gains the
+# dead-owner cause — the skip word the listing and the start's
+# split share. #1093: the sharing chgrp names its runtime-dir
+# shape — SOCKET_DIR joins the local listener's path-vocabulary
+# statement. #1094: the system unit and doctor's system-
+# deployment rows name the shared socket's path — the unit's
+# Environment line (hostsetup/unit.py) and the socket row
+# (doctor/systemd.py) are two more statements over
+# spec.sockets, names folded in.
+# #1118: the shared venv phase reads the release word the wheel
+# pins to (hostsetup/venv.py) — the module edge beside
+# __version__, the same statement shape the macOS bootstrap's
+# own read takes. #1119/#1120 fold beside these. #1102: the
+# holder route joins the relay wire vocabulary (module edge +
+# the framing and control names).
+spec = 63
 # #773: the clone route reads the state-disk floor (create_refusal
 # beside the artifacts' allocated-cost file_cost) before any byte
 # copies.

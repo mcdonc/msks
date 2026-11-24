@@ -27,6 +27,7 @@ from msks.app import build_app
 from msks.client import cli, create, images, rest, workspaces
 from msks.server.api import build_api
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
+from msks.spec.version import __version__ as client_version
 from test_api import TOKEN, StubMicrovm
 from testkeys import encrypted, mint
 
@@ -137,7 +138,7 @@ def test_version_skew_notice_names_the_pair(
     names its own client word: the tree's ambient word is a dev
     build between releases and the release's number at a cut,
     and neither may the test assume."""
-    mine = workspaces.__version__
+    mine = client_version
     assert workspaces.version_skew_notice({"version": mine}) is None
     assert workspaces.version_skew_notice(None) is None
     assert workspaces.version_skew_notice({"status": "ok"}) is None
@@ -147,7 +148,7 @@ def test_version_skew_notice_names_the_pair(
     assert f"this client is {mine}" in newer
     assert "update this client" in newer  # the daemon leads
     monkeypatch.setattr(
-        workspaces, "__version__", "0.7.0.dev0"
+        workspaces.listing, "__version__", "0.7.0.dev0"
     )  # a dev tree's own word
     older = workspaces.version_skew_notice({"version": "0.1.0"})
     assert "--wheel" in older  # so the older-daemon remedy names it
@@ -165,7 +166,7 @@ def test_a_release_clients_skew_notice_names_the_rerun(
     release, and the plain rerun lands the shipped release over
     the older dev build — an upgrade, not the downgrade the tree
     arm exists to prevent."""
-    monkeypatch.setattr(workspaces, "__version__", "0.6.0")
+    monkeypatch.setattr(workspaces.listing, "__version__", "0.6.0")
     notice = workspaces.version_skew_notice({"version": "0.1.0"})
     assert "rerun msks-setup-macos-host" in notice
     equal_base = workspaces.version_skew_notice({"version": "0.6.0.dev0"})
@@ -218,7 +219,7 @@ def test_notice_daemon_version_skew_prints_once(
     prints the pair exactly once, an equal daemon prints
     nothing."""
     client_env(monkeypatch)
-    mine = workspaces.__version__
+    mine = client_version
     skewed = mock(lambda req: httpx.Response(200, json={"version": "9.9.9"}))
     cli.notice_daemon_version_skew(transport=skewed)
     err = capsys.readouterr().err
@@ -262,7 +263,7 @@ def test_the_probe_swallows_a_dial_failure(
     async def refused(*args, **kwargs):
         raise RuntimeError("dial refused")
 
-    monkeypatch.setattr(workspaces, "fetch_health", refused)
+    monkeypatch.setattr(workspaces.listing, "fetch_health", refused)
     cli.notice_daemon_version_skew()
     assert capsys.readouterr().err == ""
 
@@ -280,7 +281,7 @@ def test_the_probe_answers_a_ctrl_c_with_the_interrupt_line(
     async def interrupted(*args, **kwargs):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(workspaces, "fetch_health", interrupted)
+    monkeypatch.setattr(workspaces.listing, "fetch_health", interrupted)
     with pytest.raises(SystemExit) as raised:
         cli.notice_daemon_version_skew()
     assert raised.value.code == 130
@@ -1149,6 +1150,9 @@ def test_cmd_start_boots_and_prints(
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/proxies"):
+            # The start's bridge hook (#1102) reads the rows; none.
+            return httpx.Response(200, json=[])
         seen["path"] = request.url.path
         seen["auth"] = request.headers.get("authorization")
         return httpx.Response(200, json={"id": "ws1", "status": "running"})
@@ -1178,6 +1182,130 @@ def test_cmd_stop_posts_and_prints(
     assert seen["path"] == "/api/v1/workspaces/ws1/stop"
     assert seen["auth"] == "Bearer tok"
     assert "ws1 stopped" in capsys.readouterr().out
+
+
+def test_cmd_start_carries_the_owner_scope(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The ``--user`` selector (#1084) rides the scoped verbs as
+    the ``owner`` query pair, and a scope-less invocation sends
+    none."""
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/proxies"):
+            # The start's bridge hook (#1102): no rows, no bridge.
+            return httpx.Response(200, json=[])
+        seen["params"] = dict(request.url.params)
+        return httpx.Response(200, json={"id": "ws1", "status": "running"})
+
+    rc = cli.main(
+        ["start", "build", "--user", "alice"], transport=mock(handler)
+    )
+    assert rc == 0
+    assert seen["params"] == {"owner": "alice"}
+    assert "build running" in capsys.readouterr().out
+
+    rc = cli.main(["start", "build"], transport=mock(handler))
+    assert rc == 0
+    assert seen["params"] == {}
+
+
+#: The structured ambiguity detail the daemon answers a plural
+#: bare name with (#1084) — the shape the client tests below feed
+#: and branch on.
+AMBIGUOUS_DETAIL = {
+    "error": "ambiguous_workspace",
+    "name": "build",
+    "owners": [
+        {"uid": 4242, "name": "alice"},
+        {"uid": 4243, "name": None},
+    ],
+}
+
+
+def test_the_ambiguity_409_is_its_own_exit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The ambiguity's own error kind (#1084): the human line
+    names the owners — the account word and the bare uid — and
+    the ``--user`` remedy; ``--json`` embeds the payload whole and
+    exits the table's sixth row."""
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail": AMBIGUOUS_DETAIL})
+
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["start", "build"], transport=mock(handler))
+    line = str(caught.value)
+    assert "alice (4242)" in line
+    assert "4243" in line
+    assert "--user" in line
+
+    rc = cli.main(["start", "build", "--json"], transport=mock(handler))
+    err = capsys.readouterr().err
+    assert json.loads(err) == {
+        "error": {"status": 409, "detail": AMBIGUOUS_DETAIL}
+    }
+    assert rc == 6
+
+
+def test_render_ls_carries_the_owner_column_across_owners(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1084: a listing that spans owners carries the owner column
+    beside the name — the account name when the host holds one,
+    the bare uid when it does not — and a one-owner listing keeps
+    the seven columns (every row is that owner's)."""
+    import pwd
+
+    named = {4242: "alice", 4243: "bob"}
+
+    def fake_getpwuid(uid):
+        if uid not in named:
+            raise KeyError(uid)
+        return SimpleNamespace(pw_name=named[uid])
+
+    monkeypatch.setattr(pwd, "getpwuid", fake_getpwuid)
+    plural = workspaces.render_ls(
+        [
+            {**ROWS[0], "owner_uid": 4242},
+            {**ROWS[1], "owner_uid": 4243},
+        ],
+        as_json=False,
+    )
+    header = plural.splitlines()[0].split()
+    assert header[:2] == ["name", "owner"]
+    assert "alice" in plural and "bob" in plural
+
+    dead = workspaces.render_ls(
+        [
+            {**ROWS[0], "owner_uid": 4242},
+            {**ROWS[1], "owner_uid": 65534},
+        ],
+        as_json=False,
+    )
+    assert "alice" in dead and "65534" in dead
+
+    single = workspaces.render_ls(
+        [
+            {**ROWS[0], "owner_uid": 4242},
+            {**ROWS[1], "owner_uid": 4242},
+        ],
+        as_json=False,
+    )
+    assert single.splitlines()[0].split()[:2] == ["name", "id"]
+
+    # A row with no owner word at all (the pre-#1082 shape) takes
+    # the dash, exactly like every other missing cell.
+    missing = workspaces.render_ls(
+        [{**ROWS[0], "owner_uid": None}, {**ROWS[1], "owner_uid": 4242}],
+        as_json=False,
+    )
+    assert missing.splitlines()[0].split()[1] == "owner"
+    assert " - " in missing
 
 
 def test_cmd_stop_missing_workspace_is_one_line(
@@ -1454,7 +1582,14 @@ def test_main_start_dispatch(
     rc = cli.main(
         ["start", "ws1"],
         transport=mock(
-            lambda req: httpx.Response(200, json={"status": "running"})
+            lambda req: httpx.Response(
+                200,
+                json=(
+                    []
+                    if req.url.path.endswith("/proxies")
+                    else {"id": "ws1", "status": "running"}
+                ),
+            )
         ),
     )
     assert rc == 0
@@ -1869,6 +2004,9 @@ async def test_ensure_running_attaches_to_a_won_race() -> None:
             return httpx.Response(
                 503, json={"detail": "VM ws1 already exists"}
             )
+        if request.url.path.endswith("/proxies"):
+            # The boot's holder step (#1102): no rows, no holder.
+            return httpx.Response(200, json=[])
         return httpx.Response(
             200, json={"id": "ws1", "status": next(statuses)}
         )
@@ -1881,6 +2019,7 @@ async def test_ensure_running_attaches_to_a_won_race() -> None:
         "GET /api/v1/workspaces/ws1",
         "POST /api/v1/workspaces/ws1/start",
         "GET /api/v1/workspaces/ws1",
+        "GET /api/v1/workspaces/ws1/proxies",
     ]
 
 
@@ -4271,6 +4410,67 @@ def test_cmd_secret_ls_lists_without_sentinels(
     assert "mskssec1_" not in out
 
 
+def test_cmd_secret_ls_shows_the_owner_column(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Two owners may hold one label (#1083): the listing tells its
+    rows apart by the owning uid the row carries."""
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/secrets"
+        return httpx.Response(
+            200,
+            json=[
+                {**secret_rows()[0], "owner_uid": 4242},
+                {
+                    **secret_rows()[0],
+                    "id": 4,
+                    "owner_uid": 4243,
+                },
+            ],
+        )
+
+    code = cli.main(["secret", "ls"], transport=mock(handler))
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "4242" in out and "4243" in out
+
+
+def test_cmd_secret_revoke_refuses_a_plural_owner_pair(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A (coverage, name) pair two owners hold (#1083) refuses to
+    pick — the exit names both uids, and no DELETE leaves the
+    client."""
+    client_env(monkeypatch)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path == "/api/v1/workspaces":
+            return httpx.Response(200, json=workspace_rows())
+        return httpx.Response(
+            200,
+            json=[
+                {**secret_rows()[0], "workspaces": [], "owner_uid": 4242},
+                {
+                    **secret_rows()[0],
+                    "id": 4,
+                    "workspaces": [],
+                    "owner_uid": 4243,
+                },
+            ],
+        )
+
+    with pytest.raises(SystemExit, match="more than one owner"):
+        cli.main(
+            ["secret", "revoke", "--name", "github_api"],
+            transport=mock(handler),
+        )
+    assert calls == ["/api/v1/workspaces", "/api/v1/secrets"]
+
+
 def test_cmd_secret_revoke_and_renew_resolve_the_label(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -4813,12 +5013,14 @@ def test_create_with_start_builds_one_tls_context(
         built.append(1)
         return ssl_mod.create_default_context()
 
-    async def fake_request(client, method: str, path: str, json_body=None):
+    async def fake_request(
+        client, method: str, path: str, json_body=None, params=None
+    ):
         if path.endswith("/start"):
             return {"id": "ws1", "status": "running"}
         return {"id": "ws1", "status": "created"}
 
-    monkeypatch.setattr(workspaces, "ssl_context", counting_context)
+    monkeypatch.setattr(workspaces.lifecycle, "ssl_context", counting_context)
     monkeypatch.setattr(rest, "request", fake_request)
     monkeypatch.setattr(create, "request", fake_request)
     rc = cli.cmd_create({"id": "ws1"}, start=True)
@@ -5880,10 +6082,14 @@ from msks.client.jsonio import (  # noqa: E402 — beside the section it serves
 def test_exit_code_table() -> None:
     """The documented table: 404 is not-found, the duplicate-name
     409 is a conflict, the other 409s and the start-again refusal
-    are wrong state, everything else the unnamed failure."""
+    are wrong state, the ambiguity kind is its own row (#1084),
+    everything else the unnamed failure."""
     assert exit_code(404, "no such workspace") == 3
     assert exit_code(409, "workspace exists") == 4
     assert exit_code(409, "workspace ws1 is running; stop it first") == 5
+    assert (
+        exit_code(409, "whatever the detail", kind="ambiguous_workspace") == 6
+    )
     assert (
         exit_code(503, "VM ws1 already exists; shutdown or cleanup first") == 5
     )
@@ -6751,3 +6957,216 @@ def test_json_requested_scans_before_the_separator() -> None:
     assert not cli.json_requested(["egress", "requests", "ws1"])
     assert not cli.json_requested(["ssh", "ws", "--", "--json"])
     assert not cli.json_requested(["ssh", "ws"])
+
+
+def test_cmd_start_spawns_the_bridge_holder(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A start of a workspace with forward rows leaves a bridge
+    holder behind (#1102): one detached child, one stderr line,
+    the start's exit code untouched."""
+    from msks.client.workspaces import lifecycle
+
+    client_env(monkeypatch)
+    spawned = []
+
+    def fake_spawn(workspace_id):
+        spawned.append(workspace_id)
+        return True
+
+    monkeypatch.setattr(lifecycle, "spawn_holder", fake_spawn)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/proxies"):
+            return httpx.Response(
+                200, json=[{"id": 5, "direction": "forward"}]
+            )
+        return httpx.Response(200, json={"id": "ws1", "status": "running"})
+
+    rc = cli.cmd_start("ws1", transport=mock(handler))
+    assert rc == 0
+    out = capsys.readouterr()
+    assert "ws1 running" in out.out
+    assert spawned == ["ws1"]
+    assert "held in the background" in out.err
+
+
+def test_spawn_holder_launches_the_detached_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The holder child: the same interpreter, the proxy hold
+    command, detached with its own session so the CLI's exit
+    leaves it standing (#1102)."""
+    import subprocess as subprocess_mod
+
+    from msks.client import hold as hold_mod
+
+    spawned = {}
+
+    class FakePopen:
+        def __init__(self, argv, **kwargs):
+            spawned["argv"] = argv
+            spawned["kwargs"] = kwargs
+
+    monkeypatch.setattr(hold_mod.subprocess, "Popen", FakePopen)
+    assert hold_mod.spawn_holder("ws1") is True
+    argv = spawned["argv"]
+    assert argv[1:] == ["-m", "msks.client.cli", "proxy", "hold", "ws1"]
+    kwargs = spawned["kwargs"]
+    assert kwargs["start_new_session"] is True
+    assert kwargs["stdin"] is subprocess_mod.DEVNULL
+
+    def refusing(*args, **kwargs):
+        raise OSError("no fork left")
+
+    monkeypatch.setattr(hold_mod.subprocess, "Popen", refusing)
+    assert hold_mod.spawn_holder("ws1") is False
+
+
+def test_cmd_start_without_a_holder_keeps_the_start_green(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A holder that cannot start leaves the start's exit code
+    alone: the rows carry the cause, one line says so (#1102)."""
+    from msks.client.workspaces import lifecycle
+
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/proxies"):
+            return httpx.Response(
+                200, json=[{"id": 5, "direction": "forward"}]
+            )
+        return httpx.Response(200, json={"id": "ws1", "status": "running"})
+
+    monkeypatch.setattr(lifecycle, "spawn_holder", lambda ws: False)
+    rc = cli.cmd_start("ws1", transport=mock(handler))
+    assert rc == 0
+    out = capsys.readouterr()
+    assert "ws1 running" in out.out
+    assert "held in the background" not in out.err
+
+
+def test_holder_due_reads_the_rows_honestly() -> None:
+    """A start owes a holder only when forward rows exist and none
+    of them already reads listening (a holder stands)."""
+    from msks.client.workspaces.lifecycle import holder_due
+
+    assert holder_due([]) is False
+    assert holder_due([{"direction": "remote"}]) is False
+    assert holder_due([{"direction": "forward"}]) is True
+    assert (
+        holder_due([{"direction": "forward", "status": "listening"}]) is False
+    )
+    assert (
+        holder_due(
+            [
+                {"direction": "forward", "status": "failed"},
+                {"direction": "forward", "status": "listening"},
+            ]
+        )
+        is False
+    )
+
+
+def test_cmd_start_skips_the_spawn_when_a_holder_serves(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Rows already listening mean a holder stands: the start
+    must not stack a standby beside it."""
+    from msks.client.workspaces import lifecycle
+
+    client_env(monkeypatch)
+    spawned = []
+    monkeypatch.setattr(lifecycle, "spawn_holder", spawned.append)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/proxies"):
+            return httpx.Response(
+                200,
+                json=[
+                    {"id": 5, "direction": "forward", "status": "listening"}
+                ],
+            )
+        return httpx.Response(200, json={"id": "ws1", "status": "running"})
+
+    rc = cli.cmd_start("ws1", transport=mock(handler))
+    assert rc == 0
+    assert spawned == []
+    assert "held in the background" not in capsys.readouterr().err
+
+
+async def test_a_boot_from_a_session_child_leaves_a_holder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The boot helper every session child uses (an ssh, console,
+    or forward child starting a stopped workspace — the GUI
+    double-click's shell among them) leaves the bridge holder
+    behind: the rows read runs, and the spawn follows (#1102)."""
+    from msks.client import rest as rest_mod
+
+    spawned = []
+    monkeypatch.setattr(rest_mod, "spawn_holder", spawned.append)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json={"id": "ws1", "status": "running"})
+        if request.url.path.endswith("/proxies"):
+            return httpx.Response(
+                200, json=[{"id": 5, "direction": "forward"}]
+            )
+        return httpx.Response(200, json={"id": "ws1", "status": "stopped"})
+
+    booted = await rest.ensure_running(
+        "ws1", "https://d", "t", transport=mock(handler)
+    )
+    assert booted is True
+    assert spawned == ["ws1"]
+
+
+async def test_a_boot_of_rows_already_listening_spawns_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A holder stands (the rows read listening): the boot the
+    session child made must not stack a standby beside it."""
+    from msks.client import rest as rest_mod
+
+    spawned = []
+    monkeypatch.setattr(rest_mod, "spawn_holder", spawned.append)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json={"id": "ws1", "status": "running"})
+        if request.url.path.endswith("/proxies"):
+            return httpx.Response(
+                200,
+                json=[
+                    {"id": 5, "direction": "forward", "status": "listening"}
+                ],
+            )
+        return httpx.Response(200, json={"id": "ws1", "status": "stopped"})
+
+    booted = await rest.ensure_running(
+        "ws1", "https://d", "t", transport=mock(handler)
+    )
+    assert booted is True
+    assert spawned == []
+
+
+async def test_a_boot_whose_rows_read_fails_quietly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The holder step is best-effort: a rows read that refuses
+    leaves the boot's answer standing."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json={"id": "ws1", "status": "running"})
+        if request.url.path.endswith("/proxies"):
+            return httpx.Response(500, json={"detail": "boom"})
+        return httpx.Response(200, json={"id": "ws1", "status": "stopped"})
+
+    booted = await rest.ensure_running(
+        "ws1", "https://d", "t", transport=mock(handler)
+    )
+    assert booted is True

@@ -13,6 +13,9 @@ the daemon's layers speak to each other:
   pin shape consent hands the data plane
 - ``images`` — the image-reference grammar (hash shape, version
   ordering) the catalog and the client share (#397)
+- ``owners`` — the workspace-addressing vocabulary two owners
+  make (#1084): the ambiguity error's kind word and the websocket
+  close code its dials take
 - ``tokens`` — the bearer-token grammar every minting and parsing
   site validates against
 - ``sockets`` — the local-listener socket paths (#555): the

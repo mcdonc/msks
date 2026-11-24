@@ -16,7 +16,7 @@ from ...spec.egress import (
     EgressPolicy,
     parse_allowlist,
 )
-from .deps import require_token
+from .deps import authed_caller
 from .rows import workspace_or_404
 from .schemas import EgressDecide, EgressPolicySet
 from .volumes import move_lock
@@ -54,24 +54,22 @@ def router(app) -> APIRouter:
 
     # --- egress consent (#69) ------------------------------------------------
 
-    @api.get(
-        "/api/v1/workspaces/{workspace_id}/egress",
-        dependencies=[Depends(require_token)],
-    )
-    async def get_egress(workspace_id: str) -> dict:
+    @api.get("/api/v1/workspaces/{workspace_id}/egress")
+    async def get_egress(
+        workspace_id: str, caller: int = Depends(authed_caller)
+    ) -> dict:
         """The rule-management view: mode, static allowlist, and the
         in-effect verdicts."""
-        row = await workspace_or_404(app, workspace_id)
+        row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
         frame = await app.state.consent.rules_frame(workspace_id)
         return frame or {"workspace_id": workspace_id}
 
-    @api.put(
-        "/api/v1/workspaces/{workspace_id}/egress/policy",
-        dependencies=[Depends(require_token)],
-    )
+    @api.put("/api/v1/workspaces/{workspace_id}/egress/policy")
     async def set_egress_policy(
-        workspace_id: str, body: EgressPolicySet
+        workspace_id: str,
+        body: EgressPolicySet,
+        caller: int = Depends(authed_caller),
     ) -> dict:
         """Switch a workspace's egress posture (#280): the row's
         mode (and, when given, its allowlist) change now; a running
@@ -87,7 +85,7 @@ def router(app) -> APIRouter:
         answers every name NXDOMAIN, an offline workspace, and the
         refusal names the escape.
         """
-        row = await workspace_or_404(app, workspace_id)
+        row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
         if body.mode not in EGRESS_MODES:
             raise HTTPException(
@@ -104,8 +102,11 @@ def router(app) -> APIRouter:
             # specs an omitted allow_list keeps and the facts a
             # failed swap rolls back to both come from THIS row —
             # a pre-lock copy can be a posture a concurrent switch
-            # already superseded.
-            row = await app.state.model.get_workspace(workspace_id)
+            # already superseded. The owner filter (#1082) rides
+            # the re-read: the caller the outer resolve proved.
+            row = await app.state.model.get_workspace(
+                workspace_id, viewer=caller
+            )
             if row is None:
                 raise HTTPException(
                     status_code=404, detail="no such workspace"
@@ -178,19 +179,17 @@ def router(app) -> APIRouter:
             "applied": applied,
         }
 
-    @api.get(
-        "/api/v1/workspaces/{workspace_id}/egress/requests",
-        dependencies=[Depends(require_token)],
-    )
+    @api.get("/api/v1/workspaces/{workspace_id}/egress/requests")
     async def list_egress_requests(
         workspace_id: str,
         decision: str | None = None,
         limit: int = Query(default=100, ge=1, le=1000),
+        caller: int = Depends(authed_caller),
     ) -> list[dict]:
         """The consent rows (audit trail), newest first; the
         ``decision`` query filters one lifecycle state and
         ``limit`` bounds the page (1..1000, newest first)."""
-        row = await workspace_or_404(app, workspace_id)
+        row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
         if decision is not None and decision not in DECISIONS:
             raise HTTPException(
@@ -201,17 +200,17 @@ def router(app) -> APIRouter:
             workspace_id, decision, limit
         )
 
-    @api.post(
-        "/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}",
-        dependencies=[Depends(require_token)],
-    )
+    @api.post("/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}")
     async def decide_egress(
-        workspace_id: str, request_id: str, body: EgressDecide
+        workspace_id: str,
+        request_id: str,
+        body: EgressDecide,
+        caller: int = Depends(authed_caller),
     ) -> dict:
         """A decider's verdict on a held request (#69): the held
         SYN releases on allow, refuses fast on deny; the duration
         sets how long enforcement honors the verdict."""
-        row = await workspace_or_404(app, workspace_id)
+        row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
         refusal = await verdict_refusal(app, workspace_id, request_id, body)
         if refusal is not None:
@@ -240,14 +239,17 @@ def router(app) -> APIRouter:
         }
 
     @api.delete(
-        "/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}",
-        dependencies=[Depends(require_token)],
+        "/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}"
     )
-    async def revoke_egress(workspace_id: str, request_id: str) -> dict:
+    async def revoke_egress(
+        workspace_id: str,
+        request_id: str,
+        caller: int = Depends(authed_caller),
+    ) -> dict:
         """Undo an in-effect verdict (#69): the row flips to
         revoked, its flow rules and tracked connections clear, and
         the destination gates again at the next connection."""
-        row = await workspace_or_404(app, workspace_id)
+        row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
         row = await app.state.model.egress_consent.get_request(request_id)
         if row is None or row["workspace_id"] != workspace_id:

@@ -11,6 +11,7 @@ bridge's own tests holding the real worker's contract.
 import importlib.util
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,6 +34,7 @@ if importlib.util.find_spec("PySide6") is None:
 
 from msks.client import ages as ages_mod  # noqa: E402
 from msks.client import data as clientdata  # noqa: E402
+from msks.client.bridge import ReHolder  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -86,6 +88,16 @@ class StubBridge:
         self.decider_starts: list[str] = []
         self.decider_controllers: list[object] = []
         self.decider_stops = 0
+        #: The bridge re-hold watch's surface (#1127): the session
+        #: policy the shell's watch reads, over a spawn the tests
+        #: record — the detached child never runs here.
+        self.holder_spawns: list[str] = []
+
+        def record_spawn(ws: str) -> bool:
+            self.holder_spawns.append(ws)
+            return True
+
+        self.reholder = ReHolder(spawn=record_spawn)
 
     def call(self, key: str, method: str, *args: object) -> None:
         self.calls.append((key, method, args))
@@ -282,6 +294,11 @@ def test_opening_a_row_shows_the_page(qt) -> None:
     # daemon's facts are not the workspace's, and the page asks
     # for no doc it renders nowhere.
     assert not [call for call in bridge.calls if call[1] == "health"]
+    # The show that follows the open adds no carried read (#1129):
+    # the open's own reads stand for it, and their landing asks
+    # nothing more — one pair of reads per open.
+    land(qt, shell.detail, bridge)
+    assert bridge.calls == []
 
 
 def test_the_page_carries_the_tab_strip(qt) -> None:
@@ -541,6 +558,77 @@ def test_the_show_anchors_on_the_tab_the_row_shows(qt) -> None:
     page.bar.setCurrentIndex(0)  # Shells, a shell current
     page.anchor_focus()
     assert window.focusWidget() is page.hub.find("ws-a", 1).widget
+
+
+def test_escape_answers_back_on_the_chrome_not_the_terminal(qt) -> None:
+    """The page's own Esc contract (#1099): the Back shortcut
+    answers while the chrome holds the keyboard — the Back
+    button the anchor sets — and yields the key while a
+    shell's terminal holds it, the press delivered through
+    the shortcut dispatch a real platform serves. The
+    terminal half's own byte pin lives with the terminal's
+    tests; this one pins the page the shortcut stands on."""
+    page, window, bridge = make_page(qt)
+    backs = []
+    page.back.connect(lambda: backs.append(1))
+    Qt = qt.QtCore.Qt
+
+    def escape_press() -> object:
+        return qt.QtGui.QKeyEvent(
+            qt.QtCore.QEvent.Type.KeyPress,
+            int(Qt.Key.Key_Escape),
+            Qt.KeyboardModifier.NoModifier,
+            "",
+        )
+
+    # The Shells tab shows a shell: its terminal holds the
+    # keyboard, and the press reaches the encoder instead.
+    # The window must be the app's active one — a window
+    # shortcut answers only there, and without the activation
+    # this arm would pass with the fix removed.
+    window.activateWindow()
+    qt.app.processEvents()
+    session = page.hub.find("ws-a", 1)
+    page.anchor_focus()
+    assert window.focusWidget() is session.widget
+    qt.app.sendEvent(session.widget, escape_press())
+    assert backs == []
+    # The chrome's own holder: the Back button the anchor
+    # names, and the shortcut answers from there.
+    show_tab(page, "Events")
+    page.anchor_focus()
+    qt.app.processEvents()
+    qt.app.sendEvent(page.back_button, escape_press())
+    assert backs == [1]
+
+
+def test_escape_cancels_a_standing_rename_not_the_page(qt) -> None:
+    """The rename editor's own Esc (#1099): the page's Back
+    shortcut stands on the bare key, and before the editor
+    claimed its ShortcutOverride the dispatch handed the
+    press to Back — the page navigated away with the editor
+    standing. The claim yields the shortcut: the editor's
+    cancel arm reads the press and the page stays."""
+    page, window, bridge = make_page(qt)
+    backs = []
+    page.back.connect(lambda: backs.append(1))
+    window.activateWindow()
+    qt.app.processEvents()
+    page.shells.begin_rename(0)
+    editor = page.shells.editor
+    assert editor is not None and editor.hasFocus()
+    qt.app.sendEvent(
+        editor,
+        qt.QtGui.QKeyEvent(
+            qt.QtCore.QEvent.Type.KeyPress,
+            int(qt.QtCore.Qt.Key.Key_Escape),
+            qt.QtCore.Qt.KeyboardModifier.NoModifier,
+            "",
+        ),
+    )
+    qt.app.processEvents()
+    assert page.shells.editor is None  # the cancel arm read it
+    assert backs == []
 
 
 def test_a_reopen_resets_the_row_and_anchors_the_terminal(qt) -> None:
@@ -843,8 +931,44 @@ def test_a_failed_refresh_flashes_and_keeps_the_tabs(qt) -> None:
     assert page.mounts_tab.table.rowCount() == 2
     page.clear_stale(page.flash_seq - 1)  # the armed timeout's slot
     assert page.status.text() == "the daemon is gone"
+    # The feed's heartbeat flashes over the outage and gives the
+    # text back when its span ends (#1129).
+    page.flash("the events feed dropped — the dial failed")
+    page.clear_stale(page.flash_seq)
+    assert page.status.text() == "the daemon is gone"
     land(qt, page, bridge)
-    assert page.status.text() == ""
+    # The answer resolves it with the recovery's one flash
+    # (#1129), the row's landing — the storage answer landing
+    # after it finds no outage standing and flashes nothing.
+    assert page.status.text() == "daemon back — page resumed"
+
+
+def test_a_volume_frame_under_a_standing_storage_read_is_carried(qt) -> None:
+    """The carry arms on either read (#1129): a volume frame moves
+    the storage strip as a lifecycle frame moves the row, and the
+    row read landing first is the common half-landed state. The
+    row re-reads at once when ``home.imported`` arrives, and the
+    standing storage read is re-read behind it — the carried
+    refresh served once no read stands — so the footer's figure
+    follows the import."""
+    page, window, bridge = make_page(qt)
+    land(qt, page, bridge)
+    row = (qt.page_mod.ROW_KEY, "workspaces", ())
+    storage = (qt.page_mod.STORAGE_KEY, "storage", ())
+
+    def reads() -> list:
+        return [c for c in bridge.calls if c[0] in (row[0], storage[0])]
+
+    page.refresh()  # both reads out
+    page.on_succeeded(qt.page_mod.ROW_KEY, [daemon_row()])  # the row first
+    bridge.calls.clear()
+    frame = {"event": "home.imported", "data": {"workspace_id": "ws-a"}}
+    page.push_frame(frame)
+    assert reads() == [row]  # the row re-reads; the storage read stands
+    page.on_succeeded(qt.page_mod.STORAGE_KEY, {"workspaces": []})
+    assert reads() == [row]  # the frame's row read still stands
+    page.on_succeeded(qt.page_mod.ROW_KEY, [daemon_row()])
+    assert reads() == [row, row, storage]  # no read stands: served
 
 
 def test_a_refusal_flash_clears_on_its_timeout(qt) -> None:
@@ -911,10 +1035,21 @@ def test_the_removed_workspace_closes_its_page(qt) -> None:
     close_removed shape): the page emits, the list returns with
     the notice on its status line."""
     shell, window, bridge = make_shell(qt)
+    # An outage standing on the list resolves behind the notice —
+    # the row's read is a daemon answer — and the listing's own
+    # read lands without the recovery's words over it (#1129,
+    # #776's mask).
+    shell.listing.on_failed(
+        "workspaces-list",
+        clientdata.RestFailure("daemon away", reach=True),
+    )
     shell.listing.opened.emit("ws-a")
     shell.detail.on_succeeded("detail-row", [other_row()])
     assert shell.currentWidget() is shell.listing
     assert "alpha removed" in shell.listing.status.text()
+    assert not shell.listing.daemon_down
+    shell.listing.on_succeeded("workspaces-list", [daemon_row()])
+    assert "alpha removed" in shell.listing.status.text()  # the notice stood
 
 
 def test_opening_resets_the_page(qt) -> None:
@@ -977,7 +1112,7 @@ def test_a_storage_answer_resolves_the_standing_outage(qt) -> None:
     )
     assert page.status.text() == "the daemon is gone"
     page.on_succeeded(qt.page_mod.STORAGE_KEY, {"workspaces": []})
-    assert page.status.text() == ""
+    assert page.status.text() == "daemon back — page resumed"  # #1129's tell
 
 
 def test_the_rows_own_name_refines_the_window_title(qt) -> None:
@@ -1123,11 +1258,12 @@ def test_a_catalog_move_re_reads_the_open_row(qt) -> None:
 
 
 def test_a_serving_feed_re_reads_the_current_screen(qt) -> None:
-    """The feed's serve poke (#1019): every connection's first
-    frame refreshes the screen the operator sees — first
-    connection included — because frames published while no
-    connection stood never landed. The listing answers while it
-    owns the window; the page answers once Back swapped it."""
+    """The feed's serve poke (#1019): every connection that
+    comes to serve refreshes the screen the operator sees —
+    first connection included — because frames published while
+    no connection stood never landed. The listing answers
+    while it owns the window; the page answers once Back
+    swapped it."""
     shell, window, bridge = make_shell(qt)
     bridge.succeeded.emit("workspaces-list", [])
     bridge.calls.clear()
@@ -1141,6 +1277,45 @@ def test_a_serving_feed_re_reads_the_current_screen(qt) -> None:
     assert ("detail-row", "workspaces", ()) in bridge.calls
 
 
+def test_a_late_daemon_recovers_the_listing_on_the_feed_connection(
+    qt,
+) -> None:
+    """The window opened against a daemon that was down (#1129):
+    the listing's opening read failed as an outage, and the
+    message stands on an empty table. While the daemon is down
+    the feed's heartbeat flashes over the outage on every failed
+    dial (#946) — the outage's text returns when each flash's
+    span ends, the daemon-down state the screen's own and not
+    the flash's. The daemon comes up and the feed connects — no
+    frame yet, an idle daemon publishes none — and the
+    connection's serve poke re-reads the listing, whose answer
+    fills the row and says the recovery once. The poke waits for
+    no frame (#1129 over #1019): the feed's own tests pin the
+    connection's entry as its moment."""
+    shell, window, bridge = make_shell(qt, rows=[])
+    bridge.failed.emit(
+        "workspaces-list",
+        clientdata.RestFailure("msks: the daemon is unreachable", reach=True),
+    )
+    assert "unreachable" in shell.listing.status.text()
+    assert shell.listing.table.rowCount() == 0
+    # The heartbeat: a failed dial's flash runs its own span over
+    # the standing outage, whose text takes the line back.
+    bridge.feed_dropped.emit("the dial failed: connection refused")
+    heartbeat = shell.listing.status.text()
+    assert "the dial failed: connection refused" in heartbeat
+    shell.listing.clear_stale(shell.listing.flash_seq)  # the span ends
+    assert "unreachable" in shell.listing.status.text()  # the outage stood
+    bridge.calls.clear()
+    bridge.feed_served.emit()  # the connection's poke, no frame
+    assert bridge.calls == [("workspaces-list", "workspaces", ())]
+    bridge.succeeded.emit("workspaces-list", [daemon_row()])
+    # The answer resolves the outage with the recovery's one
+    # flash (#1129), and the row stands on the table.
+    assert shell.listing.status.text() == "daemon back — listing resumed"
+    assert shell.listing.table.rowCount() == 1
+
+
 def test_the_feed_outage_flashes_the_current_screen(qt) -> None:
     """The feed's drop and recovery (#946): the screen the
     operator sees flashes the outage while the feed retries — an
@@ -1151,16 +1326,18 @@ def test_the_feed_outage_flashes_the_current_screen(qt) -> None:
     assert shell.listing.status.text() == (
         "the events feed dropped — the socket broke"
     )
-    # The feed's flash runs its own span, not the screens' outage
-    # flag: a REST answer must not read as the feed's recovery.
-    assert not shell.listing.flash_outage
+    # The feed's flash runs its own span over the screens'
+    # daemon-down state, which it does not set: a REST answer
+    # must not read as the feed's recovery, and the state is the
+    # screen's own, not the flash's (#1129).
+    assert not shell.listing.daemon_down
     shell.listing.on_succeeded("workspaces-list", [])
     assert shell.listing.status.text() == (
         "the events feed dropped — the socket broke"
     )
     shell.feed_back()
     assert shell.listing.status.text() == "the events feed reconnected"
-    assert not shell.listing.flash_outage
+    assert not shell.listing.daemon_down
     # The page flashes its own copy when it owns the window.
     shell.listing.opened.emit("ws-a")
     shell.feed_dropped("the dial failed")
@@ -1169,18 +1346,207 @@ def test_the_feed_outage_flashes_the_current_screen(qt) -> None:
     )
 
 
-def test_a_refresh_in_flight_is_not_stacked(qt) -> None:
-    """The in-flight guard (#945, the listing's own #470): a
-    tick under a slow call adds nothing — the landing answer
-    retires the guard and the next refresh flies."""
+def test_a_refresh_in_flight_is_carried(qt) -> None:
+    """The in-flight guard carries the ask (#945, #470's one
+    flight at a time, #1129's carry — the TUI listing's own arm
+    over #1019): a refresh asked while the row read is out adds
+    no second request, and the moment no read stands the
+    deferred refresh goes out whole — the row read and the
+    storage read again, the tabs' own pokes beside them. Not
+    before: one read landing while the other stands serves
+    nothing yet. Another key's answer is not this page's to
+    take."""
     page, window, bridge = make_page(qt)
-    assert page.row_pending and page.storage_pending
-    page.refresh()
-    assert bridge.calls == []
+    land(qt, page, bridge)
+    # The tabs' own reads land first, so the page's flights below
+    # are the row's and the storage's alone.
+    bridge.succeeded.emit(page.proxies_tab.list_key, [])
+    bridge.succeeded.emit(
+        page.egress_tab.list_key,
+        {
+            "workspace_id": page.workspace_id,
+            "mode": "interactive",
+            "allow_list": [],
+            "allowed": [],
+            "denied": [],
+        },
+    )
+    row = (qt.page_mod.ROW_KEY, "workspaces", ())
+    storage = (qt.page_mod.STORAGE_KEY, "storage", ())
+    reads = [c for c in bridge.calls if c[0] in (row[0], storage[0])]
+    assert reads == []
+    page.refresh()  # both reads out
+    page.refresh()  # carried: no second request
+    reads = [c for c in bridge.calls if c[0] in (row[0], storage[0])]
+    assert reads == [row, storage]
     page.on_succeeded(qt.page_mod.ROW_KEY, [daemon_row()])
-    page.refresh()
-    assert bridge.calls == [(qt.page_mod.ROW_KEY, "workspaces", ())]
+    reads = [c for c in bridge.calls if c[0] in (row[0], storage[0])]
+    assert reads == [row, storage]  # the storage read still stands
+    page.on_succeeded(qt.page_mod.STORAGE_KEY, {"workspaces": []})
+    reads = [c for c in bridge.calls if c[0] in (row[0], storage[0])]
+    assert reads == [row, storage, row, storage]  # no read stands: served
+    bridge.calls.clear()
+    page.on_succeeded(qt.page_mod.ROW_KEY, [daemon_row()])
+    page.on_succeeded(qt.page_mod.STORAGE_KEY, {"workspaces": []})
+    assert bridge.calls == []  # nothing carried, nothing asked
     # Another key's answer is not this page's to take.
     page.on_succeeded("workspaces-list", [])
     page.on_failed("workspaces-list", clientdata.RestFailure("x", reach=False))
     assert page.status.text() == ""
+
+
+def gui_lost_frame(ws: str = "ws-a") -> dict:
+    """The failure the daemon publishes when the last holder went
+    (#1127): one frame per forward row, the missing-holder cause
+    riding the reason."""
+    return {
+        "event": "proxy.failed",
+        "data": {
+            "id": ws,
+            "proxy": 7,
+            "reason": (
+                "no client holds the bridge — start the workspace "
+                "from a client (the holder it leaves serves after "
+                "the command exits), or run 'msks proxy hold "
+                "<workspace>'"
+            ),
+        },
+    }
+
+
+def gui_failed_rows() -> list[dict]:
+    """One workspace's forward rows as a failing read serves them
+    (#1127)."""
+    return [
+        {
+            "id": 7,
+            "workspace_id": "ws-a",
+            "direction": "forward",
+            "listen_port": 8080,
+            "target_port": 80,
+            "status": "failed",
+            "reason": gui_lost_frame()["data"]["reason"],
+        }
+    ]
+
+
+def test_the_shell_reholds_a_lost_bridge(qt) -> None:
+    """#1127: a holder's death publishes its rows' failure; the
+    shell's watch reads the rows over the bridge, spawns the
+    detached holder, and the listener that follows says the
+    recovery once on the screen the operator sees."""
+    shell, window, bridge = make_shell(qt)
+    bridge.calls.clear()
+    shell.frame_landed(gui_lost_frame())
+    # The burst one failure publishes per row lands as one read.
+    shell.frame_landed(gui_lost_frame())
+    reads = [call for call in bridge.calls if call[0].startswith("rehold:")]
+    assert reads == [("rehold:ws-a", "workspace_proxies", ("ws-a",))]
+    bridge.succeeded.emit("rehold:ws-a", gui_failed_rows())
+    assert bridge.holder_spawns == ["ws-a"]
+    # A listener that answers no spawn of this session says
+    # nothing; the one that answers the spawn says it once.
+    assert shell.listing.status.text() == ""
+    shell.frame_landed({"event": "proxy.listening", "data": {"id": "ws-b"}})
+    assert shell.listing.status.text() == ""
+    shell.frame_landed({"event": "proxy.listening", "data": {"id": "ws-a"}})
+    assert "bridge re-held" in shell.listing.status.text()
+    assert "alpha" in shell.listing.status.text()
+    shell.frame_landed({"event": "proxy.listening", "data": {"id": "ws-a"}})
+    assert shell.listing.status.text().count("bridge re-held") == 1
+
+
+def force_rehold_windows(bridge) -> None:
+    """Move the stub's real-clock re-hold windows past (#1127):
+    the drain's ruling then reads exactly as a lapsed window
+    would on the wall clock."""
+    bridge.reholder.window_until.clear()
+    bridge.reholder.awaited.clear()
+
+
+def test_the_shell_reholds_a_start_that_left_no_holder(qt) -> None:
+    """#1127: a start over the raw API leaves no holder; the
+    running transition it publishes weighs the rows the same
+    way, a failure over the spawn it made defers to the poll's
+    drain, and a standing holder's listening rows spawn
+    nothing."""
+    shell, window, bridge = make_shell(qt)
+    bridge.calls.clear()
+    shell.frame_landed(
+        {
+            "event": "workspace.status",
+            "data": {"id": "ws-a", "status": "running"},
+        }
+    )
+    assert ("rehold:ws-a", "workspace_proxies", ("ws-a",)) in bridge.calls
+    bridge.succeeded.emit("rehold:ws-a", gui_failed_rows())
+    assert bridge.holder_spawns == ["ws-a"]
+    # A failure over the spawn's outcome window defers: no
+    # second read until the poll's drain re-rules it.
+    shell.frame_landed(gui_lost_frame())
+    reads = [call for call in bridge.calls if call[0].startswith("rehold:")]
+    assert len(reads) == 1
+    force_rehold_windows(bridge)
+    shell.drain_rehold()
+    reads = [call for call in bridge.calls if call[0].startswith("rehold:")]
+    assert len(reads) == 2
+    listening = [
+        {**gui_failed_rows()[0], "status": "listening", "reason": None}
+    ]
+    bridge.succeeded.emit("rehold:ws-a", listening)
+    assert bridge.holder_spawns == ["ws-a"]
+
+
+def test_the_shell_names_the_watchs_give_up(qt) -> None:
+    """#1127: the failure that lands after the session's last
+    spawn meets the give-up line once the outcome window lapses
+    — the drain carries it, the row's cause stands, and the
+    failures after it stay quiet."""
+    shell, window, bridge = make_shell(qt)
+    # The clock moves before each spend, so the last spawn's
+    # outcome window stands after the loop.
+    for _ in range(ReHolder.MAX_TRIES):
+        force_rehold_windows(bridge)
+        assert bridge.reholder.rehold("ws-a", gui_failed_rows()) is True
+    shell.frame_landed(gui_lost_frame())
+    # The last spawn's outcome window stands: the failure
+    # defers, and the line waits for the poll's drain.
+    assert shell.listing.status.text() == ""
+    force_rehold_windows(bridge)
+    shell.drain_rehold()
+    text = shell.listing.status.text()
+    assert "bridge not re-held" in text
+    assert "msks proxy hold" in text
+
+
+def test_the_shells_timer_drains_the_deferrals(qt) -> None:
+    """#1127: the poll's own path — a deferral whose windows
+    closed re-rules through the timer, not by hand: the failure
+    the window swallowed takes its rows read once the shell's
+    clockwork fires, and a second spawn lands."""
+    shell, window, bridge = make_shell(qt)
+    bridge.calls.clear()
+    shell.frame_landed(gui_lost_frame())
+    assert ("rehold:ws-a", "workspace_proxies", ("ws-a",)) in bridge.calls
+    bridge.succeeded.emit("rehold:ws-a", gui_failed_rows())
+    assert bridge.holder_spawns == ["ws-a"]
+    # The crash-loop death lands inside the window: deferred.
+    shell.frame_landed(gui_lost_frame())
+    force_rehold_windows(bridge)
+    # The timer alone drives the drain from here.
+    shell.rehold_timer.setInterval(10)
+    shell.rehold_timer.start(10)
+    deadline = time.monotonic() + 10.0
+    answered = 0
+    while time.monotonic() < deadline and len(bridge.holder_spawns) < 2:
+        qt.app.processEvents()
+        time.sleep(0.01)
+        reads = [
+            call for call in bridge.calls if call[0].startswith("rehold:")
+        ]
+        while answered < len(reads):
+            # Answer each drained read the way the daemon would.
+            key = reads[answered][0]
+            bridge.succeeded.emit(key, gui_failed_rows())
+            answered += 1
+    assert bridge.holder_spawns == ["ws-a", "ws-a"]

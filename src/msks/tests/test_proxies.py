@@ -73,6 +73,56 @@ def attachment() -> NetAttachment:
 ATTACHMENT = attachment()
 
 
+class FakeBridge:
+    """The bridge seam (#1102): an echo listener behind ``dial``
+    (the channel the forward direction rides), with every
+    workspace's session up unless a test names it down."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+        self.refusal: Exception | None = None
+        self.down: set[str] = set()
+        self.causes: dict[str, str] = {}
+        self._server: asyncio.AbstractServer | None = None
+
+    def up(self, workspace_id: str) -> bool:
+        return workspace_id not in self.down
+
+    def cause(self, workspace_id: str) -> str:
+        return self.causes.get(workspace_id, "no bridge session (stub)")
+
+    async def _echo(self, reader, writer) -> None:
+        while True:
+            data = await reader.read(4096)
+            if not data:
+                break
+            writer.write(data.upper())
+            await writer.drain()
+        writer.close()
+
+    async def open_channel(
+        self, workspace_id: str, port: int, host: str | None = None
+    ):
+        self.calls.append((workspace_id, port))
+        if self.refusal is not None:
+            raise self.refusal
+        if self._server is None:
+            self._server = await asyncio.start_server(
+                self._echo, "127.0.0.1", 0
+            )
+        address = self._server.sockets[0].getsockname()
+        return await asyncio.open_connection(*address)
+
+    async def stop(self, workspace_id: str) -> None:
+        self.calls.append(("stop", workspace_id))
+
+    async def stop_all(self) -> None:
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+            self._server = None
+
+
 async def echo_target() -> tuple[asyncio.AbstractServer, int]:
     """A daemon-side service for the remote direction: answers in
     lower case, so a bridged byte's path reads from the answer."""
@@ -118,10 +168,13 @@ async def proxies(tmp_path: Path):
     )
     net = FakeNet()
     app.state.net = net
+    bridge = FakeBridge()
+    app.state.bridge = bridge
     queue = app.state.hub.subscribe()
     try:
-        yield app.state.proxies, app.state.model, net, queue, app
+        yield app.state.proxies, app.state.model, net, queue, app, bridge
     finally:
+        await bridge.stop_all()
         await app.state.model.close()
 
 
@@ -151,23 +204,22 @@ async def exchange(port: int, payload: bytes) -> bytes:
 
 
 async def test_forward_proxy_bridges_and_tracks(proxies) -> None:
-    manager, model, net, _queue, _app = proxies
+    manager, model, net, _queue, _app, bridge = proxies
     port = await free_port()
     row = await create_forward_row(model, port)
     live = await manager.start_one(row, ATTACHMENT)
     assert live["status"] == "listening"
     assert await exchange(port, b"hello\n") == b"HELLO\n"
-    assert net.calls == [("ws-a", 22)]
-    assert net.tracked
+    # The forward direction rides the bridge (#1102), not the
+    # forward websocket's tap dial.
+    assert bridge.calls == [("ws-a", 22)]
+    assert net.calls == []
     await manager.stop_one(row["id"])
-    # The closed session untracks its guest stream (detach's
-    # cleanup contract) — stop_one waits the handler out.
-    assert net.untracked
 
 
 async def test_forward_refusal_keeps_listener(proxies, caplog) -> None:
-    manager, model, net, _queue, _app = proxies
-    net.refusal = RuntimeError("no live network attachment")
+    manager, model, _net, _queue, _app, bridge = proxies
+    bridge.refusal = RuntimeError("no bridge session")
     port = await free_port()
     row = await create_forward_row(model, port)
     live = await manager.start_one(row, ATTACHMENT)
@@ -182,7 +234,7 @@ async def test_forward_refusal_keeps_listener(proxies, caplog) -> None:
 
 
 async def test_remote_proxy_bridges_to_daemon_side(proxies) -> None:
-    manager, model, _net, _queue, _app = proxies
+    manager, model, _net, _queue, _app, _bridge = proxies
     target, target_port = await echo_target()
     async with target:
         listen_port = await free_port()
@@ -202,7 +254,7 @@ async def test_remote_proxy_bridges_to_daemon_side(proxies) -> None:
 
 
 async def test_remote_dead_target_ends_connection(proxies) -> None:
-    manager, model, _net, _queue, _app = proxies
+    manager, model, _net, _queue, _app, _bridge = proxies
     dead_port = await free_port()
     listen_port = await free_port()
     row = await model.create_proxy(
@@ -217,7 +269,7 @@ async def test_remote_dead_target_ends_connection(proxies) -> None:
 
 
 async def test_remote_without_attachment_records_stopped(proxies) -> None:
-    manager, model, _net, _queue, _app = proxies
+    manager, model, _net, _queue, _app, _bridge = proxies
     row = await model.create_proxy(
         "ws-a", "remote", None, 9200, "127.0.0.1", 9200, None
     )
@@ -227,7 +279,7 @@ async def test_remote_without_attachment_records_stopped(proxies) -> None:
 
 
 async def test_failed_bind_records_reason_and_retries(proxies) -> None:
-    manager, model, _net, queue, _app = proxies
+    manager, model, _net, queue, _app, _bridge = proxies
     port = await free_port()
     squatter = await asyncio.start_server(lambda r, w: None, "127.0.0.1", port)
     row = await create_forward_row(model, port)
@@ -249,7 +301,7 @@ def next_event_ok(event: tuple[str, dict], expected: str) -> bool:
 
 
 async def test_start_workspace_is_idempotent(proxies) -> None:
-    manager, model, _net, _queue, _app = proxies
+    manager, model, _net, _queue, _app, _bridge = proxies
     port = await free_port()
     await create_forward_row(model, port)
     await manager.start_workspace("ws-a", ATTACHMENT)
@@ -259,7 +311,7 @@ async def test_start_workspace_is_idempotent(proxies) -> None:
 
 
 async def test_stop_workspace_closes_listeners(proxies) -> None:
-    manager, model, _net, queue, _app = proxies
+    manager, model, _net, queue, _app, _bridge = proxies
     port = await free_port()
     row = await create_forward_row(model, port)
     await manager.start_one(row, ATTACHMENT)
@@ -271,15 +323,50 @@ async def test_stop_workspace_closes_listeners(proxies) -> None:
 
 
 async def test_status_of_unknown_row_is_stopped(proxies) -> None:
-    manager, _model, _net, _queue, _app = proxies
+    manager, _model, _net, _queue, _app, _bridge = proxies
     assert manager.status({"id": 999}) == ("stopped", None)
+
+
+async def test_forward_row_reads_the_bridge_state(proxies) -> None:
+    """A bound forward row is listening exactly while the
+    workspace's bridge session stands (#1102); down, it records
+    the bridge's named cause."""
+    manager, model, _net, _queue, _app, bridge = proxies
+    port = await free_port()
+    row = await create_forward_row(model, port)
+    await manager.start_one(row, ATTACHMENT)
+    assert manager.status(row) == ("listening", None)
+    bridge.down.add("ws-a")
+    bridge.causes["ws-a"] = "bridge session ended — retry"
+    assert manager.status(row) == ("failed", "bridge session ended — retry")
+    bridge.down.clear()
+    assert manager.status(row) == ("listening", None)
+    await manager.stop_one(row["id"])
+
+
+async def test_forward_row_without_a_bridge_names_it(proxies) -> None:
+    """A daemon state with no bridge at all still reads an honest
+    row: failed, with a cause that says so."""
+    manager, model, _net, _queue, app, bridge = proxies
+    port = await free_port()
+    row = await create_forward_row(model, port)
+    await manager.start_one(row, ATTACHMENT)
+    app.state.bridge = None
+    try:
+        assert manager.status(row) == (
+            "failed",
+            "no bridge (the daemon runs no bridge)",
+        )
+    finally:
+        app.state.bridge = bridge
+    await manager.stop_one(row["id"])
 
 
 async def test_bound_remote_ports_tracks_live_binds(proxies) -> None:
     """Rows alone never qualify (#807 review): only a remote
     listener that is up carries an admission, so a failed bind
     admits nothing."""
-    manager, model, _net, _queue, _app = proxies
+    manager, model, _net, _queue, _app, _bridge = proxies
     await create_forward_row(model, await free_port())
     remote_port = await free_port()
     await model.create_proxy(
@@ -293,7 +380,7 @@ async def test_bound_remote_ports_tracks_live_binds(proxies) -> None:
 
 
 async def test_events_publish_on_listener_transitions(proxies) -> None:
-    manager, model, _net, queue, _app = proxies
+    manager, model, _net, queue, _app, _bridge = proxies
     port = await free_port()
     row = await create_forward_row(model, port)
     await manager.start_one(row, ATTACHMENT)
@@ -380,7 +467,7 @@ def test_manager_constructs_plain() -> None:
 
 
 async def test_stop_one_on_a_failed_entry_just_drops_it(proxies) -> None:
-    manager, model, _net, queue, _app = proxies
+    manager, model, _net, queue, _app, _bridge = proxies
     port = await free_port()
     squatter = await asyncio.start_server(lambda r, w: None, "127.0.0.1", port)
     row = await create_forward_row(model, port)
@@ -398,7 +485,7 @@ async def test_stop_one_on_a_failed_entry_just_drops_it(proxies) -> None:
 
 
 async def test_stop_all_ends_every_listener(proxies) -> None:
-    manager, model, _net, _queue, _app = proxies
+    manager, model, _net, _queue, _app, _bridge = proxies
     one, two = await free_port(), await free_port()
     await create_forward_row(model, one)
     await create_forward_row(model, two)
@@ -415,7 +502,9 @@ async def test_publish_skips_a_hubless_app() -> None:
     from types import SimpleNamespace
 
     manager = ProxyManager(SimpleNamespace(state=SimpleNamespace(hub=None)))
-    await manager.publish({"workspace_id": "ws", "id": 1}, "proxy.listening")
+    await manager.publish(
+        {"workspace_id": "ws", "id": 1}, "proxy.listening", None, None
+    )
 
 
 def test_bind_point_shapes() -> None:
@@ -433,9 +522,8 @@ def test_bind_point_shapes() -> None:
 async def test_stop_ends_in_flight_connections(proxies) -> None:
     """A stop cancels the sessions still bridging: two idle
     connections close with the listener, and the per-task cleanup
-    (the tracked guest streams, the discarded task records) runs
-    for both."""
-    manager, model, _net, _queue, _app = proxies
+    (the discarded task records) runs for both."""
+    manager, model, _net, _queue, _app, _bridge = proxies
     port = await free_port()
     row = await create_forward_row(model, port)
     await manager.start_one(row, ATTACHMENT)
@@ -453,7 +541,7 @@ async def test_handler_closes_its_stream_without_a_live_entry(proxies) -> None:
     """A connection the listener accepted after its entry left
     (a stop landing mid-accept) still gets its cleanup: the
     handler bridges and closes with no task record to keep."""
-    manager, model, net, _queue, _app = proxies
+    manager, model, _net, _queue, _app, bridge = proxies
     row = await create_forward_row(model, await free_port())
     handler = manager.connect_handler(row)
     reader = asyncio.StreamReader()
@@ -470,13 +558,13 @@ async def test_handler_closes_its_stream_without_a_live_entry(proxies) -> None:
             return None
 
     sink = Sink()
-    net.refusal = RuntimeError("no live network attachment")
+    bridge.refusal = RuntimeError("no bridge session")
     await handler(reader, sink)
     assert sink.closed
 
 
 async def test_stop_workspace_ends_each_listener(proxies) -> None:
-    manager, model, _net, _queue, _app = proxies
+    manager, model, _net, _queue, _app, _bridge = proxies
     one, two = await free_port(), await free_port()
     await create_forward_row(model, one)
     await create_forward_row(model, two)
@@ -490,7 +578,7 @@ async def test_stop_workspace_ends_each_listener(proxies) -> None:
 async def test_stop_workspace_spares_other_workspaces(proxies) -> None:
     """The sweep skips another workspace's listener: only the
     named workspace's rows come down."""
-    manager, model, _net, _queue, _app = proxies
+    manager, model, _net, _queue, _app, _bridge = proxies
     mine, theirs = await free_port(), await free_port()
     await create_forward_row(model, mine)
     await model.create_proxy(
@@ -535,3 +623,34 @@ async def test_stop_one_is_bounded_by_grace(monkeypatch) -> None:
     await asyncio.wait_for(manager.stop_one(1), timeout=3.0)
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, timeout=1.0)
+
+
+async def test_a_stop_after_the_workspace_row_vanished_stays_scoped(
+    proxies,
+) -> None:
+    """#1095: the owner captured at bind outlives the workspace
+    row. A forward proxy on a never-started workspace holds its
+    listener past the row's deletion until the shutdown sweep
+    closes it — the close frame still reaches the captured
+    owner's subscribers alone, and the owner-side subscriber
+    queue receives it beside the unscoped one."""
+    manager, model, _net, queue, app, _bridge = proxies
+    row = await create_forward_row(model, await free_port())
+    alice_q = app.state.hub.subscribe(viewer=4242)
+    foreign_q = app.state.hub.subscribe(viewer=9999)
+    await manager.start_one(row, None, 4242)
+    assert (await next_event(queue))[0] == "proxy.listening"
+    assert json.loads(alice_q.get_nowait())["event"] == "proxy.listening"
+    await model.delete_workspace("ws-a")
+    await manager.stop_one(row["id"])
+    event, data = await next_event(queue)
+    assert event == "proxy.closed"
+    assert data["id"] == "ws-a"
+    closed = json.loads(alice_q.get_nowait())
+    assert closed["event"] == "proxy.closed"
+    # The exclusion half: a foreign scoped subscriber receives
+    # neither the bind's frame nor the close's — the pair pins
+    # "scoped", not just "published" (same-loop broadcasts land
+    # synchronously, so the empty read is deterministic).
+    with pytest.raises(asyncio.QueueEmpty):
+        foreign_q.get_nowait()

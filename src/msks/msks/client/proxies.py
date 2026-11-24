@@ -31,6 +31,7 @@ from urllib.parse import quote
 
 import typer
 
+from . import bridge as bridge_flow
 from .context import call
 from .jsonio import json_line, outcome, set_json_mode
 from .tabular import listing_text
@@ -74,46 +75,43 @@ LOCAL_FORM = (
 LOOPBACK_HOSTS = ("localhost", "127.0.0.1")
 
 LOCAL_HOST_RULE = (
-    "-L's host field names the workspace itself; only localhost "
-    "or 127.0.0.1 is allowed — to reach a daemon-side service, "
-    "use -R"
+    "-L's host field resolves inside the workspace, ssh's own "
+    "far-end meaning: a name or address the workspace itself can "
+    "reach — to reach a daemon-side service, use -R"
 )
 
 
-def local_host(raw: str) -> None:
-    """The -L spec's host field: the workspace itself, spelled
-    either way. Anything else is the ask ssh would send to the
-    far end's dialer — the workspace has none — so it refuses
-    with the rule and the direction that serves it."""
-    if raw not in LOOPBACK_HOSTS:
-        raise SystemExit(f"msks: {LOCAL_HOST_RULE} (got {raw!r})")
+def local_host(raw: str) -> str:
+    """The -L spec's host field, passed to the far end unchanged:
+    the guest's sshd resolves and connects to it, so the reach is
+    the workspace's own. A spec naming a loopback spelling records
+    no target host (the row's default); anything else rides the
+    row for the guest to resolve."""
+    return raw
 
 
 def local_fields(rest: str) -> tuple:
-    """(bind, listen, guest) for a spec with no bracketed lead:
-    three fields are PORT:HOST:PORT, four name the bind address
-    first."""
+    """(bind, listen, host, guest) for a spec with no bracketed
+    lead: three fields are PORT:HOST:PORT, four name the bind
+    address first."""
     fields = rest.split(":")
     if len(fields) == 3:
         listen, host, guest = fields
-        local_host(host)
-        return None, listen, guest
+        return None, listen, local_host(host), guest
     if len(fields) == 4:
         bind, listen, host, guest = fields
-        local_host(host)
-        return bind, listen, guest
+        return bind, listen, local_host(host), guest
     raise SystemExit(f"msks: {LOCAL_FORM}, got {rest!r}")
 
 
 def bracketed_local(host: str, rest: str) -> tuple:
-    """(bind, listen, guest) for a spec whose lead is bracketed:
-    the host is the bind, the rest is PORT:HOST:PORT."""
+    """(bind, listen, target, guest) for a spec whose lead is
+    bracketed: the host is the bind, the rest is PORT:HOST:PORT."""
     fields = rest.split(":")
     if len(fields) != 3:
         raise SystemExit(f"msks: {LOCAL_FORM}, got {host!r}:{rest}")
     listen, target, guest = fields
-    local_host(target)
-    return host, listen, guest
+    return host, listen, local_host(target), guest
 
 
 def parse_local_spec(raw: str) -> dict:
@@ -122,9 +120,9 @@ def parse_local_spec(raw: str) -> dict:
     host field naming the workspace (localhost)."""
     host, rest = split_leading_host(raw, "L")
     if host is None:
-        bind, listen, guest = local_fields(rest)
+        bind, listen, target, guest = local_fields(rest)
     else:
-        bind, listen, guest = bracketed_local(host, rest)
+        bind, listen, target, guest = bracketed_local(host, rest)
     body = {
         "direction": "forward",
         "listen_port": spec_port(listen, "L"),
@@ -132,6 +130,10 @@ def parse_local_spec(raw: str) -> dict:
     }
     if bind is not None:
         body["listen_host"] = bind
+    if target not in LOOPBACK_HOSTS:
+        # A name beyond the loopback spellings rides the row: the
+        # guest's sshd resolves it at the far end.
+        body["target_host"] = target
     return body
 
 
@@ -182,9 +184,15 @@ def proxy_endpoint(row: dict) -> tuple[str, str]:
             f"gateway:{row['listen_port']}",
             f"{row.get('target_host') or '127.0.0.1'}:{row['target_port']}",
         )
+    target = row.get("target_host")
+    far = (
+        f"guest:{target}:{row['target_port']}"
+        if target
+        else (f"guest:{row['target_port']}")
+    )
     return (
         f"{row.get('listen_host') or '127.0.0.1'}:{row['listen_port']}",
-        f"guest:{row['target_port']}",
+        far,
     )
 
 
@@ -237,6 +245,22 @@ async def remove_proxy(
     )
 
 
+async def workspace_proxies(workspace_id: str, transport=None) -> list[dict]:
+    """One workspace's proxy rows, live status attached — the
+    read the start-time bridge hook runs on."""
+    return await call(
+        "GET",
+        f"/api/v1/workspaces/{quote(workspace_id, safe='')}/proxies",
+        transport=transport,
+    )
+
+
+def needs_bridge(rows: list[dict]) -> bool:
+    """Whether any row is a forward proxy — the rows the bridge
+    serves. Remote rows bridge nothing."""
+    return any(row["direction"] != "remote" for row in rows)
+
+
 @app.command("add")
 def cmd_proxy_add(
     ctx: typer.Context,
@@ -249,8 +273,8 @@ def cmd_proxy_add(
         "--local",
         metavar="[BIND:]PORT:HOST:PORT",
         help="local: the daemon binds PORT (loopback, or BIND) and "
-        "bridges to the workspace's port — HOST names the workspace "
-        "itself (localhost)",
+        "bridges to the workspace's port — HOST resolves inside "
+        "the guest (localhost, its own loopback)",
     ),
     remote: str | None = typer.Option(
         None,
@@ -313,6 +337,19 @@ def cmd_proxy_ls(
         )
     )
     return 0
+
+
+@app.command("hold")
+def cmd_proxy_hold(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(
+        ..., help="the workspace whose bridge is held (name or id)"
+    ),
+) -> int:
+    """Hold the workspace's bridge: serve its forward proxies'
+    connections into the guest, from this client, until the
+    workspace stops."""
+    return bridge_flow.run_hold(workspace_id, ctx.obj)
 
 
 @app.command("rm")

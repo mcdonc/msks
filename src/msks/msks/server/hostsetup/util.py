@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from stat import S_ISDIR
 
 OS_RELEASE = "/etc/os-release"
 
@@ -165,3 +166,40 @@ def invoked_as() -> str:
 def chown_path(path: Path, uid: int, gid: int) -> None:
     """os.chown, as a seam the suite can pin."""
     os.chown(path, uid, gid)
+
+
+def tree_size(path: str) -> int:
+    """The apparent size of one tree's files, in bytes — the
+    uninstall summary's kept-state evidence. Symlinks count
+    their own size, a walk that cannot read an entry counts
+    what it could (a summary never refuses), and a missing tree
+    is empty."""
+    total = 0
+    stack: list[str] = [path]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    stat = entry.stat(follow_symlinks=False)
+                    if S_ISDIR(stat.st_mode):
+                        stack.append(entry.path)
+                    else:
+                        total += stat.st_size
+        except OSError:
+            continue
+    return total
+
+
+def human_size(count: int) -> str:
+    """Bytes as the summary's word: the largest binary unit the
+    count fills, one decimal, plain bytes under a KiB."""
+    size = float(count)
+    unit = "B"
+    steps = {"B": "KiB", "KiB": "MiB", "MiB": "GiB", "GiB": "TiB"}
+    while size >= 1024 and unit != "TiB":
+        size /= 1024
+        unit = steps[unit]
+    if unit == "B":
+        return f"{int(size)} B"
+    return f"{size:.1f} {unit}"

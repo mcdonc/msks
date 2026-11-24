@@ -26,7 +26,11 @@ from .serialize import (
     workspace_fields,
 )
 from .tokens import Token
-from .workspaces import WORKSPACE_STATUSES, Workspace
+from .workspaces import (
+    WORKSPACE_STATUSES,
+    Workspace,
+    sees_all_rows,
+)
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
 
@@ -206,49 +210,96 @@ class Model(SecretOpsMixin):
         image_hash: str | None = None,
         host: str | None = None,
         name: str | None = None,
+        owner_uid: int | None = None,
     ) -> dict:
         """Insert a workspace row from its VM spec and artifact facts.
 
         ``name`` is the operator-chosen label (#246) — the spec's
         ``workspace_id`` is the daemon-minted immutable id, so the
-        label rides beside it. The row carries the public half
+        label rides beside it. ``owner_uid`` (#1082) is the creating
+        peer's credential; None records the daemon's own uid, the
+        TCP surface's mapping. The row carries the public half
         alone (#486, #497): msks never holds a private half.
         """
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
-            row = Workspace(**workspace_fields(spec, image_hash, host, name))
+            row = Workspace(
+                **workspace_fields(spec, image_hash, host, name, owner_uid)
+            )
             session.add(row)
             await session.commit()
             return workspace_dict(row)
 
-    async def get_workspace(self, ref: str) -> dict | None:
+    async def get_workspace(
+        self, ref: str, viewer: int | None = None
+    ) -> dict | None:
         """One workspace row by reference — its immutable id or its
-        unique name (#246) — None when neither matches.
+        name (#246) — None when neither matches.
 
         Id first: the create route keeps live ids and live names in
         one disjoint namespace, so the order is a canonical
         preference, not a tiebreak — and a pre-#246 row's label IS
         its id, so its operators' muscle memory lands here too.
+        ``viewer`` is the owner filter (#1082): a row another owner
+        holds answers None — the 404 mask — and a name more than
+        one owner holds raises :class:`AmbiguousRef` for a bypassing
+        viewer. ``None`` is the daemon's own unfiltered read.
         """
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
-            row = await session.get(Workspace, ref)
-            if row is None:
-                row = await session.scalar(
-                    select(Workspace).where(Workspace.name == ref)
-                )
+            row = await resolve_workspace(session, ref, viewer)
             if row is None:
                 return None
             return workspace_dict(row)
 
-    async def list_workspaces(self) -> list[dict]:
-        """All workspace rows, oldest first."""
+    async def list_workspaces(self, viewer: int | None = None) -> list[dict]:
+        """The workspace rows, oldest first. ``viewer`` is the owner
+        filter (#1082): a uid the filter does not bypass is served
+        its own rows alone; ``None`` (the daemon's own reads) sees
+        all — the watcher's scan and the image-removal guard read
+        the whole table through it."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            stmt = select(Workspace).order_by(
+                Workspace.created_at, Workspace.id
+            )
+            if not sees_all_rows(viewer):
+                stmt = stmt.where(Workspace.owner_uid == viewer)
+            rows = await session.scalars(stmt)
+            return [workspace_dict(row) for row in rows]
+
+    async def owned_workspace_ids(self, owner_uid: int) -> set[str]:
+        """The ids one owner holds, by exact match (#1083) — no
+        bypass: the owner-wide placeholder's arm set and recipient
+        set key on the owner itself, not the viewer filter, so a
+        row the daemon's uid owns reaches the daemon's own
+        workspaces alone even though that uid sees every row."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
             rows = await session.scalars(
-                select(Workspace).order_by(Workspace.created_at, Workspace.id)
+                select(Workspace.id).where(Workspace.owner_uid == owner_uid)
             )
-            return [workspace_dict(row) for row in rows]
+            return set(rows.all())
+
+    async def create_ref_blocked(self, name: str, owner_uid: int) -> bool:
+        """Whether a create of *name* is refused for this owner
+        (#1082). Two refusals, both the 409 "workspace exists":
+        the name equals any live workspace's id — the one-namespace
+        rule (#246), which stays daemon-wide — or the name is
+        already held in the creator's view: the creator's own row,
+        or any owner's row when the creator bypasses the filter
+        (root and the daemon uid see every row, so their namespace
+        spans it). A name another non-bypassing owner holds is
+        free: names are unique per owner.
+        """
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            if await session.get(Workspace, name) is not None:
+                return True
+            stmt = select(Workspace.id).where(Workspace.name == name)
+            if not sees_all_rows(owner_uid):
+                stmt = stmt.where(Workspace.owner_uid == owner_uid)
+            return await session.scalar(stmt.limit(1)) is not None
 
     async def set_status(self, workspace_id: str, status: str) -> bool:
         """Record an observed lifecycle status; False when absent."""
@@ -464,13 +515,17 @@ class Model(SecretOpsMixin):
             await session.commit()
             return result.rowcount > 0
 
-    async def get_ssh_key(self, ref: str) -> dict | None:
+    async def get_ssh_key(
+        self, ref: str, viewer: int | None = None
+    ) -> dict | None:
         """The workspace's ssh identity halves (#111, #486) and
         login user (#248), or None when the workspace does not
         exist. The
         workspace is resolved by id or name (#246) like every
-        route-facing lookup, and the answer carries the row's
-        immutable id and name so a client keys its caches on
+        route-facing lookup, with the same owner filter (#1082):
+        ``viewer`` masks another owner's row to None. The answer
+        carries the row's immutable id and name so a client keys
+        its caches on
         instance identity, not the reference it typed. A row
         without an identity (a pre-#111 workspace) returns halves of
         None — the caller distinguishes row-missing from
@@ -478,7 +533,7 @@ class Model(SecretOpsMixin):
         pre-#248 one) returns None for it the same way."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
-            row = await resolve_workspace(session, ref)
+            row = await resolve_workspace(session, ref, viewer)
             if row is None:
                 return None
             return {

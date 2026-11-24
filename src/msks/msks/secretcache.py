@@ -26,6 +26,14 @@ error, the daemon's API and store import the cache and the
 refusal vocabulary. Nothing here touches the crypto leaf, the
 model, or the settings modules — the live timeout is read off the
 app the same way every subsystem reads its settings.
+
+The cache keys by backend ref. Every ref a mint lands under
+spells its row's owner (#1083), so two owners' same-named rows
+hold distinct keys; rows migrated from the pre-owner schema keep
+their legacy ref spellings, and the backfill gives them all the
+daemon's uid — the (owner, name, coverage) unique keeps two rows
+from sharing a cache key either way. The cache never lets one
+owner's plaintext stand behind another owner's sentinel.
 """
 
 from datetime import UTC, datetime, timedelta

@@ -75,6 +75,7 @@ Every command exits with a code from this table:
 | 3    | Not found (the daemon answered 404)                                      |
 | 4    | Name conflict (a create or clone with a name another row holds)          |
 | 5    | Wrong state (a state, placement, or same-name row refuses the action)    |
+| 6    | Ambiguous name (two or more owners hold it; `--user` or the id fixes it) |
 | 130  | Interrupted (Ctrl-C)                                                     |
 
 `msksd doctor --json` prints its check rows as one JSON document (one
@@ -162,9 +163,11 @@ local socket, where the kernel vouches for the client and no token exists to
 read.
 
 An unconfigured client (no `MSKSC_URL`, no `MSKSC_SOCKET`, no
-config-file daemon) looks for the default socket a same-host
-daemon binds (`$XDG_RUNTIME_DIR/msks/msksd.sock`) and connects
-through it with peer credentials alone. Finding none, it exits
+config-file daemon) looks for the default sockets a same-host
+daemon binds: its own `$XDG_RUNTIME_DIR/msks/msksd.sock` first,
+then the system deployment's `/run/msks/msksd.sock` (#1093),
+and connects through the first one that exists with peer
+credentials alone. Finding none, it exits
 with the paths it looked for and the two settings that pick a
 daemon outright. The client never connects to a TCP address
 implicitly: a well-known port could belong to any daemon.
@@ -315,9 +318,9 @@ applies to the ssh surfaces above and leaves it untouched.
 
 A workspace carries two identity fields. The **name** is the
 label you choose at create, the positional argument of every
-command, unique among the daemon's workspaces. The **id** is
-minted by the daemon at create: 10 hex digits (5 random bytes,
-re-rolled until it collides with nothing on this daemon),
+command, unique among your own workspaces on the daemon. The
+**id** is minted by the daemon at create: 10 hex digits (5 random
+bytes, re-rolled until it collides with nothing on this daemon),
 immutable, and never reused while its workspace lives.
 
 Every host-side surface keys on the id: the artifact directories under the
@@ -329,6 +332,16 @@ the first try, with a fresh host-key cache of its own.
 Every command that takes a workspace accepts either reference: `msks console
 ws` and `msks console 1a2b3c4d5e` reach the same workspace. The name is the
 everyday reference. The id is the reference no other workspace shares.
+
+Two owners may hold the same name. When root addresses a bare name two or
+more owners hold, the command exits 6 and names every owner (`alice (4242)`,
+or the bare uid for an account the host no longer holds). The fix is the
+workspace's id, or the `--user OWNER` option on the workspace verbs (`start`,
+`stop`, `rm`, `clone`, `key`, `resize`, `mount`, `umount`): the name then
+resolves against that owner's rows alone. The option is root's; a non-root
+caller passing it is refused, because every non-root call already addresses
+the caller's own rows. `--user` takes the account name, or the bare uid the
+error printed for a dead owner.
 
 ## `msks ls`
 
@@ -343,6 +356,13 @@ my-workspace  1a2b3c4d5e  running                   interactive  2026-05-14  deb
 scratch       77eedd0199  created                   allow        2026-06-01  -                 hv-1
 refs-reader   9c1d2e3f4a  running, 1 mount skipped  allow        2026-06-18  9f2c41a…de1234ab  hv-1
 ```
+
+A listing that spans owners gains an eighth column, `owner`, right
+after the name: the account name each row's `owner_uid` resolves to
+(the bare uid for an account the host no longer holds). A listing
+whose rows all share one owner keeps the seven columns, since every
+row is already that owner's; that is the shape every non-root
+caller sees, and `--json` rows carry `owner_uid` either way.
 
 The status column speaks the daemon's lifecycle vocabulary:
 `created` (row exists, never booted), `starting`, `running`,
@@ -1014,13 +1034,13 @@ whole `/home` at once.
 
 ## `msks secret`
 
-Mint a secret placeholder (daemon-wide by default, scoped with `--workspace`)
+Mint a secret placeholder (owner-wide by default, scoped with `--workspace`)
 and the daemon keeps your value as per-recipient ciphertext blobs in its
 database. See also [docs/secrets.md](secrets.md).
 
 ```bash
-# from a password manager, nothing touches disk: daemon-wide,
-# one sentinel for every workspace on the daemon
+# from a password manager, nothing touches disk: owner-wide,
+# one sentinel for every workspace you own
 op read 'op://Vault/github/credential' \
   | msks secret mint --name github_api \
       --dest api.github.com --secret-file -
@@ -1036,9 +1056,9 @@ msks secret ls                           # placeholders + coverage + lock state
 msks secret unlock                      # decrypt the pending blobs the
                                          # configured identity key opens
 msks secret renew --workspace myws --name pypi --ttl 86400
-msks secret revoke --name github_api     # the daemon-wide row of the label
+msks secret revoke --name github_api     # the owner-wide row of the label
 msks secret revoke --workspace ci,deploy --name pypi
-msks secret coverage myws scoped         # exempt myws from daemon-wide rows
+msks secret coverage myws scoped         # exempt myws from owner-wide rows
 ```
 
 `--secret-file` takes a path or `-` for a pipe, and the value is
@@ -1153,19 +1173,28 @@ msks proxy add my-workspace -R 5432:db.internal:5432 --label db
 ```
 
 The `-L` spec is `[BIND:]PORT:HOST:PORT`; the `-R` spec is `RPORT:HOST:TPORT`
-(its bind is the workspace's tap, a runtime fact). The host field plays the
-same role it plays in ssh: it names the end that makes the connection. In
-`-L` that end is the workspace itself, so the field accepts exactly two
-spellings — `localhost` or `127.0.0.1` — and anything else refuses:
+(its bind is the workspace's tap, a runtime fact). In `-L` the host field
+carries ssh's own meaning: it resolves at the far end, inside the guest.
+The two loopback spellings (`localhost`, `127.0.0.1`) reach the guest's
+own loopback through the workspace's bridge, and any other name or
+address rides the row — the workspace's sshd connects to it, so the reach
+is the workspace's own:
 
 ```text
-msks: -L's host field names the workspace itself; only localhost or
-127.0.0.1 is allowed — to reach a daemon-side service, use -R
+msks: -L wants ports, got 'x'
 ```
 
-The workspace cannot connect out on a local proxy's behalf, because no
-agent runs inside it. A local proxy always lands on the workspace itself.
-Reaching a daemon-side service is the `-R` direction.
+A shape the parser refuses names itself; the host field itself passes
+through (`-L 5432:db.internal:5432` reaches whatever `db.internal`
+resolves to inside the workspace).
+
+The connection on the far end is the guest's own. The workspace's bridge
+is the client that holds it: each connection travels to that client, whose
+ssh connects to the host field's address inside the guest, so a service
+bound to the guest's loopback answers. [The proxies
+chapter](proxies.md#the-bridge) covers the bridge: the holder `msks start`
+leaves behind, the identity it resolves, and the failure model while no
+holder serves. Reaching a daemon-side service stays the `-R` direction.
 
 A remote proxy is the other direction. The guest connects to `host.msks`
 on the listen port. The workspace's resolver answers that name with its DHCP
@@ -1182,7 +1211,8 @@ remote row therefore reaches its target without a verdict.
 `add` is declarative. Asking twice for the same spec returns the standing
 row. A different spec on the same bind is refused with the row that holds it.
 A local proxy binds at once, on a stopped workspace too. Each connection
-refuses until the guest runs. A remote proxy on a stopped workspace records
+refuses until a holder serves the workspace: `msks start` leaves one
+behind, and `msks proxy hold` runs one on demand. A remote proxy on a stopped workspace records
 the row, and the workspace's next start brings its listener up. A stop
 closes every listener the workspace owns. A proxy whose bind fails (the
 port is taken) records the failure as its status with the cause, and every
@@ -1194,12 +1224,19 @@ until a later swap lands.
 msks proxy ls            # every stored proxy, with live status
 msks proxy ls --json     # the same rows as JSON
 msks proxy rm my-workspace 3   # remove one (listener closes at once)
+msks proxy hold my-workspace   # hold the bridge by hand
 ```
 
 The listing shows each row's direction, listen and target endpoints, and live
 status (`listening`, `stopped`, `failed` with the cause). Removing a proxy
 closes its listener when one serves and drops the row from the daemon's
 database.
+
+`hold` holds the workspace's bridge from the client it runs on. It resolves
+the workspace identity the same way `msks ssh` does (the agent first, then
+the configured identity file) and serves the rows' connections until the
+workspace stops. `msks start` leaves one behind on its own; `hold` is the
+on-demand path.
 
 ## `msks egress`
 

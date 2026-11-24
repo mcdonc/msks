@@ -17,7 +17,9 @@ import time
 
 import httpx
 
+from ..spec.owners import AMBIGUOUS_WORKSPACE, owners_word
 from .env import is_unix, ssl_context, unix_path
+from .hold import holder_due, spawn_holder
 from .jsonio import ApiExit
 
 # Generous read budget: ``POST .../start`` answers only after the
@@ -106,6 +108,17 @@ def reach_message(client: httpx.AsyncClient, exc: Exception) -> str:
 #: cannot false-positive.
 PREDATES_SHARES_DETAIL = "mounts entry has unknown keys: ['host']"
 
+
+def scope_params(owner: str | None) -> dict | None:
+    """The query pairs a scoped call carries (#1084): the owner a
+    root invocation addresses as — the daemon resolves the account
+    name (or a decimal-uid spelling) and scopes the ref resolution
+    to that owner's rows alone. An explicitly passed empty value
+    travels too: the daemon's own 404 names it, rather than the
+    client silently running the call unscoped."""
+    return {"owner": owner} if owner is not None else None
+
+
 #: The upgrade line the skew rewrite answers with: names the
 #: feature and the fix, not the wire detail.
 PREDATES_SHARES_MESSAGE = "msks: this daemon predates shares; upgrade msksd"
@@ -124,8 +137,14 @@ def status_message(exc: httpx.HTTPStatusError) -> str:
     one deliberate rewrite being the version-skew refusal (#667,
     #673): a daemon without share support answers a ``--share``
     with an unknown-key detail about the wire, and the operator
-    needs the upgrade line, not the wire's."""
+    needs the upgrade line, not the wire's. The ambiguity's
+    structured detail renders to its own line (#1084): the name,
+    the owners, and the remedy."""
     detail = error_detail(exc.response)
+    if isinstance(detail, dict) and detail.get("error") == (
+        AMBIGUOUS_WORKSPACE
+    ):
+        detail = ambiguity_message(detail)
     if detail == PREDATES_SHARES_DETAIL:
         return PREDATES_SHARES_MESSAGE
     return f"msks: {exc.response.status_code}: {detail}"
@@ -153,6 +172,7 @@ async def guarded(client: httpx.AsyncClient, exchange):
             status_message(exc),
             exc.response.status_code,
             error_detail(exc.response),
+            kind=error_kind(exc.response),
         ) from exc
 
 
@@ -161,11 +181,16 @@ async def request(
     method: str,
     path: str,
     json_body: dict | None = None,
+    params: dict | None = None,
 ):
-    """One request on ``client``; failures exit with one readable line."""
+    """One request on ``client``; failures exit with one readable
+    line. *params* is the query string's pairs — the owner scope
+    a root call carries (#1084)."""
 
     async def exchange():
-        response = await client.request(method, path, json=json_body)
+        response = await client.request(
+            method, path, json=json_body, params=params
+        )
         response.raise_for_status()
         return response.json()
 
@@ -180,10 +205,11 @@ async def api_call(
     json_body: dict | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
     ssl_ctx: ssl.SSLContext | None = None,
+    params: dict | None = None,
 ):
     """One authenticated REST call on a fresh client."""
     async with api_client(url, token, transport, ssl_ctx) as client:
-        return await request(client, method, path, json_body)
+        return await request(client, method, path, json_body, params)
 
 
 async def fetch_health(
@@ -259,15 +285,41 @@ async def upload(client: httpx.AsyncClient, path: str, content) -> dict:
     return await guarded(client, exchange)
 
 
-def error_detail(response: httpx.Response) -> str:
-    """The API's ``detail`` field; validation lists become one line."""
+def error_detail(response: httpx.Response) -> str | dict:
+    """The API's ``detail`` field; validation lists become one line.
+    A structured detail keeps its payload (#1084) — the ambiguity
+    frames stay machine-readable for the JSON error document, and
+    :func:`status_message` renders the line."""
     try:
         detail = response.json()["detail"]
     except ValueError, KeyError, TypeError:
         return response.text.strip() or "no detail"
     if isinstance(detail, list):
         return validation_detail(detail)
-    return str(detail)
+    return detail
+
+
+def error_kind(response: httpx.Response) -> str | None:
+    """The structured error's kind word (#1084), or None: the
+    ambiguity's 409 answers its own error shape, and the kind is
+    the word the exit table branches on — never message text."""
+    detail = error_detail(response)
+    if isinstance(detail, dict):
+        return detail.get("error")
+    return None
+
+
+def ambiguity_message(detail: dict) -> str:
+    """The ambiguity's one line (#1084): the name, the owners the
+    payload frames name, and the two remedies — the id (the one
+    every surface takes) and the ``--user`` scope (the workspace
+    verbs' own)."""
+    owners = owners_word(detail.get("owners") or [])
+    return (
+        f"workspace name {detail.get('name')!r} is held by more than "
+        f"one owner ({owners}); pass the workspace's id, or "
+        "--user <owner> on the workspace verbs"
+    )
 
 
 def validation_detail(items: list) -> str:
@@ -363,7 +415,39 @@ async def ensure_running(
     )
     await boot_workspace(workspace_id, url, token, ssl_ctx, transport)
     print(f"msks: {workspace_id} running", file=sys.stderr)
+    await hold_if_due(workspace_id, url, token, ssl_ctx, transport)
     return True
+
+
+async def hold_if_due(
+    workspace_id: str,
+    url: str,
+    token: str,
+    ssl_ctx: ssl.SSLContext | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> None:
+    """Leave a bridge holder behind a boot this client made
+    (#1102): the ssh, console, and forward children all boot
+    stopped workspaces through :func:`ensure_running`, and the
+    holder serves whatever forward rows the workspace owns. A
+    best-effort probe by design: any failure it touches is the
+    caller's silence — the rows carry the named cause, and the
+    next bridge-bearing client visit heals them. A session child
+    without the identity spawns a holder that exits with the
+    named refusal; one short-lived child, nothing standing."""
+    try:
+        rows = await api_call(
+            "GET",
+            url,
+            token,
+            f"/api/v1/workspaces/{workspace_id}/proxies",
+            ssl_ctx=ssl_ctx,
+            transport=transport,
+        )
+        if holder_due(rows):
+            spawn_holder(workspace_id)
+    except Exception, SystemExit:
+        return
 
 
 async def workspace_row(
@@ -470,12 +554,14 @@ async def fetch_ssh_key(
     workspace_id: str,
     transport=None,
     ssl_ctx=None,
+    owner: str | None = None,
 ) -> dict:
     """GET the workspace's identity: the public half alone (#486,
     #497 — the answer carries no private field at all), with the
     row's id, name, instance stamp, login user, disk epoch
     (#697), and seed epoch (#803) beside it — the seven fields
-    the client reads (#499).
+    the client reads (#499). *owner* is the ``--user`` scope
+    (#1084) the resolve carries.
 
     ``msks key`` prints it; ``msks ssh`` (#112) stages the session
     identity through this same call. An already-built ``ssl_ctx``
@@ -488,4 +574,5 @@ async def fetch_ssh_key(
         f"/api/v1/workspaces/{workspace_id}/ssh-key",
         transport=transport,
         ssl_ctx=ssl_ctx,
+        params=scope_params(owner),
     )

@@ -8,23 +8,20 @@ admission swap a remote proxy's live change drives."""
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ...model.workspaces import sees_all_rows
 from ...proxies import DEFAULT_LISTEN_HOST, DEFAULT_TARGET_HOST
-from .deps import require_token
+from .deps import authed_caller
 from .rows import workspace_or_404
 from .schemas import ProxyCreate
 
 
 def direction_refusal(body: ProxyCreate) -> str | None:
     """The named refusal when a direction's host fields disagree
-    with it: a forward row carries the daemon-side listen host and
-    no target host (its target is the guest); a remote row carries
-    the daemon-side target host and no listen host (its bind is
-    the workspace's tap address, a runtime fact)."""
-    if body.direction == "forward" and body.target_host is not None:
-        return (
-            "a forward proxy reaches the guest's port; "
-            "target_host names nothing"
-        )
+    with it: a remote row carries the daemon-side target host and
+    no listen host (its bind is the workspace's tap address, a
+    runtime fact). A forward row carries either host: its listen
+    host is the daemon-side bind, its target host the far-end
+    name the holder's ssh resolves (#1102)."""
     if body.direction == "remote" and body.listen_host is not None:
         return (
             "a remote proxy binds the workspace's tap; "
@@ -109,31 +106,40 @@ def router(app, hub) -> APIRouter:
     """The proxy routes."""
     api = APIRouter()
 
-    @api.get(
-        "/api/v1/workspaces/{workspace_id}/proxies",
-        dependencies=[Depends(require_token)],
-    )
-    async def list_workspace_proxies(workspace_id: str) -> list[dict]:
-        row = await workspace_or_404(app, workspace_id)
+    @api.get("/api/v1/workspaces/{workspace_id}/proxies")
+    async def list_workspace_proxies(
+        workspace_id: str, caller: int = Depends(authed_caller)
+    ) -> list[dict]:
+        row = await workspace_or_404(app, workspace_id, caller)
         rows = await app.state.model.list_proxies(row["id"])
         return [with_live_status(app.state.proxies, proxy) for proxy in rows]
 
-    @api.get(
-        "/api/v1/proxies",
-        dependencies=[Depends(require_token)],
-    )
-    async def list_proxies() -> list[dict]:
+    @api.get("/api/v1/proxies")
+    async def list_proxies(
+        caller: int = Depends(authed_caller),
+    ) -> list[dict]:
         """Every workspace's proxy rows with live status — the
-        daemon-wide read the TUI's proxies page (#809) serves."""
+        daemon-wide read the TUI's proxies page (#809) serves. The
+        owner filter (#1082) rides it: a caller sees the proxies
+        of its own workspaces alone, and no verb leaks another
+        owner's workspace existence; root and the daemon's uid
+        keep the whole table."""
         rows = await app.state.model.list_proxies()
+        if not sees_all_rows(caller):
+            mine = {
+                row["id"]
+                for row in await app.state.model.list_workspaces(viewer=caller)
+            }
+            rows = [proxy for proxy in rows if proxy["workspace_id"] in mine]
         return [with_live_status(app.state.proxies, proxy) for proxy in rows]
 
-    @api.post(
-        "/api/v1/workspaces/{workspace_id}/proxies",
-        dependencies=[Depends(require_token)],
-    )
-    async def create_proxy(workspace_id: str, body: ProxyCreate) -> dict:
-        row = await workspace_or_404(app, workspace_id)
+    @api.post("/api/v1/workspaces/{workspace_id}/proxies")
+    async def create_proxy(
+        workspace_id: str,
+        body: ProxyCreate,
+        caller: int = Depends(authed_caller),
+    ) -> dict:
+        row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
         if not row.get("egress"):
             # The same refusal the forward websocket carries: a
@@ -173,7 +179,7 @@ def router(app, hub) -> APIRouter:
             (
                 body.target_host or DEFAULT_TARGET_HOST
                 if body.direction == "remote"
-                else None
+                else body.target_host
             ),
             body.target_port,
             body.label,
@@ -181,8 +187,12 @@ def router(app, hub) -> APIRouter:
         # A running workspace takes the listener at once; a stopped
         # one records the row and its next start brings it up.
         live = await app.state.proxies.start_one(
-            created, app.state.net.attachment(workspace_id)
+            created,
+            app.state.net.attachment(workspace_id),
+            row["owner_uid"],
         )
+        # The frame's audience is the workspace's owner (#1095)
+        # — the route's resolved row carries it.
         await hub.publish(
             "proxy.created",
             {
@@ -192,6 +202,7 @@ def router(app, hub) -> APIRouter:
                 "listen_port": created["listen_port"],
                 "target_port": created["target_port"],
             },
+            owner=row["owner_uid"],
         )
         # A listening remote proxy takes its admission now — only
         # a live bind gains one (#807 review), and the swap rides
@@ -214,12 +225,12 @@ def router(app, hub) -> APIRouter:
             live = with_live_status(app.state.proxies, created)
         return live
 
-    @api.patch(
-        "/api/v1/workspaces/{workspace_id}/proxies/{proxy_id}",
-        dependencies=[Depends(require_token)],
-    )
+    @api.patch("/api/v1/workspaces/{workspace_id}/proxies/{proxy_id}")
     async def update_proxy(
-        workspace_id: str, proxy_id: int, body: ProxyCreate
+        workspace_id: str,
+        proxy_id: int,
+        body: ProxyCreate,
+        caller: int = Depends(authed_caller),
     ) -> dict:
         """Rewrite one proxy row (#890) — the create's own body,
         the create's own gates: the direction's host fields, and
@@ -228,7 +239,7 @@ def router(app, hub) -> APIRouter:
         and the create back to back: the old bind closes, its
         admission goes with it, the fresh row records, and a
         running workspace takes the new listener at once."""
-        row = await workspace_or_404(app, workspace_id)
+        row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
         if not row.get("egress"):
             raise HTTPException(
@@ -270,7 +281,7 @@ def router(app, hub) -> APIRouter:
             (
                 body.target_host or DEFAULT_TARGET_HOST
                 if body.direction == "remote"
-                else None
+                else body.target_host
             ),
             body.target_port,
             body.label,
@@ -279,7 +290,9 @@ def router(app, hub) -> APIRouter:
             # The row left between the read and the write (a
             # remove landing inside the exchange).
             raise HTTPException(status_code=404, detail="no such proxy")
-        live = await app.state.proxies.start_one(updated, attachment)
+        live = await app.state.proxies.start_one(
+            updated, attachment, row["owner_uid"]
+        )
         await hub.publish(
             "proxy.updated",
             {
@@ -289,6 +302,7 @@ def router(app, hub) -> APIRouter:
                 "listen_port": updated["listen_port"],
                 "target_port": updated["target_port"],
             },
+            owner=row["owner_uid"],
         )
         if body.direction == "remote" and live["status"] == "listening":
             # The create's own closing step, word for word: only a
@@ -305,12 +319,13 @@ def router(app, hub) -> APIRouter:
             live = with_live_status(app.state.proxies, updated)
         return live
 
-    @api.delete(
-        "/api/v1/workspaces/{workspace_id}/proxies/{proxy_id}",
-        dependencies=[Depends(require_token)],
-    )
-    async def delete_proxy(workspace_id: str, proxy_id: int) -> dict:
-        row = await workspace_or_404(app, workspace_id)
+    @api.delete("/api/v1/workspaces/{workspace_id}/proxies/{proxy_id}")
+    async def delete_proxy(
+        workspace_id: str,
+        proxy_id: int,
+        caller: int = Depends(authed_caller),
+    ) -> dict:
+        row = await workspace_or_404(app, workspace_id, caller)
         workspace_id = row["id"]
         proxy = await app.state.model.get_proxy(workspace_id, proxy_id)
         if proxy is None:
@@ -329,6 +344,7 @@ def router(app, hub) -> APIRouter:
                 "listen_port": proxy["listen_port"],
                 "target_port": proxy["target_port"],
             },
+            owner=row["owner_uid"],
         )
         return {"id": proxy_id, "workspace_id": workspace_id, "removed": True}
 

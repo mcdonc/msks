@@ -59,7 +59,7 @@ def kvm_not_a_member(user: str, manager: str | None) -> CheckResult:
         name="/dev/kvm",
         ok=False,
         message=f"{user} is not in the kvm group, which gates /dev/kvm",
-        hint=group_add_hint(user, manager),
+        hint=group_add_hint(user, "kvm", manager),
     )
 
 

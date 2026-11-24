@@ -14,8 +14,12 @@ own data modules (:mod:`msks.client.tui.data`,
 matching CLI subcommand makes.
 """
 
+import sys
+
+from .bridge import ReHolder
 from .create import create_workspace_core, invoking_user
 from .env import env_token, env_url, shared_ssl
+from .hold import holder_due, spawn_holder
 from .jsonio import ApiExit
 from .rest import api_call, fetch_health
 
@@ -51,6 +55,12 @@ class RestData:
 
     def __init__(self, transport=None) -> None:
         self.transport = transport
+        # The session's bridge re-hold policy (#1127): one per
+        # client session — the TUI's app data and the GUI's
+        # window data each own their instance through here, and
+        # the surfaces below (the listing screens, the GUI's
+        # shell) reach it as ``data.reholder``.
+        self.reholder = ReHolder()
 
     async def carried(self, build):
         """Await one REST call, carrying its exit-contract failure
@@ -191,10 +201,41 @@ class RestData:
         )
 
     async def start(self, workspace_id: str) -> dict:
-        """POST the boot — the same call ``msks start`` makes."""
-        return await self.rest(
+        """POST the boot — the same call ``msks start`` makes —
+        and leave the bridge holder behind the CLI start leaves
+        (#1102): the TUI and the GUI cross this seam, and a
+        workspace with forward rows serves them through the holder
+        this spawns. Best-effort like the CLI's own hook: a rows
+        read that fails or a holder that cannot start leaves the
+        boot's answer untouched. The re-hold window opens before
+        the POST flies (#1127): the daemon publishes ``running``
+        before the response lands, and the watch must not weigh a
+        second child beside the one this start leaves. A start
+        that fails leaves the window to lapse — the rows read a
+        due signal takes decides whether a holder is owed."""
+        self.reholder.note_start(workspace_id)
+        row = await self.rest(
             "POST", f"/api/v1/workspaces/{workspace_id}/start"
         )
+        try:
+            rows = await self.rest(
+                "GET", f"/api/v1/workspaces/{workspace_id}/proxies"
+            )
+            if holder_due(rows):
+                spawn_holder(workspace_id)
+                # The spawn this start leaves opens the outcome
+                # window too (#1127): a failure under it defers,
+                # and a listener resolves it.
+                self.reholder.note_spawn(workspace_id)
+        except Exception, SystemExit:
+            # Best-effort by contract (#1102): the boot's answer
+            # stands, and the rows carry the cause.
+            print(
+                "msks: bridge not held from this client; "
+                "'msks proxy hold' serves it",
+                file=sys.stderr,
+            )
+        return row
 
     async def stop(self, workspace_id: str) -> dict:
         """POST the graceful power-off — ``msks stop``."""

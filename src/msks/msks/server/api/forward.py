@@ -8,7 +8,8 @@ import contextlib
 from fastapi import APIRouter, WebSocket
 
 from ...microvm.errors import MicrovmError
-from .deps import authed_accept
+from .deps import authed_accept, caller_uid
+from .rows import ws_row_or_close
 from .streams import close_reason, pump_streams
 
 #: The forward.closed publishes detached by an endpoint the client
@@ -55,9 +56,13 @@ def router(app, hub) -> APIRouter:
         # one guest TCP connection.
         if not await authed_accept(app, socket):
             return
-        row = await app.state.model.get_workspace(workspace_id)
+        # The owner filter (#1082): the handshake's credential is
+        # the caller, and a foreign row answers the same 4404 as
+        # an absent one — no leak.
+        row = await ws_row_or_close(
+            app, socket, workspace_id, caller_uid(socket.scope)
+        )
         if row is None:
-            await socket.close(code=4404)
             return
         workspace_id = row["id"]
         target_port, problem = forward_port(port)
@@ -87,8 +92,12 @@ def router(app, hub) -> APIRouter:
         try:
             # The opened publish lives inside the try so a cancellation
             # between dial and pump cannot skip the writer's cleanup.
+            # The frame names the workspace: its audience is the
+            # row's owner (#1095).
             await hub.publish(
-                "forward.opened", {"id": workspace_id, "port": target_port}
+                "forward.opened",
+                {"id": workspace_id, "port": target_port},
+                owner=row.get("owner_uid"),
             )
             app.state.net.track_forward(workspace_id, writer)
             try:
@@ -106,7 +115,9 @@ def router(app, hub) -> APIRouter:
             # lands — the loop keeps only weak ones.
             closed = asyncio.create_task(
                 hub.publish(
-                    "forward.closed", {"id": workspace_id, "port": target_port}
+                    "forward.closed",
+                    {"id": workspace_id, "port": target_port},
+                    owner=row.get("owner_uid"),
                 )
             )
             DETACHED_PUBLISHES.add(closed)

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -579,8 +580,11 @@ async def test_register_decider_lands_the_snapshot_directly(
     await engine.hold("ws-reg", "held.example", 443)
 
     class RecordingSocket:
+        # scope: an unauthenticated pair — the decider reads the
+        # daemon's own uid from it (#1082), the tests' own view.
         def __init__(self) -> None:
             self.sent: list[dict] = []
+            self.scope = {}
 
         async def send_json(self, payload) -> None:
             self.sent.append(payload)
@@ -634,13 +638,22 @@ async def test_register_decider_replays_the_recorded_lifecycle(
         )
     )
     model = app.state.model
+    from msks.model.workspaces import daemon_uid
+
+    owner = daemon_uid()
     await model.record_audit(
         "mint",
-        {"workspaces": ["ws-re"], "name": "api", "dests": ["api.example"]},
+        {
+            "owner_uid": owner,
+            "workspaces": ["ws-re"],
+            "name": "api",
+            "dests": ["api.example"],
+        },
     )
     await model.record_audit(
         "mint",
         {
+            "owner_uid": owner,
             "workspaces": [],
             "name": "daemon_wide",
             "dests": ["elsewhere.example"],
@@ -648,12 +661,20 @@ async def test_register_decider_replays_the_recorded_lifecycle(
     )
     await model.record_audit(
         "revoke",
-        {"workspaces": ["ws-re"], "name": "api", "dests": "[]"},
+        {
+            "owner_uid": owner,
+            "workspaces": ["ws-re"],
+            "name": "api",
+            "dests": "[]",
+        },
     )
 
     class RecordingSocket:
+        # scope: an unauthenticated pair — the decider reads the
+        # daemon's own uid from it (#1082), the tests' own view.
         def __init__(self) -> None:
             self.sent: list[dict] = []
+            self.scope = {}
 
         async def send_json(self, payload) -> None:
             self.sent.append(payload)
@@ -743,6 +764,7 @@ async def test_replay_logs_when_it_hits_its_row_limit(
         session.add_all(
             SecretAudit(
                 kind="mint",
+                owner_uid=os.geteuid(),
                 workspaces='["ws-many"]',
                 name=f"n{i}",
                 dests="[]",
@@ -752,8 +774,11 @@ async def test_replay_logs_when_it_hits_its_row_limit(
         await session.commit()
 
     class RecordingSocket:
+        # scope: an unauthenticated pair — the decider reads the
+        # daemon's own uid from it (#1082), the tests' own view.
         def __init__(self) -> None:
             self.sent: list[dict] = []
+            self.scope = {}
 
         async def send_json(self, payload) -> None:
             self.sent.append(payload)
@@ -808,8 +833,11 @@ async def test_register_decider_survives_a_failed_audit_read(
     app.state.model.list_workspace_audit = unreadable
 
     class RecordingSocket:
+        # scope: an unauthenticated pair — the decider reads the
+        # daemon's own uid from it (#1082), the tests' own view.
         def __init__(self) -> None:
             self.sent: list[dict] = []
+            self.scope = {}
 
         async def send_json(self, payload) -> None:
             self.sent.append(payload)
@@ -855,8 +883,11 @@ async def test_register_decider_when_rules_read_fails(tmp_path: Path) -> None:
     app.state.consent.rules_frame = nothing
 
     class RecordingSocket:
+        # scope: an unauthenticated pair — the decider reads the
+        # daemon's own uid from it (#1082), the tests' own view.
         def __init__(self) -> None:
             self.sent: list[dict] = []
+            self.scope = {}
 
         async def send_json(self, payload) -> None:
             self.sent.append(payload)
@@ -1208,11 +1239,11 @@ async def test_start_reads_the_row_under_the_move_lock(
         stale = dict(row)
         served = {"first": True}
 
-        async def stale_once(ref):
+        async def stale_once(ref, viewer=None):
             if served["first"] and ref == "ws-m":
                 served["first"] = False
                 return stale  # the pre-lock read: the old posture
-            return await real_read(ref)
+            return await real_read(ref, viewer=viewer)
 
         monkeypatch.setattr(app.state.model, "get_workspace", stale_once)
         reply = await http.post(
@@ -1239,11 +1270,11 @@ async def test_start_404s_when_the_row_leaves_under_the_lock(
         real_read = app.state.model.get_workspace
         calls = {"n": 0}
 
-        async def vanishing(ref):
+        async def vanishing(ref, viewer=None):
             calls["n"] += 1
             if calls["n"] >= 2:
                 return None  # deleted between the read and the lock
-            return await real_read(ref)
+            return await real_read(ref, viewer=viewer)
 
         monkeypatch.setattr(app.state.model, "get_workspace", vanishing)
         reply = await http.post(
@@ -1303,11 +1334,11 @@ async def test_mode_switch_404s_when_the_row_vanishes_under_the_lock(
         real_read = app.state.model.get_workspace
         calls = {"n": 0}
 
-        async def vanishing(ref):
+        async def vanishing(ref, viewer=None):
             calls["n"] += 1
             if calls["n"] >= 2:
                 return None  # deleted between the read and the lock
-            return await real_read(ref)
+            return await real_read(ref, viewer=viewer)
 
         monkeypatch.setattr(app.state.model, "get_workspace", vanishing)
         reply = await put_policy(http, "ws-m", {"mode": "interactive"})

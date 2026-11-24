@@ -309,9 +309,11 @@ class ProxyLink(AuditLink):
     """The proxies page's plain-subscriber connection (#809): the
     events socket without registration, the audit view's own
     lifecycle — the page holds no decider authority, and the
-    socket's relay carries every published frame to every
-    subscriber. Each proxy transition pokes the page's refresh,
-    and every connection that comes to serve pokes one too
+    socket's relay carries every frame the subscription answers
+    to (#1090: each non-secret frame to every subscriber, each
+    secret frame to its row's owner alone). Each proxy transition
+    pokes the page's refresh, and every connection that comes to
+    serve pokes one too
     (#1019: frames published while no connection stood never
     landed); nothing else lands anywhere (the page's rows come
     from the REST listing, refetched whole)."""

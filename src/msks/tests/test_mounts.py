@@ -301,9 +301,9 @@ async def test_start_publishes_skips_and_proceeds(
     published: list[tuple[str, dict]] = []
     real_publish = app.state.hub.publish
 
-    async def spy_publish(event: str, data: dict) -> None:
+    async def spy_publish(event: str, data: dict, owner=None) -> None:
         published.append((event, data))
-        await real_publish(event, data)
+        await real_publish(event, data, owner=owner)
 
     app.state.hub.publish = spy_publish
     started = await http.post(

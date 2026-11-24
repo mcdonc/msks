@@ -47,7 +47,9 @@ A missing, expired, or revoked token answers 401. The console, forward, and
 events websockets take the same bearer token in the handshake's
 `Authorization` header, never a URL parameter. The credential therefore
 cannot appear in a proxy's access log. A failed handshake closes **4401**;
-4404 is an unknown workspace on the console and forward.
+4404 is an unknown workspace on the console and forward, and 4405 is a
+workspace name two or more owners hold (the reason names the owners and
+the by-id remedy).
 
 ## Enabling the TCP interface
 
@@ -114,6 +116,53 @@ curl -X POST "$MSKSC_URL/api/v1/workspaces" \
   -d '{"name": "ws1", "egress": true}'
 ```
 
+### Ownership and addressing
+
+Every row carries `owner_uid`, the uid of the peer credential that
+created it. The caller's uid is the owner filter on every read: a
+non-root caller sees and addresses its own rows alone, and a row
+another owner holds answers 404 exactly like an absent one. No verb
+leaks existence. Root and the daemon's own uid (the uid the TCP
+surface maps every caller onto) see every row.
+
+Workspace names are unique per owner, so two owners may each hold a
+`build`. A bypass caller (root, or the daemon's own uid) addressing a
+bare name two or more owners hold gets the ambiguity error, its own
+shape and never the not-found path:
+
+```json
+{
+  "detail": {
+    "error": "ambiguous_workspace",
+    "name": "build",
+    "owners": [
+      { "uid": 4242, "name": "alice" },
+      { "uid": 4243, "name": "bob" }
+    ]
+  }
+}
+```
+
+The `owners` frames carry the account name when the host holds one
+and `null` for a uid no account holds. The remedy is either the
+workspace's id or the owner scope below.
+
+The owner scope is the `owner` query parameter (`?owner=alice`) on
+the workspace-ref routes: `GET …/workspaces/{ref}`, `start`,
+`stop`, `reset`, `resize`, `mounts`, `ssh-key`, `clone`, `DELETE`,
+and the 405 `PUT`/`PATCH` refusal. The value is an account name
+the daemon resolves to a uid, and the request's ref resolution
+runs against that owner's rows alone. The scope changes the view
+alone: the request still acts with the caller's own authority. A
+clone through a scope creates the new row as the caller's. The
+scope always filters, even when the named owner is one the owner
+filter would bypass (root's own rows, the daemon account's): an
+explicit scope resolves as that one owner alone, which is the one
+path a plural name takes to them. A decimal-uid spelling reaches
+a dead owner the same way. The scope is a bypass caller's tool:
+any other caller passing it gets 403 with the named cause, and a
+name no account holds answers 404.
+
 - `GET /api/v1/workspaces`: every row, with its image paths,
   status, and recorded facts. `GET …/workspaces/{id}` is one
   row; the id also accepts the name.
@@ -129,7 +178,7 @@ curl -X POST "$MSKSC_URL/api/v1/workspaces" \
   the root overlay, grows or shrinks the home volume, and
   moves the cpu and memory sizes. `…/ssh-key` reads the
   workspace's planted public identity.
-  `…/secret-coverage` flips the daemon-wide placeholder
+  `…/secret-coverage` flips the owner-wide placeholder
   posture. `POST …/mounts` sets the workspace's [share
   mounts](mounts.md), the full replacement list, applied at
   the next start:
@@ -214,7 +263,7 @@ manifest, and the published channel.
 The placeholder store, per the [secrets chapter](secrets.md):
 
 ```bash
-# mint: daemon-wide with no workspaces target, the destinations
+# mint: owner-wide with no workspaces target, the destinations
 # the swap binds, the value itself
 curl -X POST "$MSKSC_URL/api/v1/secrets" \
   -H "Authorization: Bearer $MSKSC_TOKEN" \
@@ -279,9 +328,14 @@ Three streams use the same listener and the same token:
 - `wss://…/api/v1/events`: the event hub. It carries workspace
   status frames, the egress consent frames (`egress.rules`,
   `egress.request`, `egress.resolved`), and the secret
-  lifecycle events. A client that announces itself as a decider
-  receives that workspace's pending holds; `msks egress watch`
-  prints the frames as lines. Every publish also writes one INFO
+  lifecycle events. Every frame that names a workspace reaches
+  that workspace's owner alone, beside root and the daemon's own
+  uid. Frames the daemon serves daemon-wide — the image
+  catalog's `image.changed` and the `storage.pressure`
+  transitions — reach every socket. A client that announces
+  itself as a decider receives that workspace's pending holds;
+  `msks egress watch` prints the frames as lines. Every publish
+  also writes one INFO
   line to the daemon's journal (#762), so the event history
   stays readable after the subscribers are gone. The lines carry
   the frames' identifiers, names, hosts, ports, paths, and

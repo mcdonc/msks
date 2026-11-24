@@ -32,6 +32,7 @@ from cryptography.hazmat.primitives import serialization
 from msks.app import build_app
 from msks.interceptor import Interceptor, ca
 from msks.microvm import VmSpec
+from msks.model.workspaces import daemon_uid
 from msks.secretstore import backend_ref, new_sentinel
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 
@@ -385,7 +386,7 @@ async def seed(app, name: str, dests: list[str], secret: str) -> dict:
             )
         )
     sentinel = new_sentinel()
-    ref = backend_ref(["ws-live"], name)
+    ref = backend_ref(daemon_uid(), ["ws-live"], name)
     row = await app.state.model.create_placeholder(
         ["ws-live"], name, sentinel, dests, ref, None
     )

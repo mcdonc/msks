@@ -1,17 +1,27 @@
 """Workspace-row helpers shared by the resource routers: the
 seam's VmSpec rebuilt from a row, the placement and lifecycle
 guards (with the row re-read under the move-lock), the
-create-serialization lock, and the 404 the ref-resolving routes
-answer."""
+create-serialization lock, the 404 the ref-resolving routes
+answer, and the ambiguity payload a plural name answers with
+(#1084)."""
 
 import asyncio
+import pwd
 from pathlib import Path
 
 from fastapi import HTTPException
 
 from ...hostshares import check_host_share
+from ...model.workspaces import AmbiguousRef
 from ...spec.mounts import MountIssue, parse_mounts, validate_mounts
+from ...spec.owners import (
+    AMBIGUOUS_CLOSE,
+    AMBIGUOUS_WORKSPACE,
+    dead_owner_cause,
+    owners_word,
+)
 from ...spec.vm import VmSpec, VmStatus
+from .streams import close_reason
 
 
 def spec_for(row: dict, mounts: tuple | None = None) -> VmSpec:
@@ -43,6 +53,7 @@ def spec_for(row: dict, mounts: tuple | None = None) -> VmSpec:
         ssh_pubkey=row.get("ssh_pubkey"),
         login_user=row.get("login_user"),
         timezone=row.get("timezone"),
+        owner_uid=row.get("owner_uid"),
         mounts=row_mounts(row, mounts),
         # The row's seed epoch at spec time (#1069): the renewal
         # suffix reads it, so each renewal bake lands an
@@ -109,10 +120,88 @@ async def serialize_create(app, key: str):
     return lock
 
 
-async def workspace_or_404(app, workspace_id: str) -> dict:
+async def owner_frames(uids: list[int]) -> list[dict]:
+    """The owners the ambiguity answers name (#1084): one frame
+    per uid, the account name beside it when the host holds one
+    — the ``--user`` selector takes the name — and ``None`` for a
+    uid no account holds (a dead owner stays a number). The pwd
+    walk runs in a worker thread: it is a libc NSS call, and a
+    directory backend that stalls would stall the event loop
+    with it."""
+
+    def frames() -> list[dict]:
+        named = []
+        for uid in uids:
+            try:
+                named.append({"uid": uid, "name": pwd.getpwuid(uid).pw_name})
+            except KeyError:
+                named.append({"uid": uid, "name": None})
+        return named
+
+    return await asyncio.to_thread(frames)
+
+
+def ambiguity_reason(ref: str, frames: list[dict]) -> str:
+    """The close reason a plural name's dial answers with (#1084):
+    the name, the owners, and the by-id remedy — the websocket's
+    half of the payload the REST 409 carries."""
+    return (
+        f"workspace name {ref!r} is held by more than one owner "
+        f"({owners_word(frames)}); address the workspace by its id"
+    )
+
+
+async def close_ambiguous(socket, exc: AmbiguousRef) -> None:
+    """The plural-name close both dial routes answer with (#1084):
+    the ambiguity's own close code, the reason naming the owners
+    and the by-id remedy — never a pick."""
+    frames = await owner_frames(exc.owners)
+    await socket.close(
+        code=AMBIGUOUS_CLOSE,
+        reason=close_reason(ambiguity_reason(exc.ref, frames)),
+    )
+
+
+async def ws_row_or_close(app, socket, workspace_id: str, viewer: int):
+    """The row a websocket route serves, or None when the socket
+    answered itself: the plural-name close (#1084) or the 4404 a
+    missing row takes. The forward and bridge dials share it, so
+    the model's ambiguity vocabulary stays behind this seam."""
+    try:
+        row = await app.state.model.get_workspace(workspace_id, viewer=viewer)
+    except AmbiguousRef as exc:
+        await close_ambiguous(socket, exc)
+        return None
+    if row is None:
+        await socket.close(code=4404)
+        return None
+    return row
+
+
+async def workspace_or_404(app, workspace_id: str, caller: int) -> dict:
     """The workspace a route's ref names — its immutable id or its
-    unique name (#246) — or the 404."""
-    row = await app.state.model.get_workspace(workspace_id)
+    name (#246) — or the 404.
+
+    *caller* is the owner filter (#1082): it runs before the row
+    lookup, and a row another owner holds answers 404 exactly like
+    an absent one — cross-owner access is indistinguishable from a
+    miss end to end, and no verb leaks existence. A name more than
+    one owner holds (legal since names became per-owner) refuses
+    to pick for a filter-bypassing caller: the 409 answers the
+    ambiguity's own error shape (#1084) — the kind word, the name,
+    and the owners as frames — never the not-found path.
+    """
+    try:
+        row = await app.state.model.get_workspace(workspace_id, viewer=caller)
+    except AmbiguousRef as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": AMBIGUOUS_WORKSPACE,
+                "name": exc.ref,
+                "owners": await owner_frames(exc.owners),
+            },
+        ) from None
     if row is None:
         raise HTTPException(status_code=404, detail="no such workspace")
     return row
@@ -151,19 +240,43 @@ def stopping_workspaces(app) -> set[str]:
     return existing
 
 
+def dead_owner_issues(row: dict, mounts: tuple) -> tuple:
+    """The skip set a uid no account holds produces (#1088): a
+    virtiofsd cannot exec as a deleted account, so every one of
+    the workspace's mounts skips with the one named cause. The
+    gate the split (mount_state) and the listing
+    (list_mount_issues) share — the row's marker and the start's
+    refusal read the same word either surface derived it."""
+    owner_uid = row.get("owner_uid")
+    if owner_uid is None:
+        return ()
+    dead = dead_owner_cause(owner_uid)
+    if dead is None:
+        return ()
+    return tuple(
+        MountIssue(kind="skipped", mount=mount, detail=dead)
+        for mount in mounts
+    )
+
+
 async def mount_state(app, row: dict) -> tuple[tuple, tuple]:
     """A row's mounts split into the attachable and the skipped
-    (#620, part #621; #672).
+    (#620, part #621; #672; #1088).
 
     The derivation reads live state every time it runs: each
     mount re-runs the #667 gates against the daemon's current
     host mode, allowed roots, and the daemon VM's own mount
     state, and a refusal (a root the VM no longer mounts, a root
     the policy narrowed away, a symlink that moved) becomes a
-    ``skipped`` mount with the gate's message. The start
-    proceeds without the mount; the skip is state, derived again
-    on every read."""
+    ``skipped`` mount with the gate's message. A workspace whose
+    owner uid no account holds skips every mount at this gate
+    and the workspace still boots (#1088). The start proceeds
+    without the mount; the skip is state, derived again on
+    every read."""
     mounts = parse_mounts(row.get("mounts"))
+    dead = dead_owner_issues(row, mounts)
+    if dead:
+        return (), dead
     issues = host_mount_issues(app, mounts)
     skipped = {issue.mount for issue in issues}
     return (
@@ -210,15 +323,20 @@ def home_volume_guard(app, row: dict) -> tuple[int, str] | None:
     return None
 
 
-async def rechecked_row(app, workspace_id: str) -> dict:
+async def rechecked_row(app, workspace_id: str, caller: int) -> dict:
     """The row re-read under the move-lock, with both guards applied.
+
+    The owner filter (#1082) rides the re-read: the caller is the
+    one the route's first resolve proved, and the re-read answers
+    the same mask — a delete landing between the two reads cannot
+    widen the view.
 
     The row's status is the cheap guard; the live seam is the
     truth-guard: a watcher scan that probed a launch's spawn window
     can leave a live VM's row at ``stopped`` for one poll interval,
     and the seam's answer refuses where the row lies (#80 review).
     """
-    row = await app.state.model.get_workspace(workspace_id)
+    row = await app.state.model.get_workspace(workspace_id, viewer=caller)
     if row is None:
         raise HTTPException(status_code=404, detail="no such workspace")
     guard = home_volume_guard(app, row)
@@ -312,8 +430,10 @@ async def row_mount_issues(app, row: dict) -> tuple:
 async def list_mount_issues(app, rows: list[dict]) -> dict[str, tuple]:
     """Every row's derived mount issues, keyed by id (#620, part
     #624): the gates read per-row state only, so the listing
-    matches the row read."""
-    return {
-        row["id"]: host_mount_issues(app, parse_mounts(row.get("mounts")))
-        for row in rows
-    }
+    matches the row read — including the dead-owner gate (#1088)."""
+    issues = {}
+    for row in rows:
+        mounts = parse_mounts(row.get("mounts"))
+        dead = dead_owner_issues(row, mounts)
+        issues[row["id"]] = dead if dead else host_mount_issues(app, mounts)
+    return issues

@@ -410,6 +410,7 @@ class ConsentEngine:
                 workspace_id,
                 host,
                 port,
+                row.get("owner_uid"),
             )
         except Exception:
             # A model failure must not strand the held SYN: the
@@ -424,11 +425,17 @@ class ConsentEngine:
             )
 
     async def mode_verdict(
-        self, mode: str, workspace_id: str, host: str, port: int
+        self,
+        mode: str,
+        workspace_id: str,
+        host: str,
+        port: int,
+        owner: int | None,
     ) -> asyncio.Future:
         """The no-hold answers for ``allow``/``static`` and the
         hand-off to the interactive path (the docstring above owns
-        the full decision table)."""
+        the full decision table). *owner* is the workspace row's
+        owning uid (#1095) — the audience the hold's frames take."""
         if mode == MODE_ALLOW:
             await self.model.record_policy(
                 DECISION_ALLOWED, workspace_id, host, port
@@ -451,7 +458,7 @@ class ConsentEngine:
                     "pin_ttl_s": ONCE_REJECT_S,
                 }
             )
-        return await self.interactive_hold(workspace_id, host, port)
+        return await self.interactive_hold(workspace_id, host, port, owner)
 
     async def fast_refusal(
         self, workspace_id: str, host: str, port: int
@@ -477,7 +484,7 @@ class ConsentEngine:
         return None
 
     async def interactive_hold(
-        self, workspace_id: str, host: str, port: int
+        self, workspace_id: str, host: str, port: int, owner: int | None
     ) -> asyncio.Future:
         """The interactive path: the fast refusals, then the hold
         (a racing insert that loses the destination's dedup slot
@@ -491,16 +498,24 @@ class ConsentEngine:
             # only schedulable between the has_pending read and
             # this insert; the suite cannot arrange the race.
             return denial("duplicate")  # pragma: no cover
-        return self.register_hold(request)
+        return self.register_hold(request, owner)
 
-    def register_hold(self, request: dict) -> asyncio.Future:
-        """Register the hold, arm its timeout, fan out."""
+    def register_hold(
+        self, request: dict, owner: int | None
+    ) -> asyncio.Future:
+        """Register the hold, arm its timeout, fan out. *owner* is
+        the workspace's owning uid (#1095): the hold's frames —
+        the request prompt and every resolution of it — reach its
+        owner's subscribers and the bypass ones alone, the
+        decider-routing rule the resolve seam already takes
+        (#1082)."""
         request_id = request["id"]
         fut = asyncio.get_running_loop().create_future()
         task = asyncio.create_task(self.timeout_hold(request_id))
         self._holds[request_id] = {
             "future": fut,
             "workspace_id": request["workspace_id"],
+            "owner_uid": owner,
             "task": task,
         }
         frame = dict(public_row(request))
@@ -511,6 +526,7 @@ class ConsentEngine:
                 "workspace_id": request["workspace_id"],
                 "request": frame,
             },
+            owner=owner,
         )
         logger.info(
             "consent hold: ws=%s %s:%s id=%s",
@@ -583,6 +599,7 @@ class ConsentEngine:
                     "request_id": request_id,
                     "decision": resolved,
                 },
+                owner=hold["owner_uid"],
             )
             await self.broadcast_rules(hold["workspace_id"])
         except BaseException:
@@ -674,6 +691,7 @@ class ConsentEngine:
                 "request_id": request_id,
                 "decision": DECISION_EXPIRED,
             },
+            owner=hold["owner_uid"],
         )
 
     async def fail_close(self, request_id: str, *, reason: str) -> None:
@@ -769,15 +787,20 @@ class ConsentEngine:
 
     # --- frames -------------------------------------------------------------
 
-    def publish(self, event: str, data: dict) -> None:
+    def publish(
+        self, event: str, data: dict, owner: int | None = None
+    ) -> None:
         """Broadcast one event frame, fire-and-forget: the hub's
         delivery awaits nothing from this caller (the holds path
         must not block on a subscriber), and a failed send is
-        logged, never raised into a verdict path."""
+        logged, never raised into a verdict path. *owner* is the
+        frame's audience (#1095), the hub's own envelope rule."""
         hub = getattr(self.app.state, "hub", None)
         if hub is None:
             return
-        task = asyncio.get_running_loop().create_task(hub.publish(event, data))
+        task = asyncio.get_running_loop().create_task(
+            hub.publish(event, data, owner=owner)
+        )
         self._publishes.add(task)
 
         def reaped(done: asyncio.Task) -> None:
@@ -808,14 +831,19 @@ class ConsentEngine:
 
     async def broadcast_rules(self, workspace_id: str) -> None:
         """Push a refreshed rules frame (best-effort — a read
-        failure must not break the verdict path that called this)."""
+        failure must not break the verdict path that called this).
+        The frame names the workspace, so its audience is its
+        owner (#1095) — the same rule the request and resolved
+        frames take."""
         try:
-            frame = await self.rules_frame(workspace_id)
+            row = await self.app.state.model.get_workspace(workspace_id)
+            if row is None:
+                return
+            frame = await self.frame_for_row(row, workspace_id)
         except Exception:
             logger.exception("consent: rules refresh failed")
             return
-        if frame is not None:
-            self.publish("egress.rules", frame)
+        self.publish("egress.rules", frame, owner=row.get("owner_uid"))
 
     async def snapshot(self, workspace_id: str) -> list[dict]:
         """Pending-request frames for a decider that just registered

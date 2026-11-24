@@ -283,9 +283,9 @@ def test_forward_publishes_open_and_closed_events(
     published: list[tuple[str, dict]] = []
     original = EventHub.publish
 
-    async def spy(hub, event_type, data):
+    async def spy(hub, event_type, data, owner=None):
         published.append((event_type, data))
-        await original(hub, event_type, data)
+        await original(hub, event_type, data, owner=owner)
 
     monkeypatch.setattr(EventHub, "publish", spy)
     # The guest service hangs up after its answer: the session ends
@@ -364,9 +364,9 @@ def test_forward_closed_publishes_before_a_cancelling_teardown(
     published: list[tuple[str, dict]] = []
     original = EventHub.publish
 
-    async def spy(hub, event_type, data):
+    async def spy(hub, event_type, data, owner=None):
         published.append((event_type, data))
-        await original(hub, event_type, data)
+        await original(hub, event_type, data, owner=owner)
 
     monkeypatch.setattr(EventHub, "publish", spy)
 

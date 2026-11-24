@@ -1,12 +1,12 @@
 """Placeholder and audit ORM: the interceptor's DB half (#198).
 
 A placeholder row binds one sentinel to one **coverage set** — the
-whole daemon (a daemon-wide row, #339) or an explicit list of
-workspaces (a scoped row) — plus one destination allowlist and one
-backend reference into the secret store. The sentinel is stored
-**plaintext by design**: the proxy matches it on the wire, and
-without the daemon it swaps nothing — its only power is naming the
-row that carried it.
+row's owner's whole share of the daemon (an owner-wide row, #339,
+#1083) or an explicit list of workspaces (a scoped row) — plus one
+destination allowlist and one backend reference into the secret
+store. The sentinel is stored **plaintext by design**: the proxy
+matches it on the wire, and without the daemon it swaps nothing —
+its only power is naming the row that carried it.
 
 The real secret never touches this database under the SecretSpec
 store: it lives behind ``backend_ref`` and in the daemon's memory
@@ -42,38 +42,49 @@ from .db import Base, utcnow
 AUDIT_KINDS = ("mint", "revoke", "expiry", "unlock")
 
 #: The workspace settings a coverage flip accepts (#339): ``all``
-#: takes daemon-wide placeholders, ``scoped`` exempts the workspace
-#: from them (only placeholders minted directly at it arm it).
+#: takes owner-wide placeholders (#1083), ``scoped`` exempts the
+#: workspace from them (only placeholders minted directly at it
+#: arm it).
 SECRET_COVERAGES = ("all", "scoped")
 
 
 def coverage_label(workspaces: list[str]) -> str:
     """The operator-facing name of a coverage set (#339):
-    ``*`` for the daemon-wide row, a comma-joined id list scoped.
+    ``*`` for the owner-wide row, a comma-joined id list scoped.
     Display-only — rows and refs key on the JSON form."""
     return ",".join(sorted(set(workspaces))) if workspaces else "*"
 
 
 class Placeholder(Base):
     """One minted placeholder: sentinel ↔ coverage binding (#198,
-    #339).
+    #339, #1083).
 
     ``workspaces`` is the row's coverage as a JSON array of
-    workspace ids: an empty array is the daemon-wide row (valid on
-    every workspace whose ``secret_coverage`` accepts daemon-wide
-    placeholders), a non-empty array is scoped to exactly those
-    ids. The mint normalizes the list (sorted, de-duplicated), so
-    the (name, workspaces) unique constraint pins one row per
-    label per coverage set.
+    workspace ids: an empty array is the owner-wide row (valid on
+    every workspace of the row's owner whose ``secret_coverage``
+    accepts owner-wide placeholders), a non-empty array is scoped
+    to exactly those ids. The mint normalizes the list (sorted,
+    de-duplicated), so the (owner, name, workspaces) unique
+    constraint pins one row per label per owner per coverage set.
     """
 
     __tablename__ = "placeholders"
     __table_args__ = (
-        UniqueConstraint("name", "workspaces", name="uq_placeholders_name"),
+        UniqueConstraint(
+            "owner_uid",
+            "name",
+            "workspaces",
+            name="uq_placeholders_owner_name",
+        ),
     )
 
+    # The owning uid (#1083): the peer credential that minted the
+    # row — root and the daemon's own uid mint as the daemon's
+    # uid. A workspace resolves against rows its own owner holds.
+    owner_uid: Mapped[int] = mapped_column(Integer)
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    # The coverage set as a JSON array; [] = daemon-wide (#339).
+    # The coverage set as a JSON array; [] = owner-wide (#339,
+    # #1083).
     workspaces: Mapped[str] = mapped_column(Text)
     # The operator-facing label; also the tail of backend_ref.
     name: Mapped[str] = mapped_column(String)
@@ -123,22 +134,28 @@ class SecretBlob(Base):
 
 
 class SecretAudit(Base):
-    """One placeholder lifecycle event (#198).
+    """One placeholder lifecycle event (#198, #1083).
 
     ``workspaces`` records the placeholder's coverage at the event
-    (the same JSON-array shape the placeholder row carries), so an
-    audit reader can tell a daemon-wide mint from a scoped one.
+    (the same JSON-array shape the placeholder row carries), and
+    ``owner_uid`` records the row's owner beside it, so an audit
+    reader can tell an owner-wide mint from a scoped one and name
+    whose mint it was.
     """
 
     __tablename__ = "secret_audit"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     kind: Mapped[str] = mapped_column(String)
-    # The placeholder's coverage as a JSON array; [] = daemon-wide
-    # (#339). The decider replay's per-workspace scan matches rows
-    # whose coverage includes the workspace — daemon-wide rows
-    # replay onto every workspace's screen.
+    # The placeholder's coverage as a JSON array; [] = owner-wide
+    # (#339, #1083). The decider replay's per-workspace scan
+    # matches rows whose coverage includes the workspace — and,
+    # since #1083, whose owner owns it — so owner-wide rows replay
+    # onto their own owner's workspaces alone.
     workspaces: Mapped[str] = mapped_column(Text)
+    # The minting owner (#1083), copied from the placeholder row
+    # at the event.
+    owner_uid: Mapped[int] = mapped_column(Integer)
     name: Mapped[str] = mapped_column(String)
     dests: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

@@ -11,6 +11,7 @@ states the trap).
 """
 
 import ctypes
+import math
 import os
 import string
 import subprocess
@@ -180,6 +181,56 @@ def vt(widget, data: bytes) -> None:
     mode pins drive the terminal directly, not a child)."""
     widget.lib.vt_write(widget.terminal, data)
     widget.refresh()
+
+
+def paint_planned(screen, qt):
+    """Drive the paint the plan asked for (#1113): the rows
+    and the region refresh() named, painted onto one kept
+    image — the backing store the widget's own pixels play,
+    so a row that skips its background fill shows the frame
+    before it (review round one: fresh images per paint let
+    the flood pin pass with the fill deleted). The kept image
+    starts as a contrasting sentinel. Answers the image it
+    painted."""
+    from msks.client.gui.terminal import paint
+
+    image = getattr(screen, "_planned_backing", None)
+    if image is None or image.size() != screen.size():
+        image = qt.QtGui.QImage(
+            screen.width(),
+            screen.height(),
+            qt.QtGui.QImage.Format.Format_ARGB32,
+        )
+        image.fill(qt.QtGui.QColor(255, 0, 255))
+        screen._planned_backing = image
+    painter = qt.QtGui.QPainter(image)
+    try:
+        paint.paint_event(screen, painter, screen.repaint_region)
+    finally:
+        painter.end()
+    return image
+
+
+def paint_whole(screen, qt):
+    """Drive one paint of the whole widget's region — the
+    exposure the window system delivers after an un-minimize
+    or a screen move, and the harness for overlays that draw
+    above whatever the plan named."""
+    from msks.client.gui.terminal import paint
+
+    image = qt.QtGui.QImage(
+        screen.width(),
+        screen.height(),
+        qt.QtGui.QImage.Format.Format_ARGB32,
+    )
+    image.fill(qt.QtGui.QColor(255, 0, 255))
+    painter = qt.QtGui.QPainter(image)
+    whole = qt.QtGui.QRegion(0, 0, screen.width(), screen.height())
+    try:
+        paint.paint_event(screen, painter, whole)
+    finally:
+        painter.end()
+    return image
 
 
 def scrollbar(widget) -> tuple[int, int, int]:
@@ -420,6 +471,266 @@ def test_painted_text_lands_in_the_right_cells(screen, qt):
     assert top != below, "row 0 carries glyph ink"
 
 
+# --- paint damage (#1104, #1113) -----------------------------------------
+
+
+def test_a_paint_covers_a_device_whose_ratio_differs_from_the_widgets(
+    screen, qt
+):
+    """A paint holds no offscreen pixmap (#1113): the rows
+    paint in logical coordinates onto whatever device the
+    painter carries, so a device whose ratio disagrees with
+    the widget's own devicePixelRatioF — KDE Wayland
+    fractional scaling's split, the window carrying 1.5
+    while the backing store rendered at the screen's integer
+    2.0 — is Qt's own mapping, and every device pixel of the
+    pane receives the row that belongs there. The offscreen
+    suite's widget answers 1, so the pin drives the split
+    itself: a sentinel-filled ratio-2 device."""
+    from msks.client.gui.terminal import paint
+
+    vt(screen, b"\x1b[2J\x1b[Hsome text")
+    screen.grab()
+    assert screen.devicePixelRatioF() == 1.0  # the split the pin drives
+    ratio = 2.0
+    image = qt.QtGui.QImage(
+        math.ceil(screen.width() * ratio),
+        math.ceil(screen.height() * ratio),
+        qt.QtGui.QImage.Format.Format_ARGB32,
+    )
+    image.fill(qt.QtGui.QColor(255, 0, 255))  # the sentinel
+    image.setDevicePixelRatio(ratio)
+    painter = qt.QtGui.QPainter(image)
+    whole = qt.QtGui.QRegion(0, 0, screen.width(), screen.height())
+    try:
+        paint.paint_event(screen, painter, whole)
+    finally:
+        painter.end()
+    sentinel = qt.QtGui.QColor(255, 0, 255).rgb()
+    survivors = 0
+    for y in range(image.height()):
+        for x in range(image.width()):
+            if image.pixel(x, y) == sentinel:
+                survivors += 1
+    assert survivors == 0
+
+
+def test_a_fractional_device_ratio_covers_every_device_pixel(screen, qt):
+    """A fractional device ratio — the scaled-display case
+    #1110 chased — leaves no device pixel of the pane
+    unpainted: the rows paint in logical coordinates and Qt
+    maps them onto the device's own pixels, with no offscreen
+    pixmap to size in device pixels at all. The pin paints the
+    whole widget's region onto a sentinel-filled image at
+    ratio 1.25 and answers whether any sentinel survives."""
+    from msks.client.gui.terminal import paint
+
+    vt(screen, b"\x1b[2J\x1b[Hsome text")
+    screen.grab()
+    ratio = 1.25
+    # the device extent the widget's logical width names exactly:
+    # a wider image holds pixels outside the widget, and its
+    # sentinels are the image's, not the paint's
+    image = qt.QtGui.QImage(
+        int(screen.width() * ratio),
+        int(screen.height() * ratio),
+        qt.QtGui.QImage.Format.Format_ARGB32,
+    )
+    image.fill(qt.QtGui.QColor(255, 0, 255))  # the sentinel
+    image.setDevicePixelRatio(ratio)
+    painter = qt.QtGui.QPainter(image)
+    whole = qt.QtGui.QRegion(0, 0, screen.width(), screen.height())
+    try:
+        paint.paint_event(screen, painter, whole)
+    finally:
+        painter.end()
+    sentinel = qt.QtGui.QColor(255, 0, 255).rgb()
+    survivors = 0
+    for y in range(image.height()):
+        for x in range(image.width()):
+            if image.pixel(x, y) == sentinel:
+                survivors += 1
+    assert survivors == 0
+
+
+def test_a_scrolled_flood_paints_the_same_pixels_as_one_whole_pass(screen, qt):
+    """Output that scrolls the grid many times leaves none of
+    the earlier frames in the rows (#1113's flood report, the
+    ls -alR garble): a taken row paints its background first,
+    so the incremental paints after each line land exactly the
+    pixels one whole-grid pass of the settled state paints."""
+
+    vt(screen, b"\x1b[2J\x1b[H")
+    incremental = None
+    for i in range(screen.rows * 4):
+        vt(screen, f"line {i:03d} {'x' * 30}\r\n".encode())
+        incremental = paint_planned(screen, qt)
+    assert incremental is not None
+    whole = paint_whole(screen, qt)
+    # the grid's pixels alone: the comparison is about the rows
+    # — the fringe below the grid differs between the kept
+    # incremental image and the fresh whole-pass one by design
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    grid = qt.QtCore.QRect(0, 0, screen.cols * cw, screen.rows * ch)
+    assert incremental.copy(grid) == whole.copy(grid)
+
+
+def test_the_bell_flashs_end_takes_a_full_pass(screen, qt):
+    """The flash's border paints above the rows, and nothing
+    blits it away: the timer's end sets the sticky full pass,
+    and the next paint repaints every row — the border cannot
+    stay on the widget (#1113)."""
+    vt(screen, b"\x1b[2J\x1b[Hsome text")
+    paint_planned(screen, qt)
+    screen.flash()
+    flashing = paint_whole(screen, qt)  # the border draws
+    screen.bell_off()
+    after = paint_whole(screen, qt)  # the sticky full erases it
+    assert screen.painted_rows == list(range(screen.rows))
+    assert after != flashing
+
+
+def test_one_typed_character_repaints_its_row_alone(screen, qt):
+    """The paint's damage set is the library's own row flags
+    (#1104): the first planned paint takes every row, and the
+    next character repaints the row its cursor sits in alone
+    — the whole-grid paint a typed character once paid is the
+    echo lag the issue chased."""
+    vt(screen, b"\x1b[2J\x1b[Hhello\r\nworld")
+    paint_planned(screen, qt)
+    assert screen.painted_rows == list(range(screen.rows))
+    vt(screen, b"x")  # the cursor sits on row 1
+    paint_planned(screen, qt)
+    assert screen.painted_rows == [1]
+
+
+def test_the_cursor_move_repaints_the_row_it_covers(screen, qt):
+    """A cursor move flags no rows (probed); the plan names
+    the rows the translucent cursor covers — the one it left
+    and the one it takes — so the block redraws over fresh
+    pixels and never compounds on itself (#1113)."""
+    vt(screen, b"\x1b[2J\x1b[Hhello")
+    before = paint_planned(screen, qt).copy()  # the kept image mutates
+    vt(screen, b"\x1b[3C")
+    after = paint_planned(screen, qt)
+    assert screen.painted_rows == [0]  # the row it left and takes
+    assert after != before
+
+
+def test_a_viewport_scroll_repaints_every_row(screen, qt):
+    """The library's row flags stay clean through a viewport
+    scroll (probed); the plan compares the scrollbar's offset
+    and repaints every row when the viewport moved — the rows
+    the viewport now shows are different buffer lines."""
+    vt(screen, b"\x1b[2J\x1b[H" + b"line\r\n" * 40)  # history to page into
+    paint_planned(screen, qt)
+    screen.scroll_rows(-3)
+    # the plan itself must name the whole widget, not the rows
+    # the exposure would paint anyway
+    assert screen.repaint_region.boundingRect().height() == screen.height()
+    paint_planned(screen, qt)
+    assert screen.painted_rows == list(range(screen.rows))
+
+
+def test_a_pixel_resize_repaints_every_row(screen, qt):
+    """A resize re-derives the grid and repaints every row
+    (the geometry changed, and the library flags them all,
+    probed): a stale row would show the old grid's lines
+    beside the new grid's."""
+    vt(screen, b"\x1b[2J\x1b[Hhello")
+    paint_planned(screen, qt)
+    size = screen.size() + qt.QtCore.QSize(120, 40)
+    screen.resize(size)
+    screen.resizeEvent(qt.QtGui.QResizeEvent(size, screen.size()))
+    assert screen.repaint_region.boundingRect().height() == screen.height()
+    paint_planned(screen, qt)
+    assert screen.painted_rows == list(range(screen.rows))
+
+
+def test_a_changed_find_pass_repaints_every_row(screen, qt):
+    """The find underlays paint beneath the cells, over the
+    row's own background fill (#1104): a search whose
+    rectangles arrive with the rows clean repaints every
+    row, or the tint would age on the widget while the
+    needle steps."""
+    from msks.client.gui.terminal import find
+
+    vt(screen, b"\x1b[2J\x1b[Hneedle here")
+    paint_planned(screen, qt)
+    find.open(screen)
+    find.run(screen, "needle")
+    assert screen.repaint_region.boundingRect().height() == screen.height()
+    paint_planned(screen, qt)
+    assert screen.painted_rows == list(range(screen.rows))
+    find.close(screen)
+
+
+def test_a_scheme_flip_repaints_every_row_and_the_pixels(screen, qt):
+    """The scheme flip's own path — ``terminal_set`` of the
+    base colors, what ``colors.apply`` runs — flags every row
+    (probed) and moves the render state's palette: the whole
+    grid repaints over each row's fresh background fill, so
+    the painted pixels follow — a blank row reads the new
+    scheme's background (review round one: the rows repainted
+    over a stale base, black-on-black under a light scheme)."""
+    from msks.client.gui.terminal import colors
+
+    vt(screen, b"\x1b[2J\x1b[Hsome text\r\n\r\n\r\nmore")
+    screen.grab()
+    colors.apply(screen, gt.COLOR_SCHEME_LIGHT)
+    image = screen.grab().toImage()
+    assert screen.painted_rows == list(range(screen.rows))
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    pixel = image.pixelColor(cw * 2, ch + ch // 2)  # blank row 1
+    assert (pixel.red(), pixel.green(), pixel.blue()) == (255, 255, 255)
+
+
+def test_a_program_retint_repaints_the_pixels(screen, qt):
+    """A program's own default-color move — OSC 11's background
+    with OSC 10's foreground flushing the sync — moves the
+    render state's palette like the scheme flip does, and the
+    same comparison carries it: every row repaints over the
+    fresh background fill."""
+    vt(screen, b"\x1b[2J\x1b[Hsome text\r\n\r\n\r\nmore")
+    screen.grab()
+    vt(screen, b"\x1b]11;rgb:00/00/cc\x07\x1b]10;rgb:ff/ff/00\x07")
+    image = screen.grab().toImage()
+    assert screen.painted_rows == list(range(screen.rows))
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    pixel = image.pixelColor(cw * 2, ch + ch // 2)  # blank row 1
+    assert (pixel.red(), pixel.green(), pixel.blue()) == (0, 0, 204)
+
+
+def test_a_metrics_change_at_the_same_pixels_repaints_every_row(screen, qt):
+    """A font change at the same widget pixels — the zoom on a
+    maximized window, a hidden tab's ``set_face`` — changes
+    the cell metrics, and the plan's geometry comparison
+    carries them: every row repaints, and the strip below the
+    smaller grid carries the background instead of the old
+    frame's last row (review round one: the rows repainted
+    beside their stale neighbor)."""
+    from msks.client.gui.terminal.paint import palette
+
+    vt(screen, b"\x1b[2J\x1b[Hsome text")
+    size = qt.QtCore.QSize(400, 300)
+    screen.resize(size)
+    screen.resizeEvent(qt.QtGui.QResizeEvent(size, screen.size()))
+    screen.grab()  # the cache builds for this grid and font
+    larger = screen.font.pointSize()
+    screen.set_face(larger - 4)  # smaller cells at the same pixels
+    background = palette(screen).background
+    image = screen.grab().toImage()
+    assert screen.painted_rows == list(range(screen.rows))
+    strip_y = screen.rows * screen.metrics.cell_height + 2
+    assert strip_y < screen.height()  # smaller cells always leave it
+    pixel = image.pixelColor(screen.metrics.cell_width * 2, strip_y)
+    assert (pixel.red(), pixel.green(), pixel.blue()) == (
+        background.r,
+        background.g,
+        background.b,
+    )
+
+
 def test_the_inverse_and_faint_styles_paint(screen, qt):
     """Inverse swaps the cell's colors and faint dims the ink —
     both paint without changing the grid — and an empty cell
@@ -531,7 +842,14 @@ def test_paint_without_a_palette_draws_nothing(screen, qt):
 
     painter = qt.QtGui.QPainter(screen)
     try:
-        paint_mod.paint_event(Paletteless(), painter)  # draws nothing
+        paint_mod.paint_event(
+            Paletteless(), painter, qt.QtGui.QRegion(0, 0, 10, 10)
+        )  # draws nothing
+        # the plan over the same stub owes nothing either
+        bare = Paletteless()
+        region = paint_mod.plan_paint(bare)
+        assert region.isEmpty()
+        assert bare.repaint_full is False
     finally:
         painter.end()
 
@@ -717,6 +1035,140 @@ def test_the_focus_refusal_answers_qts_own_tab_delivery(qt):
         TerminalWidget.focusNextPrevChild = real
         if widget.search:
             find.close(widget)
+        shutdown(widget)
+        host.close()
+
+
+def test_shortcut_override_claims_only_the_bare_escape(screen, qt):
+    """The override's own bounds (#1099): Qt's shortcut
+    dispatch sends a ``ShortcutOverride`` to the focus widget
+    before a matching shortcut consumes the press, and the
+    accept — the answer Qt reads off the event's accepted
+    flag — yields the shortcut. The claim names the bare Esc
+    alone: a modified Esc or another key stays unaccepted, so
+    no other shortcut the window stands loses its key."""
+    QEvent = qt.QtCore.QEvent
+    Qt = qt.QtCore.Qt
+
+    def override(key, modifiers):
+        return qt.QtGui.QKeyEvent(
+            QEvent.Type.ShortcutOverride, int(key), modifiers, ""
+        )
+
+    bare = override(Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
+    assert screen.event(bare) is True
+    assert bare.isAccepted()
+    for other in (
+        override(Qt.Key.Key_Escape, Qt.KeyboardModifier.ControlModifier),
+        override(Qt.Key.Key_Escape, Qt.KeyboardModifier.ShiftModifier),
+        override(Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier),
+    ):
+        assert screen.event(other) is True  # the base's answer
+        assert not other.isAccepted()
+
+
+def test_escape_reaches_the_child_past_a_back_shortcut(qt):
+    """The bug's own path (#1099): the workspace page stands a
+    widget-scoped shortcut on the bare Esc — its Back — and
+    the match consumes the press before the encoder, so the
+    program inside never reads the key. A terminal under the
+    same shortcut keeps the press: Qt's override question
+    answers first, the shortcut stays quiet, and the pty
+    reads the escape byte. The delivery is the shortcut
+    system's own — the press goes through ``sendEvent``, the
+    dispatch a real platform serves."""
+    from msks.client.gui.terminal import TerminalWidget
+
+    host = qt.QtWidgets.QWidget()
+    host.show()
+    host.activateWindow()  # a shortcut answers in the active window
+    fired = []
+    escape = qt.QtGui.QShortcut(
+        qt.QtGui.QKeySequence(qt.QtCore.Qt.Key.Key_Escape), host
+    )
+    escape.activated.connect(lambda: fired.append(1))
+    widget = TerminalWidget([sys.executable, "-c", ECHOER], parent=host)
+    try:
+        hush_echo(widget)
+        drain_until(widget, b"ready")
+        widget.show()
+        widget.setFocus()
+        qt.app.processEvents()
+        qt.app.sendEvent(widget, key_event(qt, qt.QtCore.Qt.Key.Key_Escape))
+        assert b"\x1b" in drain_until(widget, b"\x1b")
+        assert fired == []
+    finally:
+        shutdown(widget)
+        host.close()
+
+
+def test_escape_closes_the_find_bar_not_the_page(qt):
+    """The accept's other arm (#1099): the find bar's edit is
+    the terminal's child, and an override a focused child
+    ignores propagates to the parent — the accept answers it
+    the same way, so the page's Back shortcut stays quiet and
+    the bar's own Esc handler closes the bar. Before the fix
+    the shortcut answered first, and Back navigated away with
+    the bar still open."""
+    from msks.client.gui.terminal import TerminalWidget, find
+
+    host = qt.QtWidgets.QWidget()
+    host.show()
+    host.activateWindow()
+    fired = []
+    escape = qt.QtGui.QShortcut(
+        qt.QtGui.QKeySequence(qt.QtCore.Qt.Key.Key_Escape), host
+    )
+    escape.activated.connect(lambda: fired.append(1))
+    widget = TerminalWidget([sys.executable, "-c", SLEEPER], parent=host)
+    try:
+        drain_until(widget, b"ready")
+        widget.resize(600, 400)  # the bar's overlay geometry
+        widget.show()
+        widget.setFocus()
+        qt.app.processEvents()
+        find.open(widget)
+        qt.app.processEvents()
+        assert widget.find_edit.hasFocus()
+        qt.app.sendEvent(
+            widget.find_edit, key_event(qt, qt.QtCore.Qt.Key.Key_Escape)
+        )
+        qt.app.processEvents()
+        assert widget.search == 0  # the bar's own Esc closed it
+        assert widget.find_edit is None  # close's teardown ran
+        assert fired == []
+    finally:
+        if widget.search:
+            find.close(widget)
+        shutdown(widget)
+        host.close()
+
+
+def test_escape_still_answers_back_off_the_terminal(qt):
+    """The shortcut's own arm (#1099): the refusal yields the
+    key only while the terminal holds the focus it was sent
+    to. A press that lands on the chrome — the Back button
+    the page anchors — still fires the shortcut."""
+    from msks.client.gui.terminal import TerminalWidget
+
+    host = qt.QtWidgets.QWidget()
+    host.show()
+    host.activateWindow()
+    fired = []
+    escape = qt.QtGui.QShortcut(
+        qt.QtGui.QKeySequence(qt.QtCore.Qt.Key.Key_Escape), host
+    )
+    escape.activated.connect(lambda: fired.append(1))
+    button = qt.QtWidgets.QPushButton(host)
+    button.setFocusPolicy(qt.QtCore.Qt.FocusPolicy.StrongFocus)
+    widget = TerminalWidget([sys.executable, "-c", SLEEPER], parent=host)
+    try:
+        drain_until(widget, b"ready")
+        widget.show()
+        qt.app.processEvents()
+        qt.app.sendEvent(button, key_event(qt, qt.QtCore.Qt.Key.Key_Escape))
+        assert fired == [1]
+    finally:
         shutdown(widget)
         host.close()
 
@@ -1130,7 +1582,9 @@ def test_a_resize_reaches_the_child(qt):
 def test_a_resize_event_recomputes_the_grid(screen, qt):
     """A window resize re-derives the grid from the pixels —
     the event arrives through Qt's own delivery when shown,
-    and directly here for the deterministic pin."""
+    and directly here for the deterministic pin. The
+    scrollbar's lane sits right of the grid, so the columns
+    derive from the pixels less the lane (#1113)."""
     size = qt.QtCore.QSize(
         screen.metrics.cell_width * 40,
         screen.metrics.cell_height * 10,
@@ -1138,7 +1592,7 @@ def test_a_resize_event_recomputes_the_grid(screen, qt):
     old = qt.QtCore.QSize(screen.width(), screen.height())
     screen.resize(size)
     screen.resizeEvent(qt.QtGui.QResizeEvent(size, old))
-    assert (screen.cols, screen.rows) == (40, 10)
+    assert (screen.cols, screen.rows) == (39, 10)
 
 
 def test_the_widget_holds_no_font_keys(screen, qt):
@@ -1250,10 +1704,7 @@ def test_a_fit_that_cannot_reach_lands_the_pixels_grid(screen, qt):
         held = (widget.cols, widget.rows)
         widget.apply_font_size(widget.font.pointSize() + 2)
         qt.app.processEvents()
-        landed = (
-            max(1, widget.width() // widget.metrics.cell_width),
-            max(1, widget.height() // widget.metrics.cell_height),
-        )
+        landed = widget.derived_grid()
         assert landed[1] < held[1]  # the cap held the fit short
         assert (widget.cols, widget.rows) == landed  # one grid everywhere
     finally:
@@ -1385,6 +1836,66 @@ def test_final_output_and_exit_share_one_readiness_window(qt):
         widget.read_master()
         qt.app.processEvents()
         assert exits == [7]
+    finally:
+        shutdown(widget)
+
+
+def test_a_late_exit_reports_its_real_code(qt):
+    """#1099 follow-up: the kernel closes the child's slave fds
+    before the child is waitable, so the exit report can land in
+    that window. A child that drops its tty and lives on puts
+    child_gone exactly there — the bounded wait collects the
+    real code instead of reporting the 0 placeholder (the race
+    a loaded CI runner caught)."""
+    from msks.client.gui.terminal import TerminalWidget
+
+    child = (
+        "import os, signal, time; "
+        "signal.signal(signal.SIGHUP, signal.SIG_IGN); "
+        "[os.close(fd) for fd in (0, 1, 2)]; "
+        "time.sleep(0.2); "
+        "raise SystemExit(7)"
+    )
+    exits = []
+    widget = TerminalWidget([sys.executable, "-c", child])
+    try:
+        widget.process_exited.connect(exits.append)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not exits:
+            qt.app.processEvents()
+            time.sleep(0.01)
+        assert widget.session.exited
+        assert exits == [7]
+    finally:
+        shutdown(widget)
+
+
+def test_a_wedged_child_reports_the_placeholder_within_the_grace(qt):
+    """#1099 follow-up's other arm: a child that drops its tty
+    and stays wedged past the grace still gets its report, on
+    time and with the 0 placeholder — the report never hangs on
+    a child the grace cannot collect."""
+    from msks.client.gui.terminal import TerminalWidget
+
+    child = (
+        "import os, signal, time; "
+        "signal.signal(signal.SIGHUP, signal.SIG_IGN); "
+        "[os.close(fd) for fd in (0, 1, 2)]; "
+        "time.sleep(30)"
+    )
+    exits = []
+    widget = TerminalWidget([sys.executable, "-c", child])
+    try:
+        widget.process_exited.connect(exits.append)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not exits:
+            qt.app.processEvents()
+            time.sleep(0.01)
+        assert widget.session.exited
+        assert exits == [0]
+        # The child is still alive: the teardown's escalation
+        # is what collects it.
+        assert widget.session.child_pid is not None
     finally:
         shutdown(widget)
 
@@ -2704,6 +3215,110 @@ def test_the_span_upper_bound_excludes_the_next_cell(screen, qt):
     end = screen.link_spans[0][0][1]
     assert links.under(screen, qt.QtCore.QPointF(cw * (end - 1), ch // 2))
     assert links.under(screen, qt.QtCore.QPointF(cw * end, ch // 2)) is None
+
+
+def test_a_wrapped_url_opens_whole_from_either_row(screen, qt):
+    """A URL longer than the row width soft-wraps onto the
+    next row; each row's fragment carries the whole URL, so a
+    Ctrl+Click on either opens it uncut (#1100)."""
+    from msks.client.gui.terminal import links
+
+    screen.grab().toImage()  # settles the widget's offscreen geometry
+    url = "https://example.com/" + "a" * (
+        screen.cols - 10
+    )  # one row and a tail
+    tail = len(url) - screen.cols  # the second row's cells
+    vt(screen, b"\x1b[2J\x1b[H" + url.encode() + b"\r\nplain")
+    screen.grab().toImage()  # the paint pass fills the URL scan
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    QPointF = qt.QtCore.QPointF
+    assert screen.link_spans[0] == [(0, screen.cols, url)]
+    assert screen.link_spans[1] == [(0, tail, url)]
+    assert links.under(screen, QPointF(cw * (screen.cols - 1), ch // 2)) == url
+    assert links.under(screen, QPointF(cw * (tail - 1), ch + ch // 2)) == url
+    # one past the fragment's last cell on the second row
+    assert links.under(screen, QPointF(cw * tail, ch + ch // 2)) is None
+
+
+def test_a_hard_newline_never_stitches(screen, qt):
+    """A URL-ending row followed by a fresh line stays two
+    rows: only the wrap flag joins a scan."""
+    from msks.client.gui.terminal import links
+
+    screen.grab().toImage()  # settles the widget's offscreen geometry
+    url = "https://example.com/" + "a" * (screen.cols - 25)  # fits one row
+    vt(screen, b"\x1b[2J\x1b[H" + url.encode() + b"\r\ntail")
+    screen.grab().toImage()
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    assert screen.link_spans[0] == [(0, len(url), url)]
+    assert screen.link_spans[1] == []
+    assert (
+        links.under(screen, qt.QtCore.QPointF(cw * (len(url) - 1), ch // 2))
+        == url
+    )
+    assert links.under(screen, qt.QtCore.QPointF(cw, ch + ch // 2)) is None
+
+
+def test_a_two_character_cluster_keeps_the_span_in_cells(screen, qt):
+    """A base letter and its combining mark share one cell
+    whose text carries two characters; the URL after it
+    starts on the next cell, not one character later."""
+    from msks.client.gui.terminal import links
+
+    vt(screen, b"\x1b[2J\x1b[He\xcc\x81https://example.com/x")
+    screen.grab().toImage()
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    QPointF = qt.QtCore.QPointF
+    assert links.under(screen, QPointF(0, ch // 2)) is None  # the cluster cell
+    assert links.under(screen, QPointF(cw, ch // 2)) == (
+        "https://example.com/x"
+    )
+
+
+def test_a_url_ending_mid_row_scans_only_its_cells(screen, qt):
+    """A URL followed by wrapping words: the span stops at
+    the URL's own cells, and the continuation row of the same
+    wrapped line answers no link."""
+    url = "https://example.com/words"
+    tail = " ".join(["tail"] * 15)  # pushes the line past the width
+    vt(screen, b"\x1b[2J\x1b[H" + (url + " " + tail).encode())
+    screen.grab().toImage()
+    assert screen.link_spans[0] == [(0, len(url), url)]
+    assert screen.link_spans[1] == []
+
+
+def test_a_url_cut_by_the_bottom_answers_no_link(screen, qt):
+    """A URL whose continuation sits below the viewport's
+    bottom edge cannot be known whole: the visible fragment
+    answers no link rather than a truncated one, and the
+    scrolled view that holds all its rows answers the whole
+    URL."""
+    from msks.client.gui.terminal import links
+
+    screen.grab().toImage()  # settles the widget's offscreen geometry
+    url = "https://example.com/" + "a" * (screen.cols * 3 - 5)  # four rows
+    vt(screen, b"\x1b[2J\x1b[H")
+    for index in range(screen.rows - 3):
+        vt(screen, f"filler {index}\r\n".encode())
+    vt(screen, url.encode() + b"\r\n")
+    for index in range(10):
+        vt(screen, f"tail {index}\r\n".encode())
+    screen.scroll_rows(-100)  # clamps at the scrollback's top
+    screen.grab().toImage()
+    assert scrollbar(screen)[2] == 0
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    QPointF = qt.QtCore.QPointF
+    bottom = screen.rows - 1
+    # the viewport's last three rows hold the URL's first three
+    # rows; its fourth row sits below the bottom edge
+    for row in (bottom - 2, bottom - 1, bottom):
+        assert links.under(screen, QPointF(cw * 5, ch * row + ch // 2)) is None
+    screen.scroll_rows(1)  # one row down: every row of the URL in view
+    screen.grab().toImage()
+    assert (
+        links.under(screen, QPointF(cw * 5, ch * (bottom - 3) + ch // 2))
+        == url
+    )
 
 
 def test_the_hand_drops_when_the_pointer_leaves(screen, qt):

@@ -22,6 +22,7 @@ import websockets
 from msks.client import ages as ages_mod
 from msks.client import cli
 from msks.client import data as clientdata
+from msks.client.bridge import ReHolder
 from msks.client.data import RestFailure
 from msks.client.tui import data as data_mod
 from msks.client.tui import detail as detail_mod
@@ -155,6 +156,21 @@ def row(
     }
 
 
+class HolderClock:
+    """The re-hold watch's clock, advanced by hand (#1127): the
+    backoff and outcome windows read it."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def past_windows(self) -> None:
+        """Move past every standing window at once."""
+        self.now += 2.0 * (ReHolder.RETRY_AFTER_S + ReHolder.AWAIT_S)
+
+
 class FakeData:
     """The screens' daemon calls, scripted and recorded."""
 
@@ -242,6 +258,19 @@ class FakeData:
         # page's backstop read, counted for the tests that arm a
         # refusal against it.
         self.proxies_fetches = 0
+        # The bridge re-hold watch's surface (#1127): the session
+        # policy the listing's watch reads, over a spawn the
+        # tests record — the detached child never runs here.
+        self.holder_spawns: list[str] = []
+
+        def record_spawn(ws: str) -> bool:
+            self.holder_spawns.append(ws)
+            return True
+
+        # The hand-advanced clock (#1127): the re-hold windows
+        # read it, and the tests move it past them.
+        self.holder_clock = HolderClock()
+        self.reholder = ReHolder(spawn=record_spawn, clock=self.holder_clock)
 
     async def workspaces(self) -> list[dict]:
         self.fetches += 1
@@ -700,7 +729,7 @@ def scripted_listing(monkeypatch, frames: list[str]) -> FakeFactory:
         main_screen_mod.MainScreen,
         "make_link",
         lambda self: main_screen_mod.ListingLink(
-            self.refresh_rows, ws_factory=factory
+            self.refresh_rows, self.bridge_frame, ws_factory=factory
         ),
     )
     return factory
@@ -9823,3 +9852,203 @@ async def test_a_refresh_in_flight_skips_instead_of_cancelling(
         # skip never lost the frame, and the tree never stranded.
         await wait_for(lambda: fetches == 2)
         assert screen.rows_widget() is not None
+
+
+def bridge_cause_rows(ws: str = WS) -> list[dict]:
+    """One workspace's forward rows as a failing read serves them
+    (#1127): failed, the missing-holder cause riding the reason."""
+    return [
+        {
+            "id": 7,
+            "workspace_id": ws,
+            "direction": "forward",
+            "listen_port": 8080,
+            "target_port": 80,
+            "status": "failed",
+            "reason": (
+                "no client holds the bridge — start the workspace "
+                "from a client (the holder it leaves serves after "
+                "the command exits), or run 'msks proxy hold "
+                "<workspace>'"
+            ),
+        }
+    ]
+
+
+def pushed(factory, frame: dict) -> None:
+    """One decoded frame onto the scripted listing's socket."""
+    factory.made[0].push(json.dumps(frame))
+
+
+def lost_frame(ws: str = WS) -> dict:
+    """The failure the daemon publishes when the last holder
+    went (#1127): one frame per forward row."""
+    return {
+        "event": "proxy.failed",
+        "data": {
+            "id": ws,
+            "proxy": 7,
+            "reason": bridge_cause_rows()[0]["reason"],
+        },
+    }
+
+
+async def test_the_listing_reholds_a_lost_bridge(monkeypatch) -> None:
+    """#1127: a holder's death publishes its rows' failure; the
+    listing's watch reads the rows, spawns the detached holder,
+    and the listener that follows says the recovery once."""
+    data = FakeData([row(status="running")])
+    data.proxy_rows = bridge_cause_rows()
+    factory = scripted_listing(monkeypatch, [])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "1 workspace" in status_text(app))
+        pushed(factory, lost_frame())
+        await wait_for(lambda: data.holder_spawns == [WS])
+        # The burst one failure publishes per row lands as one.
+        pushed(factory, lost_frame())
+        await asyncio.sleep(0.2)
+        assert data.holder_spawns == [WS]
+        # The listener the re-held bridge brings says so once.
+        pushed(factory, {"event": "proxy.listening", "data": {"id": WS}})
+        await wait_for(lambda: "bridge re-held" in status_text(app))
+        assert "alpha" in status_text(app)
+        pushed(factory, {"event": "proxy.listening", "data": {"id": WS}})
+        await asyncio.sleep(0.2)
+        assert status_text(app).count("bridge re-held") == 1
+
+
+async def test_the_listing_reholds_a_start_that_left_no_holder(
+    monkeypatch,
+) -> None:
+    """#1127: a start over the raw API leaves no holder; the
+    running transition it publishes weighs the rows and takes the
+    holder the start itself would have left."""
+    data = FakeData([row(status="stopped")])
+    data.proxy_rows = bridge_cause_rows()
+    factory = scripted_listing(monkeypatch, [])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "1 workspace" in status_text(app))
+        pushed(
+            factory,
+            {
+                "event": "workspace.status",
+                "data": {"id": WS, "status": "running"},
+            },
+        )
+        await wait_for(lambda: data.holder_spawns == [WS])
+        assert "bridge" not in status_text(app)
+
+
+async def test_the_listing_spawns_no_standby_beside_a_holder(
+    monkeypatch,
+) -> None:
+    """#1127: rows that already read listening mean a holder
+    stands — the refreshed read spawns nothing, and a listener
+    that lands without this session's spawn says nothing."""
+    data = FakeData([row(status="running")])
+    data.proxy_rows = [
+        {**bridge_cause_rows()[0], "status": "listening", "reason": None}
+    ]
+    factory = scripted_listing(monkeypatch, [])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "1 workspace" in status_text(app))
+        pushed(factory, lost_frame())
+        pushed(factory, {"event": "proxy.listening", "data": {"id": WS}})
+        await asyncio.sleep(0.4)
+        assert data.holder_spawns == []
+        assert "bridge" not in status_text(app)
+
+
+async def test_the_listing_names_the_watchs_give_up(monkeypatch) -> None:
+    """#1127: the failure that lands after the session's last
+    spawn meets the give-up line once — the row's cause stands,
+    and the flashes after it stay quiet."""
+    data = FakeData([row(status="running")])
+    data.proxy_rows = bridge_cause_rows()
+    factory = scripted_listing(monkeypatch, [])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "1 workspace" in status_text(app))
+        # The session's budget, spent without the frames — the
+        # clock moves before each spend, so the last spawn's
+        # outcome window stands after the loop.
+        for _ in range(ReHolder.MAX_TRIES):
+            data.holder_clock.past_windows()
+            assert data.reholder.rehold(WS, data.proxy_rows) is True
+        assert data.holder_spawns == [WS] * ReHolder.MAX_TRIES
+        pushed(factory, lost_frame())
+        await asyncio.sleep(0.3)
+        # The last spawn's outcome window stands: the failure
+        # defers, and the line waits for it.
+        assert "bridge not re-held" not in status_text(app)
+        data.holder_clock.past_windows()
+        await wait_for(lambda: "bridge not re-held" in status_text(app))
+        assert "msks proxy hold" in status_text(app)
+
+
+async def test_a_crash_looping_holder_retries_at_the_windows_pace(
+    monkeypatch,
+) -> None:
+    """#1127: a holder that dies as fast as it connects retries
+    at the backoff pace, not the frame rate — the in-window
+    failure defers as a mark, and the tick's drain re-rules it
+    once the window closes, because nothing re-delivers the
+    frames."""
+    data = FakeData([row(status="running")])
+    data.proxy_rows = bridge_cause_rows()
+    factory = scripted_listing(monkeypatch, [])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "1 workspace" in status_text(app))
+        pushed(factory, lost_frame())
+        await wait_for(lambda: data.holder_spawns == [WS])
+        # The re-held holder dies again inside the window: the
+        # burst defers, no second spawn lands.
+        pushed(factory, lost_frame())
+        await asyncio.sleep(0.3)
+        assert data.holder_spawns == [WS]
+        # The window closes: the tick's drain weighs again.
+        data.holder_clock.past_windows()
+        await wait_for(lambda: data.holder_spawns == [WS, WS])
+
+
+async def test_the_rehold_watch_survives_junk_and_refusals(
+    monkeypatch,
+) -> None:
+    """#1127: a frame that does not decode crosses the watch
+    quietly, and a rows read the seam refuses decides nothing —
+    the window stands, no spawn runs, and the next signal
+    weighs again."""
+    data = FakeData([row(status="running")])
+    data.proxy_rows = bridge_cause_rows()
+    factory = scripted_listing(monkeypatch, [])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "1 workspace" in status_text(app))
+        factory.made[0].push("not json")
+        await asyncio.sleep(0.2)
+        assert data.proxies_fetches == 0
+        data.fail.add("workspace-proxies")
+        pushed(factory, lost_frame())
+        await wait_for(lambda: data.proxies_fetches == 1)
+        await asyncio.sleep(0.3)
+        assert data.holder_spawns == []
+        assert "bridge" not in status_text(app)
+
+
+def test_a_listing_link_without_the_watch_callback_stands() -> None:
+    """#1127: the re-hold callback is optional — a link built
+    without one (a host that watches no bridge) lands its frames
+    on the refresh poke alone, and a frame that does not decode
+    crosses quietly."""
+    pokes: list[bool] = []
+    link = main_screen_mod.ListingLink(lambda: pokes.append(True))
+    assert (
+        link.land_frame('{"event": "workspace.status", "data": {}}') is False
+    )
+    assert pokes == [True]
+    assert link.land_frame("not json") is False
+    assert pokes == [True]

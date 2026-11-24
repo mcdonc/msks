@@ -15,20 +15,53 @@ from ..spec.mounts import dump_mounts, parse_mounts
 from ..spec.vm import VmSpec
 from .proxies import WorkspaceProxy
 from .secrets import Placeholder, SecretAudit
-from .workspaces import Workspace
+from .workspaces import (
+    AmbiguousRef,
+    Workspace,
+    daemon_uid,
+    sees_all_rows,
+)
 
 
-async def resolve_workspace(session, ref: str) -> Workspace | None:
+async def resolve_workspace(
+    session, ref: str, viewer: int | None = None
+) -> Workspace | None:
     """One workspace row by id-or-name ref (#246), inside a session
     the caller owns: id first (the canonical preference, not a
     tiebreak — live ids and names are one disjoint namespace), then
-    the unique name."""
+    the name.
+
+    *viewer* is the owner filter (#1082): a uid the filter does not
+    bypass sees and addresses its own rows alone, and a row another
+    owner holds answers None — indistinguishable from an absent
+    one, the 404 mask every route-facing lookup takes. ``None`` is
+    the daemon's own unfiltered read. Name resolution for a
+    bypassing viewer spans every owner: a name more than one owner
+    holds refuses to pick (:class:`AmbiguousRef`) rather than
+    silently aim a verb at the wrong workspace.
+    """
     row = await session.get(Workspace, ref)
-    if row is None:
-        row = await session.scalar(
-            select(Workspace).where(Workspace.name == ref)
-        )
-    return row
+    if row is not None:
+        if sees_all_rows(viewer) or row.owner_uid == viewer:
+            return row
+        return None
+    return await resolve_by_name(session, ref, viewer)
+
+
+async def resolve_by_name(
+    session, ref: str, viewer: int | None
+) -> Workspace | None:
+    """The name half of ref resolution, scoped by the owner filter
+    (#1082): a bypassing viewer spans every owner (and a name more
+    than one of them holds refuses to pick), every other viewer
+    resolves against its own rows alone."""
+    stmt = select(Workspace).where(Workspace.name == ref)
+    if not sees_all_rows(viewer):
+        stmt = stmt.where(Workspace.owner_uid == viewer)
+    rows = (await session.scalars(stmt)).all()
+    if len(rows) > 1:
+        raise AmbiguousRef(ref, sorted({row.owner_uid for row in rows}))
+    return rows[0] if rows else None
 
 
 def workspace_fields(
@@ -36,10 +69,14 @@ def workspace_fields(
     image_hash: str | None,
     host: str | None,
     name: str | None = None,
+    owner_uid: int | None = None,
 ) -> dict:
-    """The ORM column values a VmSpec maps to."""
+    """The ORM column values a VmSpec maps to. *owner_uid* (#1082)
+    is the creating peer's credential; None means the daemon's own
+    uid — the TCP surface's mapping."""
     return {
         "id": spec.workspace_id,
+        "owner_uid": daemon_uid() if owner_uid is None else owner_uid,
         "name": name,
         "kernel": str(spec.kernel),
         "initrd": None if spec.initrd is None else str(spec.initrd),
@@ -98,10 +135,12 @@ def placeholder_dict(row: Placeholder) -> dict:
     The sentinel is included — mint's response and the on-demand
     row fetch (#440) print it — but list views built from these
     dicts drop it. ``workspaces`` is the coverage set (#339):
-    ``[]`` is the daemon-wide row.
+    ``[]`` is the owner-wide row, and ``owner_uid`` (#1083) names
+    the minting owner.
     """
     return {
         "id": row.id,
+        "owner_uid": row.owner_uid,
         "workspaces": json.loads(row.workspaces),
         "name": row.name,
         "sentinel": row.sentinel,
@@ -116,10 +155,12 @@ def placeholder_dict(row: Placeholder) -> dict:
 
 def audit_dict(row: SecretAudit) -> dict:
     """The API-facing dict for an audit row; ``workspaces`` is the
-    placeholder's coverage at the event (#339)."""
+    placeholder's coverage at the event (#339) and ``owner_uid``
+    the minting owner it records (#1083)."""
     return {
         "id": row.id,
         "kind": row.kind,
+        "owner_uid": row.owner_uid,
         "workspaces": json.loads(row.workspaces),
         "name": row.name,
         "dests": json.loads(row.dests),
@@ -169,6 +210,10 @@ def workspace_dict(row: Workspace) -> dict:
     }
     return {
         "id": row.id,
+        # The owning uid (#1082): the peer credential that created
+        # the row. The client's display of it lands with #1084's
+        # ``--user`` work; the row carries it from day one.
+        "owner_uid": row.owner_uid,
         "name": row.name,
         "kernel": row.kernel,
         "initrd": row.initrd,

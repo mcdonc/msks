@@ -225,7 +225,7 @@ def structured_error(exc: SystemExit) -> int | None:
     if not json_mode():
         return None
     if isinstance(exc, ApiExit):
-        return api_failure(exc.api_status, exc.api_detail)
+        return api_failure(exc.api_status, exc.api_detail, exc.api_kind)
     return plain_failure(exc)
 
 

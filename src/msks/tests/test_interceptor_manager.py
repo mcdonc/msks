@@ -14,6 +14,7 @@ from msks.interceptor import Interceptor, PlaceholderEntry
 from msks.interceptor import manager as manager_mod
 from msks.microvm import VmSpec
 from msks.microvm.errors import MicrovmError
+from msks.model.workspaces import daemon_uid
 from msks.secretstore import backend_ref, new_sentinel
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 
@@ -139,9 +140,11 @@ def app(tmp_path):
     return app
 
 
-async def ensure_workspace(app, workspace_id: str, **spec_kw) -> None:
+async def ensure_workspace(
+    app, workspace_id: str, owner_uid: int | None = None, **spec_kw
+) -> None:
     """The workspace row a coverage read needs (the manager reads
-    its secret_coverage setting, #339)."""
+    its owner and secret_coverage settings, #339, #1083)."""
     if await app.state.model.get_workspace(workspace_id) is None:
         await app.state.model.create_workspace(
             VmSpec(
@@ -149,27 +152,31 @@ async def ensure_workspace(app, workspace_id: str, **spec_kw) -> None:
                 kernel=Path("/k"),
                 rootfs=Path("/r"),
                 **spec_kw,
-            )
+            ),
+            owner_uid=owner_uid,
         )
 
 
 async def mint_placeholder(
-    app, workspace_id="ws-a", name="api", coverage=None, **kw
+    app, workspace_id="ws-a", name="api", coverage=None, owner=None, **kw
 ):
     """One placeholder row (#339: *coverage* is the row's set —
-    ``[]`` mints the daemon-wide row, the default scopes it to one
-    workspace)."""
+    ``[]`` mints the owner-wide row, the default scopes it to one
+    workspace; #1083: *owner* is the minting owner, the daemon's
+    own uid by default)."""
     if coverage is None:
         coverage = [workspace_id]
+    owner = daemon_uid() if owner is None else owner
     for wid in coverage:
-        await ensure_workspace(app, wid)
+        await ensure_workspace(app, wid, owner_uid=owner)
     return await app.state.model.create_placeholder(
         coverage,
         name,
-        new_sentinel(daemon_wide=not coverage),
+        new_sentinel(owner_wide=not coverage),
         kw.get("dests", ["api.example.com"]),
-        backend_ref(coverage, name),
+        backend_ref(owner, coverage, name),
         kw.get("expires_at"),
+        owner_uid=owner,
     )
 
 
@@ -178,6 +185,7 @@ def rows_entry(row) -> PlaceholderEntry:
         sentinel=row["sentinel"],
         name=row["name"],
         placeholder_id=row["id"],
+        owner_uid=row["owner_uid"],
         dests=tuple(row["dests"]),
         backend_ref=row["backend_ref"],
     )
