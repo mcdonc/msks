@@ -14,6 +14,8 @@ own data modules (:mod:`msks.client.tui.data`,
 matching CLI subcommand makes.
 """
 
+import sys
+
 from .bridge import ReHolder
 from .create import create_workspace_core, invoking_user
 from .env import env_token, env_url, shared_ssl

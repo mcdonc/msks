@@ -36,7 +36,7 @@ from ..spec.proxy import CLOSE, OPEN, pack_frame, unpack_frame
 from . import wsdial
 from .env import env_token, env_url, is_unix, ssl_context
 from .forwarding import config_quote
-from .hold import spawn_holder  # noqa: F401  (re-export)
+from .hold import holder_due, spawn_holder  # noqa: F401  (spawn re-export)
 from .identity import known_hosts_path
 from .rest import fetch_ssh_key
 from .ssh import proxy_command, session_identity, workspace_user
@@ -327,6 +327,8 @@ def run_hold(workspace_id: str, transport=None) -> int:
     with session_identity(key, workspace_id) as resolved:
         asyncio.run(hold(workspace_id, url, token, ssl_ctx, key, resolved))
     return 0
+
+
 #: The stable opening of the cause a failed forward row carries
 #: while no holder serves it — the daemon's own line, matched by
 #: its opening so this side needs no daemon import (the client
@@ -336,24 +338,12 @@ NO_HOLDER_CAUSE = "no client holds the bridge"
 
 def rehold_due(rows: list[dict]) -> bool:
     """Whether a refreshed rows read still owes the workspace a
-    holder (#1127): it owns forward rows, and the forward rows
-    read as the start hook's own gate
-    (:func:`msks.client.proxies.holder_due`) reads them — this
-    gate keeps its own copy of that half because ``proxies``
-    imports this module's ``run_hold`` and the edge cannot point
-    back — narrowed to the cause a holder can serve."""
-    forward = [row for row in rows if row.get("direction") != "remote"]
-    return bool(forward) and forward_rows_owe_holder(forward)
-
-
-def forward_rows_owe_holder(forward: list[dict]) -> bool:
-    """The owed half of :func:`rehold_due`: none of the forward
-    rows reads ``listening`` (a holder stands — #1102's
-    no-standby rule), and one of them reads failed with the
-    missing-holder cause."""
-    if any(row.get("status") == "listening" for row in forward):
-        return False
-    return any(row_lost_holder(row) for row in forward)
+    holder (#1127): the start hook's own gate
+    (:func:`msks.client.hold.holder_due` — forward rows, none
+    of them reading ``listening``, #1102's no-standby rule),
+    narrowed to the cause a holder can serve: a failed forward
+    row whose reason names the missing holder."""
+    return holder_due(rows) and any(row_lost_holder(row) for row in rows)
 
 
 def row_lost_holder(row: dict) -> bool:
