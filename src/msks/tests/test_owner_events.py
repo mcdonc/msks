@@ -13,6 +13,7 @@ import json
 import socket
 from pathlib import Path
 
+from ext4tools import realtools
 from msks.app import build_app
 from msks.microvm import VmSpec
 from msks.server.api import build_api
@@ -153,6 +154,7 @@ def test_the_live_tail_scopes_workspace_frames_by_owner(
             )
 
 
+@realtools
 def test_the_live_tail_scopes_home_volume_frames_by_owner(
     tmp_path: Path,
 ) -> None:
