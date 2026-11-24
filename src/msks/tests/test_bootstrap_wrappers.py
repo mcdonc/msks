@@ -90,11 +90,12 @@ def pinned_lines() -> list[tuple[str, str]]:
 #: (#1136): the suite runs it over a staged dist/.
 RECORD_STEP = "Record the checksums"
 
-#: A cut release's dist/ in miniature: the pure wheel, one
-#: manylinux wheel, and the sdist.
+#: A cut release's dist/ in miniature: the pure wheel, the
+#: manylinux wheels, one per architecture, and the sdist.
 STAGED_ASSETS = (
     "msks-0.0.0-py3-none-any.whl",
     "msks-0.0.0-py3-none-manylinux_2_17_x86_64.whl",
+    "msks-0.0.0-py3-none-manylinux_2_17_aarch64.whl",
     "msks-0.0.0.tar.gz",
 )
 
@@ -314,23 +315,35 @@ def test_the_record_names_each_asset_by_its_download_name(tmp_path):
 
 
 @needs_sha256sum
-@pytest.mark.parametrize("name", sorted(WRAPPERS))
-def test_the_wheel_lookup_names_an_asset_the_release_holds(name, tmp_path):
+@pytest.mark.parametrize(
+    ("name", "arch"),
+    [
+        ("debian", "x86_64"),
+        ("debian", "aarch64"),
+        ("fedora", "x86_64"),
+        ("fedora", "aarch64"),
+    ],
+)
+def test_the_wheel_lookup_names_an_asset_the_release_holds(
+    name, arch, tmp_path
+):
     """The wrapper's lookup, sliced verbatim from the asset and
-    run over the staged record: the wheel it goes on to fetch
-    is a file the release holds, under that exact name."""
+    run over the staged record on each host architecture: the
+    wheel it goes on to fetch is a file the release holds, under
+    that exact name, and it carries the host's own tag."""
     dist = staged_record(tmp_path)
     record = shlex.quote(str(dist / "SHASUMS"))
     probe = (
         'die() { echo "$1" >&2; exit 1; }\n'
         f"sums={record}\n"
-        "wheel_arch=x86_64\n"
+        f"wheel_arch={arch}\n"
         f"{wheel_lookup(name)}\n"
         'printf "%s\\n" "$wheel_name"\n'
     )
     done = subprocess.run(["sh", "-c", probe], capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
     wheel_name = done.stdout.rstrip("\n")
+    assert wheel_name.endswith(f"manylinux_2_17_{arch}.whl"), wheel_name
     assert (dist / wheel_name).is_file(), wheel_name
 
 

@@ -231,8 +231,8 @@ jobs:
           fetch-depth: 0
 
       # Every wheel — pure and both manylinux legs — plus the
-      # sdist land in dist/, so the SHASUMS line below and the
-      # dist/* upload above carry them with no further plumbing.
+      # sdist land in dist/, so the record step and the dist/*
+      # upload below carry them with no further plumbing.
       - name: Download the wheels
         uses: actions/download-artifact@v4
         with:
