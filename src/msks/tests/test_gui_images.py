@@ -9,6 +9,7 @@ host (#939's fixture shape).
 
 import importlib.util
 import os
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -22,6 +23,7 @@ if importlib.util.find_spec("PySide6") is None:
 from msks.client.config import DEFAULT_IMAGE_MANIFEST_URL  # noqa: E402
 from msks.client.data import RestFailure  # noqa: E402
 from msks.client.frames import images_frame  # noqa: E402
+from msks.client.gui import statusflash  # noqa: E402
 from msks.client.gui.imagerows import IMPORTED_MARKER  # noqa: E402
 from msks.client.gui.images import cells as cells  # noqa: E402
 from msks.client.gui.images import layout as layout_mod  # noqa: E402
@@ -324,6 +326,39 @@ def test_a_failed_page_fetch_flashes_and_the_groups_stand(qt) -> None:
     assert tab.status.text() == (
         "fetching the catalog and the published manifest…"
     )
+    window.close()
+
+
+def test_an_outage_stands_through_the_heartbeat_and_recovers(
+    qt, monkeypatch
+) -> None:
+    """The mixin's contract on the tab (#1132, #904): an
+    outage's text stands under the feed's heartbeat — each flash
+    runs its span and the text takes the line back — and the
+    first answered read while the daemon is down says the
+    recovery once, then clears with its span."""
+    tab, window, bridge = make_tab(qt)
+    monkeypatch.setattr(statusflash, "FLASH_MS", 5)
+    tab.pending = True
+    tab.on_failed(
+        images_mod.PAGE_KEY, RestFailure("the daemon is gone", reach=True)
+    )
+    assert tab.status.text() == "the daemon is gone"
+    assert tab.daemon_down
+    bridge.feed_dropped.emit("the dial failed: connection refused")
+    assert "the dial failed" in tab.status.text()
+    assert tab.daemon_down  # the heartbeat touches nothing
+    tab.clear_stale(tab.flash_seq)  # the heartbeat's span ends
+    assert tab.status.text() == "the daemon is gone"  # the outage stood
+    tab.refresh()  # the serve poke's read
+    tab.on_succeeded(images_mod.PAGE_KEY, page_answer())
+    assert tab.status.text() == "daemon back — images resumed"
+    assert not tab.daemon_down
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and tab.status.text():
+        qt.app.processEvents()
+        time.sleep(0.01)
+    assert tab.status.text() == ""  # the recovery's own span
     window.close()
 
 

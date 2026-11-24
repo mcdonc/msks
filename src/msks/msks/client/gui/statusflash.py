@@ -1,21 +1,21 @@
 """The screens' shared status-line flash (#939, #945, #904,
-#1129): the workspace list and the workspace page paint the
-same one-line status above their content, and the flash's
-contract is one — a refusal clears itself after its span, an
-outage stands for the next answer to resolve, and the
-daemon-down state behind the outage is the screen's own, not
-the flash's (the TUI listing's marker shape): the events feed's
-heartbeat flashing over a standing outage (#946) gives the
-outage's text back when its span ends, and the first answered
-read while the state stands says the recovery once. The mixin
-carries the slots; a host screen supplies ``status`` (the
-label), sets ``flash_seq``, ``daemon_down``, and ``outage_text``
-at construction, and calls :meth:`StatusFlash.recover` from its
-landing with its own words.
+#1129, #1132): the workspace list, the workspace page, and the
+Images and Secrets tabs paint the same one-line status above
+their content, and the flash's contract is one — a refusal
+clears itself after its span, an outage stands for the next
+answer to resolve, and the daemon-down state behind the outage
+is the screen's own, not the flash's (the TUI listing's marker
+shape): the events feed's heartbeat flashing over a standing
+outage (#946) gives the outage's text back when its span ends,
+and the first answered read while the state stands says the
+recovery once. The mixin carries the slots; a host screen
+supplies ``status`` (the label), sets ``flash_seq``,
+``daemon_down``, and ``outage_text`` at construction, and calls
+:meth:`StatusFlash.recover` from its landing with its own words.
 
 This module imports PySide6 at module scope — the screens' own
-contract: nothing imports it at CLI parse time, and the two
-screens load it beside their own Qt-bearing imports.
+contract: nothing imports it at CLI parse time, and the screens
+load it beside their own Qt-bearing imports.
 """
 
 from PySide6 import QtCore
@@ -78,6 +78,15 @@ class StatusFlash:
         if reach:
             self.flash(message, outage=True)
             return
+        self.resolve()
+        self.flash(message)
+
+    def outcome(self, message: str) -> None:
+        """An action's answer (#776's mask): the daemon answered
+        through the action, so a standing outage resolves behind
+        the outcome's own flash — without the recovery's words,
+        which the read the action triggers would otherwise put
+        over the outcome one round trip later."""
         self.resolve()
         self.flash(message)
 

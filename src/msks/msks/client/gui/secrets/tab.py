@@ -57,6 +57,7 @@ from ..secretrows import (
 from ..secretrows import (
     secret_rows as build_secret_rows,
 )
+from ..statusflash import StatusFlash
 from . import cells
 from .mint import MintDialog
 
@@ -102,11 +103,10 @@ PAGE_KEY = "secrets-page"
 RENEW_KEY = "secrets-renew"
 REVOKE_KEY = "secrets-revoke"
 
-#: How long a flashed refusal stays on the status line,
-#: milliseconds — the listing's own span (#939). An outage (a
-#: fetch that answered nothing) never times out: the line holds
-#: its message until an answer resolves it (#904).
-FLASH_MS = 4000
+#: The recovery's flash (#904, #1132 — the TUI listing's own
+#: words): the first answered read after an outage names the
+#: recovery once, and the flash clears with its span.
+RECOVERY_TEXT = "daemon back — secrets resumed"
 
 #: The countdown repaint's cadence (#966), milliseconds — the
 #: TUI page's own per-second tick, paint-time math over the
@@ -125,7 +125,7 @@ TICK_MS = 1000
 FRAME_WINDOW_MS = 500
 
 
-class SecretsTab(FeedPage, QtWidgets.QWidget):
+class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
     """The Secrets tab of the main window's strip (#966, #997,
     #1060): the placeholder listing and the audit group stacked
     full width — refreshed whole at every show, behind every
@@ -145,7 +145,8 @@ class SecretsTab(FeedPage, QtWidgets.QWidget):
         self.action_model = None
         self.action_choice: str | None = None
         self.flash_seq = 0
-        self.flash_outage = False
+        self.daemon_down = False  # the mixin's state (#1132)
+        self.outage_text = ""
         self.secret_raw: list[dict] = []
         self.audit_raw: list[dict] = []
         self.secret_models: list = []
@@ -460,10 +461,10 @@ class SecretsTab(FeedPage, QtWidgets.QWidget):
             # names the retry, and a later landing must not fire
             # a refresh nobody asked for.
             self.refresh_due = False
-            self.flash(str(failure), outage=failure.reach)
+            self.refuse(str(failure), reach=failure.reach)
         elif key in (RENEW_KEY, REVOKE_KEY):
             self.action_landed()
-            self.flash(str(failure), outage=failure.reach)
+            self.refuse(str(failure), reach=failure.reach)
 
     # -- the countdown -----------------------------------------------------
 
@@ -564,9 +565,9 @@ class SecretsTab(FeedPage, QtWidgets.QWidget):
         self.action_landed()
         if key == RENEW_KEY:
             reply = result if isinstance(result, dict) else {}
-            self.flash(cells.renewed_text(model, reply))
+            self.outcome(cells.renewed_text(model, reply))
         else:
-            self.flash(cells.revoked_text(model))
+            self.outcome(cells.revoked_text(model))
         self.take_flight()
 
     def action_landed(self) -> None:
@@ -585,7 +586,7 @@ class SecretsTab(FeedPage, QtWidgets.QWidget):
         dialog = MintDialog(self.bridge, self)
         if dialog.exec() and dialog.reply:
             self.take_flight()
-            self.flash(cells.minted_text(dialog.reply))
+            self.outcome(cells.minted_text(dialog.reply))
 
     @QtCore.Slot(QtCore.QPoint)
     def menu_requested(self, pos: QtCore.QPoint) -> None:
@@ -610,38 +611,19 @@ class SecretsTab(FeedPage, QtWidgets.QWidget):
 
     # -- the status line ----------------------------------------------------
 
-    def flash(self, message: str, *, outage: bool = False) -> None:
-        """The status line's flash (#966): the message shows,
-        and a refusal's message clears itself after the span —
-        an outage holds the line until an answer resolves it.
-        Every flash carries its own serial, so a later flash's
-        message survives an earlier flash's timeout."""
-        self.flash_outage = outage
-        self.flash_seq += 1
-        self.status.setText(message)
-        if not outage:
-            serial = self.flash_seq
-            QtCore.QTimer.singleShot(
-                FLASH_MS, self, lambda: self.clear_stale(serial)
-            )
-
-    def clear_stale(self, serial: int) -> None:
-        """The flash timeout's slot: the line clears only when
-        this timeout's flash is still the one on it."""
-        if serial == self.flash_seq:
-            self.status.clear()
-
     def standing(self) -> None:
         """The standing counts (#966): a refresh's tally lands
         on the bottom line, and the status line's flash
         resolves — the serial bump retires any timeout still
-        pending and any outage the flash named."""
+        pending — save the recovery's one flash over it when the
+        read answered a standing outage (#1132: the mixin's
+        daemon-down state, not the flash's)."""
         self.flash_seq += 1
-        self.flash_outage = False
         self.counts.setText(
             cells.counts_text(self.secret_models, self.audit_models)
         )
         self.status.clear()
+        self.recover(RECOVERY_TEXT)
 
     # -- the widget's own events --------------------------------------------
 

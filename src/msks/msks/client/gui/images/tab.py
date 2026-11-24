@@ -47,6 +47,7 @@ from ..imagerows import (
     published_rows,
 )
 from ..listtable import ListTable, bold_header, resized_viewport
+from ..statusflash import StatusFlash
 from . import layout
 from .cells import (
     CATALOG_COLUMNS,
@@ -83,11 +84,10 @@ IMPORT_KEY = "images-import"
 REMOVE_KEY = "images-remove"
 DEFAULT_KEY = "images-default"
 
-#: How long a flashed refusal stays on the status line,
-#: milliseconds — the listing's own span (#939). An outage (a
-#: fetch that answered nothing) never times out: the line holds
-#: its message until an answer resolves it (#904).
-FLASH_MS = 4000
+#: The recovery's flash (#904, #1132 — the TUI listing's own
+#: words): the first answered read after an outage names the
+#: recovery once, and the flash clears with its span.
+RECOVERY_TEXT = "daemon back — images resumed"
 
 #: The import dialog's elapsed tick (#964), milliseconds — the
 #: TUI importing modal's own cadence: the wait shows it moving.
@@ -131,7 +131,7 @@ class ImageDetailDialog(Centered, QtWidgets.QDialog):
         layout.addLayout(buttons)
 
 
-class ImagesTab(FeedPage, QtWidgets.QWidget):
+class ImagesTab(FeedPage, StatusFlash, QtWidgets.QWidget):
     """The Images tab of the main window's strip (#964, #1060):
     the two labeled groups the presenter's models fill — at
     every show, on the feed's serve poke, and behind every
@@ -150,7 +150,8 @@ class ImagesTab(FeedPage, QtWidgets.QWidget):
         self.pending = False
         self.catalog_pending = False
         self.flash_seq = 0
-        self.flash_outage = False
+        self.daemon_down = False  # the mixin's state (#1132)
+        self.outage_text = ""
         self.action_pending = False
         self.action_flight: str | None = None
         self.progress: QtWidgets.QProgressDialog | None = None
@@ -356,7 +357,7 @@ class ImagesTab(FeedPage, QtWidgets.QWidget):
         traveled, the row that left."""
         label = self.action_flight or ""
         self.action_landed()
-        self.flash(action_reply_text(key, label))
+        self.outcome(action_reply_text(key, label))
         self.refresh_catalog()
 
     def page_landed(self, result: object) -> None:
@@ -553,7 +554,7 @@ class ImagesTab(FeedPage, QtWidgets.QWidget):
             # flash already names the retry, and a later landing
             # must not fire a read nobody asked for.
             self.page_due = False
-            self.flash(str(failure), outage=failure.reach)
+            self.refuse(str(failure), reach=failure.reach)
         elif key == CATALOG_KEY:
             self.catalog_pending = False
             # The carried ask dies with the flight it waited on
@@ -561,13 +562,13 @@ class ImagesTab(FeedPage, QtWidgets.QWidget):
             # flash already names the retry, and a later landing
             # must not fire a read nobody asked for.
             self.catalog_due = False
-            self.flash(str(failure), outage=failure.reach)
+            self.refuse(str(failure), reach=failure.reach)
         elif key == IMPORT_KEY:
             self.land_import()
-            self.flash(str(failure), outage=failure.reach)
+            self.refuse(str(failure), reach=failure.reach)
         elif key in (REMOVE_KEY, DEFAULT_KEY):
             self.action_landed()
-            self.flash(str(failure), outage=failure.reach)
+            self.refuse(str(failure), reach=failure.reach)
         # A stranger's key answers nothing: the tab took no such
         # flight, so its failure belongs to whoever did.
 
@@ -644,7 +645,7 @@ class ImagesTab(FeedPage, QtWidgets.QWidget):
         self.land_import()
         record = result if isinstance(result, dict) else {}
         if "ref" in record and "hash" in record:
-            self.flash(imported_text(record))
+            self.outcome(imported_text(record))
         self.refresh_catalog()
 
     def land_import(self) -> None:
@@ -753,40 +754,18 @@ class ImagesTab(FeedPage, QtWidgets.QWidget):
         menu.addAction("Remove…", lambda: self.remove_row(model))
         return menu
 
-    def flash(self, message: str, *, outage: bool = False) -> None:
-        """The status line's flash (#939's machinery, the tab's
-        own): the message shows; a refusal clears itself after
-        the flash span, an outage stands for the next answer to
-        resolve. Each flash carries its own serial, so a later
-        flash's message is not erased by an earlier flash's
-        timeout."""
-        self.flash_outage = outage
-        self.flash_seq += 1
-        self.status.setText(message)
-        if outage:
-            return
-        seq = self.flash_seq
-        # The tab is the timeout's receiver (#959): the pending
-        # callback is severed when the widget's C++ object goes.
-        QtCore.QTimer.singleShot(FLASH_MS, self, lambda: self.clear_stale(seq))
-
-    def clear_stale(self, seq: int) -> None:
-        """The flash timeout's slot: the line clears only when
-        this timeout's flash is still the one on it."""
-        if seq == self.flash_seq:
-            self.status.clear()
-
     def standing(self, text: str) -> None:
         """The standing tally (#964): a refresh's counts land on
         the bottom line beneath the published pane, and the
         status line's flash resolves — the serial bump retires
-        any timeout still pending and any outage the flash
-        named — standing clear until something else says its
-        piece."""
+        any timeout still pending — standing clear until
+        something else says its piece, save the recovery's one
+        flash over it when the fetch answered a standing outage
+        (#1132: the mixin's daemon-down state, not the flash's)."""
         self.flash_seq += 1
-        self.flash_outage = False
         self.counts.setText(text)
         self.status.clear()
+        self.recover(RECOVERY_TEXT)
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         """The tab's refresh at every show (#964, #1060): the
