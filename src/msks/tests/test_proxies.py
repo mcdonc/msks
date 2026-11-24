@@ -551,6 +551,7 @@ async def test_a_stop_after_the_workspace_row_vanished_stays_scoped(
     manager, model, _net, queue, app = proxies
     row = await create_forward_row(model, await free_port())
     alice_q = app.state.hub.subscribe(viewer=4242)
+    foreign_q = app.state.hub.subscribe(viewer=9999)
     await manager.start_one(row, None, 4242)
     assert (await next_event(queue))[0] == "proxy.listening"
     assert json.loads(alice_q.get_nowait())["event"] == "proxy.listening"
@@ -561,3 +562,9 @@ async def test_a_stop_after_the_workspace_row_vanished_stays_scoped(
     assert data["id"] == "ws-a"
     closed = json.loads(alice_q.get_nowait())
     assert closed["event"] == "proxy.closed"
+    # The exclusion half: a foreign scoped subscriber receives
+    # neither the bind's frame nor the close's — the pair pins
+    # "scoped", not just "published" (same-loop broadcasts land
+    # synchronously, so the empty read is deterministic).
+    with pytest.raises(asyncio.QueueEmpty):
+        foreign_q.get_nowait()
