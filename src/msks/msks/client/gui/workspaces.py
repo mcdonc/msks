@@ -57,6 +57,7 @@ from .rows import (
     workspace_costs,
     workspace_rows,
 )
+from .statusflash import StatusFlash
 
 #: The bridge call's key for a listing refresh (#939): the
 #: screen answers only its own key, whatever else shares the
@@ -74,14 +75,6 @@ CLONE_KEY = "workspaces-clone"
 #: strip's storage figure, fetched beside the rows and cached
 #: between listings.
 STORAGE_KEY = "workspaces-storage"
-
-#: How long a flashed refusal stays on the status line,
-#: milliseconds — long enough to read, gone before it reads as
-#: the screen's standing state. An outage (the daemon answered
-#: nothing, :attr:`RestFailure.reach`) never times out: the line
-#: holds its message until an answer resolves it, the #904
-#: contract the TUI's own listing keeps.
-FLASH_MS = 4000
 
 #: The recovery's flash (#904, #1129 — the TUI listing's own
 #: words): the first answered listing after an outage names the
@@ -103,7 +96,7 @@ def action_reply(key: str, label: str, reply: object) -> str:
     return action_reply_text(label, reply)
 
 
-class WorkspaceList(QtWidgets.QWidget):
+class WorkspaceList(StatusFlash, QtWidgets.QWidget):
     """The main window's central screen (#939): the table of row
     models, the Add / Edit / Clone / Remove button row at the
     page's bottom (#1011, the Mounts and Proxies pattern), and the
@@ -212,7 +205,13 @@ class WorkspaceList(QtWidgets.QWidget):
         # the row the index names.
         self.table.activated.connect(self.open_current)
         self.status = QtWidgets.QLabel("", self)
-        self.flash_outage = False  # the standing flash's kind
+        # The daemon-down state (#904, #1129 — the TUI listing's own
+        # marker): its own flag, not the flash's, so the feed's
+        # heartbeat flashing over the outage (#946) leaves it
+        # standing, and the first answered read while it stands
+        # says the recovery.
+        self.daemon_down = False
+        self.outage_text = ""
         # The detail strip (#849's shape, #940's GUI read): the
         # held row's quick facts on one line at the listing's
         # bottom. Every fact but storage reads the row models
@@ -568,8 +567,7 @@ class WorkspaceList(QtWidgets.QWidget):
         # answer's rows stay keyed by id beside their models.
         self.daemon_rows = {row.get("id"): row for row in result or []}
         self.set_rows(workspace_rows(result))
-        if self.flash_outage:
-            self.flash(RECOVERY_TEXT)
+        self.recover(RECOVERY_TEXT)
         self.load_storage()
         self.serve_due()
 
@@ -863,30 +861,6 @@ class WorkspaceList(QtWidgets.QWidget):
         menu.addAction("Clone", lambda: self.clone_workspace(workspace))
         menu.addAction("Delete", lambda: self.delete_workspace(workspace))
         return menu
-
-    def flash(self, message: str, *, outage: bool = False) -> None:
-        """The status line's flash (#939, #904): the message
-        shows; a refusal clears itself after the flash span, an
-        outage stands for the next answer to resolve. Each flash
-        carries its own serial, so a later flash's message is not
-        erased by an earlier flash's timeout."""
-        self.flash_outage = outage
-        self.flash_seq += 1
-        self.status.setText(message)
-        if outage:
-            return
-        seq = self.flash_seq
-        # The screen is the timeout's receiver (#959): the
-        # pending callback is severed when the widget's C++
-        # object goes, instead of firing later on a wrapper
-        # whose widgets are already destroyed.
-        QtCore.QTimer.singleShot(FLASH_MS, self, lambda: self.clear_stale(seq))
-
-    def clear_stale(self, seq: int) -> None:
-        """The flash timeout's slot: the line clears only when
-        this timeout's flash is still the one on it."""
-        if seq == self.flash_seq:
-            self.status.clear()
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         """The screen's refresh at open (#939, #1019): the

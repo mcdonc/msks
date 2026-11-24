@@ -28,7 +28,10 @@ if importlib.util.find_spec("PySide6") is None:
 
 from msks.client import ages as ages_mod  # noqa: E402
 from msks.client import data as clientdata  # noqa: E402
-from msks.client.gui import listlayout  # noqa: E402
+from msks.client.gui import (
+    listlayout,  # noqa: E402
+    statusflash,  # noqa: E402
+)
 from msks.client.gui import rows as gui_rows  # noqa: E402
 
 #: The poll cadence for the offscreen event loop, seconds — the
@@ -343,7 +346,7 @@ def test_a_refusal_flash_clears_on_its_timeout(qt, monkeypatch) -> None:
     its timeout lands — proven by elapsed time, a tiny flash
     span pumped through the real event queue."""
     screen, window, _bridge = make_screen(qt)
-    monkeypatch.setattr(qt.screen_mod, "FLASH_MS", 5)
+    monkeypatch.setattr(statusflash, "FLASH_MS", 5)
     screen.on_failed(
         "workspaces-list",
         clientdata.RestFailure("nope", reach=False),
@@ -361,11 +364,13 @@ def test_an_outage_stands_until_an_answer(qt, monkeypatch) -> None:
     """An outage is not a flash (#939, #904's contract): a
     failure the daemon never answered (``reach``) stands on the
     status line — the same tiny flash span proves nothing clears
-    it — and the next successful answer resolves it: the
-    recovery flashes once in the outage's place, the TUI
-    listing's own words (#1129), and clears with the span."""
+    it — and the feed's heartbeat flashing over it gives the
+    outage's text back when its span ends, the daemon-down state
+    the screen's own (#1129). The next successful answer
+    resolves it: the recovery flashes once in the outage's place,
+    the TUI listing's own words, and clears with the span."""
     screen, window, _bridge = make_screen(qt)
-    monkeypatch.setattr(qt.screen_mod, "FLASH_MS", 5)
+    monkeypatch.setattr(statusflash, "FLASH_MS", 5)
     screen.on_failed(
         "workspaces-list",
         clientdata.RestFailure("msks: the daemon is unreachable", reach=True),
@@ -376,6 +381,20 @@ def test_an_outage_stands_until_an_answer(qt, monkeypatch) -> None:
         qt.app.processEvents()
         time.sleep(TICK)
     assert "unreachable" in screen.status.text()  # it stood
+    # The feed's heartbeat (#946): its flash runs its span over
+    # the outage, whose text takes the line back when it ends.
+    screen.flash("the events feed dropped — the dial failed")
+    assert "the dial failed" in screen.status.text()
+    deadline = time.monotonic() + 10.0
+    while (
+        time.monotonic() < deadline
+        and "unreachable" not in screen.status.text()
+    ):
+        qt.app.processEvents()
+        time.sleep(TICK)
+    assert screen.status.text() == (
+        "msks: the daemon is unreachable"  # the outage stood under it
+    )
     screen.on_succeeded("workspaces-list", [])
     assert screen.status.text() == "daemon back — listing resumed"
     deadline = time.monotonic() + 10.0
