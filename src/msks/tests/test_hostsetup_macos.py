@@ -14,8 +14,10 @@ one fake at ``subprocess.run`` (the whole tool is subprocesses;
 the fakes answer at that boundary so every real body runs).
 """
 
+import grp
 import json
 import os
+import pwd
 import subprocess
 import urllib.request
 from pathlib import Path
@@ -24,6 +26,7 @@ from urllib.error import HTTPError
 
 import pytest
 from msks.server import hostsetup_macos as mac
+from msks.server.hostsetup import venv as host_venv
 
 
 def patch_phase(
@@ -59,6 +62,10 @@ class FakeProcesses:
         self.vm: dict[str, str] = {}
         self.vm_fail: str | None = None
         self.calls: list[list[str]] = []
+        # The host venv phase's dial (#1118): the msks version
+        # the shared venv's probe answers (None answers absent
+        # or broken — the create step's cue).
+        self.host_venv_msks: str | None = None
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> FakeProcesses:
         monkeypatch.setattr(mac.subprocess, "run", self._run)
@@ -93,6 +100,18 @@ class FakeProcesses:
             return completed(0, self.version + "\n", "")
         if command[:2] == ["limactl", "list"]:
             return completed(0, self.listing, "")
+        if command[0].endswith("/venv/bin/python"):
+            # The host venv's probes (#1118): the installed msks
+            # the venv holds, and the interpreter's own word.
+            if any("importlib.metadata" in arg for arg in command):
+                if self.host_venv_msks is None:
+                    return completed(1, "", "no module named msks\n")
+                return completed(0, f"{self.host_venv_msks}\n", "")
+            return completed(0, "Python 3.14.10\n", "")
+        if Path(command[0]).name == "uv" and command[1:2] == ["pip"]:
+            # The wheel's install lands: the probe answers the
+            # tool's own version from here on.
+            self.host_venv_msks = mac.vm_version()
         return completed(0, "", "")
 
 
@@ -149,7 +168,52 @@ def procs(monkeypatch: pytest.MonkeyPatch) -> FakeProcesses:
 
 
 @pytest.fixture
-def client_tree(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+def venv_tree(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """The host venv phase's tree, relocated (#1118): the shared
+    paths under tmp_path, a uv the phase's probe finds, and a
+    wheel of this tool's own version in hand — a test run never
+    touches the host's real /opt/msks."""
+    root = tmp_path / "opt" / "msks"
+    paths = {
+        "VENV_ROOT": str(root),
+        "VENV_DIR": str(root / "venv"),
+        "VENV_BIN": str(root / "venv" / "bin"),
+        "VENV_PYTHON": str(root / "venv" / "bin" / "python"),
+        "VENV_MARKER": str(root / "venv" / "pyvenv.cfg"),
+        "UV_VENV": str(root / "uv"),
+        "UV_PYTHON": str(root / "uv" / "bin" / "python"),
+        "UV_BIN": str(root / "uv" / "bin" / "uv"),
+        "PYTHON_INSTALL_DIR": str(root / "python"),
+    }
+    for name, value in paths.items():
+        # The shared phase's own globals, and the mac submodules'
+        # imported copies (hostvenv's ensure_shared_root, links'
+        # client_sibling) — both arms resolve the same tree.
+        monkeypatch.setattr(host_venv, name, value)
+        patch_phase(monkeypatch, name, value)
+    monkeypatch.setattr(
+        host_venv,
+        "which",
+        lambda tool: str(root / "uv" / "bin" / "uv") if tool == "uv" else None,
+    )
+    builds = tmp_path / "builds"
+    builds.mkdir()
+    (builds / f"msks-{mac.vm_version()}-py3-none-any.whl").write_bytes(
+        b"PK\x03\x04"
+    )
+    return tmp_path
+
+
+def wheel_in_hand(tree: Path) -> str:
+    """The build in hand the full runs ride (#1118): a wheel of
+    this tool's own version, under the relocated tree."""
+    return str(tree / "builds" / f"msks-{mac.vm_version()}-py3-none-any.whl")
+
+
+@pytest.fixture
+def client_tree(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, venv_tree: Path
+) -> Path:
     """The client's config tree and the agent's paths, relocated:
     the entry paths write these, and a test run must never reach
     the operator's real files."""
@@ -567,6 +631,14 @@ def test_the_read_only_passes_refuse_the_sizing_flags(capsys) -> None:
     assert "sizing flags" in capsys.readouterr().err
 
 
+def test_the_uninstall_takes_no_wheel(capsys) -> None:
+    """#1118: the wheel the uninstall arm would never install
+    refuses beside the sizing flags — the tree the wheel targets
+    is what --uninstall removes."""
+    assert mac.main(["--uninstall", "--wheel", "/builds/w.whl"]) == 1
+    assert "--uninstall takes no --wheel" in capsys.readouterr().err
+
+
 # --- the bootstrap ----------------------------------------------------
 
 
@@ -698,6 +770,7 @@ def test_a_dev_build_without_a_wheel_refuses_by_name(
     marker refuses the PyPI path up front with the --wheel
     remedy; a wheel and a release word ride through."""
     patch_phase(monkeypatch, "vm_version", lambda: "9.9.9.dev0")
+    monkeypatch.setattr(host_venv, "tool_version", lambda: "9.9.9.dev0")
     with pytest.raises(
         mac.MacSetupError, match="build one .uv build. and pass --wheel"
     ):
@@ -705,6 +778,7 @@ def test_a_dev_build_without_a_wheel_refuses_by_name(
     assert not procs.calls  # nothing touched the host or the VM
     mac.refuse_dev_build("/builds/w.whl")  # a wheel rides through
     patch_phase(monkeypatch, "vm_version", lambda: "9.9.9")
+    monkeypatch.setattr(host_venv, "tool_version", lambda: "9.9.9")
     mac.refuse_dev_build(None)  # a release word rides the PyPI path
     mac.bootstrap_vm(None, "/Users/p")  # ... and reaches the script
 
@@ -728,6 +802,7 @@ def test_a_dev_build_preflights_before_the_mutating_phases(
             monkeypatch, phase, lambda phase=phase: order.append(phase)
         )
     patch_phase(monkeypatch, "vm_version", lambda: "9.9.9.dev0")
+    monkeypatch.setattr(host_venv, "tool_version", lambda: "9.9.9.dev0")
     with pytest.raises(mac.MacSetupError, match="--wheel"):
         mac.run_setup(
             SimpleNamespace(
@@ -1457,7 +1532,10 @@ def test_the_entry_prints_the_preset(
     monkeypatch.setattr(mac.Path, "home", lambda: client_tree)
     # The tree's dev marker refuses the PyPI path (#704); a full
     # run rides a wheel — the dev tool's own contract.
-    assert mac.main(["--wheel", "/builds/w.whl", "--port", "8661"]) == 0
+    assert (
+        mac.main(["--wheel", wheel_in_hand(client_tree), "--port", "8661"])
+        == 0
+    )
     out = capsys.readouterr().out
     assert "export MSKSC_URL=https://127.0.0.1:8661" in out
     assert "export MSKSC_TOKEN=the-token" in out
@@ -1508,7 +1586,7 @@ def test_a_default_run_reaches_the_client_config_on_the_adopted_port(
     write_forward(client_tree, 8661)
     # The dev marker refuses the PyPI path (#704); the run rides
     # a wheel, the dev tool's own contract.
-    assert mac.main(["--wheel", "/builds/w.whl"]) == 0
+    assert mac.main(["--wheel", wheel_in_hand(client_tree)]) == 0
     out = capsys.readouterr().out
     assert "export MSKSC_URL=https://127.0.0.1:8661" in out
     # The safety property the issue's title carries: an adopted
@@ -2070,16 +2148,152 @@ def test_the_uninstall_closing_line_gates_on_the_note() -> None:
     that removed a link claims them gone — singular or plural
     (#734) — and a sweep that found nothing names that in the
     parenthetical instead of claiming a removal that did not
-    happen."""
-    gone = mac.uninstall_closing_line("the client link /opt/brew/msks is gone")
+    happen. The shared host install's departure rides its own
+    note's word (#1118)."""
+    gone = mac.uninstall_closing_line(
+        "the client link /opt/brew/msks is gone",
+        "/opt/msks already absent",
+    )
     assert "and the brew-prefix client links are gone" in gone
     assert "no client link" not in gone
+    assert "/opt/msks host install" not in gone
     plural = mac.uninstall_closing_line(
         "the client links /opt/brew/msks and /opt/brew/msks-term-popup "
-        "are gone"
+        "are gone",
+        "/opt/msks already absent",
     )
     assert "and the brew-prefix client links are gone" in plural
-    found_none = mac.uninstall_closing_line("no client link found")
+    found_none = mac.uninstall_closing_line("no client link found", "x")
     assert "and its login agent are gone" in found_none
     assert "brew-prefix client links are gone" not in found_none
     assert "(no client link found)" in found_none
+    vmm = mac.uninstall_closing_line(
+        "the client links /opt/brew/msks are gone",
+        "/opt/msks removed (the venv, the provisioned Python, uv)",
+    )
+    assert "the shared /opt/msks host install with them" in vmm
+
+
+# --- the host-side venv (#1118) --------------------------------------
+
+
+def test_the_host_venv_lands_the_shared_install(
+    procs: FakeProcesses, venv_tree: Path, capsys
+) -> None:
+    """The brew-prefix links' new target (#1118): /opt/msks is
+    root-owned ground, so sudo creates it owned by the installing
+    user once, then the shared middle runs — the managed 3.14,
+    the wheel pinned to the tool's version, the landing proof —
+    and the phase says its line."""
+    assert mac.install_host_venv(None) == (
+        f"{host_venv.VENV_DIR}: Python 3.14.10, msks {mac.vm_version()}"
+    )
+    user = pwd.getpwuid(os.getuid()).pw_name
+    group = grp.getgrgid(os.getgid()).gr_name
+    assert procs.calls[0] == [
+        "sudo",
+        "install",
+        "-d",
+        "-o",
+        user,
+        "-g",
+        group,
+        "-m",
+        "0755",
+        host_venv.VENV_ROOT,
+    ]
+    uv = host_venv.UV_BIN
+    assert [c for c in procs.calls if c[0] == uv] == [
+        [uv, "venv", "--clear", "--python", "3.14", host_venv.VENV_DIR],
+        [
+            uv,
+            "pip",
+            "install",
+            "--python",
+            host_venv.VENV_PYTHON,
+            f"msks=={mac.vm_version()}",
+        ],
+    ]
+    assert "through sudo (/opt is root-owned on macOS)" in (
+        capsys.readouterr().err
+    )
+
+
+def test_a_writable_root_takes_no_sudo(
+    procs: FakeProcesses, venv_tree: Path
+) -> None:
+    """The re-run's shape: a tree the installing user already
+    owns needs no privileged step at all."""
+    root = Path(host_venv.VENV_ROOT)
+    root.mkdir(parents=True)
+    assert mac.install_host_venv(None)
+    assert not any(c[:1] == ["sudo"] for c in procs.calls)
+
+
+def test_the_host_venv_equal_state_rerun_runs_no_uv(
+    procs: FakeProcesses, venv_tree: Path
+) -> None:
+    """#546's contract over the mac half: the probe answers the
+    tool's version, the phase says already, no uv runs."""
+    procs.host_venv_msks = mac.vm_version()
+    note = mac.install_host_venv(None)
+    assert "already msks" in note
+    assert not any(Path(c[0]).name == "uv" for c in procs.calls)
+
+
+def test_the_host_venv_refreshes_a_newer_tool(
+    procs: FakeProcesses, venv_tree: Path, capsys
+) -> None:
+    """The upgrade story: a venv at an older version installs the
+    new release into the existing tree, no recreation."""
+    procs.host_venv_msks = "0.9.1"
+    assert mac.install_host_venv(None)
+    uv = [c for c in procs.calls if Path(c[0]).name == "uv"]
+    assert len(uv) == 1
+    assert uv[0][1:3] == ["pip", "install"]
+    assert "refreshing the wheel" in capsys.readouterr().err
+
+
+def test_the_host_venv_refuses_the_wheel_skew(
+    procs: FakeProcesses, venv_tree: Path, tmp_path: Path
+) -> None:
+    """The converged skew guard over MacSetupError: a missing file
+    and a disagreeing version each refuse by name, nothing
+    touched."""
+    with pytest.raises(mac.MacSetupError, match="no such file"):
+        mac.install_host_venv(str(tmp_path / "nope.whl"))
+    wrong = tmp_path / "msks-0.9.1-py3-none-any.whl"
+    wrong.write_bytes(b"PK")
+    with pytest.raises(mac.MacSetupError, match="pass --wheel"):
+        mac.install_host_venv(str(wrong))
+    assert procs.calls == []
+
+
+def test_the_client_links_resolve_the_shared_install(
+    monkeypatch: pytest.MonkeyPatch, venv_tree: Path
+) -> None:
+    """A second user's bare msks (#1118): the sibling resolution
+    answers the shared install's bin first; the tool's own bin
+    stays the fallback."""
+    shared = Path(host_venv.VENV_BIN)
+    shared.mkdir(parents=True)
+    (shared / "msks").write_text("#!/bin/sh\n")
+    assert mac.client_sibling("msks") == str(shared / "msks")
+    (shared / "msks").unlink()
+    bin_dir = venv_tree / "toolbin"
+    bin_dir.mkdir()
+    (bin_dir / "msks").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(mac.sys, "argv", [str(bin_dir / "the-tool")])
+    assert mac.client_sibling("msks") == str(bin_dir / "msks")
+
+
+def test_the_uninstall_removes_the_host_venv(venv_tree: Path) -> None:
+    """The mirror: the shared tree is the installing user's own,
+    so it goes without sudo, and the closing print carries it."""
+    marker = Path(host_venv.VENV_MARKER)
+    marker.parent.mkdir(parents=True)
+    marker.write_text("home = /python\n")
+    assert mac.remove_host_venv() == (
+        f"{host_venv.VENV_ROOT} removed (the venv, the provisioned Python, uv)"
+    )
+    assert not Path(host_venv.VENV_ROOT).exists()

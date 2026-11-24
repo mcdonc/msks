@@ -70,8 +70,9 @@ def unit_text(
     dev daemon's path, not the service's) — with the shared
     socket's path and group (#1093) through its Environment
     lines and egress enabled against the uplink the tool
-    detected. ExecStart keeps the deployment's bin sibling until
-    the /opt/msks venv lands."""
+    detected. ExecStart resolves the shared venv's msksd
+    (#1118 — ``msksd_sibling()`` reads ``/opt/msks/venv/bin``
+    first, the deployment's bin sibling as the fallback)."""
     lines = [
         profile.unit_header,
         "[Unit]",

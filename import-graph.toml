@@ -449,7 +449,11 @@ secretcache = 4
 # Environment line (hostsetup/unit.py) and the socket row
 # (doctor/systemd.py) are two more statements over
 # spec.sockets, names folded in.
-spec = 59
+# #1118: the shared venv phase reads the release word the wheel
+# pins to (hostsetup/venv.py) — the module edge beside
+# __version__, the same statement shape the macOS bootstrap's
+# own read takes.
+spec = 61
 # #773: the clone route reads the state-disk floor (create_refusal
 # beside the artifacts' allocated-cost file_cost) before any byte
 # copies.

@@ -21,9 +21,12 @@ surface:
   stock ``kernel``, or the Asahi host class's ``kernel-16k``
   (the running release carries "asahi").
 
-Everything else — the wrapper's caps and ambient proof, the
-sysctl and module files, the unit, the profile PATH block, the
-VMM download — is the shared machinery reading this profile.
+Everything else — the venv phase (#1118: the ``/opt/msks`` venv
+with uv's managed 3.14 beside it, the ``--wheel`` flag, the
+refresh-on-rerun upgrade, the uninstall mirror), the wrapper's
+caps and ambient proof, the sysctl and module files, the unit,
+the profile PATH block, the VMM download — is the shared
+machinery reading this profile.
 """
 
 from .hostsetup import HostProfile

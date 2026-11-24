@@ -1,11 +1,25 @@
 """``msks-setup-debian-host`` (#546): the Debian deployment-host
 setup, moved from scripts/setup-debian-host.sh into the wheel —
 the host-side pieces msksd needs to run first-level the way the
-NixOS deployment host (nix/module.nix) runs it. The daemon itself
-(the venv or package install, msksd.yaml, the state dir) stays
-whatever deployment brought it; this tool owns the host only:
+NixOS deployment host (nix/module.nix) runs it, plus the
+installer inversion's foundation (#1080 phase 4a, #1118): the
+shared ``/opt/msks`` venv. This tool owns the host:
 
-1. The capability wrapper, the Debian equivalent of the NixOS
+1. The venv phase (#1118): ``/opt/msks/venv`` holding the msks
+   release matching the tool's own version — every later phase
+   resolves against it (the unit's ``ExecStart``, the
+   ``/usr/local/bin`` links, ``msksd_sibling()``), so one
+   install serves every account on the host. Stock Debian
+   holds no Python 3.14: uv provisions the standalone
+   interpreter under ``/opt/msks/python`` beside the venv, and
+   the run prints what it provisioned. ``--wheel <path>``
+   installs a wheel in hand (an offline or prebuilt build) in
+   place of the fetched release; a wheel whose version
+   disagrees with the tool's refuses with the ``--wheel``
+   spelling. A re-run at a newer version refreshes the wheel —
+   that re-run is the upgrade story — and an equal-state re-run
+   runs no uv command at all (#546's contract).
+2. The capability wrapper, the Debian equivalent of the NixOS
    host's security.wrappers.msks-caps (#231): a root-owned copy of
    util-linux setpriv at ``/usr/local/bin/msks-caps`` carrying
    file capabilities CAP_NET_ADMIN and CAP_NET_BIND_SERVICE —
@@ -19,14 +33,14 @@ whatever deployment brought it; this tool owns the host only:
    root:msks 0750, executable by root and the msks group's
    members, and no other account — the 0755 shape this replaces
    handed both caps to every local user.
-2. The routing kernel settings egress verifies or needs
+3. The routing kernel settings egress verifies or needs
    (docs/networking.md): net.ipv4.ip_forward=1 as a boot-time
    sysctl.d setting — the daemon reads the sysctl at startup and
    refuses every egress workspace with the cause named when it
    reads 0 — and the netfilter/tun modules at boot, mirroring
    nix/module.nix's boot.kernelModules plus the REJECT and NFQUEUE
    pieces the consent chain's rulesets reference.
-3. The system deployment's accounts (#1080): the msksd system
+4. The system deployment's accounts (#1080): the msksd system
    account (nologin, /var/lib/msksd — the unit's User= and
    StateDirectory= pair), the msks access group the shared
    socket's connect permission gates on (#1093), and the
@@ -35,7 +49,7 @@ whatever deployment brought it; this tool owns the host only:
    The daemon reaches kvm through the unit's SupplementaryGroups,
    so the human's kvm membership is never the daemon's path in
    (the account keeps its own kvm grant for bare runs).
-4. The systemd system service (#560, reshaped by #1080), on a
+5. The systemd system service (#560, reshaped by #1080), on a
    host systemd manages: the tool writes
    ``/etc/systemd/system/msksd.service`` running the daemon under
    the msksd account — the shape the NixOS module already ships:
@@ -68,8 +82,11 @@ passes the Debian mirror but not github.com still finishes
 every other piece. The client's console scripts link at
 ``/usr/local/bin`` (#719, #755) — ``msks`` and, beside it,
 ``msks-term-popup``, the consent-terminal launcher a
-GUI-opened window resolves on its own PATH — each pointing at
-the bin sibling this tool's own venv ships, on every login
+GUI-opened window resolves on its own PATH — each pointing into
+the shared venv's bin (#1118: ``/opt/msks/venv/bin``, so a
+second user's ``msks`` runs through the same links; the bin
+sibling this tool's own deployment shipped stays the fallback),
+on every login
 PATH; a path already holding a live link or a regular file
 refuses by name, and a dangling link re-points. /dev/kvm access
 for the executing user's own bare runs arrives through the kvm
@@ -87,10 +104,14 @@ no stop call is involved), then the unit file and its
 enablement symlink, the accounts the deployment created (the
 executing user's msks grant, the msksd account, the msks group —
 /var/lib/msksd stays: the VM overlays, images, and secrets
-there survive by design), the sysctl and modules files leave
+there survive by design, and the summary's state line names the
+directory and its size), the sysctl and modules files leave
 (``sysctl --system`` re-applies every remaining sysctl.d file,
 so a second owner's setting survives), the wrapper, the client
-links, the kvm membership (the tool keeps no state, so any
+links, the /opt/msks venv (#1118 — the venv, the provisioned
+Python, and the bootstrap uv leave as one tree; a root that
+holds no venv stays untouched), the kvm membership (the tool
+keeps no state, so any
 member leaves — the line names the restore), the ``~/.profile``
 block, and the cloud-hypervisor binary — while the apt packages
 stay (they are shared Debian packages; the summary names the
@@ -112,7 +133,18 @@ import subprocess as subprocess
 import sys as sys
 from pathlib import Path as Path
 
-from . import kernel, links, packages, profile, run, unit, users, util, wrapper
+from . import (
+    kernel,
+    links,
+    packages,
+    profile,
+    run,
+    unit,
+    users,
+    util,
+    venv,
+    wrapper,
+)
 from .kernel import (
     ABSENT,
     CONSENT_MODULES,
@@ -224,6 +256,7 @@ from .users import (
     executing_user,
     group_present,
     in_group,
+    kept_state_note,
     pwd_getpwnam,
     pwd_getpwuid,
     remove_accounts,
@@ -238,6 +271,7 @@ from .util import (
     am_root,
     chown_path,
     file_exists,
+    human_size,
     invoked_as,
     os_release_id,
     os_release_version_id,
@@ -247,9 +281,39 @@ from .util import (
     say,
     sh,
     silent_unlink,
+    tree_size,
     version_tuple,
     which,
     write_file,
+)
+from .venv import (
+    PY_VERSION,
+    PYTHON_INSTALL_DIR,
+    UV_BIN,
+    UV_PIN,
+    UV_PYTHON,
+    UV_VENV,
+    VENV_BIN,
+    VENV_DIR,
+    VENV_MARKER,
+    VENV_PYTHON,
+    VENV_ROOT,
+    VERSION_PROBE,
+    check_wheel,
+    create_venv,
+    drop_venv,
+    ensure_uv,
+    install_venv,
+    install_wheel,
+    installed_version,
+    landed_venv,
+    python_word,
+    refresh_venv,
+    refuse_dev_build,
+    tool_version,
+    uv_env,
+    verify_installed,
+    wheel_version,
 )
 from .wrapper import (
     CAPS,
@@ -273,6 +337,7 @@ SUBMODULES = (
     unit,
     users,
     util,
+    venv,
     wrapper,
 )
 
@@ -283,6 +348,7 @@ __all__ = [
     "am_root",
     "chown_path",
     "file_exists",
+    "human_size",
     "invoked_as",
     "os_release_id",
     "os_release_version_id",
@@ -292,6 +358,7 @@ __all__ = [
     "say",
     "sh",
     "silent_unlink",
+    "tree_size",
     "version_tuple",
     "which",
     "write_file",
@@ -359,6 +426,7 @@ __all__ = [
     "executing_user",
     "group_present",
     "in_group",
+    "kept_state_note",
     "pwd_getpwnam",
     "pwd_getpwuid",
     "remove_accounts",
@@ -406,4 +474,31 @@ __all__ = [
     "run_uninstall",
     "summary",
     "uninstall_summary",
+    "PYTHON_INSTALL_DIR",
+    "PY_VERSION",
+    "UV_BIN",
+    "UV_PIN",
+    "UV_PYTHON",
+    "UV_VENV",
+    "VENV_BIN",
+    "VENV_DIR",
+    "VENV_MARKER",
+    "VENV_PYTHON",
+    "VENV_ROOT",
+    "VERSION_PROBE",
+    "check_wheel",
+    "create_venv",
+    "drop_venv",
+    "ensure_uv",
+    "install_venv",
+    "install_wheel",
+    "installed_version",
+    "landed_venv",
+    "python_word",
+    "refresh_venv",
+    "refuse_dev_build",
+    "tool_version",
+    "uv_env",
+    "verify_installed",
+    "wheel_version",
 ]

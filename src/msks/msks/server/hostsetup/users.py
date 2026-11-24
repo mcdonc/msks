@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from .profile import HostProfile
 
 from .profile import DEBIAN_PROFILE, HostProfile
-from .util import HostSetupError, sh
+from .util import HostSetupError, human_size, sh, tree_size
 
 #: The dedicated account the system unit runs the daemon under
 #: (#1080): a system account, nologin, whose home is the daemon's
@@ -196,20 +196,31 @@ OWNERSHIP_REPAIR = f"chown -R msksd:msksd {DAEMON_HOME}"
 
 def remove_accounts(user: str, profile: HostProfile = DEBIAN_PROFILE) -> str:
     """The account phase's mirror: the executing user's grant,
-    the msksd account, the msks group — /var/lib/msksd stays:
-    the VM overlays, images, and secrets there survive by design.
-    The line names the kept directory and the ownership repair a
-    reinstall needs when the new msksd account draws a different
-    system uid than the one that owned the tree."""
+    the msksd account, the msks group — /var/lib/msksd stays,
+    and the summary's own state line names it with its size
+    (#1118)."""
     return "; ".join(
         (
             remove_grant(user, profile),
             remove_daemon_account(),
             remove_access_group(),
-            f"{DAEMON_HOME} stays (VM overlays, images, and secrets "
-            f"survive by design; a reinstall that draws a new system "
-            f"uid repairs the ownership: {OWNERSHIP_REPAIR})",
         )
+    )
+
+
+def kept_state_note() -> str:
+    """The uninstall summary's state line (#1118): /var/lib/msksd
+    stays — the VM overlays, images, and secrets survive the
+    uninstall by design — with the tree's size named, the
+    removal left a by-hand act, and the ownership repair a
+    reinstall needs when the fresh msksd account draws a
+    different system uid than the one that owned the tree."""
+    size = human_size(tree_size(DAEMON_HOME))
+    return (
+        f"{DAEMON_HOME} stays ({size}): the VM overlays, images, and "
+        "secrets survive the uninstall by design; remove it by hand "
+        "when you want it gone (a reinstall that draws a new system "
+        f"uid repairs the ownership: {OWNERSHIP_REPAIR})"
     )
 
 

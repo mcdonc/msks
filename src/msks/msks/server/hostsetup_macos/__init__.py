@@ -13,7 +13,17 @@ the other tools never see:
    A Lima the Mac does not carry installs through brew (#699) —
    the stock-Mac step this tool runs itself; a Mac without brew
    names the Homebrew line and stops.
-2. **The msksd VM** — created from the template that ships in the
+2. **The host-side venv (#1118)** — the shared install at
+   ``/opt/msks`` (the venv, uv's managed 3.14 parked beside it,
+   the bootstrap uv): the brew-prefix links point into its bin,
+   so a second user's bare ``msks`` resolves and runs through
+   them instead of dying on the installing user's home.
+   ``/opt`` is root-owned ground on macOS, so the one privileged
+   step the tool takes is sudo creating that tree owned by the
+   installing user; everything under it stays user-writable and
+   world-readable, and the rest of the tool keeps its no-sudo
+   shape.
+3. **The msksd VM** — created from the template that ships in the
    wheel (``server/assets/msksd-vm.yaml``, #671: vz, nested
    virtualization, the invoking user's home mounted under the
    reserved ``/mnt/msks`` prefix) with the daemon's port forward
@@ -31,7 +41,7 @@ the other tools never see:
    carries (#699: the forward is fixed at creation, so the VM's
    own answer is this deployment's port); an explicit ``--port``
    that disagrees with it stays the named recreation refusal.
-3. **The in-VM bootstrap** — the daemon's Debian tool set
+4. **The in-VM bootstrap** — the daemon's Debian tool set
    (egress plumbing, volume trio, seed tooling) and its kernel
    routing setting, the pinned cloud-hypervisor static release,
    the wheel installed into /opt/msks
@@ -41,12 +51,12 @@ the other tools never see:
    reserved-prefix geometry the template mounted, the invoking
    user's home the default allowed root), and a systemd unit that
    starts msksd at boot.
-4. **The verify pass** — the daemon's TLS listener answers
+5. **The verify pass** — the daemon's TLS listener answers
    through the forward; the CA and the bootstrap token come back
    out, the chain proven against the fetched CA before anything
    is written (#733), and the CA written under
    ``~/.config/msks/``.
-5. **The client config and the login agent** — ``msks.yaml`` itself
+6. **The client config and the login agent** — ``msks.yaml`` itself
    (the client's own config tree): a daemon alias pointing a bare
    ``msks`` at the forward (``url``, ``token_file``, ``cafile`` —
    the token written beside the CA), so every CLI invocation
@@ -59,11 +69,13 @@ the other tools never see:
    exactly as it is, whatever wrote it (#730) — the run names
    the file and prints the alias block to paste or update in
    it, and the config is written only when the file is missing.
-6. **The client links (#719, #734)** — ``msks`` and
+7. **The client links (#719, #734)** — ``msks`` and
    ``msks-term-popup`` linked into the brew prefix's bin dir
    (``$(brew --prefix)/bin`` — the Homebrew the tool already
-   requires for Lima): user-owned, on PATH for every brew user,
-   and the tool never runs sudo. The popup command rides beside
+   requires for Lima): user-owned and on PATH for every brew
+   user, each pointing into the shared ``/opt/msks`` install
+   (phase 2's landing, #1118; the bin beside this tool stays
+   the fallback). The popup command rides beside
    ``msks`` because an ``open``-opened terminal window resolves
    its command on a fresh login PATH — nothing from the shell
    that spawned it passes through (#734). A foreign file at a
@@ -75,9 +87,9 @@ set: Lima, the VM, the nested-virtualization marker, virtiofsd
 inside the VM, the listener, the client config, the login agent
 — and mutates nothing: a missing Lima refuses with the
 run-the-tool remedy, never an install.
-``--uninstall`` stops and deletes the VM, its login agent, and
-the brew-prefix client links (Lima and the client config stay,
-and the summary names
+``--uninstall`` stops and deletes the VM, its login agent, the
+brew-prefix client links, and the shared ``/opt/msks`` host
+install (Lima and the client config stay, and the summary names
 them). Every phase is idempotent: re-run any time; a rerun
 preserves the token, the CA, and the daemon's state.
 """
@@ -92,6 +104,7 @@ import time as time
 from pathlib import Path as Path
 
 from ...client.config import default_config_path as default_config_path
+from ..hostsetup.venv import UV_PIN
 from . import (
     agent,
     base,
@@ -99,6 +112,7 @@ from . import (
     clientconfig,
     entry,
     hostcheck,
+    hostvenv,
     links,
     skew,
     verify,
@@ -126,7 +140,6 @@ from .base import (
     PORT,
     SHAPE_FLOORS,
     TOOL,
-    UV_PIN,
     VM_CONF,
     VM_NAME,
     VM_PACKAGES,
@@ -177,6 +190,11 @@ from .hostcheck import (
     lima_version_tuple,
     require_lima,
 )
+from .hostvenv import (
+    ensure_shared_root,
+    install_host_venv,
+    remove_host_venv,
+)
 from .links import (
     CLIENT_COMMANDS,
     FALLBACK_BREW_BINS,
@@ -225,6 +243,7 @@ from .vm import (
 SUBMODULES = (
     base,
     hostcheck,
+    hostvenv,
     vm,
     bootstrap,
     verify,
@@ -261,6 +280,9 @@ __all__ = [
     "lima_version_output",
     "lima_version_tuple",
     "require_lima",
+    "ensure_shared_root",
+    "install_host_venv",
+    "remove_host_venv",
     "adopted_port",
     "apply_shape",
     "create_vm",

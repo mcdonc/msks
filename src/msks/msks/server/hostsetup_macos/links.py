@@ -1,7 +1,9 @@
 """Phase 6: the client links (#719, #734).
 
 ``msks`` and ``msks-term-popup`` linked into the brew prefix's
-bin, pointing at the sibling the install shipped.
+bin, pointing into the shared host-side install's bin —
+``/opt/msks/venv/bin``, the host venv phase's landing (#1118) —
+with the sibling the install shipped as the fallback.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ import sys
 from pathlib import Path
 
 from ..hostsetup import claim_link
+from ..hostsetup.venv import VENV_BIN
 from .base import TOOL, MacSetupError, run
 
 # --- phase 6: the client links (#719, #734) ------------------------------
@@ -42,7 +45,7 @@ def brewed_prefix() -> str:
 def client_link_path(command: str) -> str:
     """One command's link path: the brew prefix's bin dir. The
     tool already requires Homebrew for Lima (#699), the prefix
-    is user-owned (the tool never runs sudo), and its bin dir is
+    is user-owned, and its bin dir is
     on PATH for every brew user. A brew that will not answer
     refuses by name — the install's own remedy is the same
     brew line #699 prints."""
@@ -57,11 +60,17 @@ def client_link_path(command: str) -> str:
 
 
 def client_sibling(command: str) -> str | None:
-    """One command's console script beside this tool's own — the
+    """One command's console script: the shared install's bin
+    first (#1118 — ``/opt/msks/venv/bin``, the host venv phase's
+    landing, where a second user's ``msks`` resolves through the
+    same links), then the script beside this tool's own (the
     Python environment that shipped this tool shipped every
-    client command with it — or None when no sibling exists: the
+    client command with it), or None when neither exists: the
     deployment runs its client from elsewhere, and the phase
     stands down for that command with a note."""
+    shared = Path(VENV_BIN) / command
+    if shared.exists():
+        return str(shared)
     sibling = Path(sys.argv[0]).resolve().parent / command
     return str(sibling) if sibling.exists() else None
 

@@ -9,7 +9,7 @@ import msks.server.hostsetup as hostsetup
 import pytest
 from msks.server.hostsetup import CAPS, WRAPPER
 from msks.server.hostsetup_fedora import FEDORA_PROFILE, main
-from test_hostsetup import Host, patch_phase
+from test_hostsetup import Host, patch_phase, patch_venv_paths
 
 
 class FedoraHost(Host):
@@ -87,6 +87,7 @@ def fedora_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         ),
     )
     (tmp_path / "client").mkdir()
+    patch_venv_paths(monkeypatch, tmp_path, host)
     patch_phase(monkeypatch, "OS_RELEASE", str(release))
     monkeypatch.setattr(hostsetup.os, "geteuid", lambda: 0)
     patch_phase(monkeypatch, "which", lambda tool: f"/usr/bin/{tool}")
