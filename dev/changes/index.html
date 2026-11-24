@@ -817,10 +817,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#removed" class="md-nav__link">
+  <a href="#added" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Removed
+        Added
       </span>
     </span>
   </a>
@@ -828,10 +828,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#added" class="md-nav__link">
+  <a href="#removed" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Added
+        Removed
       </span>
     </span>
   </a>
@@ -1504,10 +1504,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#removed" class="md-nav__link">
+  <a href="#added" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Removed
+        Added
       </span>
     </span>
   </a>
@@ -1515,10 +1515,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#added" class="md-nav__link">
+  <a href="#removed" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Added
+        Removed
       </span>
     </span>
   </a>
@@ -2155,19 +2155,169 @@
 <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>; versions are
 tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
-<h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>The GUI workspace page's Info tab (#1017).</strong> The page's
-  tab strip carries Shells, Mounts, Proxies, and Events. The
-  health facts the tab showed are gone with it. They are the
-  daemon's own facts rather than the workspace's: the machine
-  fact already reads through the images tab, and a refused
-  read's flash on the status line already tells the daemon's
-  reachability. The page no longer asks the daemon for a
-  health doc on its refresh tick.</li>
-</ul>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>The TUI and GUI re-hold the bridge (#1127).</strong> An open
+  client now restarts a workspace's bridge holder when its
+  failure names the missing one — the holder died, or a start
+  left none (a raw API call) — so the operator with a TUI or
+  GUI open never runs <code>msks proxy hold</code> by hand. The re-hold
+  spawns the same detached holder a start leaves, says the
+  recovery with one line on the open screen, and tries three
+  times per workspace per session with a 30-second backoff.
+  See <a href="../proxies/#the-bridge">docs/proxies.md</a>.</li>
+<li><strong>The one-command install (#1119).</strong> Every release carries
+  two bootstrap wrapper assets, <code>msks-setup-debian.sh</code> and
+  <code>msks-setup-fedora.sh</code>, so a stock host installs with
+  <code>curl -LsSf &lt;release-url&gt;/msks-setup-debian.sh | sudo sh</code>:
+  the wrapper fetches the release wheel, verifies every
+  artifact it fetches against the release's checksum record,
+  provisions Python 3.14 through uv when the host holds none,
+  and runs the platform setup tool from a throwaway venv that
+  is discarded afterwards. Flags after <code>-s --</code> pass through to
+  the tool (<code>--no-service</code>, <code>--wheel</code>, <code>--uninstall</code>).</li>
+<li><strong>The rewritten installation chapter (#1120).</strong> The
+  chapter's install step is the one-command bootstrap, and its
+  "what the setup lands" section inventories the full host
+  shape: the <code>/opt/msks</code> venv, the system unit, the accounts
+  and the shared socket, the client links, and the bundled
+  <code>virtiofsd-as</code> helper. The by-hand chapter spells out the
+  bootstrap's steps (interpreter, venv, wheel, tool
+  invocation), and the uninstall chapter covers the removals
+  and the kept <code>/var/lib/msksd</code> with its size report. The
+  <code>uv tool install</code> step, the env-source step, and the quoted
+  <code>command -v</code> invocation leave the docs. An install holding
+  state under a user's home takes the clean cut #1118's entry
+  states.</li>
+<li><strong>The <code>/opt/msks</code> venv install (#1118).</strong> The Debian and
+  Fedora setup tools gain a first phase that creates
+  <code>/opt/msks/venv</code> — Python 3.14 provisioned through uv when
+  the host holds none — and installs the msks release matching
+  the tool's version into it. Every later phase resolves
+  against that venv: the system unit's <code>ExecStart</code>, the
+  <code>/usr/local/bin</code> links, and a second user's <code>msks</code> runs
+  through them. <code>--wheel &lt;path&gt;</code> installs a wheel in hand
+  instead of the fetched release, and a re-run with a newer
+  tool refreshes the wheel (the upgrade path). <code>--uninstall</code>
+  removes <code>/opt/msks</code>, keeps <code>/var/lib/msksd</code>, and the summary
+  names the kept directory with its size; on macOS, the
+  brew-prefix links point at the same shared install.</li>
+<li><strong>The clean cut for existing installs (#1118, #1080).</strong> An
+  install holding state under a user's home uninstalls and
+  re-runs with the system-unit tool. The state directory does
+  not move.</li>
+<li><strong><code>-L</code> proxies reach whatever the workspace can reach (#1102).</strong> The
+  <code>-L</code> host field resolves inside the guest, ssh's own far-end meaning:
+  <code>localhost</code> and <code>127.0.0.1</code> reach the guest's own loopback, and any
+  other name or address rides the row for the guest's sshd to resolve.
+  The reach rides a bridge a client holds: <code>msks start</code> — from the CLI,
+  the TUI, or the GUI — leaves a background holder behind that serves the
+  rows' connections over ssh, the same transport <code>msks ssh</code> rides (<code>msks
+proxy hold</code> runs one on demand). The daemon runs no ssh and stores no
+  key material. The rows serve while a holder stands; with none they read
+  <code>failed</code> with the cause.</li>
+<li><strong>A right-click on a Mounts tab row (#1098).</strong> The click
+  selects the row and opens a menu with <strong>Edit</strong> and
+  <strong>Remove</strong>. The entries carry the same paths and the same
+  gating as the button row under the table. A press below the
+  rows opens nothing.</li>
+<li><strong>The system unit install (#1094).</strong> The Debian and Fedora
+  setup tools now land <code>/etc/systemd/system/msksd.service</code>:
+  the daemon runs under a dedicated <code>msksd</code> system account
+  (nologin, <code>/var/lib/msksd</code>) with <code>SupplementaryGroups=msks-kvm</code>
+  and <code>cap_net_admin</code>/<code>cap_net_bind_service</code> granted
+  natively, serving the shared <code>/run/msks/msksd.sock</code> to the
+  new <code>msks</code> access group — the executing user gains the
+  membership, so members connect with no token and no CA. The
+  <code>msks-caps</code> wrapper narrows to root:<code>msks</code> 0750 (the system
+  unit no longer runs through it), <code>msksd doctor</code> gains rows
+  for the group grant, the unit state, and the socket, and
+  <code>--uninstall</code> mirrors the service, the account, and the
+  group while naming <code>/var/lib/msksd</code> as kept. The user-unit
+  machinery (runuser, linger, bus-race retries) is gone.</li>
+<li><strong>Owner-scoped secret events (#1090).</strong> The live <code>secret.*</code>
+  frames on the events websocket now reach the row's owner
+  alone — mint, revoke, unlock, expiry, and the per-request swap
+  and sighting frames publish to the owning uid, so one operator
+  no longer receives another operator's placeholder names,
+  coverage, or destination allowlists on a shared daemon. Root
+  and the daemon's own uid keep receiving every owner's frames,
+  and every non-secret event still broadcasts to every socket.
+  The audit replay and the live tail now agree.</li>
+<li>
+<p><strong><code>socket_group</code> and the system socket candidate (#1093).</strong>
+  <code>MSKSD_SOCKET_GROUP</code> names the group the daemon hands its
+  local listener to at startup: the socket's runtime directory
+  takes 0750 and the socket 0660 under the group, so members
+  connect with no token. The unconfigured client now falls to
+  the system deployment's <code>/run/msks/msksd.sock</code> when its own
+  runtime root holds no socket, and its refusal names both
+  paths it checked. The daemon-side half of #1080's phase 3;
+  the system unit that drives the setting lands with #1094.</p>
+</li>
+<li>
+<p><strong>Owner-tracked virtiofsd exec (#1088).</strong> Each share's
+  virtiofsd now runs as the workspace's owner: the daemon binds
+  the share's vhost socket itself and hands the listening socket
+  across the exec (<code>--fd</code>, no <code>--socket-path</code>), execing through
+  the <code>virtiofsd-as</code> helper when the owner differs from the
+  daemon's own account (<code>MSKSD_VIRTIOFSD_AS</code> overrides the
+  helper's location) and directly, exactly as before, when it
+  does not — the dev daemon and single-user installs keep their
+  shape. A workspace whose owner uid no account holds skips its
+  mounts with the named cause <code>owner uid N no longer exists</code> and
+  still starts. The helper execs a virtiofsd path compiled into
+  itself; a cross-owner start whose resolved virtiofsd differs
+  from that target refuses by name, so the <code>MSKSD_VIRTIOFSD</code>
+  override never drifts a cross-owner share onto a binary the
+  daemon did not probe.</p>
+</li>
+<li>
+<p><strong>The <code>virtiofsd-as</code> owner-exec helper (#1087).</strong> The repo
+  carries the helper's C source: <code>virtiofsd-as &lt;uid&gt; --fd &lt;n&gt; --
+&lt;argv&gt;</code> validates the invocation, clears supplementary groups,
+  drops every capability, closes every other file descriptor, and
+  execs one fixed virtiofsd path as the named uid with a scrubbed
+  environment and one journal audit line per exec. Each release
+  publishes a manylinux wheel per architecture carrying the
+  static binary beside the pure wheel, and the NixOS module builds
+  it from the in-repo source into
+  <code>security.wrappers.msks-virtiofsd-as</code>. The daemon wiring follows
+  in #1088.</p>
+</li>
+<li><strong>Root addressing for shared names (#1084).</strong> A bare workspace
+  name two or more owners hold is its own error kind: exit 6 under
+  <code>--json</code>, a line naming every owner otherwise. The workspace
+  verbs (<code>start</code>, <code>stop</code>, <code>rm</code>, <code>clone</code>, <code>key</code>, <code>resize</code>, <code>mount</code>,
+  <code>umount</code>) take <code>--user OWNER</code>, root only, to resolve the name
+  against that owner's rows alone. <code>msks ls</code> gains an <code>owner</code>
+  column when the listing spans owners, and the console and forward
+  dials name the ambiguity with their own close code.</li>
+<li><strong>Owner-scoped secrets (#1083).</strong> Placeholder rows record the
+  uid of the peer that minted them, and the daemon-wide coverage
+  (<code>[]</code>) became owner-wide: a mint with no workspace target
+  reaches every workspace the minting user owns and never
+  another user's. Every secret surface serves the caller's own
+  rows alone — the listing, the audit trail, the pending
+  ciphertext list, revoke, renew, the row fetch, and the unlock
+  — with root and the daemon's user seeing every owner's. A
+  bypass caller's scoped mint at another user's workspace is
+  refused by name instead of minting a row that covers nothing.
+  The audit trail names the owner on every lifecycle event.
+  Existing databases migrate with every row owned by the
+  daemon's own uid — behavior unchanged on a single-user host.</li>
+<li><strong>Workspace ownership (#1082).</strong> Every workspace row records
+  the uid of the peer credential that created it, and workspace
+  names are unique per owner instead of per daemon: two users on
+  one host may each hold a <code>build</code>. A listing serves the caller's
+  own rows alone, and cross-owner access answers 404, the same as
+  an absent workspace; root and the daemon's own uid see every
+  row, and token minting, listing, and revocation is the
+  operator's alone (403 for other group members). The TCP surface
+  maps every caller onto the daemon's own uid, so the dev daemon
+  and single-user hosts keep exactly their visibility. Existing
+  databases migrate with every row owned by the daemon's uid —
+  behavior unchanged.</li>
 <li><strong>The GUI workspaces page's Clone action (#1063).</strong> The
   page's bottom button row carries a Clone button beside Edit,
   and a right-click on a row carries a Clone entry. Both ask
@@ -2566,14 +2716,47 @@ tagged <code>vX.Y.Z</code>.</p>
   the client state root (see <code>docs/cli.md</code> → Client
   environment).</li>
 </ul>
+<h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>The GUI workspace page's Info tab (#1017).</strong> The page's
+  tab strip carries Shells, Mounts, Proxies, and Events. The
+  health facts the tab showed are gone with it. They are the
+  daemon's own facts rather than the workspace's: the machine
+  fact already reads through the images tab, and a refused
+  read's flash on the status line already tells the daemon's
+  reachability. The page no longer asks the daemon for a
+  health doc on its refresh tick.</li>
+</ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Proxy direction terms (#1032).</strong> The TUI's proxy form, the
+<li><strong><code>-L</code> rows need a bridge holder (#1102).</strong> A forward proxy now
+  resolves its host field inside the guest, so its reach moved from the
+  guest's tap address to the guest's own loopback and beyond it to
+  whatever the workspace can reach, carried by a client holder. Rows
+  serve while a holder stands; start the workspace from any client to
+  leave one behind, or run <code>msks proxy hold</code>. The ephemeral <code>msks
+forward</code> keeps its tap dial unchanged.</li>
+<li>
+<p><strong>Owner-scoped event frames (#1095).</strong> Every frame on the
+  events websocket that names a workspace now reaches that
+  workspace's owner alone: the workspace lifecycle, mounts,
+  resize, and home-volume import/export frames, the consent
+  hold and rules frames, and the proxy and forward frames join
+  the <code>secret.*</code> frames #1090 scoped, so one operator's socket
+  no longer receives another operator's workspace ids, names,
+  or hosts on a shared daemon. Root and the daemon's own uid
+  keep receiving every owner's frames, the daemon-wide families
+  (<code>image.changed</code>, <code>storage.pressure</code>) still reach every
+  socket, and the daemon's journal still records every publish.</p>
+</li>
+<li>
+<p><strong>Proxy direction terms (#1032).</strong> The TUI's proxy form, the
   <code>msks proxy add</code> help and listings, and the docs chapters now
   call the two directions local (<code>-L</code>) and remote (<code>-R</code>), ssh's
   own pair, named for the side that holds the listener. The
   flags, the form's stored values, and the API rows are
-  unchanged.</li>
+  unchanged.</p>
+</li>
 <li><strong>The conditional certifi overlay (#785).</strong> The nix builds
   swap certifi in the python package set only while the pinned
   nixpkgs sits below the <code>certifi&gt;=2026.10.23</code> floor pyproject
@@ -2671,6 +2854,68 @@ gui</code>. The nix package keeps the daemon's closure lean, so on
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>The Images and Secrets tabs recover from a daemon outage like
+  the workspace list (#1132).</strong> An outage on either tab kept its
+  text only until the events feed's next retry flash, then the
+  line went blank, and the recovery said nothing. Both tabs now
+  keep the outage's text between the feed's retries and say the
+  recovery once when a read answers. The refresh an action
+  triggers no longer clears the action's result from the status
+  line.</li>
+<li><strong>The GUI's workspace list recovers when the daemon comes up
+  late (#1129).</strong> A window opened while msksd was down showed an
+  empty list and a standing outage message, and nothing re-read
+  the list once the daemon answered. The events feed now
+  triggers one re-read on every connection it makes. The open
+  tab fills by itself when the daemon comes up, a hidden tab
+  at its next show, and the status line says the recovery once.
+  See <a href="../gui/#the-workspace-list">docs/gui.md</a>.</li>
+<li><strong>GUI terminal rendering on scaled and Wayland displays
+  (#1113).</strong> The terminal's cells now paint straight onto the
+  widget, one damaged row at a time over its own background
+  fill, with no offscreen pixmap kept between paints. The
+  pixmap design broke twice on display scaling — a stale
+  band below the blit on KDE Wayland fractional scaling
+  (the window at 1.5 while the backing store rendered at the
+  screen's integer 2.0), and ghosted, overprinted glyphs
+  under fast-scrolling output — and both classes are gone
+  with the pixmap. The scrollbar now draws in a small lane
+  reserved right of the grid, so its thumb never covers a
+  cell.</li>
+<li><strong>GUI terminal on scaled displays (#1110).</strong> The cell
+  cache from #1107 built its pixmap at the widget's logical
+  size. On a display with scaling (a device pixel ratio above
+  1), the blit left most of the terminal showing stale
+  frames: stacked prompts, garbage glyphs, and cursor blocks
+  that never cleared. The pixmap now carries the screen's
+  device pixel ratio, so painting stays in logical
+  coordinates and the blit lands one device pixel for one
+  device pixel. A window moved between displays that scale
+  differently rebuilds its cache.</li>
+<li><strong>GUI terminal echo lag (#1104).</strong> Typing in a GUI
+  terminal tab now echoes immediately: each paint repairs
+  only the rows the terminal emulator flags as damaged
+  instead of repainting every cell of the grid (a full-grid
+  paint cost ~80 ms per echoed character, and echoes fell
+  further behind while typing). The cells live in an
+  offscreen cache blitted whole each frame, so the cursor,
+  scrollbar, and overlays draw fresh above it.</li>
+<li><strong>The GUI terminal's exit report (#1099 follow-up).</strong> The
+  kernel closes a child's terminal fds before the child is
+  waitable, and the exit signal could fire in that window with
+  the 0 placeholder instead of the program's real exit code —
+  a race a loaded CI runner caught. The report now waits out a
+  half-second grace for the child to finish exiting, so the
+  real code goes out; a wedged child still reports on time.</li>
+<li><strong>Ctrl+Click on a URL wrapped across terminal rows
+  (#1100).</strong> The GUI terminal's URL scan now stitches
+  soft-wrapped rows into one text before matching, and every
+  row a URL touches carries the whole link — a Ctrl+Click on
+  any fragment opens the full URL instead of the piece on the
+  clicked row. A match reaching the last cell of a line that
+  still wraps past the viewport's bottom edge answers no
+  link, because the rows below the viewport cannot be read to
+  tell whether the address continues there.</li>
 <li><strong><code>nix build .#server</code> on the unstable nixpkgs pin (#1062).</strong>
   The build again completes: the pinned set's filelock, openai,
   and huggingface-hub had moved outside litellm 1.106.2's
@@ -2686,6 +2931,14 @@ gui</code>. The nix package keeps the daemon's closure lean, so on
   reads, and Shift+Tab sends the shifted tab (the
   reverse-completion sequence). Before, both moved the
   keyboard focus to the next widget in the window.</li>
+<li><strong>Esc in a GUI shell terminal (#1099).</strong> Pressing Esc while
+  a workspace shell's terminal holds focus no longer leaves
+  the workspace page: the key reaches the program inside the
+  terminal (canceling a vim search, leaving a <code>less</code> view).
+  The find bar's Esc closes the bar instead of navigating
+  Back, and a standing tab rename's Esc cancels the edit the
+  same way. Esc still goes Back while the page's own controls
+  hold the keyboard focus.</li>
 <li>
 <p><strong>The secrets audit rows' time labels (#1064).</strong> The audit
   rows in the GUI's Secrets tab and in the TUI's audit views

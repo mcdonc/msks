@@ -796,6 +796,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Workspaces">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ownership-and-addressing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Ownership and addressing
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1006,6 +1023,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Workspaces">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ownership-and-addressing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Ownership and addressing
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1136,7 +1170,9 @@ token answers 401.</p>
 events websockets take the same bearer token in the handshake's
 <code>Authorization</code> header, never a URL parameter. The credential therefore
 cannot appear in a proxy's access log. A failed handshake closes <strong>4401</strong>;
-4404 is an unknown workspace on the console and forward.</p>
+4404 is an unknown workspace on the console and forward, and 4405 is a
+workspace name two or more owners hold (the reason names the owners and
+the by-id remedy).</p>
 <h2 id="enabling-the-tcp-interface">Enabling the TCP interface<a class="headerlink" href="#enabling-the-tcp-interface" title="Permanent link">&para;</a></h2>
 <p>The TCP listener serves loopback from the first start: the dev
 daemon and the NixOS module both do. Reaching it from another
@@ -1193,6 +1229,46 @@ carries both settings and the socket's tradeoffs.</p>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"name": "ws1", "egress": true}'</span>
 </span></code></pre></div>
+<h3 id="ownership-and-addressing">Ownership and addressing<a class="headerlink" href="#ownership-and-addressing" title="Permanent link">&para;</a></h3>
+<p>Every row carries <code>owner_uid</code>, the uid of the peer credential that
+created it. The caller's uid is the owner filter on every read: a
+non-root caller sees and addresses its own rows alone, and a row
+another owner holds answers 404 exactly like an absent one. No verb
+leaks existence. Root and the daemon's own uid (the uid the TCP
+surface maps every caller onto) see every row.</p>
+<p>Workspace names are unique per owner, so two owners may each hold a
+<code>build</code>. A bypass caller (root, or the daemon's own uid) addressing a
+bare name two or more owners hold gets the ambiguity error, its own
+shape and never the not-found path:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"detail"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">"error"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ambiguous_workspace"</span><span class="p">,</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"build"</span><span class="p">,</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="nt">"owners"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">      </span><span class="p">{</span><span class="w"> </span><span class="nt">"uid"</span><span class="p">:</span><span class="w"> </span><span class="mi">4242</span><span class="p">,</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"alice"</span><span class="w"> </span><span class="p">},</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">      </span><span class="p">{</span><span class="w"> </span><span class="nt">"uid"</span><span class="p">:</span><span class="w"> </span><span class="mi">4243</span><span class="p">,</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"bob"</span><span class="w"> </span><span class="p">}</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">    </span><span class="p">]</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">  </span><span class="p">}</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>The <code>owners</code> frames carry the account name when the host holds one
+and <code>null</code> for a uid no account holds. The remedy is either the
+workspace's id or the owner scope below.</p>
+<p>The owner scope is the <code>owner</code> query parameter (<code>?owner=alice</code>) on
+the workspace-ref routes: <code>GET …/workspaces/{ref}</code>, <code>start</code>,
+<code>stop</code>, <code>reset</code>, <code>resize</code>, <code>mounts</code>, <code>ssh-key</code>, <code>clone</code>, <code>DELETE</code>,
+and the 405 <code>PUT</code>/<code>PATCH</code> refusal. The value is an account name
+the daemon resolves to a uid, and the request's ref resolution
+runs against that owner's rows alone. The scope changes the view
+alone: the request still acts with the caller's own authority. A
+clone through a scope creates the new row as the caller's. The
+scope always filters, even when the named owner is one the owner
+filter would bypass (root's own rows, the daemon account's): an
+explicit scope resolves as that one owner alone, which is the one
+path a plural name takes to them. A decimal-uid spelling reaches
+a dead owner the same way. The scope is a bypass caller's tool:
+any other caller passing it gets 403 with the named cause, and a
+name no account holds answers 404.</p>
 <ul>
 <li><code>GET /api/v1/workspaces</code>: every row, with its image paths,
   status, and recorded facts. <code>GET …/workspaces/{id}</code> is one
@@ -1209,15 +1285,15 @@ carries both settings and the socket's tradeoffs.</p>
   the root overlay, grows or shrinks the home volume, and
   moves the cpu and memory sizes. <code>…/ssh-key</code> reads the
   workspace's planted public identity.
-  <code>…/secret-coverage</code> flips the daemon-wide placeholder
+  <code>…/secret-coverage</code> flips the owner-wide placeholder
   posture. <code>POST …/mounts</code> sets the workspace's <a href="../mounts/">share
   mounts</a>, the full replacement list, applied at
   the next start:</li>
 </ul>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">"</span><span class="nv">$MSKSC_URL</span><span class="s2">/api/v1/workspaces/ws1/mounts"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$MSKSC_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"mounts": [{"host": "/srv/projects", "guest": "/mnt/projects"}]}'</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">"</span><span class="nv">$MSKSC_URL</span><span class="s2">/api/v1/workspaces/ws1/mounts"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$MSKSC_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"mounts": [{"host": "/srv/projects", "guest": "/mnt/projects"}]}'</span>
 </span></code></pre></div>
 <p>The daemon validates the list against its #667 gates (a host path outside
 the allowed roots, and one that does not resolve under them, are named
@@ -1244,10 +1320,10 @@ mount</code>/<code>umount</code> and the TUI's editor use this route.</p>
   egress allowlist; the default leaves it with the source), and
   the reply is the new workspace's row:</li>
 </ul>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">"</span><span class="nv">$MSKSC_URL</span><span class="s2">/api/v1/workspaces/ws1/clone"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$MSKSC_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"name": "fork"}'</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">"</span><span class="nv">$MSKSC_URL</span><span class="s2">/api/v1/workspaces/ws1/clone"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$MSKSC_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"name": "fork"}'</span>
 </span></code></pre></div>
 <p>A running source answers 409, a taken name answers 409, and a
 state disk under its floor answers 507.</p>
@@ -1271,22 +1347,22 @@ is API-direct.</p>
   one (refused while a workspace still boots it).</li>
 </ul>
 <p>The import, in the form the channel's rows give:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">"</span><span class="nv">$MSKSC_URL</span><span class="s2">/api/v1/images"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$MSKSC_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"source": "https://…/debian.tar.zst"}'</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">"</span><span class="nv">$MSKSC_URL</span><span class="s2">/api/v1/images"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$MSKSC_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"source": "https://…/debian.tar.zst"}'</span>
 </span></code></pre></div>
 <p>The <a href="../images/">images chapter</a> owns the archive layout, the
 manifest, and the published channel.</p>
 <h2 id="secrets">Secrets<a class="headerlink" href="#secrets" title="Permanent link">&para;</a></h2>
 <p>The placeholder store, per the <a href="../secrets/">secrets chapter</a>:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># mint: daemon-wide with no workspaces target, the destinations</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="c1"># the swap binds, the value itself</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">"</span><span class="nv">$MSKSC_URL</span><span class="s2">/api/v1/secrets"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$MSKSC_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"name": "github_api", "dests": ["api.github.com"],</span>
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="s1">       "value": "ghp_..."}'</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># mint: owner-wide with no workspaces target, the destinations</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="c1"># the swap binds, the value itself</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">"</span><span class="nv">$MSKSC_URL</span><span class="s2">/api/v1/secrets"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$MSKSC_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"name": "github_api", "dests": ["api.github.com"],</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="s1">       "value": "ghp_..."}'</span>
 </span></code></pre></div>
 <p>The mint answer carries the <strong>sentinel</strong>, never the value. <code>GET
 /api/v1/secrets</code> lists rows with coverage and expiry; <code>GET …/secrets/{id}</code>
@@ -1301,18 +1377,18 @@ chapter describes.</p>
 revokes bearer tokens. The token surface is API-direct (the
 client ships no token command). A revoked token's next request
 answers 401.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">"</span><span class="nv">$MSKSC_URL</span><span class="s2">/api/v1/tokens"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$MSKSC_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"name": "ci"}'</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">"</span><span class="nv">$MSKSC_URL</span><span class="s2">/api/v1/tokens"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$MSKSC_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"name": "ci"}'</span>
 </span></code></pre></div>
 <h2 id="storage">Storage<a class="headerlink" href="#storage" title="Permanent link">&para;</a></h2>
 <p><code>GET /api/v1/storage</code>: the state disk's capacity report (the
 volumes' sizes, the images' weight, the headroom). The
 <a href="../storage/">storage chapter</a> owns the accounting.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>curl<span class="w"> </span>--cacert<span class="w"> </span><span class="s2">"</span><span class="nv">$MSKSC_CAFILE</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$MSKSC_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="s2">"</span><span class="nv">$MSKSC_URL</span><span class="s2">/api/v1/storage"</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>curl<span class="w"> </span>--cacert<span class="w"> </span><span class="s2">"</span><span class="nv">$MSKSC_CAFILE</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$MSKSC_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="s2">"</span><span class="nv">$MSKSC_URL</span><span class="s2">/api/v1/storage"</span>
 </span></code></pre></div>
 <h2 id="egress-consent">Egress consent<a class="headerlink" href="#egress-consent" title="Permanent link">&para;</a></h2>
 <p>The consent surface the decider drives, per the <a href="../egress-consent/">egress
@@ -1333,9 +1409,14 @@ consent chapter</a>:</p>
 <li><code>wss://…/api/v1/events</code>: the event hub. It carries workspace
   status frames, the egress consent frames (<code>egress.rules</code>,
   <code>egress.request</code>, <code>egress.resolved</code>), and the secret
-  lifecycle events. A client that announces itself as a decider
-  receives that workspace's pending holds; <code>msks egress watch</code>
-  prints the frames as lines. Every publish also writes one INFO
+  lifecycle events. Every frame that names a workspace reaches
+  that workspace's owner alone, beside root and the daemon's own
+  uid. Frames the daemon serves daemon-wide — the image
+  catalog's <code>image.changed</code> and the <code>storage.pressure</code>
+  transitions — reach every socket. A client that announces
+  itself as a decider receives that workspace's pending holds;
+  <code>msks egress watch</code> prints the frames as lines. Every publish
+  also writes one INFO
   line to the daemon's journal (#762), so the event history
   stays readable after the subscribers are gone. The lines carry
   the frames' identifiers, names, hosts, ports, paths, and

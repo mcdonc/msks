@@ -1038,7 +1038,16 @@ refuses the create. The <code>--image</code> ref is a <code>name:version</code> 
 from <code>msks image ls</code>, a bare <code>name</code>, or the image's full hash.
 The pair must match a catalog row exactly. A bare name resolves to
 the newest version of that name. Workspace names are unique per
-daemon: a create over a held name is the exit-4 conflict.</p>
+owner: a create over a held name is the exit-4 conflict, and
+root's namespace spans every owner.</p>
+<p>Two owners may hold the same workspace name. Root addressing a
+bare name two or more owners hold exits 6 with every owner named.
+<code>--user OWNER</code> on a workspace verb (<code>start</code>, <code>stop</code>, <code>rm</code>,
+<code>clone</code>, <code>key</code>, <code>resize</code>, <code>mount</code>, <code>umount</code>) resolves the name
+against that owner's rows alone. The selector is root only: a
+non-root caller passing it is refused. OWNER is the account name,
+or the bare uid the error printed for a dead owner. A listing that
+spans owners carries an <code>owner</code> column beside the name.</p>
 <p>A workspace's <code>status</code> is one of these values:</p>
 <table>
 <thead>
@@ -1157,12 +1166,16 @@ above, from the stream or from <code>requests</code>. <code>--duration</code> is
 <td>wrong state: the row's state or placement refuses the action</td>
 </tr>
 <tr>
+<td>6</td>
+<td>ambiguous name: two or more owners hold it (--user or the id)</td>
+</tr>
+<tr>
 <td>130</td>
 <td>interrupted</td>
 </tr>
 </tbody>
 </table>
-<p>Rows 3, 4, and 5 hold under <code>--json</code>. Without it, every API
+<p>Rows 3, 4, 5, and 6 hold under <code>--json</code>. Without it, every API
 failure exits 1 and prints its detail on stderr: <code>msks: 409:
 workspace exists</code>. The codes 0, 2, and 130 hold either way. Code 2
 and a config the client cannot read keep text lines under <code>--json</code>

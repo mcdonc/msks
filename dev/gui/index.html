@@ -1338,7 +1338,14 @@ flashes on the status line.</p>
 <p>A failed refresh flashes the status line at the top of the page.
 A refusal clears itself after four seconds. A daemon outage
 stands on the line until an answer resolves it, and the rows
-already on screen stand the whole time.</p>
+already on screen stand the whole time. While the daemon is
+down, the events feed's retry message flashes over the outage
+on every failed connection. The outage's text returns when each
+flash ends. A window opened while the daemon is down recovers by
+itself when the daemon comes up. The events feed reconnects
+within five seconds, and every connection it makes re-reads the
+page. The status line then says <code>daemon back — listing resumed</code>
+once.</p>
 <p>The strip at the bottom reads the held row's quick facts: the
 name, id, image, cpu count, memory, egress mode, mounts marker,
 pending note, and storage cost. The storage figure comes from the
@@ -1413,6 +1420,10 @@ the spec beside the state the daemon derived, in five columns:
 HOST, GUEST, MODE, STATE, REASON. <strong>Add</strong> opens the form, <strong>Edit</strong>
 changes the selected row, and <strong>Remove</strong> drops it. Every change
 posts the whole list to the daemon.</p>
+<p>A right-click on a row selects it and opens its menu with
+<strong>Edit</strong> and <strong>Remove</strong>. The entries take the buttons' own
+paths and act on the selection, with the buttons' gating. A
+press below the rows opens nothing.</p>
 <p>The daemon owns the rules. A host path outside the allowed roots
 is refused with the remedy stated, and the refusal appears on
 the tab's note line. The edited list rolls back to the last set
@@ -1492,12 +1503,17 @@ channel publishes no frame, so its rows move only through the
 page's re-reads.</p>
 <p>A dropped events feed flashes the page while it is open. The
 page re-reads whole when the feed serves again, so the gap
-between the drop and the recovery lands on screen.</p>
+between the drop and the recovery lands on screen. A daemon
+outage keeps its text on the status line between the feed's
+retry flashes. The first answered read after it says
+<code>daemon back — images resumed</code> once. An action's answer also ends
+the outage. The status line shows the action's result, not the
+recovery line.</p>
 <h2 id="the-secrets-tab">The Secrets tab<a class="headerlink" href="#the-secrets-tab" title="Permanent link">&para;</a></h2>
 <p><img alt="The Secrets tab: the placeholder listing above the audit group" src="../screens/gui-secrets.png" /></p>
 <p>The third top-level tab manages the daemon's secret
 placeholders. The <strong>Placeholders</strong> group lists every row with its
-coverage (the daemon-wide <code>*</code> or its workspace ids), name,
+coverage (the owner-wide <code>*</code> or its workspace ids), name,
 destinations, remaining lifetime, created label, and lock state.
 The lifetime cell is a live countdown, repainted every second.
 An unbounded row reads <code>never</code>.</p>
@@ -1506,7 +1522,7 @@ to <code>30d</code>, the one nearest the row's remaining lifetime
 pre-selected), and Revoke…, which asks first. A revoked row
 retires everywhere at once.</p>
 <p><strong>Mint</strong> opens the mint form: name, comma-separated destinations,
-coverage (daemon-wide, or scoped to a workspace multi-select),
+coverage (owner-wide, or scoped to a workspace multi-select),
 the TTL choice, and the value. A landed mint closes the form and
 the listing refreshes. The GUI shows no sentinel panel: the flash
 reports the minted row, and the sentinel itself reads back
@@ -1532,7 +1548,12 @@ batches frames behind half a second and takes one re-read per
 batch.</p>
 <p>A dropped events feed flashes the page while it is open. The
 page re-reads whole when the feed serves again, so the gap
-between the drop and the recovery lands on screen.</p>
+between the drop and the recovery lands on screen. A daemon
+outage keeps its text on the status line between the feed's
+retry flashes. The first answered read after it says
+<code>daemon back — secrets resumed</code> once. An action's answer also ends
+the outage. The status line shows the action's result, not the
+recovery line.</p>
 <h2 id="the-zoom-keys">The zoom keys<a class="headerlink" href="#the-zoom-keys" title="Permanent link">&para;</a></h2>
 <p>Ctrl+Plus, Ctrl+=, and Ctrl+Shift++ (the plus key without a
 numpad) all grow every font in the client one step. Ctrl+Minus

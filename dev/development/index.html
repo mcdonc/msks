@@ -1423,7 +1423,12 @@ configuration installs; on a host NixOS does not manage the
 script finds the setup tool's <code>/usr/local/bin/msks-caps</code> by
 itself (<code>DEV_CAPS</code> gives another path outright). The tool is
 <code>msks-setup-debian-host</code> on a Debian host and
-<code>msks-setup-fedora-host</code> on a Fedora host.</p>
+<code>msks-setup-fedora-host</code> on a Fedora host. There the wrapper is
+the dev daemon's path alone: it lands root:<code>msks</code> mode 0750, and
+the account running <code>msks-dev</code> must hold the <code>msks</code> group — the
+setup tool grants it to <code>$SUDO_USER</code>, and the membership applies
+at the next login. A session that predates the grant meets
+<code>Permission denied</code> on the wrapper; log out and back in.</p>
 <p>The same daemon is the default <code>devenv processes up</code> process:
 the manager runs <code>scripts/dev-daemon.sh</code> in the foreground, and
 Ctrl-C stops it through the daemon's own graceful path.</p>

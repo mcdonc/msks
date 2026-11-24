@@ -1019,16 +1019,16 @@
 
 
 <h1 id="first-run">First run<a class="headerlink" href="#first-run" title="Permanent link">&para;</a></h1>
-<p>After the installation process has resulted in a running <code>msksd</code> systemd user
+<p>After the installation process has resulted in a running <code>msksd</code> system
 service, it's almost ready to use. But you need to supply your ssh keypair and
 import at least one image used as a base for workspace creation before you can
 successfully create one.</p>
 <h2 id="make-sure-its-running">Make sure it's running<a class="headerlink" href="#make-sure-its-running" title="Permanent link">&para;</a></h2>
 <p>Before trying to connect to <code>msksd</code> via the client, make sure it's running.</p>
-<p>On Linux, to see status and log output from the account the daemon runs as
-(the service is a systemd user unit):</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="w">  </span>systemctl<span class="w"> </span>--user<span class="w"> </span>status<span class="w"> </span>msksd
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>journalctl<span class="w"> </span>--user<span class="w"> </span>-u<span class="w"> </span>msksd<span class="w"> </span>-f<span class="w">          </span><span class="c1"># follow the daemon's log</span>
+<p>On Linux, to see status and log output (the daemon runs under the <code>msksd</code>
+account as a systemd system service):</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="w">  </span>systemctl<span class="w"> </span>status<span class="w"> </span>msksd
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>sudo<span class="w"> </span>journalctl<span class="w"> </span>-u<span class="w"> </span>msksd<span class="w"> </span>-f<span class="w">            </span><span class="c1"># follow the daemon's log</span>
 </span></code></pre></div>
 <p>On macOS, do the following (the daemon runs inside the Lima VM, as a
 systemd system unit):</p>
@@ -1036,15 +1036,17 @@ systemd system unit):</p>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>limactl<span class="w"> </span>shell<span class="w"> </span>msksd<span class="w"> </span>--<span class="w"> </span>sudo<span class="w"> </span>journalctl<span class="w"> </span>-u<span class="w"> </span>msksd<span class="w"> </span>-f<span class="w">   </span><span class="c1"># follow the daemon's log</span>
 </span></code></pre></div>
 <p>When msksd is first started on Linux (or within the Lima VM that runs Linux on
-Mac), it creates a state dir (<code>~/.local/state/msksd</code>). The <code>msksd.yaml</code> config
-file is generated within it as a commented template (see
+Mac), it creates a state dir (<code>~/.local/state/msksd</code> under the daemon account's
+home on a dev daemon; <code>/var/lib/msksd</code> under the system unit). The
+<code>msksd.yaml</code> config file is generated within it as a commented template (see
 <a href="../config/">Configuration</a>).</p>
-<p>The unix listener binds <code>$XDG_RUNTIME_DIR/msks/msksd.sock</code>. Same-host Linux
-clients connect through it on peer-credential authentication. A remote can, if
+<p>The unix listener binds <code>/run/msks/msksd.sock</code> under the system unit. Same-host
+clients in the <code>msks</code> group connect through it on peer-credential
+authentication, with no token. A remote can, if
 configured, contact a TLS/https listener with a bearer token. That's how it
 works on macOS.</p>
-<p>With the host prepared, the service lingered, and an image imported, invoking
-the <code>msks</code> (the client) on the same account will find the socket.</p>
+<p>With the host prepared and an image imported, invoking
+the <code>msks</code> (the client) as a member of the <code>msks</code> group will find the socket.</p>
 <h2 id="the-key-files">The key files<a class="headerlink" href="#the-key-files" title="Permanent link">&para;</a></h2>
 <p>You need to configure an ssh key before msksd/msks will work properly.</p>
 <p>Every workspace msks uses your public ssh key as the workspace's operator

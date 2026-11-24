@@ -1343,7 +1343,14 @@ the file itself carries them all at one level.</p>
 <td><code>MSKSD_SOCKET</code></td>
 <td>string</td>
 <td><em>(unset)</em></td>
-<td>Binds a second, local listener at this unix socket path: same-host clients connect through it with peer-credential authentication, with no token and no TLS. Unset binds the default path, <code>$XDG_RUNTIME_DIR/msks/msksd.sock</code>. A daemon without a runtime dir (a container, a hand-written system unit pointing <code>MSKSD_SOCKET</code> at a path its <code>RuntimeDirectory</code> creates) serves TCP alone until this setting gives a path; the empty string always serves TCP alone. The socket file is mode 0660: <code>chgrp</code> it to a shared group to admit that group's members. Membership counts every supplementary group the account database holds for the user (including the nesting a directory backend expands itself), and the daemon keeps no membership cache, so a removal takes effect at the next request once the account database serves the change. The systemd <strong>user</strong> unit the setup tools generate creates <code>$XDG_RUNTIME_DIR/msks</code> for this listener through its <code>RuntimeDirectory</code>, the client's own default candidate path. Read at startup; a reload applies a change at restart.</td>
+<td>Binds a second, local listener at this unix socket path: same-host clients connect through it with peer-credential authentication, with no token and no TLS. Unset binds the default path, <code>$XDG_RUNTIME_DIR/msks/msksd.sock</code>. A daemon without a runtime dir (a container, a hand-written system unit pointing <code>MSKSD_SOCKET</code> at a path its <code>RuntimeDirectory</code> creates) serves TCP alone until this setting gives a path; the empty string always serves TCP alone. The socket file is mode 0660; <code>socket_group</code> hands it to a shared group at bind. The peer policy reads the socket's group once at startup. A hand <code>chgrp</code> while the daemon runs opens the connect alone. The <code>socket_group</code> setting is the supported way to share the listener. Membership counts every supplementary group the account database holds for the user (including the nesting a directory backend expands itself), and the daemon keeps no membership cache, so a removal takes effect at the next request once the account database serves the change. The system unit the setup tools generate points this setting at <code>/run/msks/msksd.sock</code> and creates <code>/run/msks</code> for the listener through its <code>RuntimeDirectory</code>, with <code>socket_group</code> naming the <code>msks</code> access group. Read at startup; a reload applies a change at restart.</td>
+</tr>
+<tr>
+<td><code>socket_group</code></td>
+<td><code>MSKSD_SOCKET_GROUP</code></td>
+<td>string</td>
+<td><em>(unset)</em></td>
+<td>Names the group the local listener is handed to at startup: after the bind, the daemon chgrps the socket's runtime directory to this group at 0750 and the socket file at 0660, so the group's members connect with no token (#1093, #1080). The handover needs the default path's shape: the socket sits under a directory named <code>msks</code> the daemon's own account owns, and any other socket path refuses at startup with the shape named. The daemon's account must hold the group — the system unit's <code>SupplementaryGroups</code> carries it — and a startup whose handover fails refuses with the group named. Unset keeps the bind's own group: the same-user deployment's shape. The membership rule is the <code>socket</code> row's own. Read at startup; a reload applies a change at restart.</td>
 </tr>
 <tr>
 <td><code>tls_cert</code></td>
@@ -1741,7 +1748,14 @@ the removal message pointing at these keys.</p>
 <td><code>MSKSD_VIRTIOFSD</code></td>
 <td>string</td>
 <td><code>virtiofsd</code></td>
-<td>Path to the virtiofsd binary each attached share spawns. A value with a slash is used exactly as given; a bare name resolves on PATH first, then the locations the distro packages install the binary at (<code>/usr/libexec/virtiofsd</code>, <code>/usr/lib/qemu/virtiofsd</code>; Debian's and Ubuntu's <code>virtiofsd</code> packages install it off PATH). The resolution runs at settings load and again on SIGHUP: a binary installed after the daemon started is one reload away.</td>
+<td>Path to the virtiofsd binary each attached share spawns. A value with a slash is used exactly as given; a bare name resolves on PATH first, then the locations the distro packages install the binary at (<code>/usr/libexec/virtiofsd</code>, <code>/usr/lib/qemu/virtiofsd</code>; Debian's and Ubuntu's <code>virtiofsd</code> packages install it off PATH). The resolution runs at settings load and again on SIGHUP: a binary installed after the daemon started is one reload away. The override reaches only the shares the daemon runs as itself — a cross-owner share execs the helper's compile-time virtiofsd target, and a start whose resolved binary differs from that target refuses by name (see <code>virtiofsd_as</code>).</td>
+</tr>
+<tr>
+<td><code>virtiofsd_as</code></td>
+<td><code>MSKSD_VIRTIOFSD_AS</code></td>
+<td>string</td>
+<td><code>virtiofsd-as</code></td>
+<td>The setuid helper a share whose owner is not the daemon's own account execs its virtiofsd through, as that owner (#1087, #1088). A value with a slash is used exactly as given; a bare name resolves on PATH under either install name (<code>virtiofsd-as</code>, the NixOS wrapper's <code>msks-virtiofsd-as</code>), then the binary bundled inside the platform wheel, then <code>/usr/local/libexec/msks/virtiofsd-as</code>. The daemon binds each share's vhost socket itself, so a missing helper never widens access: a cross-owner share without one refuses at start by name. Shares owned by the daemon's own account never consult this setting. The helper execs a virtiofsd path compiled into itself (<code>--print-target</code> reports it), so the daemon compares it against its own resolved binary at every cross-owner start: a helper built against a different virtiofsd than the daemon resolved refuses by name, keeping the override honest.</td>
 </tr>
 </tbody>
 </table>
