@@ -328,9 +328,14 @@ Three streams use the same listener and the same token:
 - `wss://…/api/v1/events`: the event hub. It carries workspace
   status frames, the egress consent frames (`egress.rules`,
   `egress.request`, `egress.resolved`), and the secret
-  lifecycle events. A client that announces itself as a decider
-  receives that workspace's pending holds; `msks egress watch`
-  prints the frames as lines. Every publish also writes one INFO
+  lifecycle events. Every frame that names a workspace reaches
+  that workspace's owner alone, beside root and the daemon's own
+  uid. Frames the daemon serves daemon-wide — the image
+  catalog's `image.changed` and the `storage.pressure`
+  transitions — reach every socket. A client that announces
+  itself as a decider receives that workspace's pending holds;
+  `msks egress watch` prints the frames as lines. Every publish
+  also writes one INFO
   line to the daemon's journal (#762), so the event history
   stays readable after the subscribers are gone. The lines carry
   the frames' identifiers, names, hosts, ports, paths, and

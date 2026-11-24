@@ -59,12 +59,17 @@ class LiveProxy:
     """One proxy's process-local state: the bound server, its
     in-flight connection tasks, or — when the bind failed — the
     named cause. Exactly one of ``server`` and ``failure`` is
-    set."""
+    set. ``owner`` is the workspace's owning uid captured at
+    bind (#1095): the close's frame stays scoped to it even
+    after the workspace row is gone — a forward proxy on a
+    never-started workspace outlives its row until the shutdown
+    sweep closes it."""
 
     row: dict
     server: asyncio.AbstractServer | None = None
     failure: str | None = None
     tasks: set = field(default_factory=set)
+    owner: int | None = None
 
     @property
     def workspace_id(self) -> str:
@@ -127,10 +132,14 @@ class ProxyManager:
     async def start_workspace(self, workspace_id: str, attachment) -> None:
         """Bring up every persisted proxy one workspace owns (the
         attach hook). Each proxy is best-effort alone: one failed
-        bind names itself and the rest still come up."""
+        bind names itself and the rest still come up. The
+        workspace row is read once for the owner every frame the
+        set publishes attributes to (#1095)."""
         rows = await self.app.state.model.list_proxies(workspace_id)
+        workspace = await self.app.state.model.get_workspace(workspace_id)
+        owner = None if workspace is None else workspace.get("owner_uid")
         for row in rows:
-            await self.start_one(row, attachment)
+            await self.start_one(row, attachment, owner)
 
     async def stop_workspace(self, workspace_id: str) -> None:
         """End every live listener the workspace owns (the detach
@@ -149,10 +158,15 @@ class ProxyManager:
 
     # --- single-proxy operations (the API routes call these) ----------
 
-    async def start_one(self, row: dict, attachment) -> dict:
+    async def start_one(
+        self, row: dict, attachment, owner: int | None = None
+    ) -> dict:
         """Bind one proxy's listener; returns the row with its
         status. Idempotent: a listener already up stays up, a
-        recorded failure gets its retry."""
+        recorded failure gets its retry. *owner* is the
+        workspace's owning uid (#1095), captured onto the live
+        proxy so every frame it publishes — the bind's own and
+        the close's — attributes to it."""
         existing = self._live.get(row["id"])
         if existing is not None and existing.server is not None:
             return with_status(row, "listening", None)
@@ -163,9 +177,9 @@ class ProxyManager:
             # nothing — its status is stopped, and the next start
             # brings it up.
             return with_status(row, "stopped", None)
-        return await self.bind_listener(row, point)
+        return await self.bind_listener(row, point, owner)
 
-    async def bind_listener(self, row: dict, point) -> dict:
+    async def bind_listener(self, row: dict, point, owner: int | None) -> dict:
         """Bind one proxy's listener at its ``(host, port)``,
         recording the failure as the row's status when the bind
         refuses (a taken port, an address the host cannot bind)."""
@@ -175,11 +189,13 @@ class ProxyManager:
             )
         except OSError as exc:
             cause = str(exc) or type(exc).__name__
-            self._live[row["id"]] = LiveProxy(row=row, failure=cause)
-            await self.publish(row, "proxy.failed", detail=cause)
+            self._live[row["id"]] = LiveProxy(
+                row=row, failure=cause, owner=owner
+            )
+            await self.publish(row, "proxy.failed", cause, owner)
             return with_status(row, "failed", cause)
-        self._live[row["id"]] = LiveProxy(row=row, server=server)
-        await self.publish(row, "proxy.listening")
+        self._live[row["id"]] = LiveProxy(row=row, server=server, owner=owner)
+        await self.publish(row, "proxy.listening", None, owner)
         return with_status(row, "listening", None)
 
     async def stop_one(self, proxy_id: int) -> None:
@@ -210,7 +226,7 @@ class ProxyManager:
         # ends it so nothing lingers off the guard.
         for task in live.tasks:
             task.cancel()
-        await self.publish(live.row, "proxy.closed")
+        await self.publish(live.row, "proxy.closed", None, live.owner)
 
     # --- reads ---------------------------------------------------------
 
@@ -353,10 +369,19 @@ class ProxyManager:
                     await guest_writer.wait_closed()
 
     async def publish(
-        self, row: dict, event: str, detail: str | None = None
+        self,
+        row: dict,
+        event: str,
+        detail: str | None,
+        owner: int | None,
     ) -> None:
         """One proxy transition on the hub (and its journal line,
-        the hub's own #762 rule)."""
+        the hub's own #762 rule). The frame names the workspace,
+        so its audience is the workspace's owner (#1095),
+        captured at bind — the caller holds it; nothing here
+        reads the model, so a close racing its workspace row's
+        deletion stays scoped and cannot raise into the stop
+        paths."""
         hub = self.app.state.hub
         if hub is None:
             return
@@ -369,7 +394,7 @@ class ProxyManager:
         }
         if detail is not None:
             payload["reason"] = detail
-        await hub.publish(event, payload)
+        await hub.publish(event, payload, owner=owner)
 
 
 def bind_point(row: dict, attachment) -> tuple[str, int] | None:

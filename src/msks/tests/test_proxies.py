@@ -415,7 +415,9 @@ async def test_publish_skips_a_hubless_app() -> None:
     from types import SimpleNamespace
 
     manager = ProxyManager(SimpleNamespace(state=SimpleNamespace(hub=None)))
-    await manager.publish({"workspace_id": "ws", "id": 1}, "proxy.listening")
+    await manager.publish(
+        {"workspace_id": "ws", "id": 1}, "proxy.listening", None, None
+    )
 
 
 def test_bind_point_shapes() -> None:
@@ -535,3 +537,34 @@ async def test_stop_one_is_bounded_by_grace(monkeypatch) -> None:
     await asyncio.wait_for(manager.stop_one(1), timeout=3.0)
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, timeout=1.0)
+
+
+async def test_a_stop_after_the_workspace_row_vanished_stays_scoped(
+    proxies,
+) -> None:
+    """#1095: the owner captured at bind outlives the workspace
+    row. A forward proxy on a never-started workspace holds its
+    listener past the row's deletion until the shutdown sweep
+    closes it — the close frame still reaches the captured
+    owner's subscribers alone, and the owner-side subscriber
+    queue receives it beside the unscoped one."""
+    manager, model, _net, queue, app = proxies
+    row = await create_forward_row(model, await free_port())
+    alice_q = app.state.hub.subscribe(viewer=4242)
+    foreign_q = app.state.hub.subscribe(viewer=9999)
+    await manager.start_one(row, None, 4242)
+    assert (await next_event(queue))[0] == "proxy.listening"
+    assert json.loads(alice_q.get_nowait())["event"] == "proxy.listening"
+    await model.delete_workspace("ws-a")
+    await manager.stop_one(row["id"])
+    event, data = await next_event(queue)
+    assert event == "proxy.closed"
+    assert data["id"] == "ws-a"
+    closed = json.loads(alice_q.get_nowait())
+    assert closed["event"] == "proxy.closed"
+    # The exclusion half: a foreign scoped subscriber receives
+    # neither the bind's frame nor the close's — the pair pins
+    # "scoped", not just "published" (same-loop broadcasts land
+    # synchronously, so the empty read is deterministic).
+    with pytest.raises(asyncio.QueueEmpty):
+        foreign_q.get_nowait()

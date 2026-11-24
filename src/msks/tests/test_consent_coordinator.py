@@ -79,9 +79,9 @@ async def build_engine_app(tmp_path: Path, consent_timeout_s: float):
     queue = hub.subscribe()
 
     class Capture:
-        async def publish(self, event, data):
+        async def publish(self, event, data, owner=None):
             frames.append((event, data))
-            await hub.publish(event, data)
+            await hub.publish(event, data, owner=owner)
 
     app.state.hub = Capture()
     return app, frames, queue
@@ -508,7 +508,7 @@ async def test_publish_without_a_hub_and_with_a_failing_hub(
     engine = app.state.consent
 
     class Boom:
-        async def publish(self, event, data):
+        async def publish(self, event, data, owner=None):
             raise RuntimeError("subscriber gone")
 
     hub = app.state.hub
@@ -524,10 +524,10 @@ async def test_broadcast_rules_survives_a_read_error(engine_app) -> None:
     app, _frames, _queue = engine_app
     engine = app.state.consent
 
-    async def explode(_workspace_id):
+    async def explode(_row, _workspace_id):
         raise RuntimeError("db down")
 
-    engine.rules_frame = explode
+    engine.frame_for_row = explode
     await engine.broadcast_rules("ws-interactive")
 
 

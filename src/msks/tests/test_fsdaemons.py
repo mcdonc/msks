@@ -527,9 +527,9 @@ async def test_start_skips_a_gate_refused_host_path(  # noqa: F811
     published = []
     real_publish = app.state.hub.publish
 
-    async def spy_publish(event: str, data: dict) -> None:
+    async def spy_publish(event: str, data: dict, owner=None) -> None:
         published.append((event, data))
-        await real_publish(event, data)
+        await real_publish(event, data, owner=owner)
 
     app.state.hub.publish = spy_publish
     started = await http.post(
@@ -1469,9 +1469,9 @@ async def test_missing_share_path_skips_at_start(client, tmp_path):  # noqa: F81
     published = []
     real_publish = app.state.hub.publish
 
-    async def spy_publish(event: str, data: dict) -> None:
+    async def spy_publish(event: str, data: dict, owner=None) -> None:
         published.append((event, data))
-        await real_publish(event, data)
+        await real_publish(event, data, owner=owner)
 
     app.state.hub.publish = spy_publish
     started = await http.post(

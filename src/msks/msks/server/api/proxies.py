@@ -191,8 +191,12 @@ def router(app, hub) -> APIRouter:
         # A running workspace takes the listener at once; a stopped
         # one records the row and its next start brings it up.
         live = await app.state.proxies.start_one(
-            created, app.state.net.attachment(workspace_id)
+            created,
+            app.state.net.attachment(workspace_id),
+            row["owner_uid"],
         )
+        # The frame's audience is the workspace's owner (#1095)
+        # — the route's resolved row carries it.
         await hub.publish(
             "proxy.created",
             {
@@ -202,6 +206,7 @@ def router(app, hub) -> APIRouter:
                 "listen_port": created["listen_port"],
                 "target_port": created["target_port"],
             },
+            owner=row["owner_uid"],
         )
         # A listening remote proxy takes its admission now — only
         # a live bind gains one (#807 review), and the swap rides
@@ -289,7 +294,9 @@ def router(app, hub) -> APIRouter:
             # The row left between the read and the write (a
             # remove landing inside the exchange).
             raise HTTPException(status_code=404, detail="no such proxy")
-        live = await app.state.proxies.start_one(updated, attachment)
+        live = await app.state.proxies.start_one(
+            updated, attachment, row["owner_uid"]
+        )
         await hub.publish(
             "proxy.updated",
             {
@@ -299,6 +306,7 @@ def router(app, hub) -> APIRouter:
                 "listen_port": updated["listen_port"],
                 "target_port": updated["target_port"],
             },
+            owner=row["owner_uid"],
         )
         if body.direction == "remote" and live["status"] == "listening":
             # The create's own closing step, word for word: only a
@@ -340,6 +348,7 @@ def router(app, hub) -> APIRouter:
                 "listen_port": proxy["listen_port"],
                 "target_port": proxy["target_port"],
             },
+            owner=row["owner_uid"],
         )
         return {"id": proxy_id, "workspace_id": workspace_id, "removed": True}
 

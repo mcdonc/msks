@@ -84,7 +84,9 @@ async def scan_workspace(app, hub: EventHub, row: dict) -> bool:
         return False
     if in_flight_hold(app, row["id"], row["status"], status):
         return False
-    return await publish_transition(app, hub, row["id"], status)
+    return await publish_transition(
+        app, hub, row["id"], status, row.get("owner_uid")
+    )
 
 
 def steady_state(row_status: str, seam_status: str) -> bool:
@@ -141,13 +143,17 @@ def in_flight_hold(
 
 
 async def publish_transition(
-    app, hub: EventHub, workspace_id: str, status: str
+    app, hub: EventHub, workspace_id: str, status: str, owner: int | None
 ) -> bool:
-    """Write the new status and announce it; False when the row vanished."""
+    """Write the new status and announce it; False when the row
+    vanished. The frame's audience is the workspace's owner
+    (#1095) — the scan's row carries it."""
     if not await app.state.model.set_status(workspace_id, status):
         return False
     await hub.publish(
-        "workspace.status", {"id": workspace_id, "status": status}
+        "workspace.status",
+        {"id": workspace_id, "status": status},
+        owner=owner,
     )
     return True
 

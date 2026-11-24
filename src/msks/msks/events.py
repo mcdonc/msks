@@ -91,12 +91,14 @@ class EventHub:
     ) -> None:
         """Deliver one event; a full (stalled) queue drops its oldest.
 
-        *owner* is the frame's audience (#1090): a frame that
-        names the uid its row belongs to reaches that uid's
+        *owner* is the frame's audience (#1090, #1095): a frame
+        that names the uid its row belongs to reaches that uid's
         subscribers and the unscoped ones alone — the live tail's
         half of the owner filter the audit replay already takes
-        (#1083) — while ``None`` (every non-secret frame, and the
-        daemon's own internal publishes) broadcasts unchanged.
+        (#1083) — while ``None`` (every frame the policy serves
+        daemon-wide, like the image catalog and the disk-pressure
+        transitions, and the daemon's own internal publishes)
+        broadcasts unchanged.
 
         The journal line (#762) writes here, on the publishing
         thread before any hop: the record is the publish, not the
