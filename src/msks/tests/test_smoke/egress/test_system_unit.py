@@ -135,6 +135,11 @@ def running_unit(deployment_host):
         )
     run_dir = Path(tempfile.mkdtemp(prefix="msks-unit-", dir="/tmp"))
     run_dir.chmod(0o755)
+    # The probe runs as the msksd account and writes its CapAmb
+    # file here: a root-owned 0755 directory would refuse the
+    # redirect, and the unit would crash-loop on its own proof.
+    entry = pwd.getpwnam(hostsetup.DAEMON_USER)
+    os.chown(run_dir, entry.pw_uid, entry.pw_gid)
     ambient = run_dir / "capamb"
     probe = run_dir / "msksd-probe"
     probe.write_text(
