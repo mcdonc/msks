@@ -71,7 +71,9 @@ def bridge_api(
 
     async def settled_publish_down(self: BridgeHub, workspace_id: str) -> None:
         await publish_down(self, workspace_id)
-        self.settled.set()
+        settled = getattr(self, "settled", None)
+        if settled is not None:
+            settled.set()
 
     monkeypatch.setattr(BridgeHub, "publish_down", settled_publish_down)
     hub.settled = settled
