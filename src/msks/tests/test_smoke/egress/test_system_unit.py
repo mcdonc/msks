@@ -144,6 +144,16 @@ def running_unit(deployment_host):
         "exec sleep 300\n"
     )
     probe.chmod(0o755)
+    drop_in = Path("/etc/systemd/system/msksd.service.d")
+    drop_in.mkdir(parents=True, exist_ok=True)
+    (drop_in / "smoke.conf").write_text(
+        # The deployed unit orders itself after network-online.target
+        # (the daemon binds a listener and NATs through the uplink);
+        # the CI runner's network-online job can take minutes, and
+        # this proof is about the privilege shape, not the ordering.
+        # Empty assignments reset the lists.
+        "[Unit]\nAfter=\nWants=\n"
+    )
     started = False
     try:
         hostsetup.verify_daemon_binary(str(probe))
@@ -159,6 +169,7 @@ def running_unit(deployment_host):
             hostsetup.stop_unit()
         hostsetup.teardown_unit_files()
         hostsetup.forget_unit()
+        shutil.rmtree(drop_in, ignore_errors=True)
         shutil.rmtree(run_dir, ignore_errors=True)
 
 
