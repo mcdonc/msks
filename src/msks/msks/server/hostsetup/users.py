@@ -186,18 +186,29 @@ def remove_access_group() -> str:
     return f"the {ACCESS_GROUP} group removed"
 
 
+#: The ownership repair a reinstall may need: a fresh useradd -r
+#: draws the next free system uid, and the kept state tree still
+#: carries the deleted account's. The line names the command; the
+#: tree can hold tens of gigabytes of images, and the tool does
+#: not walk it.
+OWNERSHIP_REPAIR = f"chown -R msksd:msksd {DAEMON_HOME}"
+
+
 def remove_accounts(user: str, profile: HostProfile = DEBIAN_PROFILE) -> str:
     """The account phase's mirror: the executing user's grant,
     the msksd account, the msks group — /var/lib/msksd stays:
-    the VM overlays, images, and secrets there survive by
-    design; the line names it."""
+    the VM overlays, images, and secrets there survive by design.
+    The line names the kept directory and the ownership repair a
+    reinstall needs when the new msksd account draws a different
+    system uid than the one that owned the tree."""
     return "; ".join(
         (
             remove_grant(user, profile),
             remove_daemon_account(),
             remove_access_group(),
             f"{DAEMON_HOME} stays (VM overlays, images, and secrets "
-            "survive by design)",
+            f"survive by design; a reinstall that draws a new system "
+            f"uid repairs the ownership: {OWNERSHIP_REPAIR})",
         )
     )
 

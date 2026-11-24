@@ -1193,13 +1193,13 @@ def test_the_kvm_row_errors_when_the_user_is_not_a_member(
 
 
 def test_the_kvm_group_add_hint_matches_the_manager() -> None:
-    assert group_add_hint("op", "dnf") == "sudo usermod -aG kvm op"
-    assert group_add_hint("op", "zypper") == "sudo usermod -aG kvm op"
-    assert group_add_hint("op", "pacman") == "sudo gpasswd -a op kvm"
-    assert group_add_hint("op", "apk") == "sudo addgroup op kvm"
+    assert group_add_hint("op", "kvm", "dnf") == "sudo usermod -aG kvm op"
+    assert group_add_hint("op", "kvm", "zypper") == "sudo usermod -aG kvm op"
+    assert group_add_hint("op", "kvm", "pacman") == ("sudo gpasswd -a op kvm")
+    assert group_add_hint("op", "kvm", "apk") == "sudo addgroup op kvm"
     # No manager detected falls back to the Debian form — the
     # documented deployment host.
-    assert group_add_hint("op", None) == "sudo adduser op kvm"
+    assert group_add_hint("op", "kvm", None) == "sudo adduser op kvm"
 
 
 def test_the_kvm_row_names_a_session_that_predates_the_group(

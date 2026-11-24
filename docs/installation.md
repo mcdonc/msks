@@ -68,27 +68,30 @@ own PATH (the system manager's default carries them). A daemon started
 by hand (`msks-dev`, a bare `msksd`) inherits the session's PATH, so the
 same login carries the fix to both shapes.
 
-**The accounts.** The setup creates the `msksd` system account — `nologin`,
-home `/var/lib/msksd`, where the daemon's state lives — and the `msks`
-access group. Membership in `msks` is the deliberate grant that gates the
-shared socket: the daemon binds `/run/msks/msksd.sock` and hands it to the
-group, and a member connects with no token and no CA. The setup grants the
-executing user (`$SUDO_USER`) the membership, so the single-user workstation
-needs no further step. The membership applies at the next login.
+**The accounts.** The setup creates the `msksd` system account: `nologin`,
+with `/var/lib/msksd` as its home. That directory is the daemon's state
+directory — the unit's `StateDirectory` creates it and its
+`MSKSD_STATE_DIR` line points the daemon at it. The setup also creates the
+`msks` access group. Membership in `msks` is the deliberate grant that
+gates the shared socket: the daemon binds `/run/msks/msksd.sock` and hands
+it to the group, and a member connects with no token and no CA. The setup
+grants the executing user (`$SUDO_USER`) the membership, so the
+single-user workstation needs no further step. The membership applies at
+the next login.
 
 **The systemd system service.** On a host systemd manages, the setup writes
 `/etc/systemd/system/msksd.service` and enables it. The unit runs the
-daemon under the `msksd` account with `SupplementaryGroups=msks kvm`, and
-grants `cap_net_admin` and `cap_net_bind_service` natively —
-`AmbientCapabilities` and `CapabilityBoundingSet` carry the pair, so no
-wrapper and no setuid path is involved. The unit points the daemon at the
-shared socket (`MSKSD_SOCKET=/run/msks/msksd.sock`, handed to the `msks`
-group) and runs with `MSKSD_EGRESS_ENABLED=true` and the uplink interface
-the setup detected. It restarts the daemon on failure, and it starts at
-boot with no login. Before the unit lands, the setup verifies the resolved
-`msksd` binary is readable and executable by the `msksd` account — a
-deployment whose venv sits behind a permission the account cannot cross
-(a 0700 home) refuses at install time with the cause named.
+daemon under the `msksd` account with `SupplementaryGroups=msks kvm`.
+`AmbientCapabilities` and `CapabilityBoundingSet` carry
+`cap_net_admin` and `cap_net_bind_service` natively, so no wrapper and no
+setuid path is involved. The unit points the daemon at the shared socket
+(`MSKSD_SOCKET=/run/msks/msksd.sock`, handed to the `msks` group) and runs
+with `MSKSD_EGRESS_ENABLED=true` and the uplink interface the setup
+detected. It restarts the daemon on failure, and it starts at boot with no
+login. Before the unit lands, the setup verifies the resolved `msksd`
+binary is readable and executable by the `msksd` account. A deployment
+whose venv sits behind a permission the account cannot cross (a 0700 home)
+refuses at install time with the cause named.
 
 **Cloud Hypervisor's static release binary**. So guest VMs can be started.
 
@@ -292,8 +295,10 @@ src 192.168.1.112 metric 100 gives it):
 ```ini
 [Unit]
 Description=msks daemon (workspaces as cloud-hypervisor microvms)
+Documentation=https://github.com/mcdonc/msks
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 User=msksd
@@ -306,6 +311,7 @@ Environment=MSKSD_EGRESS_ENABLED=true
 Environment=MSKSD_EGRESS_UPLINK=<uplink>
 Environment=MSKSD_SOCKET=/run/msks/msksd.sock
 Environment=MSKSD_SOCKET_GROUP=msks
+Environment=MSKSD_STATE_DIR=/var/lib/msksd
 StateDirectory=msksd
 RuntimeDirectory=msks
 Restart=always
@@ -324,7 +330,9 @@ systemctl enable --now msksd.service
 
 The unit grants the two capabilities natively (`AmbientCapabilities`
 with a matching bounding set), so no wrapper sits on the daemon's path.
-It starts at boot with no login.
+`StartLimitIntervalSec=0` with `Restart=always` restarts a crash-looping
+daemon forever, the contract the appliance shipped. The unit starts at
+boot with no login.
 
 The daemon's workspace machinery execs `cloud-hypervisor` (the VMM).
 
@@ -394,7 +402,11 @@ workspaces included. It removes the `msksd` account and the `msks` group
 (the executing user's grant leaves with them, and the summary names the
 `adduser` line that restores it). `/var/lib/msksd` stays: the VM overlays,
 images, and secrets there survive by design, and the summary names the kept
-directory. It removes the two `/etc` files the
+directory. A reinstall creates the `msksd` account again with the next
+free system uid. When that uid differs from the one that owned the kept
+tree, repair the ownership before the daemon starts:
+`chown -R msksd:msksd /var/lib/msksd`. The uninstall summary names the
+same command. It removes the two `/etc` files the
 run landed, and removes the capability wrapper. It takes the executing user
 out of the `kvm` group; the tool keeps no record of which run added a
 membership, so any member leaves. It strips the PATH block from `~/.profile`

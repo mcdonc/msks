@@ -17,14 +17,14 @@ from pathlib import Path
 from ...spec.sockets import is_socket_file, system_socket_path
 from ..hostsetup import (
     SYSTEMD_MANAGER,
+    UNIT_NAME,
     executing_user,
     group_present,
     in_group,
 )
+from .hints import group_add_hint
 from .probes import probe_which, run
 from .report import CheckResult
-
-UNIT_NAME = "msksd.service"
 
 ACCESS_GROUP = "msks"
 
@@ -47,9 +47,11 @@ def group_absent_result() -> CheckResult:
     )
 
 
-def not_a_member_result(user: str) -> CheckResult:
+def not_a_member_result(user: str, manager: str | None) -> CheckResult:
     """The database knows the group and the caller sits outside
-    it — the client cannot connect through the shared socket."""
+    it — the client cannot connect through the shared socket. The
+    fix names the group command the detected manager runs, the
+    kvm row's own distro awareness."""
     return CheckResult(
         name="msks-group",
         ok=False,
@@ -58,7 +60,8 @@ def not_a_member_result(user: str) -> CheckResult:
             f"{user} is not in the msks group, which gates the "
             "shared socket's connect permission"
         ),
-        hint=f"adduser {user} msks, then log out and back in",
+        hint=f"{group_add_hint(user, ACCESS_GROUP, manager)}, "
+        "then log out and back in",
     )
 
 
@@ -90,7 +93,7 @@ def session_lacks_group(uid: int) -> bool:
     return group_gid not in os.getgroups() and os.getgid() != group_gid
 
 
-def msks_group_result() -> CheckResult:
+def msks_group_result(manager: str | None = None) -> CheckResult:
     """The access-group row (#1080): the group exists, and the
     caller holds it — root passes without holding anything, the
     same bypass every owner check takes."""
@@ -104,7 +107,7 @@ def msks_group_result() -> CheckResult:
             message="the msks group exists (root passes)",
         )
     if not in_group(user, ACCESS_GROUP):
-        return not_a_member_result(user)
+        return not_a_member_result(user, manager)
     if session_lacks_group(uid):
         return session_predates_result(user)
     return CheckResult(

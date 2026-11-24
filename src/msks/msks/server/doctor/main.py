@@ -77,7 +77,7 @@ def run_doctor(settings: Settings) -> DoctorReport:
         # shared socket — Linux-only like the kvm row (systemd
         # and /run/msks are Linux surfaces), and warning grade:
         # a daemon serving TCP alone stays green without them.
-        report.add(msks_group_result())
+        report.add(msks_group_result(manager))
         report.add(msks_unit_result())
         report.add(shared_socket_result())
     report.add(

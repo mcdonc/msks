@@ -128,6 +128,11 @@ def running_unit(deployment_host):
         pytest.skip("no systemd manager on this host")
     if shutil.which("adduser") is None:
         pytest.skip("the Debian group commands (adduser) are absent")
+    if Path(hostsetup.UNIT_PATH).exists():
+        pytest.skip(
+            f"a unit is already installed at {hostsetup.UNIT_PATH} — "
+            "this proof writes that path"
+        )
     run_dir = Path(tempfile.mkdtemp(prefix="msks-unit-", dir="/tmp"))
     run_dir.chmod(0o755)
     ambient = run_dir / "capamb"
@@ -139,13 +144,19 @@ def running_unit(deployment_host):
         "exec sleep 300\n"
     )
     probe.chmod(0o755)
-    hostsetup.verify_daemon_binary(str(probe))
-    hostsetup.write_unit(str(probe), "lo")
-    hostsetup.activate_unit(False)
+    started = False
     try:
+        hostsetup.verify_daemon_binary(str(probe))
+        hostsetup.write_unit(str(probe), "lo")
+        hostsetup.activate_unit(False)
+        started = True
         yield ambient
     finally:
-        hostsetup.stop_unit()
+        # The stop is only the running service's; a landing that
+        # failed partway leaves files no daemon serves, and the
+        # by-path teardown plus reload still cleans them.
+        if started:
+            hostsetup.stop_unit()
         hostsetup.teardown_unit_files()
         hostsetup.forget_unit()
         shutil.rmtree(run_dir, ignore_errors=True)

@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 from ...spec.sockets import system_socket_path
 from .links import msksd_sibling
 from .profile import DEBIAN_PROFILE, HostProfile
-from .users import ACCESS_GROUP, DAEMON_USER
+from .users import ACCESS_GROUP, DAEMON_HOME, DAEMON_USER, group_present
 from .util import (
     HostSetupError,
     file_exists,
@@ -95,6 +95,14 @@ def unit_text(
     lines += [
         f"Environment=MSKSD_SOCKET={system_socket_path()}",
         f"Environment=MSKSD_SOCKET_GROUP={ACCESS_GROUP}",
+        # The state dir env line pins the daemon's tree to the
+        # unit's StateDirectory: systemd sets $HOME to the
+        # account's home for User= units, and the daemon's own
+        # default would otherwise nest under
+        # /var/lib/msksd/.local/state/msksd instead of the state
+        # directory the unit creates — the NixOS module's own
+        # state_dir pin, one env line here.
+        f"Environment=MSKSD_STATE_DIR={DAEMON_HOME}",
         "StateDirectory=msksd",
         "RuntimeDirectory=msks",
         "Restart=always",
@@ -117,9 +125,12 @@ def verify_daemon_binary(msksd: str) -> None:
     dedicated account (#1080), and a deployment whose daemon
     lives behind a permission the account cannot cross — a venv
     under a 0700 home — would crash-loop at boot; setpriv drops
-    to the account for the test, so the answer is the kernel's
-    own, and the refusal names the cause at install time (the
-    /opt/msks venv is the durable answer)."""
+    to the account for the test (the script's own path walk, the
+    kernel's answer; the interpreter behind its shebang shares
+    the traversal chain, and --clear-groups reads stricter than
+    the unit's runtime groups), and the refusal names the cause
+    at install time (the /opt/msks venv is the durable
+    answer)."""
     argv = [
         "setpriv",
         f"--reuid={DAEMON_USER}",
@@ -225,6 +236,12 @@ def service_skip_cause(msksd: str | None) -> str | None:
     if not systemd_manages():
         return (
             "skipped (no systemd manager on this host — bare msksd unchanged)"
+        )
+    if not group_present("kvm"):
+        return (
+            "skipped (the kvm group is absent — the unit's "
+            "SupplementaryGroups names it; install the KVM stack "
+            "(qemu-kvm) first, then re-run)"
         )
     return None
 

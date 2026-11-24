@@ -1464,6 +1464,10 @@ def test_service_lands_the_system_unit(
     assert "Environment=MSKSD_EGRESS_UPLINK=eno4" in text
     assert "Environment=MSKSD_SOCKET=/run/msks/msksd.sock" in text
     assert "Environment=MSKSD_SOCKET_GROUP=msks" in text
+    # The state dir env line pins the daemon's tree to the
+    # unit's StateDirectory — without it the daemon nests under
+    # the account home's own default ($HOME/.local/state/msksd).
+    assert "Environment=MSKSD_STATE_DIR=/var/lib/msksd" in text
     assert "StateDirectory=msksd" in text
     assert "RuntimeDirectory=msks" in text
     assert "WantedBy=multi-user.target" in text
@@ -1555,6 +1559,24 @@ def test_no_service_flag_keeps_today_s_behavior(
     assert unit_writes(debian_host) == {}
     assert debian_host.ran("systemctl") == []
     assert "service:    skipped (--no-service)" in capsys.readouterr().out
+
+
+def test_service_skips_without_a_kvm_group(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """The unit's SupplementaryGroups names kvm, and a start with
+    an unresolvable group fails inside systemd with no cause this
+    tool can name — the phase stands down with the KVM-stack fix
+    instead (#1094 review)."""
+    patch_phase(monkeypatch, "group_present", lambda name: False)
+    assert main() == 0
+    assert unit_writes(debian_host) == {}
+    assert debian_host.ran("systemctl") == []
+    out = capsys.readouterr().out
+    assert "skipped (the kvm group is absent" in out
+    assert "qemu-kvm" in out
 
 
 def test_a_rerun_with_an_unchanged_unit_does_not_restart(
@@ -1880,7 +1902,9 @@ def test_uninstall_removes_every_piece(
         "account:    removed chrism from msks (adduser chrism msks "
         "restores it); the msksd account removed; the msks group "
         "removed; /var/lib/msksd stays (VM overlays, images, and "
-        "secrets survive by design)" in out
+        "secrets survive by design; a reinstall that draws a new "
+        "system uid repairs the ownership: chown -R msksd:msksd "
+        "/var/lib/msksd)" in out
     )
     assert f"wrapper:    {WRAPPER} removed" in out
     assert f"VMM:        {hostsetup.CLOUD_HYPERVISOR_BIN} removed" in out

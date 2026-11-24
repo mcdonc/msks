@@ -50,6 +50,7 @@ import sys as sys  # noqa: F401 — suite seam
 
 from ...config import load_settings as load_settings
 from ..hostsetup import SYSTEMD_MANAGER as SYSTEMD_MANAGER
+from ..hostsetup import UNIT_NAME as UNIT_NAME
 from ..hostsetup import executing_user as executing_user
 from . import checks, hints, kvm, probes, report, systemd
 from .checks import (
@@ -136,7 +137,6 @@ from .report import (
 )
 from .systemd import (
     ACCESS_GROUP,
-    UNIT_NAME,
     group_absent_result,
     msks_group_result,
     msks_unit_result,
