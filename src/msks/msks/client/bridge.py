@@ -434,10 +434,11 @@ class ReHolder:
     (:class:`~msks.client.data.RestData`) owns it, and the start
     path marks it (:meth:`note_start`). The surfaces feed it the
     frames their subscriptions land and the rows their reads
-    serve; it owns the rest — when to retry, how often, and when
-    to give the workspace up to the row's own cause for the
-    session. The spawn is the same detached child ``msks start``
-    leaves (:func:`spawn_holder`); no key material moves anywhere
+    serve, and poll :meth:`take_due` on their own cadence; it
+    owns the rest — when to retry, how often, and when to give
+    the workspace up to the row's own cause for the session.
+    The spawn is the same detached child ``msks start`` leaves
+    (:func:`spawn_holder`); no key material moves anywhere
     new.
     """
 
@@ -466,51 +467,137 @@ class ReHolder:
         self.clock = clock
         #: Spawns spent per workspace this session.
         self.spent: dict[str, int] = {}
-        #: The clock at each handled signal — the backoff window.
-        self.handled: dict[str, float] = {}
+        #: The clock each workspace's backoff window closes at — a
+        #: signal inside it defers (:attr:`pending`), and one
+        #: past it weighs.
+        self.window_until: dict[str, float] = {}
         #: The clock at each spawn — the outcome window.
         self.awaited: dict[str, float] = {}
+        #: The workspaces holding a deferred signal: the failure
+        #: landed inside the window (or over a spawn whose fate
+        #: was still unknown), and :meth:`take_due` re-rules it
+        #: once the window closes. Failure frames are
+        #: edge-triggered — nothing periodic re-delivers them —
+        #: so the deferral is a mark, not a drop.
+        self.pending: set[str] = set()
         #: The workspaces whose give-up line was said.
         self.said: set[str] = set()
 
     def note_start(self, workspace_id: str) -> None:
         """A holder the start path itself spawned (#1102): the
-        running transition that follows must not stack a second
-        child beside it, so the start's own spawn takes the
-        window a signal would."""
-        self.handled[workspace_id] = self.clock()
+        running transition the boot publishes must not stack a
+        second child beside it, so the start's own spawn takes
+        the window a signal would. The start marks before its
+        POST flies (the daemon publishes ``running`` before the
+        response), and a start that fails leaves the window to
+        lapse — the rows read a due signal takes decides
+        whether a holder is owed at all."""
+        self.open_window(workspace_id)
+
+    def note_spawn(self, workspace_id: str) -> None:
+        """A holder spawned outside the watch (the start path's
+        own, #1102): the outcome window opens with it — the
+        listener that follows is that spawn's, and a failure
+        under it defers exactly as the watch's own would."""
+        self.awaited[workspace_id] = self.clock()
+
+    def open_window(self, workspace_id: str) -> None:
+        """Start the backoff window now."""
+        self.window_until[workspace_id] = self.clock() + self.RETRY_AFTER_S
 
     def signal(self, workspace_id: str) -> str | None:
         """One bridge-failure signal's ruling (#1127): WEIGH —
-        follow with a rows read and :meth:`rehold`; GAVE_UP — the
-        session's budget is spent, said once, and the surfaces
-        flash the line; None — the backoff window stands (the
-        burst of one failure lands as one, and a fast crash
-        loop retries at the window's pace)."""
+        follow with a rows read and :meth:`rehold`; GAVE_UP —
+        the session's budget is spent, said once, and the
+        surfaces flash the line; None — deferred or collapsed.
+        A signal inside the backoff window defers (the burst one
+        failure publishes per row lands as one), and so does one
+        over a spawn whose outcome window still stands (the
+        spawn's own holder may be connecting; its listener, or
+        the window's lapse at :meth:`take_due`, resolves the
+        deferral) — a deferred signal is re-ruled when the
+        window closes, never dropped."""
+        return self.defer_or_rule(workspace_id)
+
+    def defer_or_rule(self, workspace_id: str) -> str | None:
+        """The ruling half of :meth:`signal`, shared with
+        :meth:`take_due`: the budget check comes last, after
+        the deferrals, so a failure landing while the last
+        spawn's holder is still connecting neither spends a
+        give-up line early nor weighs a second child beside
+        it."""
+        if self.deferred(workspace_id):
+            self.pending.add(workspace_id)
+            return None
+        return self.rule(workspace_id)
+
+    def deferred(self, workspace_id: str) -> bool:
+        """Whether a signal for this workspace waits: inside the
+        backoff window, or over a spawn whose outcome window
+        still stands."""
+        until = self.window_until.get(workspace_id)
+        if until is not None and self.clock() < until:
+            return True
+        return self.outcome_stands(workspace_id)
+
+    def outcome_stands(self, workspace_id: str) -> bool:
+        """Whether a spawn's outcome window still stands — its
+        holder's fate is unknown, and a listener or the window's
+        lapse resolves it."""
+        at = self.awaited.get(workspace_id)
+        return at is not None and (self.clock() - at) <= self.AWAIT_S
+
+    def rule(self, workspace_id: str) -> str | None:
+        """The fresh ruling: the give-up line once past the
+        budget, else a weigh over a newly opened window. Either
+        arm closes the standing outcome window — the spawn it
+        watched is superseded (a weigh spawns a fresh one, and
+        the give-up line names the row's cause instead)."""
         if self.spent.get(workspace_id, 0) >= self.MAX_TRIES:
             if workspace_id in self.said:
                 return None
             self.said.add(workspace_id)
+            self.awaited.pop(workspace_id, None)
             return GAVE_UP
-        last = self.handled.get(workspace_id)
-        if last is not None and (self.clock() - last) < self.RETRY_AFTER_S:
-            return None
-        self.handled[workspace_id] = self.clock()
-        # A signal a standing outcome window meets closes it:
-        # the spawn it followed either served (its listening
-        # landed and was said) or it did not, and a listener
-        # from here on is not that spawn's recovery.
         self.awaited.pop(workspace_id, None)
+        self.open_window(workspace_id)
         return WEIGH
+
+    def take_due(self) -> list[tuple[str, str]]:
+        """The deferred signals whose windows closed, taken with
+        their rulings (#1127): the surfaces poll this on their
+        own cadence — the failure frames are edge-triggered, and
+        nothing else re-delivers a deferred signal. Each taken
+        signal re-rules exactly as a fresh one would: a weigh,
+        or the give-up line the spent budget owes."""
+        now = self.clock()
+        due = []
+        for workspace_id in sorted(self.pending):
+            if self.signal_due(workspace_id, now):
+                self.pending.discard(workspace_id)
+                due.append((workspace_id, self.rule(workspace_id)))
+        return due
+
+    def signal_due(self, workspace_id: str, now: float) -> bool:
+        """Whether one deferred signal's windows closed: the
+        backoff elapsed, and the spawn it stood over resolved or
+        lapsed with it."""
+        until = self.window_until.get(workspace_id)
+        if until is not None and now < until:
+            return False
+        at = self.awaited.get(workspace_id)
+        return at is None or (now - at) > self.AWAIT_S
 
     def serving(self, workspace_id: str) -> bool:
         """A listener came up: whether it answers a spawn this
         watch made inside the outcome window — the caller says
-        the recovery once. The take consumes the window; its
-        expiry keeps a listener that comes up later (an
-        operator's manual hold) from reading as this watch's
-        work."""
+        the recovery once. The take consumes the window and any
+        deferred signal with it: the bridge stands, and the
+        failure those frames carried is resolved. A listener
+        past the window (an operator's manual hold) answers
+        False."""
         at = self.awaited.pop(workspace_id, None)
+        self.pending.discard(workspace_id)
         return at is not None and (self.clock() - at) <= self.AWAIT_S
 
     def rehold(self, workspace_id: str, rows: list[dict]) -> bool:
@@ -519,9 +606,15 @@ class ReHolder:
         same detached child ``msks start`` leaves. The attempt
         spends the budget; rows that read listening (a holder
         stands, #1102's no-standby rule) or failed with another
-        cause (a bind refusal) spawn nothing and spend
-        nothing."""
+        cause (a bind refusal) spawn nothing and spend nothing.
+        A spawn whose outcome window still stands answers False
+        too: its holder's fate is unknown, and a second child
+        beside it is the standby the rule forbids — a slow rows
+        read racing a second signal lands here, on either
+        surface."""
         if self.spent.get(workspace_id, 0) >= self.MAX_TRIES:
+            return False
+        if self.outcome_stands(workspace_id):
             return False
         if not rehold_due(rows):
             return False

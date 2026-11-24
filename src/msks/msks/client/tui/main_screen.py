@@ -375,10 +375,15 @@ class MainScreen(HelpKeys, Screen):
             self.app.flash_standing(f"bridge re-held — {label}")
 
     def weigh_bridge_signal(self, workspace_id: str) -> None:
-        """One failure signal's ruling (#1127): the give-up line
-        names the remedy the row's cause already carries, and a
-        weigh runs the rows read that gates the spawn."""
+        """One failure signal's ruling (#1127), landed: the
+        shared path decides the give-up line or the weigh."""
         ruling = self.app.data.reholder.signal(workspace_id)
+        self.land_ruling(workspace_id, ruling)
+
+    def land_ruling(self, workspace_id: str, ruling: str | None) -> None:
+        """One ruling's effect (#1127): the give-up line names the
+        remedy the row's cause already carries, and a weigh runs
+        the rows read that gates the spawn."""
         if ruling is None:
             return
         if ruling == GAVE_UP:
@@ -389,6 +394,18 @@ class MainScreen(HelpKeys, Screen):
             )
             return
         self.run_worker(self.weigh_rehold(workspace_id), group="rehold")
+
+    def watch_rehold(self) -> None:
+        """The re-hold deferrals' drain (#1127): the failure
+        frames are edge-triggered, so a signal the window
+        swallowed waits as a mark — the tick re-rules each one
+        whose window closed, exactly as a fresh signal would. A
+        screen without its link decides nothing: the signals
+        land on the connection it would hold."""
+        if self.link is None:
+            return
+        for workspace_id, ruling in self.app.data.reholder.take_due():
+            self.land_ruling(workspace_id, ruling)
 
     def bridge_label(self, workspace_id: str) -> str:
         """The workspace's label for a re-hold line: the standing
@@ -412,10 +429,14 @@ class MainScreen(HelpKeys, Screen):
         self.app.data.reholder.rehold(workspace_id, rows)
 
     def local_tick(self) -> None:
-        """The client-side watch (#1019): the link's health, then
-        the shell counts. Neither reads the daemon, so the watch
-        keeps its timer whatever the events socket does."""
+        """The client-side watch (#1019): the link's health, the
+        re-hold deferrals (#1127), then the shell counts. The
+        first two read the wires the daemon owns — a socket that
+        dropped pokes one refresh, and a deferred bridge signal
+        whose window closed re-rules on the spot — and the last
+        reads the host's session records."""
         self.watch_link()
+        self.watch_rehold()
         self.sync_shells()
 
     def watch_link(self) -> None:

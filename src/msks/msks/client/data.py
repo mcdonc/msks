@@ -205,7 +205,13 @@ class RestData:
         workspace with forward rows serves them through the holder
         this spawns. Best-effort like the CLI's own hook: a rows
         read that fails or a holder that cannot start leaves the
-        boot's answer untouched."""
+        boot's answer untouched. The re-hold window opens before
+        the POST flies (#1127): the daemon publishes ``running``
+        before the response lands, and the watch must not weigh a
+        second child beside the one this start leaves. A start
+        that fails leaves the window to lapse — the rows read a
+        due signal takes decides whether a holder is owed."""
+        self.reholder.note_start(workspace_id)
         row = await self.rest(
             "POST", f"/api/v1/workspaces/{workspace_id}/start"
         )
@@ -215,11 +221,10 @@ class RestData:
             )
             if holder_due(rows):
                 spawn_holder(workspace_id)
-                # The running transition the boot publishes must
-                # not weigh a second child beside the one this
-                # start leaves (#1127): the spawn takes the
-                # re-hold window a signal would.
-                self.reholder.note_start(workspace_id)
+                # The spawn this start leaves opens the outcome
+                # window too (#1127): a failure under it defers,
+                # and a listener resolves it.
+                self.reholder.note_spawn(workspace_id)
         except Exception, SystemExit:
             # Best-effort by contract (#1102): the boot's answer
             # stands, and the rows carry the cause.

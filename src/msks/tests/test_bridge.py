@@ -382,6 +382,40 @@ async def test_up_paint_skips_rows_whose_bind_failed(tmp_path) -> None:
     await app.state.model.close()
 
 
+async def test_the_down_paint_takes_every_forward_row(tmp_path) -> None:
+    """The down-transition's frame is the bridge's own fact
+    (#1127): a row that reads failed only because no holder
+    serves still takes it — the open client's re-hold watch keys
+    on the frame, and the up-paint's bind-failure skip must not
+    eat the down's whole audience (the holder is already
+    unregistered when the down publishes, so every live forward
+    row reads failed then)."""
+
+    app = await hub_app(tmp_path)
+    queue = app.state.hub.subscribe()
+    hub = app.state.bridge
+
+    class ServedRows:
+        """The read a live forward row answers at down time:
+        failed with the missing-holder cause, whatever its own
+        bind did."""
+
+        def status(self, row):
+            from msks.bridge import NO_HOLDER
+
+            return ("failed", NO_HOLDER)
+
+    app.state.proxies = ServedRows()
+    hub.register("ws-a", FakeSocket())
+    await hub.publish_up("ws-a")  # the up-paint skips: the read is failed
+    hub.unregister("ws-a", hub.holders["ws-a"][0])
+    await hub.publish_down("ws-a")
+    frame = json.loads(await asyncio.wait_for(queue.get(), 0.3))
+    assert frame["event"] == "proxy.failed"
+    assert frame["data"]["id"] == "ws-a"
+    await app.state.model.close()
+
+
 async def test_row_listening_guards_the_bare_states() -> None:
     """No proxy subsystem answers: the paint proceeds (the tests'
     bare-state shape); a status read that fails does the same."""

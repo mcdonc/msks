@@ -733,10 +733,15 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
             )
 
     def weigh_bridge_signal(self, workspace_id: str) -> None:
-        """One failure signal's ruling (#1127): the give-up line
-        names the remedy the row's cause already carries, and a
-        weigh is one rows read over the bridge."""
+        """One failure signal's ruling (#1127), landed: the
+        shared path decides the give-up line or the rows read."""
         ruling = self.bridge.reholder.signal(workspace_id)
+        self.land_ruling(workspace_id, ruling)
+
+    def land_ruling(self, workspace_id: str, ruling: str | None) -> None:
+        """One ruling's effect (#1127): the give-up line names
+        the remedy the row's cause already carries, and a weigh
+        is one rows read over the bridge."""
         if ruling is None:
             return
         if ruling == GAVE_UP:
@@ -748,6 +753,15 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         self.bridge.call(
             REHOLD_KEY + workspace_id, "workspace_proxies", workspace_id
         )
+
+    @QtCore.Slot()
+    def drain_rehold(self) -> None:
+        """The re-hold deferrals' drain (#1127): the failure
+        frames are edge-triggered, so a signal the window
+        swallowed waits as a mark — the poll re-rules each one
+        whose window closed, exactly as a fresh signal would."""
+        for workspace_id, ruling in self.bridge.reholder.take_due():
+            self.land_ruling(workspace_id, ruling)
 
     @QtCore.Slot(str, object)
     def rehold_rows_landed(self, key: str, result: object) -> None:

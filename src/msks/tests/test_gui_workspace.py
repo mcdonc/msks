@@ -1329,10 +1329,19 @@ def test_the_shell_reholds_a_lost_bridge(qt) -> None:
     assert shell.listing.status.text().count("bridge re-held") == 1
 
 
+def force_rehold_windows(bridge) -> None:
+    """Move the stub's real-clock re-hold windows past (#1127):
+    the drain's ruling then reads exactly as a lapsed window
+    would on the wall clock."""
+    bridge.reholder.window_until.clear()
+    bridge.reholder.awaited.clear()
+
+
 def test_the_shell_reholds_a_start_that_left_no_holder(qt) -> None:
     """#1127: a start over the raw API leaves no holder; the
     running transition it publishes weighs the rows the same
-    way, and a standing holder's listening rows spawn
+    way, a failure over the spawn it made defers to the poll's
+    drain, and a standing holder's listening rows spawn
     nothing."""
     shell, window, bridge = make_shell(qt)
     bridge.calls.clear()
@@ -1345,10 +1354,13 @@ def test_the_shell_reholds_a_start_that_left_no_holder(qt) -> None:
     assert ("rehold:ws-a", "workspace_proxies", ("ws-a",)) in bridge.calls
     bridge.succeeded.emit("rehold:ws-a", gui_failed_rows())
     assert bridge.holder_spawns == ["ws-a"]
-    # The window passed: the next failure weighs again, and rows
-    # that already read listening mean a holder stands.
-    bridge.reholder.handled["ws-a"] -= ReHolder.RETRY_AFTER_S
+    # A failure over the spawn's outcome window defers: no
+    # second read until the poll's drain re-rules it.
     shell.frame_landed(gui_lost_frame())
+    reads = [call for call in bridge.calls if call[0].startswith("rehold:")]
+    assert len(reads) == 1
+    force_rehold_windows(bridge)
+    shell.drain_rehold()
     reads = [call for call in bridge.calls if call[0].startswith("rehold:")]
     assert len(reads) == 2
     listening = [
@@ -1360,12 +1372,21 @@ def test_the_shell_reholds_a_start_that_left_no_holder(qt) -> None:
 
 def test_the_shell_names_the_watchs_give_up(qt) -> None:
     """#1127: the failure that lands after the session's last
-    spawn meets the give-up line once — the row's cause stands,
-    and the failures after it stay quiet."""
+    spawn meets the give-up line once the outcome window lapses
+    — the drain carries it, the row's cause stands, and the
+    failures after it stay quiet."""
     shell, window, bridge = make_shell(qt)
+    # The clock moves before each spend, so the last spawn's
+    # outcome window stands after the loop.
     for _ in range(ReHolder.MAX_TRIES):
+        force_rehold_windows(bridge)
         assert bridge.reholder.rehold("ws-a", gui_failed_rows()) is True
     shell.frame_landed(gui_lost_frame())
+    # The last spawn's outcome window stands: the failure
+    # defers, and the line waits for the poll's drain.
+    assert shell.listing.status.text() == ""
+    force_rehold_windows(bridge)
+    shell.drain_rehold()
     text = shell.listing.status.text()
     assert "bridge not re-held" in text
     assert "msks proxy hold" in text

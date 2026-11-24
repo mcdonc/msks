@@ -156,6 +156,21 @@ def row(
     }
 
 
+class HolderClock:
+    """The re-hold watch's clock, advanced by hand (#1127): the
+    backoff and outcome windows read it."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def past_windows(self) -> None:
+        """Move past every standing window at once."""
+        self.now += 2.0 * (ReHolder.RETRY_AFTER_S + ReHolder.AWAIT_S)
+
+
 class FakeData:
     """The screens' daemon calls, scripted and recorded."""
 
@@ -252,7 +267,10 @@ class FakeData:
             self.holder_spawns.append(ws)
             return True
 
-        self.reholder = ReHolder(spawn=record_spawn)
+        # The hand-advanced clock (#1127): the re-hold windows
+        # read it, and the tests move it past them.
+        self.holder_clock = HolderClock()
+        self.reholder = ReHolder(spawn=record_spawn, clock=self.holder_clock)
 
     async def workspaces(self) -> list[dict]:
         self.fetches += 1
@@ -9954,13 +9972,47 @@ async def test_the_listing_names_the_watchs_give_up(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test():
         await wait_for(lambda: "1 workspace" in status_text(app))
-        # The session's budget, spent without the frames.
+        # The session's budget, spent without the frames — the
+        # clock moves before each spend, so the last spawn's
+        # outcome window stands after the loop.
         for _ in range(ReHolder.MAX_TRIES):
+            data.holder_clock.past_windows()
             assert data.reholder.rehold(WS, data.proxy_rows) is True
         assert data.holder_spawns == [WS] * ReHolder.MAX_TRIES
         pushed(factory, lost_frame())
+        await asyncio.sleep(0.3)
+        # The last spawn's outcome window stands: the failure
+        # defers, and the line waits for it.
+        assert "bridge not re-held" not in status_text(app)
+        data.holder_clock.past_windows()
         await wait_for(lambda: "bridge not re-held" in status_text(app))
         assert "msks proxy hold" in status_text(app)
+
+
+async def test_a_crash_looping_holder_retries_at_the_windows_pace(
+    monkeypatch,
+) -> None:
+    """#1127: a holder that dies as fast as it connects retries
+    at the backoff pace, not the frame rate — the in-window
+    failure defers as a mark, and the tick's drain re-rules it
+    once the window closes, because nothing re-delivers the
+    frames."""
+    data = FakeData([row(status="running")])
+    data.proxy_rows = bridge_cause_rows()
+    factory = scripted_listing(monkeypatch, [])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "1 workspace" in status_text(app))
+        pushed(factory, lost_frame())
+        await wait_for(lambda: data.holder_spawns == [WS])
+        # The re-held holder dies again inside the window: the
+        # burst defers, no second spawn lands.
+        pushed(factory, lost_frame())
+        await asyncio.sleep(0.3)
+        assert data.holder_spawns == [WS]
+        # The window closes: the tick's drain weighs again.
+        data.holder_clock.past_windows()
+        await wait_for(lambda: data.holder_spawns == [WS, WS])
 
 
 async def test_the_rehold_watch_survives_junk_and_refusals(
