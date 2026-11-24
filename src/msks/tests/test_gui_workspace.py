@@ -33,6 +33,7 @@ if importlib.util.find_spec("PySide6") is None:
 
 from msks.client import ages as ages_mod  # noqa: E402
 from msks.client import data as clientdata  # noqa: E402
+from msks.client.bridge import ReHolder  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -86,6 +87,16 @@ class StubBridge:
         self.decider_starts: list[str] = []
         self.decider_controllers: list[object] = []
         self.decider_stops = 0
+        #: The bridge re-hold watch's surface (#1127): the session
+        #: policy the shell's watch reads, over a spawn the tests
+        #: record — the detached child never runs here.
+        self.holder_spawns: list[str] = []
+
+        def record_spawn(ws: str) -> bool:
+            self.holder_spawns.append(ws)
+            return True
+
+        self.reholder = ReHolder(spawn=record_spawn)
 
     def call(self, key: str, method: str, *args: object) -> None:
         self.calls.append((key, method, args))
@@ -1255,3 +1266,106 @@ def test_a_refresh_in_flight_is_not_stacked(qt) -> None:
     page.on_succeeded("workspaces-list", [])
     page.on_failed("workspaces-list", clientdata.RestFailure("x", reach=False))
     assert page.status.text() == ""
+
+
+def gui_lost_frame(ws: str = "ws-a") -> dict:
+    """The failure the daemon publishes when the last holder went
+    (#1127): one frame per forward row, the missing-holder cause
+    riding the reason."""
+    return {
+        "event": "proxy.failed",
+        "data": {
+            "id": ws,
+            "proxy": 7,
+            "reason": (
+                "no client holds the bridge — start the workspace "
+                "from a client (the holder it leaves serves after "
+                "the command exits), or run 'msks proxy hold "
+                "<workspace>'"
+            ),
+        },
+    }
+
+
+def gui_failed_rows() -> list[dict]:
+    """One workspace's forward rows as a failing read serves them
+    (#1127)."""
+    return [
+        {
+            "id": 7,
+            "workspace_id": "ws-a",
+            "direction": "forward",
+            "listen_port": 8080,
+            "target_port": 80,
+            "status": "failed",
+            "reason": gui_lost_frame()["data"]["reason"],
+        }
+    ]
+
+
+def test_the_shell_reholds_a_lost_bridge(qt) -> None:
+    """#1127: a holder's death publishes its rows' failure; the
+    shell's watch reads the rows over the bridge, spawns the
+    detached holder, and the listener that follows says the
+    recovery once on the screen the operator sees."""
+    shell, window, bridge = make_shell(qt)
+    bridge.calls.clear()
+    shell.frame_landed(gui_lost_frame())
+    # The burst one failure publishes per row lands as one read.
+    shell.frame_landed(gui_lost_frame())
+    reads = [call for call in bridge.calls if call[0].startswith("rehold:")]
+    assert reads == [("rehold:ws-a", "workspace_proxies", ("ws-a",))]
+    bridge.succeeded.emit("rehold:ws-a", gui_failed_rows())
+    assert bridge.holder_spawns == ["ws-a"]
+    # A listener that answers no spawn of this session says
+    # nothing; the one that answers the spawn says it once.
+    assert shell.listing.status.text() == ""
+    shell.frame_landed({"event": "proxy.listening", "data": {"id": "ws-b"}})
+    assert shell.listing.status.text() == ""
+    shell.frame_landed({"event": "proxy.listening", "data": {"id": "ws-a"}})
+    assert "bridge re-held" in shell.listing.status.text()
+    assert "alpha" in shell.listing.status.text()
+    shell.frame_landed({"event": "proxy.listening", "data": {"id": "ws-a"}})
+    assert shell.listing.status.text().count("bridge re-held") == 1
+
+
+def test_the_shell_reholds_a_start_that_left_no_holder(qt) -> None:
+    """#1127: a start over the raw API leaves no holder; the
+    running transition it publishes weighs the rows the same
+    way, and a standing holder's listening rows spawn
+    nothing."""
+    shell, window, bridge = make_shell(qt)
+    bridge.calls.clear()
+    shell.frame_landed(
+        {
+            "event": "workspace.status",
+            "data": {"id": "ws-a", "status": "running"},
+        }
+    )
+    assert ("rehold:ws-a", "workspace_proxies", ("ws-a",)) in bridge.calls
+    bridge.succeeded.emit("rehold:ws-a", gui_failed_rows())
+    assert bridge.holder_spawns == ["ws-a"]
+    # The window passed: the next failure weighs again, and rows
+    # that already read listening mean a holder stands.
+    bridge.reholder.handled["ws-a"] -= ReHolder.RETRY_AFTER_S
+    shell.frame_landed(gui_lost_frame())
+    reads = [call for call in bridge.calls if call[0].startswith("rehold:")]
+    assert len(reads) == 2
+    listening = [
+        {**gui_failed_rows()[0], "status": "listening", "reason": None}
+    ]
+    bridge.succeeded.emit("rehold:ws-a", listening)
+    assert bridge.holder_spawns == ["ws-a"]
+
+
+def test_the_shell_names_the_watchs_give_up(qt) -> None:
+    """#1127: the failure that lands after the session's last
+    spawn meets the give-up line once — the row's cause stands,
+    and the failures after it stay quiet."""
+    shell, window, bridge = make_shell(qt)
+    for _ in range(ReHolder.MAX_TRIES):
+        assert bridge.reholder.rehold("ws-a", gui_failed_rows()) is True
+    shell.frame_landed(gui_lost_frame())
+    text = shell.listing.status.text()
+    assert "bridge not re-held" in text
+    assert "msks proxy hold" in text

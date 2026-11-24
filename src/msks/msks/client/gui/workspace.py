@@ -24,6 +24,7 @@ its guards (#927), the reachability the gate counts.
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from ..bridge import GAVE_UP, became_running, bridge_serving, holder_lost
 from ..data import RestFailure
 from ..frames import listing_frame, row_frame
 from .bridge import Bridge
@@ -76,6 +77,11 @@ PROXIES_LABEL = "Proxies"
 #: The Events tab's label (#989): the page's recent-frames
 #: window.
 EVENTS_LABEL = "Events"
+
+#: The re-hold rows read's key prefix (#1127): the shell's
+#: flights on the bridge, one workspace per key — the answer
+#: feeds the policy's spawn gate.
+REHOLD_KEY = "rehold:"
 
 #: The Egress tab's label (#1042): the workspace's egress
 #: posture and the in-place mode switch (#1049).
@@ -577,6 +583,7 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         self.detail.shell_wanted.connect(self.open_shell)
         self.detail.external_wanted.connect(self.open_external)
         bridge.landed.connect(self.frame_landed)
+        bridge.succeeded.connect(self.rehold_rows_landed)
         bridge.feed_dropped.connect(self.feed_dropped)
         bridge.feed_reconnected.connect(self.feed_back)
         bridge.feed_served.connect(self.feed_served)
@@ -690,10 +697,71 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         the listing while it owns the window: the listing
         re-reads on the frames the daemon publishes, not on a
         standing tick, the TUI listing's own rule. A hidden
-        screen re-reads at its next show."""
+        screen re-reads at its next show. A bridge-relevant
+        frame crosses to the re-hold watch first (#1127)."""
+        self.bridge_frame(frame)
         self.detail.push_frame(frame)
         if listing_frame(frame) and self.currentWidget() is self.listing:
             self.listing.refresh()
+
+    # -- the bridge re-hold watch (#1127) --------------------------------
+
+    def bridge_frame(self, frame: dict) -> None:
+        """One bridge-relevant frame to the shell's re-hold watch
+        (#1127): a listener that answers a spawn this window's
+        session made says the recovery once — the toast lands on
+        the screen the operator sees — and a failure signal (the
+        holder died, or a running start left none) goes to the
+        policy for its ruling: a weigh is one rows read over the
+        bridge, and the give-up line names the remedy the row's
+        cause already carries."""
+        serving = bridge_serving(frame)
+        if serving is not None:
+            self.note_reheld(serving)
+            return
+        lost = holder_lost(frame) or became_running(frame)
+        if lost is not None:
+            self.weigh_bridge_signal(lost)
+
+    def note_reheld(self, workspace_id: str) -> None:
+        """A listener came up (#1127): the one that answers a
+        spawn this session made says the recovery once, on the
+        screen the operator sees."""
+        if self.bridge.reholder.serving(workspace_id):
+            self.currentWidget().flash(
+                f"bridge re-held — {self.detail_label(workspace_id)}"
+            )
+
+    def weigh_bridge_signal(self, workspace_id: str) -> None:
+        """One failure signal's ruling (#1127): the give-up line
+        names the remedy the row's cause already carries, and a
+        weigh is one rows read over the bridge."""
+        ruling = self.bridge.reholder.signal(workspace_id)
+        if ruling is None:
+            return
+        if ruling == GAVE_UP:
+            self.currentWidget().flash(
+                f"bridge not re-held — {self.detail_label(workspace_id)}; "
+                "the row's cause names 'msks proxy hold'"
+            )
+            return
+        self.bridge.call(
+            REHOLD_KEY + workspace_id, "workspace_proxies", workspace_id
+        )
+
+    @QtCore.Slot(str, object)
+    def rehold_rows_landed(self, key: str, result: object) -> None:
+        """One re-hold rows read's answer (#1127): the refreshed
+        rows gate the spawn — a listening row means a holder
+        stands and a failed row with another cause means a
+        holder cannot serve it. Every other key belongs to the
+        screens' own flights and decides nothing here. A refusal
+        never lands on this slot (the bridge's ``failed`` signal
+        carries it): the window stands, the row's cause stays
+        visible, and the next signal weighs again."""
+        if not key.startswith(REHOLD_KEY):
+            return
+        self.bridge.reholder.rehold(key[len(REHOLD_KEY) :], result or [])
 
     @QtCore.Slot(str)
     def feed_dropped(self, reason: str) -> None:

@@ -33,6 +33,7 @@ from textual.events import Click, Resize
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Footer, Input, ListItem, ListView, Static
 
+from ..bridge import GAVE_UP, became_running, bridge_serving, holder_lost
 from ..data import RestFailure
 from ..frames import decode_frame, listing_frame
 from ..sshsessions import count_sessions
@@ -105,24 +106,32 @@ class ListingLink(AuditLink):
     lifecycle — this screen holds no decider authority, and the
     socket's relay carries every published frame to every
     subscriber. Each listing-affecting frame pokes the listing's
-    refresh, and every connection that comes to serve pokes one
+    refresh, every connection that comes to serve pokes one
     too (frames published while no connection stood never
-    landed); nothing else lands anywhere — the rows come from
-    the REST listing, refetched whole."""
+    landed), and each bridge-relevant frame crosses to the
+    re-hold watch (#1127) — the screen's ``on_bridge`` callback;
+    nothing else lands anywhere — the rows come from the REST
+    listing, refetched whole."""
 
-    def __init__(self, on_event, *, ws_factory=None) -> None:
+    def __init__(self, on_event, on_bridge=None, *, ws_factory=None) -> None:
         super().__init__(ws_factory=ws_factory)
         self.on_event = on_event
+        self.on_bridge = on_bridge
         self.on_connect = on_event
 
     def land_frame(self, raw: str) -> bool:
         """One frame's landing: a listing-affecting transition
-        pokes the refresh; the rest is not this screen's state,
+        pokes the refresh, and a bridge-relevant one crosses to
+        the re-hold watch; the rest is not this screen's state,
         and no registration was sent, so no rejection can
         arrive."""
         msg = decode_frame(raw)
-        if msg is not None and listing_frame(msg):
+        if msg is None:
+            return False
+        if listing_frame(msg):
             self.on_event()
+        if self.on_bridge is not None:
+            self.on_bridge(msg)
         return False
 
 
@@ -337,7 +346,70 @@ class MainScreen(HelpKeys, Screen):
     def make_link(self) -> ListingLink:
         """The listing's subscriber connection — the tests' seam
         for a scripted one."""
-        return ListingLink(self.refresh_rows)
+        return ListingLink(self.refresh_rows, self.bridge_frame)
+
+    # -- the bridge re-hold watch (#1127) ----------------------------
+
+    def bridge_frame(self, msg: dict) -> None:
+        """One bridge-relevant frame to the app's re-hold watch
+        (#1127): a listener that answers a spawn this session
+        made says the recovery once, and a failure signal (the
+        holder died, or a running start left none) goes to the
+        policy for its ruling — a weigh runs the rows read, and
+        the give-up line names the remedy the row's cause
+        already carries."""
+        serving = bridge_serving(msg)
+        if serving is not None:
+            self.note_reheld(serving)
+            return
+        lost = holder_lost(msg) or became_running(msg)
+        if lost is not None:
+            self.weigh_bridge_signal(lost)
+
+    def note_reheld(self, workspace_id: str) -> None:
+        """A listener came up (#1127): the one that answers a
+        spawn this session made says the recovery once, on the
+        surface the operator stands on."""
+        if self.app.data.reholder.serving(workspace_id):
+            label = flash_safe(self.bridge_label(workspace_id))
+            self.app.flash_standing(f"bridge re-held — {label}")
+
+    def weigh_bridge_signal(self, workspace_id: str) -> None:
+        """One failure signal's ruling (#1127): the give-up line
+        names the remedy the row's cause already carries, and a
+        weigh runs the rows read that gates the spawn."""
+        ruling = self.app.data.reholder.signal(workspace_id)
+        if ruling is None:
+            return
+        if ruling == GAVE_UP:
+            label = flash_safe(self.bridge_label(workspace_id))
+            self.app.flash_standing(
+                f"bridge not re-held — {label}; "
+                "the row's cause names 'msks proxy hold'"
+            )
+            return
+        self.run_worker(self.weigh_rehold(workspace_id), group="rehold")
+
+    def bridge_label(self, workspace_id: str) -> str:
+        """The workspace's label for a re-hold line: the standing
+        row's, the id alone for one the listing does not hold."""
+        row = next(
+            (row for row in self.rows if row["id"] == workspace_id), None
+        )
+        return workspace_label(row) if row is not None else workspace_id
+
+    async def weigh_rehold(self, workspace_id: str) -> None:
+        """One weighed signal's rows read (#1127): the refreshed
+        rows gate the spawn — a listening row means a holder
+        stands and a failed row with another cause means a
+        holder cannot serve it. A refusal decides nothing: the
+        window stands, the row's cause stays visible, and the
+        next signal weighs again."""
+        try:
+            rows = await self.app.data.workspace_proxies(workspace_id)
+        except RestFailure:
+            return
+        self.app.data.reholder.rehold(workspace_id, rows)
 
     def local_tick(self) -> None:
         """The client-side watch (#1019): the link's health, then

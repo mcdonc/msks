@@ -408,3 +408,262 @@ async def test_guarded_open_answers_its_own_close_on_failure() -> None:
     holder.open = raising
     await bridge.guarded_open(holder, 7, 8080, "/a", "/i")
     assert json.loads(socket.outgoing[-1]) == {"t": CLOSE, "cid": 7}
+
+
+def lost_frame(ws: str = "ws-a") -> dict:
+    """One proxy.failed frame carrying the missing-holder cause —
+    the daemon's publish_down shape."""
+    return {
+        "event": "proxy.failed",
+        "data": {
+            "id": ws,
+            "proxy": 7,
+            "direction": "forward",
+            "reason": (
+                "no client holds the bridge — start the workspace "
+                "from a client (the holder it leaves serves after "
+                "the command exits), or run 'msks proxy hold "
+                "<workspace>'"
+            ),
+        },
+    }
+
+
+def failed_rows(reason: str | None = bridge.NO_HOLDER_CAUSE) -> list[dict]:
+    """One workspace's forward rows as a failing read serves
+    them: failed, the cause riding the reason."""
+    return [
+        {
+            "id": 7,
+            "direction": "forward",
+            "status": "failed",
+            "reason": reason,
+        }
+    ]
+
+
+class FakeClock:
+    """The monotonic stand-in: the tests advance it by hand."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def make_reholder(spawned: list | None = None):
+    """A policy over a recording spawn and a hand-advanced
+    clock."""
+    spawned = [] if spawned is None else spawned
+    clock = FakeClock()
+    return (
+        bridge.ReHolder(
+            spawn=lambda ws: bool(spawned.append(ws) or True), clock=clock
+        ),
+        clock,
+    )
+
+
+def test_the_frame_predicates_name_their_workspaces() -> None:
+    """#1127: the bridge-relevant frames — a holder-lost failure,
+    a running transition, a serving listener — name their
+    workspace; every other shape decides nothing."""
+    assert bridge.holder_lost(lost_frame()) == "ws-a"
+    # Another cause (a bind refusal) is not the bridge's failure.
+    assert bridge.holder_lost(lost_frame()) == "ws-a"
+    bind_failed = {
+        "event": "proxy.failed",
+        "data": {"id": "ws-a", "reason": "[Errno 98] address in use"},
+    }
+    assert bridge.holder_lost(bind_failed) is None
+    assert (
+        bridge.holder_lost({"event": "proxy.closed", "data": {"id": "ws-a"}})
+        is None
+    )
+    assert bridge.holder_lost({"event": "proxy.failed", "data": {}}) is None
+    running = {
+        "event": "workspace.status",
+        "data": {"id": "ws-b", "status": "running"},
+    }
+    assert bridge.became_running(running) == "ws-b"
+    assert (
+        bridge.became_running(
+            {"event": "workspace.status", "data": {"id": "ws-b"}}
+        )
+        is None
+    )
+    assert (
+        bridge.became_running(
+            {
+                "event": "workspace.status",
+                "data": {"id": "ws-b", "status": "stopping"},
+            }
+        )
+        is None
+    )
+    assert (
+        bridge.became_running(
+            {"event": "workspace.created", "data": {"id": "ws-b"}}
+        )
+        is None
+    )
+    serving = {"event": "proxy.listening", "data": {"id": "ws-c"}}
+    assert bridge.bridge_serving(serving) == "ws-c"
+    assert (
+        bridge.bridge_serving(
+            {"event": "proxy.removed", "data": {"id": "ws-c"}}
+        )
+        is None
+    )
+
+
+def test_rehold_due_reads_the_rows_honestly() -> None:
+    """#1127: a refreshed read owes a holder when a forward row
+    reads failed with the missing-holder cause and none reads
+    listening — the start hook's own gate, narrowed to the cause
+    a holder can serve."""
+    assert bridge.rehold_due(failed_rows()) is True
+    # A listening row means a holder stands: no standby beside it.
+    assert (
+        bridge.rehold_due(
+            [
+                *failed_rows(),
+                {"id": 8, "direction": "forward", "status": "listening"},
+            ]
+        )
+        is False
+    )
+    # A bind refusal reads failed with another cause.
+    assert bridge.rehold_due(failed_rows("[Errno 98] address in use")) is False
+    # Stopped rows (the workspace went down) owe no holder.
+    assert (
+        bridge.rehold_due(
+            [{"id": 7, "direction": "forward", "status": "stopped"}]
+        )
+        is False
+    )
+    # Remote rows never take a holder.
+    assert (
+        bridge.rehold_due(
+            [
+                {
+                    "id": 7,
+                    "direction": "remote",
+                    "status": "failed",
+                    "reason": bridge.NO_HOLDER_CAUSE,
+                }
+            ]
+        )
+        is False
+    )
+    assert bridge.rehold_due([]) is False
+
+
+def test_reholder_spawns_once_per_signal_burst() -> None:
+    """#1127: the burst one failure publishes per row lands as
+    one — the first signal weighs and spawns, the rest meet the
+    window and decide nothing."""
+    holder, _clock = make_reholder()
+    assert holder.signal("ws-a") == bridge.WEIGH
+    assert holder.signal("ws-a") is None
+    assert holder.signal("ws-a") is None
+    assert holder.rehold("ws-a", failed_rows()) is True
+    assert holder.spent == {"ws-a": 1}
+
+
+def test_reholder_retries_at_the_backoff_pace() -> None:
+    """#1127: a signal past the window weighs again — a
+    crash-looping holder retries at the window's pace, not the
+    frame rate."""
+    holder, clock = make_reholder()
+    assert holder.signal("ws-a") == bridge.WEIGH
+    clock.now += bridge.ReHolder.RETRY_AFTER_S
+    assert holder.signal("ws-a") == bridge.WEIGH
+    clock.now += bridge.ReHolder.RETRY_AFTER_S - 0.1
+    assert holder.signal("ws-a") is None
+    clock.now += 0.2
+    assert holder.signal("ws-a") == bridge.WEIGH
+
+
+def test_reholder_gives_up_once_per_session() -> None:
+    """#1127: the budget is bounded per workspace per session —
+    the failure after the last spawn meets GAVE_UP once, and the
+    ones after it meet silence (the row's cause stands)."""
+    holder, clock = make_reholder()
+    for _ in range(bridge.ReHolder.MAX_TRIES):
+        assert holder.signal("ws-a") == bridge.WEIGH
+        assert holder.rehold("ws-a", failed_rows()) is True
+        clock.now += bridge.ReHolder.RETRY_AFTER_S
+    assert holder.signal("ws-a") == bridge.GAVE_UP
+    assert holder.signal("ws-a") is None
+    # Another workspace keeps its own budget.
+    assert holder.signal("ws-b") == bridge.WEIGH
+
+
+def test_reholder_does_not_spawn_past_the_budget() -> None:
+    """#1127: a rows read that lands after the budget spent
+    spawns nothing — the ruling and the read cannot race the
+    budget loose."""
+    holder, clock = make_reholder()
+    for _ in range(bridge.ReHolder.MAX_TRIES):
+        assert holder.rehold("ws-a", failed_rows()) is True
+    assert holder.rehold("ws-a", failed_rows()) is False
+
+
+def test_reholder_says_the_recovery_once_inside_the_window() -> None:
+    """#1127: a listener that lands inside the outcome window is
+    the spawn's recovery, said once; a later one — an operator's
+    manual hold — is not the watch's work, and a signal in
+    between closes the window."""
+    holder, clock = make_reholder()
+    assert holder.rehold("ws-a", failed_rows()) is True
+    assert holder.serving("ws-a") is True
+    assert holder.serving("ws-a") is False
+    # A late listener past the window reads as someone else's.
+    assert holder.rehold("ws-b", failed_rows()) is True
+    clock.now += bridge.ReHolder.AWAIT_S + 1
+    assert holder.serving("ws-b") is False
+    # A fresh signal closes the standing outcome window.
+    assert holder.rehold("ws-c", failed_rows()) is True
+    clock.now += bridge.ReHolder.RETRY_AFTER_S
+    assert holder.signal("ws-c") == bridge.WEIGH
+    assert holder.serving("ws-c") is False
+
+
+def test_reholder_spends_only_real_attempts() -> None:
+    """#1127: rows that read listening, stopped, or failed with
+    another cause spawn nothing and spend nothing — the stop race
+    and the bind refusal never exhaust a session's budget."""
+    holder, _clock = make_reholder()
+    assert (
+        holder.rehold(
+            "ws-a",
+            [{"id": 7, "direction": "forward", "status": "listening"}],
+        )
+        is False
+    )
+    assert holder.rehold("ws-a", failed_rows("[Errno 98] used")) is False
+    assert holder.spent == {}
+
+
+def test_reholder_takes_the_starts_window() -> None:
+    """#1127: the start path's own spawn takes the window a
+    signal would — the running transition the boot publishes
+    must not stack a second child beside it."""
+    holder, clock = make_reholder()
+    holder.note_start("ws-a")
+    assert holder.signal("ws-a") is None
+    clock.now += bridge.ReHolder.RETRY_AFTER_S
+    assert holder.signal("ws-a") == bridge.WEIGH
+
+
+def test_reholder_names_a_failed_spawn() -> None:
+    """#1127: a spawn that cannot start spends its attempt and
+    answers False — the failure is the surface's to name, and no
+    outcome window stands for a child that never left."""
+    holder, _clock = make_reholder()
+    holder.spawn = lambda ws: False
+    assert holder.rehold("ws-a", failed_rows()) is False
+    assert holder.spent == {"ws-a": 1}
+    assert holder.awaited == {}

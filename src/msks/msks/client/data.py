@@ -14,8 +14,7 @@ own data modules (:mod:`msks.client.tui.data`,
 matching CLI subcommand makes.
 """
 
-import sys
-
+from .bridge import ReHolder
 from .create import create_workspace_core, invoking_user
 from .env import env_token, env_url, shared_ssl
 from .hold import holder_due, spawn_holder
@@ -54,6 +53,12 @@ class RestData:
 
     def __init__(self, transport=None) -> None:
         self.transport = transport
+        # The session's bridge re-hold policy (#1127): one per
+        # client session — the TUI's app data and the GUI's
+        # window data each own their instance through here, and
+        # the surfaces below (the listing screens, the GUI's
+        # shell) reach it as ``data.reholder``.
+        self.reholder = ReHolder()
 
     async def carried(self, build):
         """Await one REST call, carrying its exit-contract failure
@@ -210,6 +215,11 @@ class RestData:
             )
             if holder_due(rows):
                 spawn_holder(workspace_id)
+                # The running transition the boot publishes must
+                # not weigh a second child beside the one this
+                # start leaves (#1127): the spawn takes the
+                # re-hold window a signal would.
+                self.reholder.note_start(workspace_id)
         except Exception, SystemExit:
             # Best-effort by contract (#1102): the boot's answer
             # stands, and the rows carry the cause.

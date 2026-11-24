@@ -15,12 +15,18 @@ no key material anywhere.
 forward rows, so the proxies serve after the command exits; the
 holder exits when its websocket ends (the workspace stopped, the
 daemon went away). ``msks proxy hold`` runs one on demand.
+
+The re-hold watch (#1127) lives here too: an open client — the
+TUI or the GUI — restarts a holder whose failure named the
+missing one, through :class:`ReHolder`, the one policy both
+surfaces share.
 """
 
 import asyncio
 import contextlib
 import json
 import sys
+import time
 from urllib.parse import quote
 
 import websockets
@@ -321,3 +327,206 @@ def run_hold(workspace_id: str, transport=None) -> int:
     with session_identity(key, workspace_id) as resolved:
         asyncio.run(hold(workspace_id, url, token, ssl_ctx, key, resolved))
     return 0
+#: The stable opening of the cause a failed forward row carries
+#: while no holder serves it — the daemon's own line, matched by
+#: its opening so this side needs no daemon import (the client
+#: isolation rule keeps the daemon's bridge module out of here).
+NO_HOLDER_CAUSE = "no client holds the bridge"
+
+
+def rehold_due(rows: list[dict]) -> bool:
+    """Whether a refreshed rows read still owes the workspace a
+    holder (#1127): it owns forward rows, and the forward rows
+    read as the start hook's own gate
+    (:func:`msks.client.proxies.holder_due`) reads them — this
+    gate keeps its own copy of that half because ``proxies``
+    imports this module's ``run_hold`` and the edge cannot point
+    back — narrowed to the cause a holder can serve."""
+    forward = [row for row in rows if row.get("direction") != "remote"]
+    return bool(forward) and forward_rows_owe_holder(forward)
+
+
+def forward_rows_owe_holder(forward: list[dict]) -> bool:
+    """The owed half of :func:`rehold_due`: none of the forward
+    rows reads ``listening`` (a holder stands — #1102's
+    no-standby rule), and one of them reads failed with the
+    missing-holder cause."""
+    if any(row.get("status") == "listening" for row in forward):
+        return False
+    return any(row_lost_holder(row) for row in forward)
+
+
+def row_lost_holder(row: dict) -> bool:
+    """Whether one forward row reads failed with the
+    missing-holder cause — a bind refusal reads failed with
+    another cause, and a holder cannot serve a port the host
+    never bound."""
+    return row.get("status") == "failed" and str(
+        row.get("reason") or ""
+    ).startswith(NO_HOLDER_CAUSE)
+
+
+def frame_id(data: dict) -> str | None:
+    """The workspace one frame's data names, when it names
+    one."""
+    return str(data.get("id")) if data.get("id") is not None else None
+
+
+def holder_lost(frame: dict) -> str | None:
+    """The workspace one events frame names as bridge-lost
+    (#1127): a ``proxy.failed`` whose cause is the missing
+    holder — the holder died, or the start left none. None for
+    every other frame (a bind's own failure carries another
+    cause, and another remedy)."""
+    if frame.get("event") != "proxy.failed":
+        return None
+    return lost_with_cause(frame.get("data") or {})
+
+
+def lost_with_cause(data: dict) -> str | None:
+    """The named half of :func:`holder_lost`: the cause matches
+    the missing-holder line, and the workspace it names is the
+    answer."""
+    if not str(data.get("reason") or "").startswith(NO_HOLDER_CAUSE):
+        return None
+    return frame_id(data)
+
+
+def became_running(frame: dict) -> str | None:
+    """The workspace one events frame names as newly running
+    (#1127): the watcher's ``workspace.status`` transition. A
+    start that left no holder (a raw API call, a client without
+    the key) shows here first — the rows it left read failed
+    with the bridge cause."""
+    data = frame.get("data") or {}
+    if frame.get("event") != "workspace.status":
+        return None
+    if data.get("status") != "running":
+        return None
+    return frame_id(data)
+
+
+def bridge_serving(frame: dict) -> str | None:
+    """The workspace one events frame names as bridge-served
+    (#1127): a ``proxy.listening`` transition — the hub's own
+    up-publish among the binds' own. The watch reads it as its
+    spawn's outcome alone (:meth:`ReHolder.serving`)."""
+    if frame.get("event") != "proxy.listening":
+        return None
+    return frame_id(frame.get("data") or {})
+
+
+#: One bridge-failure signal's ruling (:meth:`ReHolder.signal`):
+#: the surfaces follow WEIGH with a rows read, and GAVE_UP names
+#: the spent budget.
+WEIGH = "weigh"
+GAVE_UP = "gave up"
+
+
+class ReHolder:
+    """The session's bridge re-hold policy (#1127): an open
+    client — the TUI or the GUI — restarts a workspace's holder
+    when its failure names the missing one, so the operator with
+    a client open never reads that cause and runs the hold
+    command by hand.
+
+    One instance per client session; the shared data seam
+    (:class:`~msks.client.data.RestData`) owns it, and the start
+    path marks it (:meth:`note_start`). The surfaces feed it the
+    frames their subscriptions land and the rows their reads
+    serve; it owns the rest — when to retry, how often, and when
+    to give the workspace up to the row's own cause for the
+    session. The spawn is the same detached child ``msks start``
+    leaves (:func:`spawn_holder`); no key material moves anywhere
+    new.
+    """
+
+    #: Spawns per workspace per session: the failure that lands
+    #: after the last one ends the watch — the row's cause
+    #: stands, one line says the watch gave up, and a
+    #: crash-looping holder cannot spin the client past it.
+    MAX_TRIES = 3
+
+    #: Seconds between handled signals for one workspace: the
+    #: burst one failure publishes per row lands as one, and a
+    #: holder that dies as fast as it connects retries at this
+    #: pace, not at the frame rate.
+    RETRY_AFTER_S = 30.0
+
+    #: Seconds a spawn's outcome stays awaited: a listener that
+    #: lands inside the window is the spawn's recovery, and the
+    #: surfaces say so once; one that lands later — an
+    #: operator's manual hold among them — is not this watch's
+    #: work. The clock is monotonic, so a suspend never expires
+    #: it early.
+    AWAIT_S = 30.0
+
+    def __init__(self, spawn=None, clock=time.monotonic) -> None:
+        self.spawn = spawn or spawn_holder
+        self.clock = clock
+        #: Spawns spent per workspace this session.
+        self.spent: dict[str, int] = {}
+        #: The clock at each handled signal — the backoff window.
+        self.handled: dict[str, float] = {}
+        #: The clock at each spawn — the outcome window.
+        self.awaited: dict[str, float] = {}
+        #: The workspaces whose give-up line was said.
+        self.said: set[str] = set()
+
+    def note_start(self, workspace_id: str) -> None:
+        """A holder the start path itself spawned (#1102): the
+        running transition that follows must not stack a second
+        child beside it, so the start's own spawn takes the
+        window a signal would."""
+        self.handled[workspace_id] = self.clock()
+
+    def signal(self, workspace_id: str) -> str | None:
+        """One bridge-failure signal's ruling (#1127): WEIGH —
+        follow with a rows read and :meth:`rehold`; GAVE_UP — the
+        session's budget is spent, said once, and the surfaces
+        flash the line; None — the backoff window stands (the
+        burst of one failure lands as one, and a fast crash
+        loop retries at the window's pace)."""
+        if self.spent.get(workspace_id, 0) >= self.MAX_TRIES:
+            if workspace_id in self.said:
+                return None
+            self.said.add(workspace_id)
+            return GAVE_UP
+        last = self.handled.get(workspace_id)
+        if last is not None and (self.clock() - last) < self.RETRY_AFTER_S:
+            return None
+        self.handled[workspace_id] = self.clock()
+        # A signal a standing outcome window meets closes it:
+        # the spawn it followed either served (its listening
+        # landed and was said) or it did not, and a listener
+        # from here on is not that spawn's recovery.
+        self.awaited.pop(workspace_id, None)
+        return WEIGH
+
+    def serving(self, workspace_id: str) -> bool:
+        """A listener came up: whether it answers a spawn this
+        watch made inside the outcome window — the caller says
+        the recovery once. The take consumes the window; its
+        expiry keeps a listener that comes up later (an
+        operator's manual hold) from reading as this watch's
+        work."""
+        at = self.awaited.pop(workspace_id, None)
+        return at is not None and (self.clock() - at) <= self.AWAIT_S
+
+    def rehold(self, workspace_id: str, rows: list[dict]) -> bool:
+        """The refreshed rows read's ruling (#1127): rows that
+        still owe the workspace a holder take one spawn, the
+        same detached child ``msks start`` leaves. The attempt
+        spends the budget; rows that read listening (a holder
+        stands, #1102's no-standby rule) or failed with another
+        cause (a bind refusal) spawn nothing and spend
+        nothing."""
+        if self.spent.get(workspace_id, 0) >= self.MAX_TRIES:
+            return False
+        if not rehold_due(rows):
+            return False
+        self.spent[workspace_id] = self.spent.get(workspace_id, 0) + 1
+        if not self.spawn(workspace_id):
+            return False
+        self.awaited[workspace_id] = self.clock()
+        return True
