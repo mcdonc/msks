@@ -474,8 +474,10 @@ secretcache = 4
 # #1118: the shared venv phase reads the release word the wheel
 # pins to (hostsetup/venv.py) — the module edge beside
 # __version__, the same statement shape the macOS bootstrap's
-# own read takes. #1119/#1120 fold beside these.
-spec = 61 1feee36 (Rearchitect the bridge: a client holder serves the rows)
+# own read takes. #1119/#1120 fold beside these. #1102: the
+# holder route joins the relay wire vocabulary (module edge +
+# the framing and control names).
+spec = 63
 # #773: the clone route reads the state-disk floor (create_refusal
 # beside the artifacts' allocated-cost file_cost) before any byte
 # copies.

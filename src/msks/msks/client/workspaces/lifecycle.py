@@ -12,11 +12,11 @@ printed lines. The listing surface lives in
 import asyncio
 import os
 import posixpath
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..bridge import spawn_holder
 from ..context import (
     call,
     env_token,
@@ -36,7 +36,9 @@ from ..create import (
     read_pubkey,
 )
 from ..jsonio import ApiExit, emit, json_line, outcome
-from ..proxies import needs_bridge, workspace_proxies
+from ..proxies import (
+    workspace_proxies,
+)
 from ..resize import display_name, resize_message
 
 
@@ -233,37 +235,14 @@ async def start_stop_row(
         return row
 
 
-def spawn_holder(workspace_id: str) -> bool:
-    """Leave a bridge holder behind (#1102): a detached child of
-    this CLI that serves the workspace's forward rows until the
-    workspace stops. It runs the same interpreter with the same
-    environment (the daemon's address and the identity the shell
-    presets), in its own session so the command's exit leaves it
-    standing."""
-    argv = [
-        sys.executable,
-        "-m",
-        "msks.client.cli",
-        "proxy",
-        "hold",
-        workspace_id,
-    ]
-    try:
-        subprocess.Popen(
-            argv,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    except OSError as exc:
-        print(
-            f"msks: the bridge holder did not start ({exc}); "
-            f"'msks proxy hold {workspace_id}' serves it instead",
-            file=sys.stderr,
-        )
+def holder_due(rows: list[dict]) -> bool:
+    """Whether a start owes the workspace a fresh holder: it owns
+    forward rows, and none of them already reads ``listening`` (a
+    holder stands — another start must not stack a standby beside
+    it, #1102 review)."""
+    if not any(row["direction"] != "remote" for row in rows):
         return False
-    return True
+    return not any(row.get("status") == "listening" for row in rows)
 
 
 def bridge_hook(workspace_id: str, transport=None) -> None:
@@ -276,8 +255,7 @@ def bridge_hook(workspace_id: str, transport=None) -> None:
     next bridge-bearing client visit."""
     try:
         rows = asyncio.run(workspace_proxies(workspace_id, transport))
-        if not needs_bridge(rows):
-            return
+        due = holder_due(rows)
     except (Exception, SystemExit) as exc:
         # Best-effort by contract (#1102): the start keeps its
         # exit code whatever the rows read says.
@@ -287,7 +265,7 @@ def bridge_hook(workspace_id: str, transport=None) -> None:
             file=sys.stderr,
         )
         return
-    if spawn_holder(workspace_id):
+    if due and spawn_holder(workspace_id):
         print(
             "msks: bridge held in the background — the forward "
             "proxies serve while this machine can reach the daemon",

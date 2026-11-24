@@ -14,6 +14,7 @@ own data modules (:mod:`msks.client.tui.data`,
 matching CLI subcommand makes.
 """
 
+from .bridge import spawn_holder
 from .create import create_workspace_core, invoking_user
 from .env import env_token, env_url, shared_ssl
 from .jsonio import ApiExit
@@ -191,10 +192,25 @@ class RestData:
         )
 
     async def start(self, workspace_id: str) -> dict:
-        """POST the boot — the same call ``msks start`` makes."""
-        return await self.rest(
+        """POST the boot — the same call ``msks start`` makes —
+        and leave the bridge holder behind the CLI start leaves
+        (#1102): the TUI and the GUI cross this seam, and a
+        workspace with forward rows serves them through the holder
+        this spawns. Best-effort like the CLI's own hook: a rows
+        read that fails or a holder that cannot start leaves the
+        boot's answer untouched."""
+        row = await self.rest(
             "POST", f"/api/v1/workspaces/{workspace_id}/start"
         )
+        try:
+            rows = await self.rest(
+                "GET", f"/api/v1/workspaces/{workspace_id}/proxies"
+            )
+            if any(item["direction"] != "remote" for item in rows):
+                spawn_holder(workspace_id)
+        except Exception, SystemExit:
+            pass  # the start itself already succeeded
+        return row
 
     async def stop(self, workspace_id: str) -> dict:
         """POST the graceful power-off — ``msks stop``."""

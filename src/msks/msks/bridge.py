@@ -126,22 +126,33 @@ class BridgeHub:
         return holder
 
     def unregister(self, workspace_id: str, holder: Holder) -> None:
-        """The holder's websocket went: its channels end, and the
-        workspace keeps only its remaining holders."""
+        """The holder's websocket went: its channels end (their
+        readers see EOF, or a connected peer hangs forever), and
+        the workspace keeps only its remaining holders."""
         held = self.holders.get(workspace_id)
-        if held is None:
-            return
-        with contextlib.suppress(ValueError):
-            held.remove(holder)
-        if not held:
-            self.holders.pop(workspace_id, None)
-        holder.channels.clear()
+        if held is not None:
+            with contextlib.suppress(ValueError):
+                held.remove(holder)
+            if not held:
+                self.holders.pop(workspace_id, None)
+        self.retire(holder)
 
     def close_workspace(self, workspace_id: str) -> list[Holder]:
         """The workspace's holders, taken with it (the detach
-        hook): the route closes each websocket it returns, and the
-        holding clients exit with theirs."""
-        return self.holders.pop(workspace_id, [])
+        hook): the route closes each websocket it returns, the
+        holding clients exit with theirs, and their channels end
+        (the readers see EOF)."""
+        taken = self.holders.pop(workspace_id, [])
+        for holder in taken:
+            self.retire(holder)
+        return taken
+
+    def retire(self, holder: Holder) -> None:
+        """End a departing holder's channels: every reader sees
+        EOF, whether or not the workspace keeps other holders."""
+        for reader in holder.channels.values():
+            reader.feed_eof()
+        holder.channels.clear()
 
     # --- the bridge's transitions ------------------------------------
 
@@ -154,9 +165,22 @@ class BridgeHub:
 
     async def publish_down(self, workspace_id: str) -> None:
         """The last holder went: the forward rows carry the named
-        cause until the next holder."""
+        cause until the next holder. The fact is re-read after the
+        rows read — a holder arriving under it must not be painted
+        failed by the stale half of the transition."""
         if not self.holders.get(workspace_id):
             await self.publish_rows(workspace_id, DOWN_EVENT, NO_HOLDER)
+            if self.holders.get(workspace_id):
+                await self.publish_rows(workspace_id, UP_EVENT)
+
+    async def row_owner(self, workspace_id: str) -> int | None:
+        """The workspace row's owner, for the scoped frames #1095
+        promised; None when the row cannot be read."""
+        with contextlib.suppress(Exception):
+            workspace = await self.app.state.model.get_workspace(workspace_id)
+            if workspace is not None:
+                return workspace.get("owner_uid")
+        return None
 
     async def publish_rows(
         self, workspace_id: str, event: str, reason: str | None = None
@@ -168,19 +192,35 @@ class BridgeHub:
         if hub is None:
             return
         with contextlib.suppress(Exception):
+            owner = await self.row_owner(workspace_id)
             for row in await self.app.state.model.list_proxies(workspace_id):
-                if row["direction"] == "remote":
-                    continue
-                payload = {
-                    "id": workspace_id,
-                    "proxy": row["id"],
-                    "direction": row["direction"],
-                    "listen_port": row["listen_port"],
-                    "target_port": row["target_port"],
-                }
-                if reason is not None:
-                    payload["reason"] = reason
-                await hub.publish(event, payload)
+                await self.publish_row(
+                    hub, workspace_id, row, event, reason, owner
+                )
+
+    async def publish_row(
+        self,
+        hub,
+        workspace_id: str,
+        row: dict,
+        event: str,
+        reason: str | None,
+        owner: int | None,
+    ) -> None:
+        """One row's transition frame: the payload the listeners'
+        own events carry, scoped to the row's owner (#1095)."""
+        if row["direction"] == "remote":
+            return
+        payload = {
+            "id": workspace_id,
+            "proxy": row["id"],
+            "direction": row["direction"],
+            "listen_port": row["listen_port"],
+            "target_port": row["target_port"],
+        }
+        if reason is not None:
+            payload["reason"] = reason
+        await hub.publish(event, payload, owner=owner)
 
     # --- the row status' facts ---------------------------------------
 

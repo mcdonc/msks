@@ -212,3 +212,123 @@ async def test_publish_rows_skips_remote_rows(tmp_path: Path) -> None:
     assert frame["data"]["direction"] == "forward"
     assert queue.empty()
     await app.state.model.close()
+
+
+async def test_departing_holders_eof_their_channels() -> None:
+    """Both departure paths end their channels' readers: a
+    connected idle peer must not hang forever (#1102 review)."""
+    hub = BridgeHub(object())
+    holder = hub.register("ws-a", FakeSocket())
+    reader, _writer = await hub.open_channel("ws-a", 8080)
+    hub.unregister("ws-a", holder)
+    assert await asyncio.wait_for(reader.read(64), 2) == b""
+
+    holder = hub.register("ws-a", FakeSocket())
+    reader, _writer = await hub.open_channel("ws-a", 8080)
+    hub.close_workspace("ws-a")
+    assert await asyncio.wait_for(reader.read(64), 2) == b""
+
+
+async def test_unregister_of_a_stranger_keeps_the_serving_holder() -> None:
+    """The stop path pops the workspace first; the route's
+    unregister then arrives as a stranger and must neither raise
+    nor disturb the channels' retirement."""
+    hub = BridgeHub(object())
+    serving = hub.register("ws-a", FakeSocket())
+    hub.close_workspace("ws-a")
+    hub.unregister("ws-a", serving)
+    assert hub.up("ws-a") is False
+
+
+async def test_row_owner_reads_the_rows_owner() -> None:
+    """The transition frames scope to the workspace's owner
+    (#1095); a row that cannot be read scopes nothing."""
+    from types import SimpleNamespace
+
+    class Model:
+        def __init__(self, row):
+            self.row = row
+
+        async def get_workspace(self, workspace_id):
+            if isinstance(self.row, Exception):
+                raise self.row
+            return self.row
+
+    hub = BridgeHub(SimpleNamespace(state=SimpleNamespace()))
+    hub.app.state.model = Model({"owner_uid": 1000})
+    assert await hub.row_owner("ws-a") == 1000
+    hub.app.state.model = Model({"id": "ws-a"})
+    assert await hub.row_owner("ws-a") is None
+    hub.app.state.model = Model(RuntimeError("gone"))
+    assert await hub.row_owner("ws-a") is None
+
+
+async def test_a_holder_arriving_under_the_down_publish(tmp_path) -> None:
+    """The race the round-2 review named: a holder registering
+    while the down-publish reads its rows must end painted up,
+    not failed."""
+    app = await hub_app(tmp_path)
+    hub = app.state.bridge
+    queue = app.state.hub.subscribe()
+
+    class Racing:
+        """A model whose rows read lands a new holder mid-read."""
+
+        def __init__(self, inner):
+            self.inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self.inner, name)
+
+        async def list_proxies(self, workspace_id):
+            rows = await self.inner.list_proxies(workspace_id)
+            hub.register("ws-a", FakeSocket())
+            return rows
+
+    app.state.model = Racing(app.state.model)
+    hub.register("ws-a", FakeSocket())
+    hub.unregister("ws-a", hub.holders["ws-a"][0])
+    await hub.publish_down("ws-a")
+    frames = [
+        json.loads(await asyncio.wait_for(queue.get(), 2)) for _ in range(2)
+    ]
+    assert [f["event"] for f in frames] == [
+        "proxy.failed",
+        "proxy.listening",
+    ]
+    await app.state.model.inner.close()
+
+
+async def test_a_second_holder_arriving_repaints_nothing(
+    tmp_path: Path,
+) -> None:
+    """The up-publish belongs to the FIRST holder alone: a second
+    one arriving changes no row's paint."""
+    app = await hub_app(tmp_path)
+    hub = app.state.bridge
+    queue = app.state.hub.subscribe()
+    hub.register("ws-a", FakeSocket())
+    await hub.publish_up("ws-a")
+    hub.register("ws-a", FakeSocket())
+    await hub.publish_up("ws-a")
+    frame = json.loads(await asyncio.wait_for(queue.get(), 2))
+    assert frame["event"] == "proxy.listening"
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(queue.get(), 0.3)
+    await app.state.model.close()
+
+
+async def test_row_owner_of_a_missing_row_scopes_nothing() -> None:
+    """A workspace row the model cannot find scopes its frames to
+    nobody (the unscoped broadcast the subscribers allow)."""
+
+    class Model:
+        @staticmethod
+        async def get_workspace(workspace_id):
+            return None
+
+    from types import SimpleNamespace
+
+    hub = BridgeHub(SimpleNamespace(state=SimpleNamespace()))
+    hub.app.state.model = Model()
+    assert await hub.row_owner("gone") is None

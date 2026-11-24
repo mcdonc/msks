@@ -305,3 +305,11 @@ def test_hold_command_runs_the_flow(
     assert rc == 0
     assert seen["workspace"] == "alpha"
     assert seen["transport"] is not None
+
+
+def test_needs_bridge_reads_the_direction() -> None:
+    from msks.client.proxies import needs_bridge
+
+    assert needs_bridge([{"direction": "forward"}]) is True
+    assert needs_bridge([{"direction": "remote"}]) is False
+    assert needs_bridge([]) is False

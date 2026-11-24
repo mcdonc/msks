@@ -235,15 +235,20 @@ async def test_every_screen_action_makes_its_exchange(
     CLI subcommand makes — verb, path, and body — and hands the
     daemon's reply to the screen untouched."""
     gui_env(monkeypatch)
+    monkeypatch.setattr(clientdata, "spawn_holder", lambda ws: True)
     seen: list[tuple[str, str, dict | None]] = []
     reply = {"ok": True}
-    data = data_mod.GuiData(
-        transport=scripted(
-            [(verb, path, httpx.Response(200, json=reply))], seen
-        )
-    )
+    # A start also reads the rows (#1102): the holder follows a
+    # workspace with forward proxies.
+    script = [(verb, path, httpx.Response(200, json=reply))]
+    extra = []
+    if method == "start":
+        rows_path = f"{path.split('/start')[0]}/proxies"
+        extra = [("GET", rows_path, None)]
+        script.append(("GET", rows_path, httpx.Response(200, json=[])))
+    data = data_mod.GuiData(transport=scripted(script, seen))
     assert await getattr(data, method)(*args) == reply
-    assert seen == [(verb, path, body)]
+    assert seen == [(verb, path, body)] + extra
 
 
 async def test_egress_confirm_empty_is_sent_only_when_set(
@@ -520,3 +525,49 @@ async def test_the_secrets_page_gathers_both_halves(
         ("GET", "/api/v1/secrets"),
         ("GET", "/api/v1/secrets/audit"),
     ]
+
+
+async def test_start_survives_a_failed_rows_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The holder step never takes the start down with it: a rows
+    read that refuses leaves the boot's answer standing (#1102)."""
+    gui_env(monkeypatch)
+    monkeypatch.setattr(clientdata, "spawn_holder", lambda ws: True)
+    seen: list[tuple[str, str]] = []
+    reply = {"ok": True}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        if request.url.path.endswith("/proxies"):
+            return httpx.Response(500, json={"detail": "boom"})
+        return httpx.Response(200, json=reply)
+
+    data = data_mod.GuiData(transport=httpx.MockTransport(handler))
+    assert await data.start("ws-1") == reply
+    assert seen == [
+        ("POST", "/api/v1/workspaces/ws-1/start"),
+        ("GET", "/api/v1/workspaces/ws-1/proxies"),
+    ]
+
+
+async def test_start_spawns_the_holder_for_forward_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A start whose rows carry an unserved forward row leaves a
+    holder behind — the same start the CLI makes (#1102)."""
+    gui_env(monkeypatch)
+    spawned = []
+    monkeypatch.setattr(clientdata, "spawn_holder", spawned.append)
+    reply = {"ok": True}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/proxies"):
+            return httpx.Response(
+                200, json=[{"id": 5, "direction": "forward"}]
+            )
+        return httpx.Response(200, json=reply)
+
+    data = data_mod.GuiData(transport=httpx.MockTransport(handler))
+    assert await data.start("ws-1") == reply
+    assert spawned == ["ws-1"]

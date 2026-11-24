@@ -20,7 +20,8 @@ daemon went away). ``msks proxy hold`` runs one on demand.
 import asyncio
 import contextlib
 import json
-import shlex
+import subprocess
+import sys
 from urllib.parse import quote
 
 import websockets
@@ -29,6 +30,7 @@ from ..spec.owners import AMBIGUOUS_CLOSE
 from ..spec.proxy import CLOSE, OPEN, pack_frame, unpack_frame
 from . import wsdial
 from .env import env_token, env_url, is_unix, ssl_context
+from .forwarding import config_quote
 from .identity import known_hosts_path
 from .rest import fetch_ssh_key
 from .ssh import proxy_command, session_identity, workspace_user
@@ -58,14 +60,41 @@ def bridge_ws_url(base_url: str, workspace_id: str) -> str:
     )
 
 
+#: The clean ends: the workspace stopped (the detach hook's
+#: close) or the server is going away. A holder exits quietly on
+#: these alone — every other end names itself (#1102 review).
+CLEAN_CLOSES = (1000, 1001)
+
+
 def close_code_message(closed: websockets.ConnectionClosed) -> str | None:
-    """The one-line failure for a daemon close code, or None for a
-    clean end (the workspace stopped; the holder exits quietly)."""
-    if closed.rcvd is None or closed.rcvd.code not in CLOSE_CODE_REASONS:
+    """The one-line failure for how the daemon's websocket ended:
+    None for a clean end, the named refusal for a mapped close
+    code, and an unexpected-end line for everything else (a
+    dropped connection, an unmapped code) — a repair path that
+    answers success to those lies."""
+    rcvd = closed.rcvd
+    if rcvd is None:
+        return unexpected_end(1006)
+    if rcvd.code in CLEAN_CLOSES:
         return None
-    reason = closed.rcvd.reason.strip()
-    detail = f": {reason}" if reason else ""
-    return f"msks: {CLOSE_CODE_REASONS[closed.rcvd.code]}{detail}"
+    return named_refusal(rcvd.code, rcvd.reason) or unexpected_end(rcvd.code)
+
+
+def named_refusal(code: int, reason: str) -> str | None:
+    """The one-line failure for a mapped refusal close code."""
+    if code not in CLOSE_CODE_REASONS:
+        return None
+    detail = f": {reason.strip()}" if reason.strip() else ""
+    return f"msks: {CLOSE_CODE_REASONS[code]}{detail}"
+
+
+def unexpected_end(code: int) -> str:
+    """The line an abnormal bridge end answers with — a repair
+    path that exits quietly here lies (#1102 review)."""
+    return (
+        "msks: the bridge ended unexpectedly (close code "
+        f"{code}) — 'msks proxy hold <workspace>' retries"
+    )
 
 
 def channel_argv(
@@ -83,17 +112,17 @@ def channel_argv(
     return [
         SSH,
         "-o",
-        f"ProxyCommand={proxy_command(workspace_id)}",
+        proxy_command(workspace_id),
         "-o",
-        f"UserKnownHostsFile={shlex.quote(known_hosts)}",
+        f"UserKnownHostsFile={config_quote(known_hosts)}",
         "-o",
         "StrictHostKeyChecking=accept-new",
         "-o",
         "IdentitiesOnly=yes",
         "-o",
-        f"IdentityAgent={shlex.quote(agent)}",
+        f"IdentityAgent={config_quote(agent)}",
         "-i",
-        shlex.quote(identity),
+        identity,
         "-l",
         user,
         "-W",
@@ -154,6 +183,12 @@ class Holder:
                 break
             await self.socket.send(pack_frame(cid, data))
         await self.socket.send(json.dumps({"t": CLOSE, "cid": cid}))
+        if process.returncode not in (0, None):
+            print(
+                f"msks: bridge channel {cid} ended"
+                f" (ssh exited {process.returncode})",
+                file=sys.stderr,
+            )
         self.channels.pop(cid, None)
 
     async def feed(self, data: bytes) -> None:
@@ -198,9 +233,25 @@ async def dispatch_control(
     except ValueError, KeyError, TypeError:
         return  # a frame this side does not speak acts on nothing
     if kind == OPEN and port is not None:
-        await holder.open(cid, port, agent, ident)
+        await guarded_open(holder, cid, port, agent, ident)
     elif kind == CLOSE:
         holder.close(cid)
+
+
+async def guarded_open(
+    holder: Holder, cid: int, port: int, agent: str, ident: str
+) -> None:
+    """One ``open`` with its spawn failure isolated: the channel
+    that cannot start answers its own close, and the holder keeps
+    serving the rest."""
+    try:
+        await holder.open(cid, port, agent, ident)
+    except OSError as exc:
+        print(
+            f"msks: bridge channel {cid} did not start ({exc})",
+            file=sys.stderr,
+        )
+        await holder.socket.send(json.dumps({"t": CLOSE, "cid": cid}))
 
 
 async def serve(socket, holder: Holder, agent: str, ident: str) -> None:
@@ -248,3 +299,31 @@ def run_hold(workspace_id: str, transport=None) -> int:
     with session_identity(key, workspace_id) as resolved:
         asyncio.run(hold(workspace_id, url, token, ssl_ctx, key, resolved))
     return 0
+
+
+def spawn_holder(workspace_id: str) -> bool:
+    """Leave a bridge holder behind (#1102): a detached child of
+    this client that serves the workspace's forward rows until the
+    workspace stops. It runs the same interpreter with the same
+    environment, in its own session so the caller's exit leaves it
+    standing. The CLI, the TUI, and the GUI all reach the bridge
+    through it."""
+    argv = [
+        sys.executable,
+        "-m",
+        "msks.client.cli",
+        "proxy",
+        "hold",
+        workspace_id,
+    ]
+    try:
+        subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        return False
+    return True

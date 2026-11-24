@@ -54,9 +54,10 @@ def text(kind: str, cid: int, port: int | None = None) -> str:
 class FakeProcess:
     """The ssh channel stand-in: pipes the tests drive by hand."""
 
-    def __init__(self) -> None:
+    def __init__(self, returncode: int = 0) -> None:
         self.stdin = PipeWriter()
         self.stdout = asyncio.StreamReader()
+        self.returncode = returncode
         self.terminated = False
 
     def terminate(self) -> None:
@@ -316,3 +317,61 @@ async def test_dispatch_control_closes_a_channel() -> None:
         holder, '{"t":"mystery","cid":5}', "/a", "/i"
     )
     assert holder.channels == {}
+
+
+def test_close_code_message_separates_the_three_ends() -> None:
+    """Clean ends stay quiet; named refusals name themselves;
+    everything else (a dropped connection) is an unexpected end,
+    not a silent success."""
+    assert bridge.close_code_message(closed_with(1000)) is None
+    assert bridge.close_code_message(closed_with(1001)) is None
+    assert bridge.close_code_message(closed_with(4404, "gone")) == (
+        "msks: no such workspace: gone"
+    )
+    dropped = websockets.ConnectionClosed(None, None)
+    assert "ended unexpectedly" in bridge.close_code_message(dropped)
+    assert "ended unexpectedly" in bridge.close_code_message(closed_with(1014))
+
+
+async def test_guarded_open_isolates_a_failed_spawn() -> None:
+    """A spawn that cannot start ends its own connection with a
+    close and one stderr line; the holder keeps serving."""
+
+    class Raising:
+        async def open(self, cid, port, agent, ident):
+            raise OSError("no fork left")
+
+        class socket:
+            sent = []
+
+            @staticmethod
+            async def send(message):
+                Raising.socket.sent.append(message)
+
+    import contextlib
+
+    with contextlib.suppress(AttributeError):
+        pass
+    socket = FakeSocket([])
+    holder = bridge.Holder(socket, "ws-a", "root")
+
+    async def raising(cid, port, agent, ident):
+        raise OSError("no fork left")
+
+    holder.open = raising
+    await bridge.guarded_open(holder, 0, 8080, "/a", "/i")
+    assert json.loads(socket.outgoing[-1]) == {"t": CLOSE, "cid": 0}
+
+
+async def test_pump_out_names_a_failed_channel() -> None:
+    """A channel whose ssh exited nonzero says one line on
+    stderr (the repair path's diagnosability)."""
+    socket = FakeSocket([])
+    holder = bridge.Holder(socket, "ws-a", "root")
+    process = FakeProcess(returncode=255)
+    process.stdout.feed_data(b"data")
+    process.stdout.feed_eof()
+    await holder.pump_out(0, process)
+    kinds = [json.loads(m) for m in socket.outgoing if isinstance(m, str)]
+    assert kinds[-1] == {"t": CLOSE, "cid": 0}
+    assert pack_frame(0, b"data") in socket.outgoing

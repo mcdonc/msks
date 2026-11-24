@@ -6995,7 +6995,7 @@ def test_spawn_holder_launches_the_detached_child(
     leaves it standing (#1102)."""
     import subprocess as subprocess_mod
 
-    from msks.client.workspaces import lifecycle
+    from msks.client import bridge as bridge_mod
 
     spawned = {}
 
@@ -7004,8 +7004,8 @@ def test_spawn_holder_launches_the_detached_child(
             spawned["argv"] = argv
             spawned["kwargs"] = kwargs
 
-    monkeypatch.setattr(lifecycle.subprocess, "Popen", FakePopen)
-    assert lifecycle.spawn_holder("ws1") is True
+    monkeypatch.setattr(bridge_mod.subprocess, "Popen", FakePopen)
+    assert bridge_mod.spawn_holder("ws1") is True
     argv = spawned["argv"]
     assert argv[1:] == ["-m", "msks.client.cli", "proxy", "hold", "ws1"]
     kwargs = spawned["kwargs"]
@@ -7015,8 +7015,8 @@ def test_spawn_holder_launches_the_detached_child(
     def refusing(*args, **kwargs):
         raise OSError("no fork left")
 
-    monkeypatch.setattr(lifecycle.subprocess, "Popen", refusing)
-    assert lifecycle.spawn_holder("ws1") is False
+    monkeypatch.setattr(bridge_mod.subprocess, "Popen", refusing)
+    assert bridge_mod.spawn_holder("ws1") is False
 
 
 def test_cmd_start_without_a_holder_keeps_the_start_green(
@@ -7041,3 +7041,52 @@ def test_cmd_start_without_a_holder_keeps_the_start_green(
     out = capsys.readouterr()
     assert "ws1 running" in out.out
     assert "held in the background" not in out.err
+
+
+def test_holder_due_reads_the_rows_honestly() -> None:
+    """A start owes a holder only when forward rows exist and none
+    of them already reads listening (a holder stands)."""
+    from msks.client.workspaces.lifecycle import holder_due
+
+    assert holder_due([]) is False
+    assert holder_due([{"direction": "remote"}]) is False
+    assert holder_due([{"direction": "forward"}]) is True
+    assert (
+        holder_due([{"direction": "forward", "status": "listening"}]) is False
+    )
+    assert (
+        holder_due(
+            [
+                {"direction": "forward", "status": "failed"},
+                {"direction": "forward", "status": "listening"},
+            ]
+        )
+        is False
+    )
+
+
+def test_cmd_start_skips_the_spawn_when_a_holder_serves(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Rows already listening mean a holder stands: the start
+    must not stack a standby beside it."""
+    from msks.client.workspaces import lifecycle
+
+    client_env(monkeypatch)
+    spawned = []
+    monkeypatch.setattr(lifecycle, "spawn_holder", spawned.append)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/proxies"):
+            return httpx.Response(
+                200,
+                json=[
+                    {"id": 5, "direction": "forward", "status": "listening"}
+                ],
+            )
+        return httpx.Response(200, json={"id": "ws1", "status": "running"})
+
+    rc = cli.cmd_start("ws1", transport=mock(handler))
+    assert rc == 0
+    assert spawned == []
+    assert "held in the background" not in capsys.readouterr().err

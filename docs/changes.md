@@ -54,7 +54,7 @@ tagged `vX.Y.Z`.
   rides a bridge a client holds: `msks start` (from the CLI, the TUI, or
   the GUI) leaves a background holder behind that serves the rows'
   connections over ssh, the same transport `msks ssh` rides (`msks proxy
-  hold` runs one on demand). The daemon runs no ssh and stores no key
+hold` runs one on demand). The daemon runs no ssh and stores no key
   material. The rows serve while a holder stands; with none they read
   `failed` with the cause.
 - **A right-click on a Mounts tab row (#1098).** The click
