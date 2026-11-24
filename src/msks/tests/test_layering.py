@@ -81,8 +81,10 @@ spec.loader.exec_module(check_import_cycles)
 
 ALLOWED_EDGES = {
     # app composes the daemon; the hub is a root leaf (#408)
-    # #1102: the bridge subsystem's composition seam
+    # #1102: the bridge subsystem's composition seam; its wire
+    # vocabulary is the shared spec leaf
     ("app", "bridge"),
+    ("bridge", "spec"),
     ("app", "consent"),
     ("app", "events"),
     ("app", "interceptor"),

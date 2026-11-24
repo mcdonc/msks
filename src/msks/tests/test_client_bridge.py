@@ -1,7 +1,6 @@
-"""The client half of the bridge relay (#1102): the framing pump
-against a scripted websocket and a real transient agent, the
-close-code names, and the ``msks proxy bridge`` flow end to end
-against fakes."""
+"""The client half of the bridge (#1102): the holder's channel
+argv, the frame pump against a scripted websocket and a fake ssh,
+and the ``msks proxy hold`` flow — against fakes, end to end."""
 
 import asyncio
 import json
@@ -10,8 +9,8 @@ from contextlib import contextmanager
 import pytest
 import websockets
 from cryptography.hazmat.primitives.asymmetric import ed25519
-from msks.client import agent, bridge
-from msks.spec.proxy import CLOSE, ESTABLISHED, OPEN, pack_frame
+from msks.client import bridge
+from msks.spec.proxy import CLOSE, OPEN, pack_frame
 from test_client_forward import closed_with
 
 
@@ -33,8 +32,7 @@ class FakeSocket:
             await asyncio.sleep(0)
             if not self.incoming:
                 # Park forever once the script ends: the caller
-                # ends the exchange (established, or a raised
-                # close).
+                # ends the exchange (a raised close, a sweep).
                 await asyncio.Event().wait()
             item = self.incoming.pop(0)
             if isinstance(item, float):
@@ -46,68 +44,158 @@ class FakeSocket:
         self.outgoing.append(message)
 
 
-def text(kind: str, cid: int) -> str:
-    return json.dumps({"t": kind, "cid": cid})
+def text(kind: str, cid: int, port: int | None = None) -> str:
+    body = {"t": kind, "cid": cid}
+    if port is not None:
+        body["port"] = port
+    return json.dumps(body)
 
 
-async def test_serve_answers_the_agent_protocol(tmp_path) -> None:
-    """One agent connection relayed both ways: the daemon's open,
-    a signed-identity listing across, the close, the end."""
-    with agent.serve(a_key(), "bridge-test") as staged:
-        request = agent.frame(b"\x0b")  # REQUEST_IDENTITIES
-        socket = FakeSocket(
-            [
-                text(OPEN, 0),
-                pack_frame(0, request),
-                0.1,  # one pump round trip for the agent's answer
-                text(CLOSE, 0),
-                0.1,  # the pump reads the agent connection's end
-                text(ESTABLISHED, 0),
-            ]
-        )
-        await asyncio.wait_for(
-            bridge.serve(socket, staged.server_address), timeout=5.0
-        )
-    frames = [m for m in socket.outgoing if not isinstance(m, str)]
-    assert len(frames) == 1
-    cid, payload = (int.from_bytes(frames[0][:4], "big"), frames[0][4:])
-    # The relay is transparent to the agent protocol's own length
-    # framing: the answer rides it whole.
-    assert cid == 0 and payload[4] == 12  # IDENTITIES_ANSWER
-    closes = [json.loads(m) for m in socket.outgoing if isinstance(m, str)]
-    assert {c["t"] for c in closes} == {CLOSE}
+class FakeProcess:
+    """The ssh channel stand-in: pipes the tests drive by hand."""
+
+    def __init__(self) -> None:
+        self.stdin = PipeWriter()
+        self.stdout = asyncio.StreamReader()
+        self.terminated = False
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.stdout.feed_eof()
 
 
-async def test_serve_skips_frames_it_does_not_know() -> None:
-    """A frame short of its id and a control it ignores both pass
-    through without an answer; established still ends the serve."""
-    socket = FakeSocket(
+class PipeWriter:
+    """The stdin pipe's recording stand-in."""
+
+    def __init__(self) -> None:
+        self.written: list[bytes] = []
+
+    def write(self, data: bytes) -> None:
+        self.written.append(data)
+
+    async def drain(self) -> None:
+        return None
+
+
+def test_channel_argv_rides_the_forward_websocket() -> None:
+    argv = bridge.channel_argv(
+        "ws-a", "/agent.sock", "/identity.pub", "dev", 8080, "/kh"
+    )
+    assert argv[0] == "ssh"
+    joined = " ".join(argv)
+    assert "ProxyCommand=" in joined and "forward" in joined
+    assert "-W 127.0.0.1:8080" in joined
+    assert "-l dev" in joined
+    assert "IdentityAgent=/agent.sock" in joined
+    assert "IdentitiesOnly=yes" in joined
+    assert "StrictHostKeyChecking=accept-new" in joined
+
+
+def test_parse_control_shapes() -> None:
+    assert bridge.parse_control(text(OPEN, 3, 8080)) == ("open", 3, 8080)
+    assert bridge.parse_control(text(CLOSE, 3)) == ("close", 3, None)
+    with pytest.raises(ValueError):
+        bridge.parse_control("not json")
+    with pytest.raises(KeyError):
+        bridge.parse_control('{"cid": 1}')
+
+
+async def test_holder_serves_one_connection() -> None:
+    """One open, bytes both ways, the channel's end closing the
+    connection — the frames the daemon side sends and expects."""
+    socket = FakeSocket([])
+    holder = bridge.Holder(socket, "ws-a", "root")
+    process = FakeProcess()
+    spawn_argv = []
+
+    async def fake_spawn(*argv, **kwargs):
+        spawn_argv.append(list(argv))
+        return process
+
+    holder.spawner = fake_spawn
+    await holder.open(0, 8080, "/agent.sock", "/identity.pub")
+    assert "-W" in spawn_argv[0]
+    assert spawn_argv[0][spawn_argv[0].index("-W") + 1] == "127.0.0.1:8080"
+    # Daemon bytes to the channel's stdin.
+    await holder.feed(pack_frame(0, b"ping"))
+    assert process.stdin.written == [b"ping"]
+    # The channel's stdout to the websocket.
+    process.stdout.feed_data(b"pong")
+    await asyncio.sleep(0.05)
+    assert pack_frame(0, b"pong") in [
+        m for m in socket.outgoing if not isinstance(m, str)
+    ]
+    # The channel ending sends the close.
+    process.stdout.feed_eof()
+    await asyncio.sleep(0.05)
+    assert json.loads(socket.outgoing[-1]) == {"t": CLOSE, "cid": 0}
+    # A close from the daemon terminates the channel.
+    await holder.open(1, 8080, "/agent.sock", "/identity.pub")
+    holder.close(1)
+    await holder.sweep()
+
+
+async def test_holder_feed_skips_what_it_cannot_place() -> None:
+    socket = FakeSocket([])
+    holder = bridge.Holder(socket, "ws-a", "root")
+    await holder.feed(b"\x00\x01")  # shorter than an id
+    await holder.feed(pack_frame(9, b"x"))  # no such channel
+    holder.close(9)  # never stood: quiet
+
+
+class ClosingSocket(FakeSocket):
+    """A socket whose recv answers the script, then ends with the
+    close it was given."""
+
+    def __init__(self, incoming: list, code: int = 1000) -> None:
+        super().__init__(incoming)
+        self.code = code
+
+    async def recv(self):
+        if not self.incoming:
+            raise closed_with(self.code)
+        item = self.incoming.pop(0)
+        if isinstance(item, float):
+            await asyncio.sleep(item)
+            return await self.recv()
+        return item
+
+
+async def test_serve_dispatches_until_the_websocket_ends() -> None:
+    socket = ClosingSocket(
         [
-            b"\x00\x00",
-            pack_frame(9, b"x"),  # no such connection
-            text("mystery", 7),  # a kind, but not one that acts
-            "not json",
-            text(ESTABLISHED, 0),
+            text(OPEN, 0, 8080),
+            pack_frame(0, b"payload"),
+            text(CLOSE, 0),
+            "mystery",  # a kind that acts on nothing
+            text(CLOSE, 9),  # a close for nothing standing
         ]
     )
-    await asyncio.wait_for(bridge.serve(socket, "/nonexistent"), timeout=5.0)
-    assert socket.outgoing == []
-
-
-async def test_serve_ends_on_a_refusal_close() -> None:
-    socket = FakeSocket([])
-
-    async def recv_closed():
-        raise closed_with(4502, "bridge establish failed: nope")
-
-    socket.recv = recv_closed
+    holder = bridge.Holder(socket, "ws-a", "root")
+    spawn = FakeSpawn()
+    holder.spawner = spawn
     with pytest.raises(websockets.ConnectionClosed):
-        await bridge.serve(socket, "/nonexistent")
+        await bridge.serve(socket, holder, "/a", "/i")
+    assert spawn.argvs and "-W" in spawn.argvs[0]
+    assert holder.channels == {}
+
+
+class FakeSpawn:
+    """The spawner stand-in: records, serves quiet processes."""
+
+    def __init__(self) -> None:
+        self.argvs: list[list[str]] = []
+
+    async def __call__(self, *argv, **kwargs):
+        self.argvs.append(list(argv))
+        return FakeProcess()
 
 
 def test_close_code_message_names_the_refusals() -> None:
-    message = bridge.close_code_message(closed_with(4502, "denied"))
-    assert message == "msks: bridge establish failed: denied"
+    assert (
+        bridge.close_code_message(closed_with(4404, "gone"))
+        == "msks: no such workspace: gone"
+    )
     assert bridge.close_code_message(closed_with(1000)) is None
 
 
@@ -118,137 +206,25 @@ def test_bridge_ws_url_quotes_the_workspace() -> None:
     )
 
 
-async def test_needs_bridge_reads_the_direction() -> None:
-    from msks.client.proxies import needs_bridge
-
-    assert needs_bridge([{"direction": "forward"}]) is True
-    assert needs_bridge([{"direction": "remote"}]) is False
-    assert needs_bridge([]) is False
-
-
-def test_run_bridge_establishes_and_prints(monkeypatch, capsys) -> None:
+def test_run_hold_serves_until_the_websocket_ends(monkeypatch, capsys) -> None:
     """The command flow: fetch the identity row, resolve the
-    holder, serve the relay until the daemon says established."""
+    holder, serve until the daemon's websocket ends clean."""
     pubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample bridge-test"
 
     async def fake_fetch(*args, **kwargs):
-        return {"public_key": pubkey, "user": "root"}
+        return {"public_key": pubkey, "user": "dev"}
 
     monkeypatch.setattr(bridge, "fetch_ssh_key", fake_fetch)
 
     @contextmanager
     def fake_identity(key, workspace_id):
-        yield type("Holder", (), {"server_address": "/nonexistent"})()
+        yield type(
+            "Held", (), {"server_address": "/a", "identity_path": "/i"}
+        )()
 
     monkeypatch.setattr(bridge, "session_identity", fake_identity)
+    monkeypatch.setattr(bridge, "known_hosts_path", lambda ws, **kw: "/kh")
 
-    class FakeConnection:
-        def __init__(self) -> None:
-            self.socket = FakeSocket([text(ESTABLISHED, 0)])
-
-        async def __aenter__(self):
-            return self.socket
-
-        async def __aexit__(self, *exc):
-            return None
-
-    def fake_dial(*args, **kwargs):
-        async def connect():
-            return FakeConnection()
-
-        return connect()
-
-    monkeypatch.setattr(bridge.wsdial, "dial", fake_dial)
-    monkeypatch.setenv("MSKSC_URL", "https://d")
-    monkeypatch.setenv("MSKSC_TOKEN", "t")
-    assert bridge.run_bridge("ws-a") == 0
-    assert "bridge established" in capsys.readouterr().out
-
-
-def test_establish_names_a_refusal_close(monkeypatch) -> None:
-    holder = type("Holder", (), {"server_address": "/x"})()
-    refusing = FakeSocket([])
-
-    async def recv_closed():
-        raise closed_with(4502, "Permission denied")
-
-    refusing.recv = recv_closed
-
-    class RefusingConnection:
-        async def __aenter__(self):
-            return refusing
-
-        async def __aexit__(self, *exc):
-            return None
-
-    def fake_dial(*args, **kwargs):
-        async def connect():
-            return RefusingConnection()
-
-        return connect()
-
-    monkeypatch.setattr(bridge.wsdial, "dial", fake_dial)
-    with pytest.raises(SystemExit, match="Permission denied"):
-        asyncio.run(bridge.establish("ws-a", "https://d", "t", None, holder))
-
-
-async def test_relay_client_open_refusal_tells_the_daemon() -> None:
-    """An agent socket that refuses its connection answers the
-    daemon's open with a close, not silence."""
-    socket = FakeSocket([])
-    client = bridge.RelayClient(socket, "/nonexistent/agent")
-    await client.open(3)
-    assert json.loads(socket.outgoing[0]) == {"t": CLOSE, "cid": 3}
-    await client.sweep()
-
-
-def test_parse_control_refuses_every_broken_shape() -> None:
-    assert bridge.parse_control("[1,2]") is None  # not an object
-    assert bridge.parse_control('{"t":"open","cid":"x"}') is None
-    assert bridge.parse_control('{"t":"open"}') is None
-    assert bridge.parse_control("not json") is None
-    assert bridge.parse_control('{"t":"open","cid":4}') == ("open", 4)
-
-
-def test_relay_client_close_of_an_unknown_cid_is_quiet() -> None:
-    client = bridge.RelayClient(FakeSocket([]), "/nonexistent")
-    client.close(9)  # nothing opened: no error, nothing leaked
-
-
-async def test_sweep_ends_a_live_connection_task() -> None:
-    socket = FakeSocket([])
-    client = bridge.RelayClient(socket, "/nonexistent")
-    held = asyncio.Event()
-    client.tasks.add(asyncio.create_task(held.wait()))
-    await client.sweep()
-    assert all(task.done() for task in client.tasks)
-
-
-async def test_sweep_closes_a_still_open_connection() -> None:
-    """The sweep owns both halves: the still-open agent connection
-    closes, and the live pump task ends cancelled."""
-
-    class Conn:
-        closed = False
-
-        def close(self):
-            self.closed = True
-
-    client = bridge.RelayClient(FakeSocket([]), "/nonexistent")
-    conn = Conn()
-    client.connections[0] = (None, conn)
-    task = asyncio.create_task(asyncio.sleep(60))
-    client.tasks.add(task)
-    await client.sweep()
-    assert conn.closed is True
-    assert client.connections == {}
-    assert task.done()
-
-
-def test_establish_takes_a_clean_close_quietly(monkeypatch) -> None:
-    """A websocket that closes clean (the daemon's own end, code
-    1000) is not a refusal: establish returns without raising."""
-    holder = type("Holder", (), {"server_address": "/x"})()
     clean = FakeSocket([])
 
     async def recv_clean():
@@ -270,4 +246,73 @@ def test_establish_takes_a_clean_close_quietly(monkeypatch) -> None:
         return connect()
 
     monkeypatch.setattr(bridge.wsdial, "dial", fake_dial)
-    asyncio.run(bridge.establish("ws-a", "https://d", "t", None, holder))
+    monkeypatch.setenv("MSKSC_URL", "https://d")
+    monkeypatch.setenv("MSKSC_TOKEN", "t")
+    assert bridge.run_hold("ws-a") == 0
+
+
+def test_run_hold_names_a_refusal_close(monkeypatch) -> None:
+    held = type("Held", (), {"server_address": "/a", "identity_path": "/i"})()
+
+    async def fake_fetch(*args, **kwargs):
+        return {"public_key": "k", "user": "root"}
+
+    monkeypatch.setattr(bridge, "fetch_ssh_key", fake_fetch)
+
+    @contextmanager
+    def fake_identity(key, workspace_id):
+        yield held
+
+    monkeypatch.setattr(bridge, "session_identity", fake_identity)
+    refusing = FakeSocket([])
+
+    async def recv_refused():
+        raise closed_with(4404, "gone")
+
+    refusing.recv = recv_refused
+
+    class RefusingConnection:
+        async def __aenter__(self):
+            return refusing
+
+        async def __aexit__(self, *exc):
+            return None
+
+    def fake_dial(*args, **kwargs):
+        async def connect():
+            return RefusingConnection()
+
+        return connect()
+
+    monkeypatch.setattr(bridge.wsdial, "dial", fake_dial)
+    monkeypatch.setenv("MSKSC_URL", "https://d")
+    monkeypatch.setenv("MSKSC_TOKEN", "t")
+    with pytest.raises(SystemExit, match="no such workspace"):
+        bridge.run_hold("ws-a")
+
+
+async def test_sweep_ends_live_channels() -> None:
+    socket = FakeSocket([])
+    holder = bridge.Holder(socket, "ws-a", "root")
+    spawn = FakeSpawn()
+    holder.spawner = spawn
+    await holder.open(0, 8080, "/a", "/i")
+    await holder.open(1, 8080, "/a", "/i")
+    await holder.sweep()
+    assert holder.channels == {}
+
+
+async def test_dispatch_control_closes_a_channel() -> None:
+    socket = FakeSocket([])
+    holder = bridge.Holder(socket, "ws-a", "root")
+    spawn = FakeSpawn()
+    holder.spawner = spawn
+    await bridge.dispatch_control(holder, text(OPEN, 0, 8080), "/a", "/i")
+    assert 0 in holder.channels
+    await bridge.dispatch_control(holder, text(CLOSE, 0), "/a", "/i")
+    assert holder.channels == {}
+    # A parseable frame that acts on nothing passes through.
+    await bridge.dispatch_control(
+        holder, '{"t":"mystery","cid":5}', "/a", "/i"
+    )
+    assert holder.channels == {}

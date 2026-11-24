@@ -65,33 +65,29 @@ refused: `workspace … has no NIC (created without egress)`.
 
 ### The bridge
 
-A local proxy reaches the guest through the workspace's bridge: an ssh
-session the daemon holds, one per workspace. The session logs in over the
-tap as the workspace's login user, with the operator's key the create
-seeded into the guest. Each connection to the proxy's port opens one
-channel on that session, and the guest's sshd connects to `127.0.0.1` on
-the spec's port inside the guest. A service bound to the guest's loopback
-answers. This is the ssh `-L` behavior: the host field resolves where the
-session ends.
+A local proxy reaches the guest through the workspace's bridge: a client
+that holds the workspace identity serves the rows' connections. Each
+connection to a proxy port travels to that client, and the client carries
+it into the guest over ssh, to `127.0.0.1` on the spec's port. A service
+bound to the guest's loopback answers. This is the ssh `-L` behavior: the
+host field resolves where the ssh session ends.
 
-The private half of the key stays on the client machine. `msks start`
-opens a relay to the daemon and answers the session's signature requests
-from the client's agent (`SSH_AUTH_SOCK`) or its configured identity file.
-Only signature requests cross the API. The daemon stores no private key
-material under any row.
+The daemon runs no ssh and holds no key material. The client's ssh logs in
+over the forward websocket with the operator's key the create seeded into
+the guest, from the client's agent (`SSH_AUTH_SOCK`) or its configured
+identity file. The daemon relays bytes between its listener and the
+client, nothing more.
 
-Establishment happens at start, from a client that holds the workspace
-identity. A start over the raw API, or from a client without the key, still
-boots the workspace. The local rows record `failed` with the cause.
-`msks proxy bridge <workspace>` establishes the session on demand. It is
-the repair path after a drop.
+`msks start` leaves a holder behind when the workspace has local rows, so
+the proxies serve after the command exits. The holder is a small process
+on the machine the command ran on. It serves until the workspace stops or
+the daemon goes away, and it exits then by itself. `msks proxy hold
+<workspace>` runs one on demand.
 
-A session can end while the workspace runs: the guest's sshd restarted,
-the connection dropped, or the daemon crashed and the VM survived it. The
-local rows record `failed` with the cause, and the next client that holds
-the identity restores them. A workspace restart restores them too. The
-daemon pins the guest's host key at the first bridge and refuses a changed
-key afterward, the same posture an ssh client's known_hosts file carries.
+The rows work while a holder serves. A start over the raw API, or from a
+client without the key, still boots the workspace; its local rows record
+`failed` with the cause until a holder connects. The client's ssh pins the
+guest's host key in its own cache, the same file `msks ssh` uses.
 
 ### Reach and consent
 
@@ -193,13 +189,13 @@ row. A different spec on the same bind is refused with the row that holds
 it.
 
 A local proxy binds at once, on a stopped workspace too. Each connection
-refuses until the workspace's bridge serves: `msks start` from a client
-that holds the identity establishes it. A remote proxy on a stopped
-workspace records the row, and the workspace's next start brings its
-listener up. A stop closes every listener the workspace owns and ends its
-bridge session. Each start binds the listeners again and waits for the
-next bridge-bearing client. A proxy whose bind fails records the failure
-as its status with the cause, and every later start retries it.
+refuses until a holder serves the workspace: `msks start` leaves one
+behind, and `msks proxy hold` runs one on demand. A remote proxy on a
+stopped workspace records the row, and the workspace's next start brings
+its listener up. A stop closes every listener the workspace owns and ends
+its holders; each start leaves a fresh holder behind. A proxy whose bind
+fails records the failure as its status with the cause, and every later
+start retries it.
 
 ## Managing proxies from the TUI
 

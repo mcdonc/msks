@@ -12,11 +12,11 @@ printed lines. The listing surface lives in
 import asyncio
 import os
 import posixpath
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..bridge import run_bridge
 from ..context import (
     call,
     env_token,
@@ -233,28 +233,64 @@ async def start_stop_row(
         return row
 
 
+def spawn_holder(workspace_id: str) -> bool:
+    """Leave a bridge holder behind (#1102): a detached child of
+    this CLI that serves the workspace's forward rows until the
+    workspace stops. It runs the same interpreter with the same
+    environment (the daemon's address and the identity the shell
+    presets), in its own session so the command's exit leaves it
+    standing."""
+    argv = [
+        sys.executable,
+        "-m",
+        "msks.client.cli",
+        "proxy",
+        "hold",
+        workspace_id,
+    ]
+    try:
+        subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        print(
+            f"msks: the bridge holder did not start ({exc}); "
+            f"'msks proxy hold {workspace_id}' serves it instead",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
 def bridge_hook(workspace_id: str, transport=None) -> None:
     """The start's bridge step (#1102): a workspace with forward
-    proxy rows takes its bridge — the ssh session those rows ride
-    — at once, from this client's identity. Best-effort by
-    design: a start that arrives without the identity (a raw API
-    call, a client without the key) keeps its exit code, the
-    refusal is one stderr line, and the rows carry the named
-    cause until the next bridge-bearing client visit."""
+    proxy rows takes its holder at once — a detached child that
+    serves them after this command exits. Best-effort by design:
+    a start that arrives without the identity (a raw API call, a
+    client without the key) keeps its exit code, the refusal is
+    one stderr line, and the rows carry the named cause until the
+    next bridge-bearing client visit."""
     try:
         rows = asyncio.run(workspace_proxies(workspace_id, transport))
         if not needs_bridge(rows):
             return
-        run_bridge(workspace_id, transport)
-    except SystemExit as exc:
+    except (Exception, SystemExit) as exc:
+        # Best-effort by contract (#1102): the start keeps its
+        # exit code whatever the rows read says.
         print(
-            f"msks: forward proxies need the bridge, not established ({exc})",
+            f"msks: bridge not held ({exc}); 'msks proxy hold "
+            f"{workspace_id}' serves it",
             file=sys.stderr,
         )
-    except Exception as exc:
+        return
+    if spawn_holder(workspace_id):
         print(
-            f"msks: bridge not established ({exc}); 'msks proxy "
-            f"bridge {workspace_id}' retries",
+            "msks: bridge held in the background — the forward "
+            "proxies serve while this machine can reach the daemon",
             file=sys.stderr,
         )
 

@@ -369,7 +369,7 @@ class ProxyManager:
         bridge = self.app.state.bridge
         channel_writer = None
         try:
-            channel_reader, channel_writer = await bridge.dial(
+            channel_reader, channel_writer = await bridge.open_channel(
                 row["workspace_id"], row["target_port"]
             )
             await pump(reader, writer, channel_reader, channel_writer)
@@ -382,9 +382,8 @@ class ProxyManager:
             )
         finally:
             if channel_writer is not None:
-                channel_writer.close()
                 with contextlib.suppress(Exception):
-                    await channel_writer.wait_closed()
+                    await channel_writer.close()
 
     async def publish(
         self,

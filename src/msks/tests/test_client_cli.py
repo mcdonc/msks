@@ -6955,12 +6955,75 @@ def test_json_requested_scans_before_the_separator() -> None:
     assert not cli.json_requested(["ssh", "ws"])
 
 
-def test_cmd_start_bridge_refusal_keeps_the_start_green(
+def test_cmd_start_spawns_the_bridge_holder(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A start whose bridge cannot establish (this client holds no
-    identity) keeps its exit code: one stderr line, the rows carry
-    the cause (#1102)."""
+    """A start of a workspace with forward rows leaves a bridge
+    holder behind (#1102): one detached child, one stderr line,
+    the start's exit code untouched."""
+    from msks.client.workspaces import lifecycle
+
+    client_env(monkeypatch)
+    spawned = []
+
+    def fake_spawn(workspace_id):
+        spawned.append(workspace_id)
+        return True
+
+    monkeypatch.setattr(lifecycle, "spawn_holder", fake_spawn)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/proxies"):
+            return httpx.Response(
+                200, json=[{"id": 5, "direction": "forward"}]
+            )
+        return httpx.Response(200, json={"id": "ws1", "status": "running"})
+
+    rc = cli.cmd_start("ws1", transport=mock(handler))
+    assert rc == 0
+    out = capsys.readouterr()
+    assert "ws1 running" in out.out
+    assert spawned == ["ws1"]
+    assert "held in the background" in out.err
+
+
+def test_spawn_holder_launches_the_detached_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The holder child: the same interpreter, the proxy hold
+    command, detached with its own session so the CLI's exit
+    leaves it standing (#1102)."""
+    import subprocess as subprocess_mod
+
+    from msks.client.workspaces import lifecycle
+
+    spawned = {}
+
+    class FakePopen:
+        def __init__(self, argv, **kwargs):
+            spawned["argv"] = argv
+            spawned["kwargs"] = kwargs
+
+    monkeypatch.setattr(lifecycle.subprocess, "Popen", FakePopen)
+    assert lifecycle.spawn_holder("ws1") is True
+    argv = spawned["argv"]
+    assert argv[1:] == ["-m", "msks.client.cli", "proxy", "hold", "ws1"]
+    kwargs = spawned["kwargs"]
+    assert kwargs["start_new_session"] is True
+    assert kwargs["stdin"] is subprocess_mod.DEVNULL
+
+    def refusing(*args, **kwargs):
+        raise OSError("no fork left")
+
+    monkeypatch.setattr(lifecycle.subprocess, "Popen", refusing)
+    assert lifecycle.spawn_holder("ws1") is False
+
+
+def test_cmd_start_without_a_holder_keeps_the_start_green(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A holder that cannot start leaves the start's exit code
+    alone: the rows carry the cause, one line says so (#1102)."""
     from msks.client.workspaces import lifecycle
 
     client_env(monkeypatch)
@@ -6972,12 +7035,9 @@ def test_cmd_start_bridge_refusal_keeps_the_start_green(
             )
         return httpx.Response(200, json={"id": "ws1", "status": "running"})
 
-    def refusing(workspace_id, transport=None):
-        raise SystemExit("this client holds no private half")
-
-    monkeypatch.setattr(lifecycle, "run_bridge", refusing)
+    monkeypatch.setattr(lifecycle, "spawn_holder", lambda ws: False)
     rc = cli.cmd_start("ws1", transport=mock(handler))
     assert rc == 0
     out = capsys.readouterr()
     assert "ws1 running" in out.out
-    assert "not established" in out.err
+    assert "held in the background" not in out.err

@@ -535,6 +535,12 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **`-L` rows need a bridge holder (#1102).** A forward proxy now
+  resolves its host field inside the guest, so its reach moved from the
+  guest's tap address to the guest's own loopback, carried by a client
+  holder. Rows serve while a holder stands; start the workspace from the
+  CLI to leave one behind, or run `msks proxy hold`. The ephemeral
+  `msks forward` keeps its tap dial unchanged.
 - **Owner-scoped event frames (#1095).** Every frame on the
   events websocket that names a workspace now reaches that
   workspace's owner alone: the workspace lifecycle, mounts,

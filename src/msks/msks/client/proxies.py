@@ -332,16 +332,17 @@ def cmd_proxy_ls(
     return 0
 
 
-@app.command("bridge")
-def cmd_proxy_bridge(
+@app.command("hold")
+def cmd_proxy_hold(
     ctx: typer.Context,
     workspace_id: str = typer.Argument(
-        ..., help="the workspace whose bridge is established (name or id)"
+        ..., help="the workspace whose bridge is held (name or id)"
     ),
 ) -> int:
-    """Establish the workspace's bridge: the ssh session its
-    forward proxies ride, signed through this client's identity."""
-    return bridge_flow.run_bridge(workspace_id, ctx.obj)
+    """Hold the workspace's bridge: serve its forward proxies'
+    connections into the guest, from this client, until the
+    workspace stops."""
+    return bridge_flow.run_hold(workspace_id, ctx.obj)
 
 
 @app.command("rm")

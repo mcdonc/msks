@@ -281,7 +281,7 @@ def test_add_and_rm_json(
     assert capsys.readouterr().out == '{"removed": 3}\n'
 
 
-def test_bridge_command_runs_the_flow(
+def test_hold_command_runs_the_flow(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from msks.client import bridge as bridge_flow
@@ -295,9 +295,9 @@ def test_bridge_command_runs_the_flow(
         seen["transport"] = transport
         return 0
 
-    monkeypatch.setattr(bridge_flow, "run_bridge", fake_run)
+    monkeypatch.setattr(bridge_flow, "run_hold", fake_run)
     rc = cli.main(
-        ["proxy", "bridge", "alpha"],
+        ["proxy", "hold", "alpha"],
         transport=httpx.MockTransport(
             lambda req: httpx.Response(200, json=[])
         ),

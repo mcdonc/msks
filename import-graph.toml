@@ -129,10 +129,10 @@ hostshares = 1
 identity = 0
 llm = 0
 msks = 0
-# #1102: the loopback bridge — the per-workspace ssh sessions the
-# forward proxies' channels ride; a root leaf the composer, the
-# proxy subsystem (by attribute), and the relay route reach.
-bridge = 0
+# #1102: the bridge hub — the holders registry the composer, the
+# proxy subsystem (by attribute), and the holder route reach; it
+# sits above the spec leaf for its wire vocabulary.
+bridge = 1
 # #808: the workspace proxy subsystem — the persisted forward and
 # remote TCP listeners the daemon owns; a root leaf the composer
 # and the net manager (by attribute) reach.
@@ -160,6 +160,11 @@ conformance = 5
 # Exact cross-package import-statement counts, per pair. A count
 # that grows or shrinks fails until this file is updated in the
 # same commit — re-coupling is always a deliberate edit.
+[snapshot.bridge]
+# #1102: the holder wire vocabulary — the framing and control
+# names the hub and the client holder both speak.
+spec = 5
+
 [snapshot.app]
 # #1102: the bridge subsystem's composition seam — the manager
 # the detach hook and the relay route reach (module edge + the
@@ -221,7 +226,7 @@ identity = 2
 # #1102: the bridge relay client joins both leaves — the owners'
 # close code it labels (edge + name) and the relay's own wire
 # vocabulary (edge + the five framing/control names).
-spec = 32
+spec = 31
 
 [snapshot.config]
 configio = 3
@@ -469,10 +474,8 @@ secretcache = 4
 # #1118: the shared venv phase reads the release word the wheel
 # pins to (hostsetup/venv.py) — the module edge beside
 # __version__, the same statement shape the macOS bootstrap's
-# own read takes. #1119/#1120 fold beside these. #1102: the
-# holder route joins the relay wire vocabulary (module edge +
-# the framing and control names).
-spec = 66
+# own read takes. #1119/#1120 fold beside these.
+spec = 61 1feee36 (Rearchitect the bridge: a client holder serves the rows)
 # #773: the clone route reads the state-disk floor (create_refusal
 # beside the artifacts' allocated-cost file_cost) before any byte
 # copies.

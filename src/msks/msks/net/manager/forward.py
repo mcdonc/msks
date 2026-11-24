@@ -81,13 +81,16 @@ class ForwardMixin:
         await self.app.state.proxies.stop_workspace(workspace_id)
 
     async def stop_bridge(self, workspace_id: str) -> None:
-        """End the workspace's bridge session (#1102), the same
+        """End the workspace's holders (#1102), the same
         best-effort, idempotent contract the other detach stops
-        carry: the master's graceful exit; nothing to do when no
-        session stands."""
+        carry: each bridge websocket closes, and the clients
+        holding them exit with theirs."""
         bridge = self.app.state.bridge
-        if bridge is not None:
-            await bridge.stop(workspace_id)
+        if bridge is None:
+            return
+        for holder in bridge.close_workspace(workspace_id):
+            with contextlib.suppress(Exception):
+                await holder.socket.close(code=1000)
 
     async def start_proxies(self, attachment: NetAttachment) -> None:
         """Bring up the workspace's persisted proxy listeners

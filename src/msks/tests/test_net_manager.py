@@ -2299,3 +2299,33 @@ async def test_stop_bridge_without_a_manager_is_quiet(tmp_path) -> None:
     app.state.bridge = None
     manager = NetManager(app)
     await manager.stop_bridge("ws-a")
+
+
+async def test_stop_bridge_closes_the_holders_websockets(tmp_path) -> None:
+    """The detach hook closes each holder's websocket: the holding
+    clients exit with theirs (#1102)."""
+
+    class Socket:
+        closed = None
+
+        async def close(self, code=1000):
+            self.closed = code
+
+    class Holder:
+        def __init__(self):
+            self.socket = Socket()
+
+    class Hub:
+        def __init__(self, holders):
+            self.holders = holders
+
+        def close_workspace(self, workspace_id):
+            return self.holders.pop(workspace_id)
+
+    app = build_app(Settings(net=NetSettings(enabled=False)))
+    holders = [Holder(), Holder()]
+    hub = Hub({"ws-a": holders})
+    app.state.bridge = hub
+    manager = NetManager(app)
+    await manager.stop_bridge("ws-a")
+    assert [h.socket.closed for h in holders] == [1000, 1000]
