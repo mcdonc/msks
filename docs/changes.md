@@ -8,6 +8,11 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **A right-click on a Mounts tab row (#1098).** The click
+  selects the row and opens a menu with **Edit** and
+  **Remove**. The entries carry the same paths and the same
+  gating as the button row under the table. A press below the
+  rows opens nothing.
 - **The system unit install (#1094).** The Debian and Fedora
   setup tools now land `/etc/systemd/system/msksd.service`:
   the daemon runs under a dedicated `msksd` system account
