@@ -169,6 +169,11 @@ HOST, GUEST, MODE, STATE, REASON. **Add** opens the form, **Edit**
 changes the selected row, and **Remove** drops it. Every change
 posts the whole list to the daemon.
 
+A right-click on a row selects it and opens its menu with
+**Edit** and **Remove**. The entries take the buttons' own
+paths and act on the selection, with the buttons' gating. A
+press below the rows opens nothing.
+
 The daemon owns the rules. A host path outside the allowed roots
 is refused with the remedy stated, and the refusal appears on
 the tab's note line. The edited list rolls back to the last set
