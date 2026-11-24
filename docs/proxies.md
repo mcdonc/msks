@@ -92,6 +92,15 @@ client without the key, still boots the workspace; its local rows record
 stand, the first to connect serves the connections. The client's ssh pins
 the guest's host key in its own cache, the same file `msks ssh` uses.
 
+An open TUI or GUI re-holds by itself (#1127). When a holder dies while
+the workspace keeps running, or a start leaves none behind, the client
+spawns a fresh holder: the same detached one a start leaves. One line on
+the screen it is showing says the bridge came back. It tries three times
+per workspace per session, waiting 30 seconds between tries. A client
+that cannot resolve the workspace identity stops there and leaves the
+row's cause visible. The CLI never does this: a one-shot command is not
+a session, and `msks proxy hold <workspace>` remains the by-hand path.
+
 The listener binds on the daemon host, so whoever can reach
 `listen_host:listen_port` — loopback only by default — connects through
 the workspace's reach. A bind beyond loopback widens that audience

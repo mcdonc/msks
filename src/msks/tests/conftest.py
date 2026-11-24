@@ -107,7 +107,9 @@ def quiet_listing_link(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         MainScreen,
         "make_link",
-        lambda self: ListingLink(self.refresh_rows, ws_factory=factory),
+        lambda self: ListingLink(
+            self.refresh_rows, self.bridge_frame, ws_factory=factory
+        ),
     )
 
 

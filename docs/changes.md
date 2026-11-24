@@ -8,6 +8,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The TUI and GUI re-hold the bridge (#1127).** An open
+  client now restarts a workspace's bridge holder when its
+  failure names the missing one — the holder died, or a start
+  left none (a raw API call) — so the operator with a TUI or
+  GUI open never runs `msks proxy hold` by hand. The re-hold
+  spawns the same detached holder a start leaves, says the
+  recovery with one line on the open screen, and tries three
+  times per workspace per session with a 30-second backoff.
+  See [docs/proxies.md](proxies.md#the-bridge).
 - **The one-command install (#1119).** Every release carries
   two bootstrap wrapper assets, `msks-setup-debian.sh` and
   `msks-setup-fedora.sh`, so a stock host installs with

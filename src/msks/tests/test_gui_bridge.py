@@ -673,3 +673,17 @@ def test_the_controller_arms_of_the_idempotence_rule(qapp_setup) -> None:
     assert links[2].controller is fresh
     bridge.stop()
     assert not bridge.running
+
+
+def test_the_bridge_exposes_the_data_seams_reholder(
+    qapp_setup,
+) -> None:
+    """#1127: the shell's watch reaches the session's re-hold
+    policy through the bridge — the same instance the data seam
+    owns and the start path marks."""
+    from msks.client.gui.data import GuiData
+
+    qt = qapp_setup
+    data = GuiData()
+    bridge = qt.Bridge(data)
+    assert bridge.reholder is data.reholder

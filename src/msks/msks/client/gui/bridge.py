@@ -143,6 +143,13 @@ class Bridge(QtCore.QObject):
         """Whether the worker loop is up and taking calls."""
         return self._loop is not None
 
+    @property
+    def reholder(self):
+        """The session's bridge re-hold policy (#1127) — the
+        data seam's own instance, the same one the start path
+        marks when it leaves its holder behind."""
+        return self._data.reholder
+
     def start(self) -> None:
         """Bring the loop up: the worker thread runs it, and
         start() returns once it is turning — a call handed over
