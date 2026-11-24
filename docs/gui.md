@@ -283,7 +283,8 @@ page re-reads whole when the feed serves again, so the gap
 between the drop and the recovery lands on screen. A daemon
 outage keeps its text on the status line between the feed's
 retry flashes. The first answered read after it says
-`daemon back — images resumed` once.
+`daemon back — images resumed` once. An action's answer resolves
+the outage behind the outcome's own line.
 
 ## The Secrets tab
 
@@ -334,7 +335,8 @@ page re-reads whole when the feed serves again, so the gap
 between the drop and the recovery lands on screen. A daemon
 outage keeps its text on the status line between the feed's
 retry flashes. The first answered read after it says
-`daemon back — secrets resumed` once.
+`daemon back — secrets resumed` once. An action's answer resolves
+the outage behind the outcome's own line.
 
 ## The zoom keys
 

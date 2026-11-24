@@ -147,6 +147,10 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         self.flash_seq = 0
         self.daemon_down = False  # the mixin's state (#1132)
         self.outage_text = ""
+        # The serial at which the line took the fetch's own text
+        # (#1132): the landing clears that text and only it — a
+        # flash in its span keeps the line (#776's mask).
+        self.fetch_seq = 0
         self.secret_raw: list[dict] = []
         self.audit_raw: list[dict] = []
         self.secret_models: list = []
@@ -271,10 +275,19 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
     @QtCore.Slot()
     def refresh(self) -> None:
         """The tab's whole refresh (#966): the read every show
-        takes and the serve poke's (#1060) — both groups from
-        one flight, the status line saying the fetch is out. A
-        refresh already in flight is skipped, the listing's own
-        guard (#470)."""
+        takes and the serve poke's (#1060) — the status line
+        saying the fetch is out, the serial bump retiring any
+        pending flash timeout so none clears it mid-flight. A
+        refresh already in flight carries the ask instead: its
+        landing takes the flight the gate refused, so an
+        action's refresh is never dropped — the stale answer a
+        read issued before the action lands once, then the
+        fresh read replaces it."""
+        if self.pending:
+            self.refresh_due = True
+            return
+        self.flash_seq += 1
+        self.fetch_seq = self.flash_seq
         self.status.setText("fetching the placeholders and the audit rows…")
         self.take_flight()
 
@@ -282,16 +295,15 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         """The gathered flight itself (#966), the status line
         untouched — the refresh an action's landing takes keeps
         the flash that named the outcome standing while it
-        flies. A flight already out carries the need instead:
-        its landing takes the flight the gate refused, so an
-        action's refresh is never dropped — the stale answer a
-        read issued before the action lands once, then the
-        fresh read replaces it."""
+        flies, for its own span (#776's mask, #1132: the serial
+        used to retire that timeout here). A flight already out
+        carries the need instead: its landing takes the flight
+        the gate refused, so an action's refresh is never
+        dropped."""
         if self.pending:
             self.refresh_due = True
             return
         self.pending = True
-        self.flash_seq += 1  # retire any pending flash timeout
         self.bridge.call(PAGE_KEY, "secrets_page")
 
     # -- the pushed frames and the feed (#1060) -----------------------------
@@ -613,16 +625,17 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
 
     def standing(self) -> None:
         """The standing counts (#966): a refresh's tally lands
-        on the bottom line, and the status line's flash
-        resolves — the serial bump retires any timeout still
-        pending — save the recovery's one flash over it when the
-        read answered a standing outage (#1132: the mixin's
-        daemon-down state, not the flash's)."""
-        self.flash_seq += 1
+        on the bottom line, and the status line's own fetch text
+        clears — only it: a flash in its span keeps the line for
+        its span (#776's mask, #1132: an action's outcome used to
+        last one round trip), and a standing outage resolves with
+        the recovery's one flash, the mixin's daemon-down state
+        deciding."""
         self.counts.setText(
             cells.counts_text(self.secret_models, self.audit_models)
         )
-        self.status.clear()
+        if self.flash_seq == self.fetch_seq:
+            self.status.clear()
         self.recover(RECOVERY_TEXT)
 
     # -- the widget's own events --------------------------------------------

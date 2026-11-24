@@ -152,6 +152,10 @@ class ImagesTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         self.flash_seq = 0
         self.daemon_down = False  # the mixin's state (#1132)
         self.outage_text = ""
+        # The serial at which the line took the fetch's own text
+        # (#1132): the landing clears that text and only it — a
+        # flash in its span keeps the line (#776's mask).
+        self.fetch_seq = 0
         self.action_pending = False
         self.action_flight: str | None = None
         self.progress: QtWidgets.QProgressDialog | None = None
@@ -306,6 +310,7 @@ class ImagesTab(FeedPage, StatusFlash, QtWidgets.QWidget):
             return
         self.pending = True
         self.flash_seq += 1  # retire any pending flash timeout
+        self.fetch_seq = self.flash_seq
         self.status.setText("fetching the catalog and the published manifest…")
         self.read_seq += 1
         self.page_seq = self.read_seq
@@ -375,8 +380,12 @@ class ImagesTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         if self.page_seq == self.read_seq:
             self.catalog_raw = list(page.get("catalog") or [])
         self.rebuild()
-        self.standing(counts_text(self.catalog_raw, self.published_raw))
+        # The carried ask's read goes out before the standing line
+        # (#1132): the fetch text it writes lands under the line,
+        # and the recovery a standing outage flashes below stays
+        # visible for its span instead of being written over.
         self.carried_page()
+        self.standing(counts_text(self.catalog_raw, self.published_raw))
 
     def carried_page(self) -> None:
         """The gathered flight's owed read (#1060's review round):
@@ -394,7 +403,11 @@ class ImagesTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         reader went out after this flight, whose fresher rows
         this one must not wipe. A carried ask (#1060) takes its
         read here: the guard held it while this flight stood,
-        and the move it names may postdate this answer."""
+        and the move it names may postdate this answer. The
+        answer is the daemon's, so an outage the gathered read
+        raised resolves here too (#1132): the recovery says
+        itself, and the published group stands until the next
+        show or serve poke re-reads it."""
         self.catalog_pending = False
         if self.catalog_seq == self.read_seq:
             self.catalog_raw = list(result or [])
@@ -757,14 +770,14 @@ class ImagesTab(FeedPage, StatusFlash, QtWidgets.QWidget):
     def standing(self, text: str) -> None:
         """The standing tally (#964): a refresh's counts land on
         the bottom line beneath the published pane, and the
-        status line's flash resolves — the serial bump retires
-        any timeout still pending — standing clear until
-        something else says its piece, save the recovery's one
-        flash over it when the fetch answered a standing outage
-        (#1132: the mixin's daemon-down state, not the flash's)."""
-        self.flash_seq += 1
+        status line's own fetch text clears — only it: a flash
+        in its span keeps the line for its span (#776's mask,
+        #1132: an action's outcome used to last one round trip),
+        and a standing outage resolves with the recovery's one
+        flash, the mixin's daemon-down state deciding."""
         self.counts.setText(text)
-        self.status.clear()
+        if self.flash_seq == self.fetch_seq:
+            self.status.clear()
         self.recover(RECOVERY_TEXT)
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:

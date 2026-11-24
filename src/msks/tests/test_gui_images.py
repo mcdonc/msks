@@ -362,6 +362,64 @@ def test_an_outage_stands_through_the_heartbeat_and_recovers(
     window.close()
 
 
+def test_an_actions_answer_resolves_the_outage_behind_its_outcome(
+    qt, monkeypatch
+) -> None:
+    """The #776 mask on the tab (#1132): a remove's answer is the
+    daemon answering — the standing outage resolves behind the
+    outcome's own flash, the catalog read the action triggers
+    lands without clearing it, and the outcome clears with its
+    own span, no recovery's words over it."""
+    tab, window, bridge = make_tab(qt)
+    monkeypatch.setattr(statusflash, "FLASH_MS", 5)
+    tab.pending = True
+    tab.on_failed(
+        images_mod.PAGE_KEY, RestFailure("the daemon is gone", reach=True)
+    )
+    assert tab.daemon_down
+    tab.action_pending = True
+    tab.action_flight = "debian:13.6"
+    outcome = images_mod.action_reply_text(
+        images_mod.REMOVE_KEY, "debian:13.6"
+    )
+    tab.on_succeeded(images_mod.REMOVE_KEY, {})
+    assert tab.status.text() == outcome
+    assert not tab.daemon_down
+    tab.on_succeeded(
+        images_mod.CATALOG_KEY, catalog_raw()
+    )  # the action's read
+    assert tab.status.text() == outcome  # the outcome keeps the line
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and tab.status.text():
+        qt.app.processEvents()
+        time.sleep(0.01)
+    assert tab.status.text() == ""  # its own span, no recovery's words
+    window.close()
+
+
+def test_the_recovery_stays_visible_through_a_carried_read(qt) -> None:
+    """The carried ask after an outage (#1132, #1060): the
+    recovery's flash lands on the first answer, after the
+    carried read's own fetch text went out under it, and the
+    carried read's landing does not clear it — the line was the
+    recovery's, not the fetch's."""
+    tab, window, bridge = make_tab(qt)
+    tab.pending = True
+    tab.on_failed(
+        images_mod.PAGE_KEY, RestFailure("the daemon is gone", reach=True)
+    )
+    tab.refresh()  # the flight out
+    assert tab.status.text().startswith("fetching")
+    tab.refresh()  # carried: the gather's landing takes the read
+    assert tab.page_due
+    tab.on_succeeded(images_mod.PAGE_KEY, page_answer())
+    assert tab.status.text() == "daemon back — images resumed"
+    assert ("images-page", "images_page", (CHANNEL,)) in bridge.calls
+    tab.on_succeeded(images_mod.PAGE_KEY, page_answer())  # the carried read
+    assert tab.status.text() == "daemon back — images resumed"  # still shown
+    window.close()
+
+
 def test_a_failed_catalog_read_flashes_only(qt) -> None:
     """A refused catalog refresh (#964, #1060): the failure
     flashes, the guard releases, and a carried ask dies with
@@ -654,8 +712,9 @@ def test_the_selection_carries_across_a_rebuild(qt) -> None:
 def test_the_flash_clears_after_its_span(qt) -> None:
     """The flash machinery (#939's, the tab's own): a refusal's
     message clears after its span — only its own timeout clears
-    it, a later flash's timeout standing down — and the standing
-    counts retire a timeout still pending."""
+    it, a later flash's timeout standing down — and a flash in its
+    span keeps the line through a landing (#776's mask, #1132): the
+    standing counts clear only the fetch's own text."""
     tab, window, _bridge = make_tab(qt)
     tab.flash("a first refusal")
     first = tab.flash_seq
@@ -667,7 +726,9 @@ def test_the_flash_clears_after_its_span(qt) -> None:
     tab.flash("a third")
     third = tab.flash_seq
     tab.standing("2 in the catalog · 2 published")
-    tab.clear_stale(third)  # retired by the standing line
+    assert tab.status.text() == "a third"  # the landing kept it
+    tab.clear_stale(third)  # its own timeout
+    assert tab.status.text() == ""
     assert tab.counts.text() == "2 in the catalog · 2 published"
     window.close()
 
