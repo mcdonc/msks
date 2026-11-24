@@ -231,10 +231,16 @@ async def test_departing_holders_eof_their_channels() -> None:
 
 async def test_unregister_of_a_stranger_keeps_the_serving_holder() -> None:
     """The stop path pops the workspace first; the route's
-    unregister then arrives as a stranger and must neither raise
-    nor disturb the channels' retirement."""
+    unregister then arrives as a stranger — twice over, with a
+    second holder still serving — and must neither raise nor
+    disturb the channels' retirement."""
     hub = BridgeHub(object())
+    departing = hub.register("ws-a", FakeSocket())
     serving = hub.register("ws-a", FakeSocket())
+    hub.unregister("ws-a", departing)
+    assert hub.up("ws-a") is True
+    hub.unregister("ws-a", departing)
+    assert hub.up("ws-a") is True
     hub.close_workspace("ws-a")
     hub.unregister("ws-a", serving)
     assert hub.up("ws-a") is False
@@ -332,3 +338,58 @@ async def test_row_owner_of_a_missing_row_scopes_nothing() -> None:
     hub = BridgeHub(SimpleNamespace(state=SimpleNamespace()))
     hub.app.state.model = Model()
     assert await hub.row_owner("gone") is None
+
+
+async def test_open_channel_carries_the_named_host() -> None:
+    """A row whose target names a host beyond the loopback: the
+    open frame carries it beside the port, and the holder's ssh
+    resolves it inside the workspace (#1102)."""
+    hub = BridgeHub(object())
+    socket = FakeSocket()
+    hub.register("ws-a", socket)
+    await hub.open_channel("ws-a", 5432, "db.internal")
+    opened = json.loads(socket.sent[0][1])
+    assert opened == {
+        "t": OPEN,
+        "cid": 0,
+        "port": 5432,
+        "host": "db.internal",
+    }
+    # No host named: the frame stays lean.
+    await hub.open_channel("ws-a", 22)
+    opened = json.loads(socket.sent[1][1])
+    assert "host" not in opened
+
+
+async def test_up_paint_skips_rows_whose_bind_failed(tmp_path) -> None:
+    """The up-transition paints the rows whose listeners serve
+    alone: a failed bind keeps its own cause, and its row is not
+    repainted listening by the bridge's arrival."""
+
+    app = await hub_app(tmp_path)
+    queue = app.state.hub.subscribe()
+    hub = app.state.bridge
+
+    class RefusedBinds:
+        def status(self, row):
+            return ("failed", "bind refused")
+
+    app.state.proxies = RefusedBinds()
+    hub.register("ws-a", FakeSocket())
+    await hub.publish_up("ws-a")
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(queue.get(), 0.3)
+    await app.state.model.close()
+
+
+async def test_row_listening_guards_the_bare_states() -> None:
+    """No proxy subsystem answers: the paint proceeds (the tests'
+    bare-state shape); a status read that fails does the same."""
+    from types import SimpleNamespace
+
+    hub = BridgeHub(SimpleNamespace(state=SimpleNamespace()))
+    assert hub.row_listening({"id": 1}) is True
+    hub.app.state.proxies = SimpleNamespace(
+        status=lambda row: (_ for _ in ()).throw(RuntimeError("gone"))
+    )
+    assert hub.row_listening({"id": 1}) is True

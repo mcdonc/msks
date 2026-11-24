@@ -20,7 +20,6 @@ daemon went away). ``msks proxy hold`` runs one on demand.
 import asyncio
 import contextlib
 import json
-import subprocess
 import sys
 from urllib.parse import quote
 
@@ -31,6 +30,7 @@ from ..spec.proxy import CLOSE, OPEN, pack_frame, unpack_frame
 from . import wsdial
 from .env import env_token, env_url, is_unix, ssl_context
 from .forwarding import config_quote
+from .hold import spawn_holder  # noqa: F401  (re-export)
 from .identity import known_hosts_path
 from .rest import fetch_ssh_key
 from .ssh import proxy_command, session_identity, workspace_user
@@ -104,6 +104,7 @@ def channel_argv(
     user: str,
     port: int,
     known_hosts: str,
+    host: str = "127.0.0.1",
 ) -> list[str]:
     """One relayed connection's ssh argv: a ``-W`` channel to the
     guest's own loopback port, over the forward websocket, as the
@@ -126,19 +127,23 @@ def channel_argv(
         "-l",
         user,
         "-W",
-        f"127.0.0.1:{port}",
+        f"{host}:{port}",
         workspace_id,
     ]
 
 
-def parse_control(message: str) -> tuple[str, int, int | None]:
-    """(kind, cid, port) of one control text frame — the port
-    rides an ``open`` alone — raising for a frame this side does
-    not speak."""
+def parse_control(message: str) -> tuple[str, int, int | None, str | None]:
+    """(kind, cid, port, host) of one control text frame — the
+    port and host ride an ``open`` alone — raising for a frame
+    this side does not speak. A host beyond the default resolves
+    inside the workspace."""
     body = json.loads(message)
     kind, cid = body["t"], int(body["cid"])
-    port = int(body["port"]) if kind == OPEN and "port" in body else None
-    return kind, cid, port
+    if kind != OPEN:
+        return kind, cid, None, None
+    port = int(body["port"])
+    host = body.get("host") or None
+    return kind, cid, port, host
 
 
 class Holder:
@@ -154,9 +159,19 @@ class Holder:
         self.channels: dict[int, object] = {}
         self.spawner = asyncio.create_subprocess_exec
 
-    async def open(self, cid: int, port: int, agent: str, ident: str):
+    async def open(
+        self,
+        cid: int,
+        port: int,
+        agent: str,
+        ident: str,
+        host: str = "127.0.0.1",
+    ):
         """Serve one relayed connection: an ssh channel piped to
-        the websocket both ways, until either end closes it."""
+        the websocket both ways, until either end closes it. The
+        far end is ``host:port`` inside the workspace — the
+        loopback by default, or the name the row carries, which
+        the guest's sshd resolves."""
         argv = channel_argv(
             self.workspace_id,
             agent,
@@ -164,6 +179,7 @@ class Holder:
             self.user,
             port,
             self.known_hosts,
+            host,
         )
         process = await self.spawner(
             *argv,
@@ -183,7 +199,8 @@ class Holder:
                 break
             await self.socket.send(pack_frame(cid, data))
         await self.socket.send(json.dumps({"t": CLOSE, "cid": cid}))
-        if process.returncode not in (0, None):
+        await process.wait()
+        if process.returncode != 0:
             print(
                 f"msks: bridge channel {cid} ended"
                 f" (ssh exited {process.returncode})",
@@ -229,23 +246,28 @@ async def dispatch_control(
     channel, a ``close`` ends one; a frame this side does not
     speak acts on nothing."""
     try:
-        kind, cid, port = parse_control(message)
+        kind, cid, port, host = parse_control(message)
     except ValueError, KeyError, TypeError:
         return  # a frame this side does not speak acts on nothing
     if kind == OPEN and port is not None:
-        await guarded_open(holder, cid, port, agent, ident)
+        await guarded_open(holder, cid, port, agent, ident, host)
     elif kind == CLOSE:
         holder.close(cid)
 
 
 async def guarded_open(
-    holder: Holder, cid: int, port: int, agent: str, ident: str
+    holder: Holder,
+    cid: int,
+    port: int,
+    agent: str,
+    ident: str,
+    host: str | None = None,
 ) -> None:
     """One ``open`` with its spawn failure isolated: the channel
     that cannot start answers its own close, and the holder keeps
     serving the rest."""
     try:
-        await holder.open(cid, port, agent, ident)
+        await holder.open(cid, port, agent, ident, host or "127.0.0.1")
     except OSError as exc:
         print(
             f"msks: bridge channel {cid} did not start ({exc})",
@@ -299,31 +321,3 @@ def run_hold(workspace_id: str, transport=None) -> int:
     with session_identity(key, workspace_id) as resolved:
         asyncio.run(hold(workspace_id, url, token, ssl_ctx, key, resolved))
     return 0
-
-
-def spawn_holder(workspace_id: str) -> bool:
-    """Leave a bridge holder behind (#1102): a detached child of
-    this client that serves the workspace's forward rows until the
-    workspace stops. It runs the same interpreter with the same
-    environment, in its own session so the caller's exit leaves it
-    standing. The CLI, the TUI, and the GUI all reach the bridge
-    through it."""
-    argv = [
-        sys.executable,
-        "-m",
-        "msks.client.cli",
-        "proxy",
-        "hold",
-        workspace_id,
-    ]
-    try:
-        subprocess.Popen(
-            argv,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    except OSError:
-        return False
-    return True

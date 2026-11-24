@@ -19,6 +19,7 @@ import httpx
 
 from ..spec.owners import AMBIGUOUS_WORKSPACE, owners_word
 from .env import is_unix, ssl_context, unix_path
+from .hold import holder_due, spawn_holder
 from .jsonio import ApiExit
 
 # Generous read budget: ``POST .../start`` answers only after the
@@ -414,7 +415,39 @@ async def ensure_running(
     )
     await boot_workspace(workspace_id, url, token, ssl_ctx, transport)
     print(f"msks: {workspace_id} running", file=sys.stderr)
+    await hold_if_due(workspace_id, url, token, ssl_ctx, transport)
     return True
+
+
+async def hold_if_due(
+    workspace_id: str,
+    url: str,
+    token: str,
+    ssl_ctx: ssl.SSLContext | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> None:
+    """Leave a bridge holder behind a boot this client made
+    (#1102): the ssh, console, and forward children all boot
+    stopped workspaces through :func:`ensure_running`, and the
+    holder serves whatever forward rows the workspace owns. A
+    best-effort probe by design: any failure it touches is the
+    caller's silence — the rows carry the named cause, and the
+    next bridge-bearing client visit heals them. A session child
+    without the identity spawns a holder that exits with the
+    named refusal; one short-lived child, nothing standing."""
+    try:
+        rows = await api_call(
+            "GET",
+            url,
+            token,
+            f"/api/v1/workspaces/{workspace_id}/proxies",
+            ssl_ctx=ssl_ctx,
+            transport=transport,
+        )
+        if holder_due(rows):
+            spawn_holder(workspace_id)
+    except Exception, SystemExit:
+        return
 
 
 async def workspace_row(

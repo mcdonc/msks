@@ -478,12 +478,12 @@ async def test_the_add_form_cancels_by_key(monkeypatch) -> None:
         assert proxy_children(app) == 1
 
 
-async def test_the_form_refuses_a_foreign_host_home(
+async def test_the_form_takes_a_foreign_host_home(
     monkeypatch,
 ) -> None:
     """The form parses with the CLI's own parser: a -L spec naming
-    a host besides the workspace itself keeps the form standing
-    with the rule on the note — the daemon never sees the body."""
+    a host beyond the loopback spellings carries the far-end name
+    (#1102) — the body lands with its target host."""
     scripted_link(monkeypatch, [])
     quiet_link(monkeypatch)
     data = FakeData([row()])
@@ -496,9 +496,10 @@ async def test_the_form_refuses_a_foreign_host_home(
         form.query_one("#field-spec", Input).value = "2201:db.internal:22"
         form.query_one("#do-add").press()
         await pilot.pause()
-        note = form.query_one("#form-note", Static).content
-        assert "use -R" in str(note)
-        assert data.proxy_calls == []
+        assert (
+            data.proxy_calls
+            and data.proxy_calls[0][1].get("target_host") == "db.internal"
+        )
 
 
 async def test_the_form_picks_the_remote_parser(monkeypatch) -> None:
@@ -801,12 +802,12 @@ async def test_a_markup_carrying_spec_refusal_crashes_nothing(
         await pilot.press("a")
         await wait_for(lambda: isinstance(app.screen, ProxyFormScreen))
         form = app.screen
-        form.query_one("#field-spec", Input).value = "2201:local[/host:22"
+        form.query_one("#field-spec", Input).value = "2201:local[/host:x"
         form.query_one("#do-add").press()
         await pilot.pause()
         assert isinstance(app.screen, ProxyFormScreen)  # still standing
         note = str(form.query_one("#form-note", Static).content)
-        assert "use -R" in note and "local" in note
+        assert "ports" in note and "x" in note
 
 
 async def test_the_walk_crosses_the_direction_select(monkeypatch) -> None:

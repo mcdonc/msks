@@ -16,7 +16,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..bridge import spawn_holder
 from ..context import (
     call,
     env_token,
@@ -35,10 +34,9 @@ from ..create import (
     operator_pubkey,
     read_pubkey,
 )
+from ..hold import holder_due, spawn_holder
 from ..jsonio import ApiExit, emit, json_line, outcome
-from ..proxies import (
-    workspace_proxies,
-)
+from ..proxies import workspace_proxies
 from ..resize import display_name, resize_message
 
 
@@ -233,16 +231,6 @@ async def start_stop_row(
             file=sys.stderr,
         )
         return row
-
-
-def holder_due(rows: list[dict]) -> bool:
-    """Whether a start owes the workspace a fresh holder: it owns
-    forward rows, and none of them already reads ``listening`` (a
-    holder stands — another start must not stack a standby beside
-    it, #1102 review)."""
-    if not any(row["direction"] != "remote" for row in rows):
-        return False
-    return not any(row.get("status") == "listening" for row in rows)
 
 
 def bridge_hook(workspace_id: str, transport=None) -> None:

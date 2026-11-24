@@ -76,45 +76,42 @@ LOOPBACK_HOSTS = ("localhost", "127.0.0.1")
 
 LOCAL_HOST_RULE = (
     "-L's host field resolves inside the workspace, ssh's own "
-    "far-end meaning; only localhost or 127.0.0.1 is allowed — "
-    "to reach a daemon-side service, use -R"
+    "far-end meaning: a name or address the workspace itself can "
+    "reach — to reach a daemon-side service, use -R"
 )
 
 
-def local_host(raw: str) -> None:
-    """The -L spec's host field: the workspace itself, spelled
-    either way. Anything else is the ask ssh would send to the
-    far end's dialer — the workspace has none — so it refuses
-    with the rule and the direction that serves it."""
-    if raw not in LOOPBACK_HOSTS:
-        raise SystemExit(f"msks: {LOCAL_HOST_RULE} (got {raw!r})")
+def local_host(raw: str) -> str:
+    """The -L spec's host field, passed to the far end unchanged:
+    the guest's sshd resolves and connects to it, so the reach is
+    the workspace's own. A spec naming a loopback spelling records
+    no target host (the row's default); anything else rides the
+    row for the guest to resolve."""
+    return raw
 
 
 def local_fields(rest: str) -> tuple:
-    """(bind, listen, guest) for a spec with no bracketed lead:
-    three fields are PORT:HOST:PORT, four name the bind address
-    first."""
+    """(bind, listen, host, guest) for a spec with no bracketed
+    lead: three fields are PORT:HOST:PORT, four name the bind
+    address first."""
     fields = rest.split(":")
     if len(fields) == 3:
         listen, host, guest = fields
-        local_host(host)
-        return None, listen, guest
+        return None, listen, local_host(host), guest
     if len(fields) == 4:
         bind, listen, host, guest = fields
-        local_host(host)
-        return bind, listen, guest
+        return bind, listen, local_host(host), guest
     raise SystemExit(f"msks: {LOCAL_FORM}, got {rest!r}")
 
 
 def bracketed_local(host: str, rest: str) -> tuple:
-    """(bind, listen, guest) for a spec whose lead is bracketed:
-    the host is the bind, the rest is PORT:HOST:PORT."""
+    """(bind, listen, target, guest) for a spec whose lead is
+    bracketed: the host is the bind, the rest is PORT:HOST:PORT."""
     fields = rest.split(":")
     if len(fields) != 3:
         raise SystemExit(f"msks: {LOCAL_FORM}, got {host!r}:{rest}")
     listen, target, guest = fields
-    local_host(target)
-    return host, listen, guest
+    return host, listen, local_host(target), guest
 
 
 def parse_local_spec(raw: str) -> dict:
@@ -123,9 +120,9 @@ def parse_local_spec(raw: str) -> dict:
     host field naming the workspace (localhost)."""
     host, rest = split_leading_host(raw, "L")
     if host is None:
-        bind, listen, guest = local_fields(rest)
+        bind, listen, target, guest = local_fields(rest)
     else:
-        bind, listen, guest = bracketed_local(host, rest)
+        bind, listen, target, guest = bracketed_local(host, rest)
     body = {
         "direction": "forward",
         "listen_port": spec_port(listen, "L"),
@@ -133,6 +130,10 @@ def parse_local_spec(raw: str) -> dict:
     }
     if bind is not None:
         body["listen_host"] = bind
+    if target not in LOOPBACK_HOSTS:
+        # A name beyond the loopback spellings rides the row: the
+        # guest's sshd resolves it at the far end.
+        body["target_host"] = target
     return body
 
 
@@ -183,9 +184,15 @@ def proxy_endpoint(row: dict) -> tuple[str, str]:
             f"gateway:{row['listen_port']}",
             f"{row.get('target_host') or '127.0.0.1'}:{row['target_port']}",
         )
+    target = row.get("target_host")
+    far = (
+        f"guest:{target}:{row['target_port']}"
+        if target
+        else (f"guest:{row['target_port']}")
+    )
     return (
         f"{row.get('listen_host') or '127.0.0.1'}:{row['listen_port']}",
-        f"guest:{row['target_port']}",
+        far,
     )
 
 

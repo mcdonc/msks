@@ -100,7 +100,9 @@ class FakeBridge:
             await writer.drain()
         writer.close()
 
-    async def open_channel(self, workspace_id: str, port: int):
+    async def open_channel(
+        self, workspace_id: str, port: int, host: str | None = None
+    ):
         self.calls.append((workspace_id, port))
         if self.refusal is not None:
             raise self.refusal

@@ -1175,14 +1175,18 @@ msks proxy add my-workspace -R 5432:db.internal:5432 --label db
 The `-L` spec is `[BIND:]PORT:HOST:PORT`; the `-R` spec is `RPORT:HOST:TPORT`
 (its bind is the workspace's tap, a runtime fact). In `-L` the host field
 carries ssh's own meaning: it resolves at the far end, inside the guest.
-The two spellings (`localhost`, `127.0.0.1`) both reach the guest's own
-loopback through the workspace's bridge, and anything else refuses:
+The two loopback spellings (`localhost`, `127.0.0.1`) reach the guest's
+own loopback through the workspace's bridge, and any other name or
+address rides the row — the workspace's sshd connects to it, so the reach
+is the workspace's own:
 
 ```text
-msks: -L's host field resolves inside the workspace, ssh's own far-end
-meaning; only localhost or 127.0.0.1 is allowed — to reach a daemon-side
-service, use -R
+msks: -L wants ports, got 'x'
 ```
+
+A shape the parser refuses names itself; the host field itself passes
+through (`-L 5432:db.internal:5432` reaches whatever `db.internal`
+resolves to inside the workspace).
 
 The connection on the far end is the guest's own. The workspace's bridge
 is the client that holds it: each connection travels to that client, whose

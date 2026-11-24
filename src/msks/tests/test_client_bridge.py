@@ -57,8 +57,15 @@ class FakeProcess:
     def __init__(self, returncode: int = 0) -> None:
         self.stdin = PipeWriter()
         self.stdout = asyncio.StreamReader()
-        self.returncode = returncode
+        self._returncode = returncode
         self.terminated = False
+
+    @property
+    def returncode(self) -> int:
+        return self._returncode
+
+    async def wait(self) -> int:
+        return self._returncode
 
     def terminate(self) -> None:
         self.terminated = True
@@ -80,21 +87,33 @@ class PipeWriter:
 
 def test_channel_argv_rides_the_forward_websocket() -> None:
     argv = bridge.channel_argv(
-        "ws-a", "/agent.sock", "/identity.pub", "dev", 8080, "/kh"
+        "ws-a",
+        "/a gent.sock",
+        "/iden tity.pub",
+        "dev",
+        8080,
+        "/known hosts",
+        "db.internal",
     )
     assert argv[0] == "ssh"
     joined = " ".join(argv)
     assert "ProxyCommand=" in joined and "forward" in joined
-    assert "-W 127.0.0.1:8080" in joined
+    assert "-W db.internal:8080" in joined
     assert "-l dev" in joined
-    assert "IdentityAgent=/agent.sock" in joined
+    assert 'IdentityAgent="/a gent.sock"' in joined
+    assert 'UserKnownHostsFile="/known hosts"' in joined
     assert "IdentitiesOnly=yes" in joined
     assert "StrictHostKeyChecking=accept-new" in joined
 
 
 def test_parse_control_shapes() -> None:
-    assert bridge.parse_control(text(OPEN, 3, 8080)) == ("open", 3, 8080)
-    assert bridge.parse_control(text(CLOSE, 3)) == ("close", 3, None)
+    assert bridge.parse_control(text(OPEN, 3, 8080)) == (
+        "open",
+        3,
+        8080,
+        None,
+    )
+    assert bridge.parse_control(text(CLOSE, 3)) == ("close", 3, None, None)
     with pytest.raises(ValueError):
         bridge.parse_control("not json")
     with pytest.raises(KeyError):
@@ -355,7 +374,7 @@ async def test_guarded_open_isolates_a_failed_spawn() -> None:
     socket = FakeSocket([])
     holder = bridge.Holder(socket, "ws-a", "root")
 
-    async def raising(cid, port, agent, ident):
+    async def raising(cid, port, agent, ident, host="127.0.0.1"):
         raise OSError("no fork left")
 
     holder.open = raising
@@ -375,3 +394,17 @@ async def test_pump_out_names_a_failed_channel() -> None:
     kinds = [json.loads(m) for m in socket.outgoing if isinstance(m, str)]
     assert kinds[-1] == {"t": CLOSE, "cid": 0}
     assert pack_frame(0, b"data") in socket.outgoing
+
+
+async def test_guarded_open_answers_its_own_close_on_failure() -> None:
+    """The spawn-isolated open: an OSError from the channel spawn
+    prints one line and answers the connection's close."""
+    socket = FakeSocket([])
+    holder = bridge.Holder(socket, "ws-a", "root")
+
+    async def raising(cid, port, agent, ident, host="127.0.0.1"):
+        raise OSError("no fork left")
+
+    holder.open = raising
+    await bridge.guarded_open(holder, 7, 8080, "/a", "/i")
+    assert json.loads(socket.outgoing[-1]) == {"t": CLOSE, "cid": 7}

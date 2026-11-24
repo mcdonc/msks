@@ -48,14 +48,15 @@ tagged `vX.Y.Z`.
   install holding state under a user's home uninstalls and
   re-runs with the system-unit tool. The state directory does
   not move.
-- **`-L` proxies reach the guest's own loopback (#1102).** The `-L` host
-  field now resolves inside the guest, ssh's own far-end meaning, so a
-  stored row reaches services bound to the guest's `127.0.0.1`. The reach
-  rides a bridge a client holds: `msks start` (from the CLI, the TUI, or
-  the GUI) leaves a background holder behind that serves the rows'
-  connections over ssh, the same transport `msks ssh` rides (`msks proxy
-hold` runs one on demand). The daemon runs no ssh and stores no key
-  material. The rows serve while a holder stands; with none they read
+- **`-L` proxies reach whatever the workspace can reach (#1102).** The
+  `-L` host field resolves inside the guest, ssh's own far-end meaning:
+  `localhost` and `127.0.0.1` reach the guest's own loopback, and any
+  other name or address rides the row for the guest's sshd to resolve.
+  The reach rides a bridge a client holds: `msks start` — from the CLI,
+  the TUI, or the GUI — leaves a background holder behind that serves the
+  rows' connections over ssh, the same transport `msks ssh` rides (`msks
+proxy hold` runs one on demand). The daemon runs no ssh and stores no
+  key material. The rows serve while a holder stands; with none they read
   `failed` with the cause.
 - **A right-click on a Mounts tab row (#1098).** The click
   selects the row and opens a menu with **Edit** and
@@ -537,10 +538,11 @@ hold` runs one on demand). The daemon runs no ssh and stores no key
 
 - **`-L` rows need a bridge holder (#1102).** A forward proxy now
   resolves its host field inside the guest, so its reach moved from the
-  guest's tap address to the guest's own loopback, carried by a client
-  holder. Rows serve while a holder stands; start the workspace from the
-  CLI to leave one behind, or run `msks proxy hold`. The ephemeral
-  `msks forward` keeps its tap dial unchanged.
+  guest's tap address to the guest's own loopback and beyond it to
+  whatever the workspace can reach, carried by a client holder. Rows
+  serve while a holder stands; start the workspace from any client to
+  leave one behind, or run `msks proxy hold`. The ephemeral `msks
+forward` keeps its tap dial unchanged.
 - **Owner-scoped event frames (#1095).** Every frame on the
   events websocket that names a workspace now reaches that
   workspace's owner alone: the workspace lifecycle, mounts,

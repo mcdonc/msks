@@ -14,9 +14,11 @@ own data modules (:mod:`msks.client.tui.data`,
 matching CLI subcommand makes.
 """
 
-from .bridge import spawn_holder
+import sys
+
 from .create import create_workspace_core, invoking_user
 from .env import env_token, env_url, shared_ssl
+from .hold import holder_due, spawn_holder
 from .jsonio import ApiExit
 from .rest import api_call, fetch_health
 
@@ -206,10 +208,16 @@ class RestData:
             rows = await self.rest(
                 "GET", f"/api/v1/workspaces/{workspace_id}/proxies"
             )
-            if any(item["direction"] != "remote" for item in rows):
+            if holder_due(rows):
                 spawn_holder(workspace_id)
         except Exception, SystemExit:
-            pass  # the start itself already succeeded
+            # Best-effort by contract (#1102): the boot's answer
+            # stands, and the rows carry the cause.
+            print(
+                "msks: bridge not held from this client; "
+                "'msks proxy hold' serves it",
+                file=sys.stderr,
+            )
         return row
 
     async def stop(self, workspace_id: str) -> dict:

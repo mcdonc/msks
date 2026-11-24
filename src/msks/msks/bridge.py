@@ -30,9 +30,9 @@ from .spec.proxy import CLOSE, OPEN, pack_frame, unpack_frame
 #: the client surface: start the workspace from the CLI (its
 #: holder outlives the command), or run the hold command on demand.
 NO_HOLDER = (
-    "no client holds the bridge — start the workspace from the "
-    "CLI (the holder it leaves serves after the command exits), "
-    "or run 'msks proxy hold <workspace>'"
+    "no client holds the bridge — start the workspace from a "
+    "client (the holder it leaves serves after the command "
+    "exits), or run 'msks proxy hold <workspace>'"
 )
 
 
@@ -49,12 +49,20 @@ UP_EVENT = "proxy.listening"
 DOWN_EVENT = "proxy.failed"
 
 
-def control(kind: str, cid: int, port: int | None = None) -> str:
+def control(
+    kind: str,
+    cid: int,
+    port: int | None = None,
+    host: str | None = None,
+) -> str:
     """One control text frame: the kind, its connection id, and
-    the guest port an ``open`` names."""
+    the guest-side ``host:port`` an ``open`` names (the host
+    rides only when the row names one beyond the loopback)."""
     body = {"t": kind, "cid": cid}
     if port is not None:
         body["port"] = port
+    if host is not None:
+        body["host"] = host
     return json.dumps(body)
 
 
@@ -94,9 +102,13 @@ class Holder:
         self.next_cid = 0
 
     async def send_control(
-        self, kind: str, cid: int, port: int | None = None
+        self,
+        kind: str,
+        cid: int,
+        port: int | None = None,
+        host: str | None = None,
     ) -> None:
-        await self.socket.send_text(control(kind, cid, port))
+        await self.socket.send_text(control(kind, cid, port, host))
 
     async def flush(self) -> None:
         """Move queued frames to the websocket."""
@@ -194,9 +206,27 @@ class BridgeHub:
         with contextlib.suppress(Exception):
             owner = await self.row_owner(workspace_id)
             for row in await self.app.state.model.list_proxies(workspace_id):
+                if event == UP_EVENT and not self.row_listening(row):
+                    # The up-paint belongs to the rows whose
+                    # listeners serve; a failed bind keeps its own
+                    # cause (#1102 review round 3).
+                    continue
                 await self.publish_row(
                     hub, workspace_id, row, event, reason, owner
                 )
+
+    def row_listening(self, row: dict) -> bool:
+        """Whether the up-paint may reach the row: False only for
+        a row the proxy subsystem itself reports ``failed`` (its
+        bind refused — the bridge's arrival repaints nothing over
+        that cause); True for a listening or stopped row and when
+        no subsystem answers (a bare state, the tests' shape)."""
+        proxies = getattr(self.app.state, "proxies", None)
+        if proxies is None:
+            return True
+        with contextlib.suppress(Exception):
+            return proxies.status(row)[0] != "failed"
+        return True
 
     async def publish_row(
         self,
@@ -234,10 +264,14 @@ class BridgeHub:
 
     # --- the dataplane -------------------------------------------------
 
-    async def open_channel(self, workspace_id: str, port: int):
+    async def open_channel(
+        self, workspace_id: str, port: int, host: str | None = None
+    ):
         """(reader, writer) for one accepted proxy connection,
-        relayed to a serving holder. Refuses with the named cause
-        when none serves."""
+        relayed to a serving holder. ``host`` rides when the row
+        names a target beyond the guest's own loopback; the
+        holder's ssh resolves it inside the workspace. Refuses
+        with the named cause when no holder serves."""
         held = self.holders.get(workspace_id)
         if not held:
             raise NoHolder(self.cause(workspace_id))
@@ -246,7 +280,7 @@ class BridgeHub:
         holder.next_cid += 1
         reader = asyncio.StreamReader()
         holder.channels[cid] = reader
-        await holder.send_control(OPEN, cid, port)
+        await holder.send_control(OPEN, cid, port, host)
         return reader, ChannelWriter(holder, cid)
 
     def feed(self, holder: Holder, data: bytes) -> None:

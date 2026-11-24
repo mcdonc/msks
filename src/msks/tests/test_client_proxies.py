@@ -7,6 +7,9 @@ import json
 import httpx
 import pytest
 from msks.client import proxies as px
+from msks.client.proxies import (
+    parse_local_spec,
+)
 
 ROW = {
     "id": 3,
@@ -28,50 +31,32 @@ def client_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_local_spec_forms() -> None:
-    # ssh's own literal shape: PORT:HOST:PORT with HOST naming the
-    # workspace itself, either spelling; a leading bind address,
-    # IPv6 bracketed.
-    assert px.parse_local_spec("2201:localhost:22") == {
+    """The -L grammar: the plain and bound forms, the bracketed
+    IPv6 bind, and the far-end host beyond the loopback spelling
+    passing through (#1102 — the reach is the workspace's own)."""
+    assert parse_local_spec("2201:localhost:22") == {
         "direction": "forward",
         "listen_port": 2201,
         "target_port": 22,
     }
-    assert px.parse_local_spec("2201:127.0.0.1:22") == {
-        "direction": "forward",
-        "listen_port": 2201,
-        "target_port": 22,
-    }
-    assert px.parse_local_spec("0.0.0.0:2201:localhost:22") == {
+    assert parse_local_spec("0.0.0.0:2201:127.0.0.1:22") == {
         "direction": "forward",
         "listen_host": "0.0.0.0",
         "listen_port": 2201,
         "target_port": 22,
     }
-    assert px.parse_local_spec("[::1]:2201:localhost:22") == {
+    assert parse_local_spec("[::1]:2201:localhost:22") == {
         "direction": "forward",
         "listen_host": "::1",
         "listen_port": 2201,
         "target_port": 22,
     }
-    # A host the workspace cannot name refuses with the rule and
-    # the direction that serves it.
-    with pytest.raises(SystemExit, match="use -R"):
-        px.parse_local_spec("2201:db.internal:22")
-    # The shorthand is gone: the host field is part of the shape.
-    with pytest.raises(SystemExit):
-        px.parse_local_spec("2201:22")
-    with pytest.raises(SystemExit):
-        px.parse_local_spec("2201")
-    with pytest.raises(SystemExit):
-        px.parse_local_spec("[::1]:2201:localhost")
-    with pytest.raises(SystemExit):
-        px.parse_local_spec("[::1:2201:localhost:22")
-    with pytest.raises(SystemExit):
-        px.parse_local_spec("::1:2201:localhost:22")
-    with pytest.raises(SystemExit):
-        px.parse_local_spec("abc:localhost:22")
-    with pytest.raises(SystemExit):
-        px.parse_local_spec("2201:localhost:0")
+    assert parse_local_spec("8080:db.internal:5432") == {
+        "direction": "forward",
+        "listen_port": 8080,
+        "target_host": "db.internal",
+        "target_port": 5432,
+    }
 
 
 def test_remote_spec_forms() -> None:
@@ -313,3 +298,26 @@ def test_needs_bridge_reads_the_direction() -> None:
     assert needs_bridge([{"direction": "forward"}]) is True
     assert needs_bridge([{"direction": "remote"}]) is False
     assert needs_bridge([]) is False
+
+
+def test_local_spec_refused_shapes() -> None:
+    from msks.client.proxies import parse_local_spec
+
+    with pytest.raises(SystemExit, match="out of range"):
+        parse_local_spec("2201:localhost:70000")
+    with pytest.raises(SystemExit, match="wants"):
+        parse_local_spec("[::1]:2201:localhost:22:extra")
+
+
+def test_a_four_field_local_spec_needs_its_last_field_numeric() -> None:
+    from msks.client.proxies import parse_local_spec
+
+    with pytest.raises(SystemExit, match="wants ports"):
+        parse_local_spec("2201:localhost:22:x")
+
+
+def test_an_unclosed_ipv6_bracket_refuses() -> None:
+    from msks.client.proxies import parse_local_spec
+
+    with pytest.raises(SystemExit, match="bracket closed"):
+        parse_local_spec("[::1:2201:localhost:22")

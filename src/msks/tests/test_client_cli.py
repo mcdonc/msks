@@ -2004,6 +2004,9 @@ async def test_ensure_running_attaches_to_a_won_race() -> None:
             return httpx.Response(
                 503, json={"detail": "VM ws1 already exists"}
             )
+        if request.url.path.endswith("/proxies"):
+            # The boot's holder step (#1102): no rows, no holder.
+            return httpx.Response(200, json=[])
         return httpx.Response(
             200, json={"id": "ws1", "status": next(statuses)}
         )
@@ -2016,6 +2019,7 @@ async def test_ensure_running_attaches_to_a_won_race() -> None:
         "GET /api/v1/workspaces/ws1",
         "POST /api/v1/workspaces/ws1/start",
         "GET /api/v1/workspaces/ws1",
+        "GET /api/v1/workspaces/ws1/proxies",
     ]
 
 
@@ -6995,7 +6999,7 @@ def test_spawn_holder_launches_the_detached_child(
     leaves it standing (#1102)."""
     import subprocess as subprocess_mod
 
-    from msks.client import bridge as bridge_mod
+    from msks.client import hold as hold_mod
 
     spawned = {}
 
@@ -7004,8 +7008,8 @@ def test_spawn_holder_launches_the_detached_child(
             spawned["argv"] = argv
             spawned["kwargs"] = kwargs
 
-    monkeypatch.setattr(bridge_mod.subprocess, "Popen", FakePopen)
-    assert bridge_mod.spawn_holder("ws1") is True
+    monkeypatch.setattr(hold_mod.subprocess, "Popen", FakePopen)
+    assert hold_mod.spawn_holder("ws1") is True
     argv = spawned["argv"]
     assert argv[1:] == ["-m", "msks.client.cli", "proxy", "hold", "ws1"]
     kwargs = spawned["kwargs"]
@@ -7015,8 +7019,8 @@ def test_spawn_holder_launches_the_detached_child(
     def refusing(*args, **kwargs):
         raise OSError("no fork left")
 
-    monkeypatch.setattr(bridge_mod.subprocess, "Popen", refusing)
-    assert bridge_mod.spawn_holder("ws1") is False
+    monkeypatch.setattr(hold_mod.subprocess, "Popen", refusing)
+    assert hold_mod.spawn_holder("ws1") is False
 
 
 def test_cmd_start_without_a_holder_keeps_the_start_green(
@@ -7090,3 +7094,79 @@ def test_cmd_start_skips_the_spawn_when_a_holder_serves(
     assert rc == 0
     assert spawned == []
     assert "held in the background" not in capsys.readouterr().err
+
+
+async def test_a_boot_from_a_session_child_leaves_a_holder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The boot helper every session child uses (an ssh, console,
+    or forward child starting a stopped workspace — the GUI
+    double-click's shell among them) leaves the bridge holder
+    behind: the rows read runs, and the spawn follows (#1102)."""
+    from msks.client import rest as rest_mod
+
+    spawned = []
+    monkeypatch.setattr(rest_mod, "spawn_holder", spawned.append)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json={"id": "ws1", "status": "running"})
+        if request.url.path.endswith("/proxies"):
+            return httpx.Response(
+                200, json=[{"id": 5, "direction": "forward"}]
+            )
+        return httpx.Response(200, json={"id": "ws1", "status": "stopped"})
+
+    booted = await rest.ensure_running(
+        "ws1", "https://d", "t", transport=mock(handler)
+    )
+    assert booted is True
+    assert spawned == ["ws1"]
+
+
+async def test_a_boot_of_rows_already_listening_spawns_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A holder stands (the rows read listening): the boot the
+    session child made must not stack a standby beside it."""
+    from msks.client import rest as rest_mod
+
+    spawned = []
+    monkeypatch.setattr(rest_mod, "spawn_holder", spawned.append)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json={"id": "ws1", "status": "running"})
+        if request.url.path.endswith("/proxies"):
+            return httpx.Response(
+                200,
+                json=[
+                    {"id": 5, "direction": "forward", "status": "listening"}
+                ],
+            )
+        return httpx.Response(200, json={"id": "ws1", "status": "stopped"})
+
+    booted = await rest.ensure_running(
+        "ws1", "https://d", "t", transport=mock(handler)
+    )
+    assert booted is True
+    assert spawned == []
+
+
+async def test_a_boot_whose_rows_read_fails_quietly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The holder step is best-effort: a rows read that refuses
+    leaves the boot's answer standing."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json={"id": "ws1", "status": "running"})
+        if request.url.path.endswith("/proxies"):
+            return httpx.Response(500, json={"detail": "boom"})
+        return httpx.Response(200, json={"id": "ws1", "status": "stopped"})
+
+    booted = await rest.ensure_running(
+        "ws1", "https://d", "t", transport=mock(handler)
+    )
+    assert booted is True

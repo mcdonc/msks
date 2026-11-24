@@ -129,7 +129,10 @@ async def test_create_refuses_workspace_without_egress(client) -> None:
     assert "no NIC" in created.json()["detail"]
 
 
-async def test_create_refuses_direction_mismatched_hosts(client) -> None:
+async def test_create_refuses_remote_listen_hosts(client) -> None:
+    """A remote row still names no daemon-side listen host; a
+    forward row MAY carry a target host (#1102 — the far-end
+    name its sshd resolves), which this test also pins."""
     http, _app, _stub = client
     wid = await make_workspace(http, "ws-shape")
     forward_with_target = await http.post(
@@ -138,12 +141,12 @@ async def test_create_refuses_direction_mismatched_hosts(client) -> None:
             "direction": "forward",
             "listen_port": 2201,
             "target_port": 22,
-            "target_host": "127.0.0.1",
+            "target_host": "db.internal",
         },
         headers=auth(),
     )
-    assert forward_with_target.status_code == 400
-    assert "target_host" in forward_with_target.json()["detail"]
+    assert forward_with_target.status_code == 200
+    assert forward_with_target.json()["target_host"] == "db.internal"
     remote_with_listen = await http.post(
         f"/api/v1/workspaces/{wid}/proxies",
         json={
@@ -614,12 +617,14 @@ async def test_update_refuses_the_known_shapes(client) -> None:
             "direction": "forward",
             "listen_port": 2202,
             "target_port": 22,
-            "target_host": "127.0.0.1",
+            "target_host": "db.internal",
         },
         headers=auth(),
     )
-    assert mismatched.status_code == 400
-    assert "target_host" in mismatched.json()["detail"]
+    # A forward row may name its far-end host (#1102); the
+    # daemon-side listen host stays the remote direction's own.
+    assert mismatched.status_code == 200
+    assert mismatched.json()["target_host"] == "db.internal"
     missing = await http.patch(
         f"/api/v1/workspaces/{wid}/proxies/999",
         json={"direction": "forward", "listen_port": 2203, "target_port": 22},
@@ -795,3 +800,29 @@ async def test_update_of_a_row_that_left_mid_exchange(
     )
     assert raced.status_code == 404
     assert raced.json()["detail"] == "no such proxy"
+
+
+async def test_update_refuses_a_remote_listen_host_and_names_a_gone_row(
+    client,
+) -> None:
+    http, _app, _stub = client
+    wid = await make_workspace(http, "ws-up")
+    remote_with_listen = await http.patch(
+        f"/api/v1/workspaces/{wid}/proxies/1",
+        json={
+            "direction": "remote",
+            "listen_port": 9200,
+            "target_port": 9200,
+            "listen_host": "127.0.0.1",
+        },
+        headers=auth(),
+    )
+    assert remote_with_listen.status_code == 400
+    assert "listen_host" in remote_with_listen.json()["detail"]
+    gone = await http.patch(
+        f"/api/v1/workspaces/{wid}/proxies/99",
+        json={"direction": "forward", "listen_port": 1, "target_port": 1},
+        headers=auth(),
+    )
+    assert gone.status_code == 404
+    assert "no such proxy" in gone.json()["detail"]

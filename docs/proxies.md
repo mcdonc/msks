@@ -38,11 +38,13 @@ want there more permanently.
 
 A local proxy's target is the workspace itself. The spec's host field
 resolves at the far end, inside the guest, exactly as it does in ssh's
-`-L`. It accepts two spellings: `localhost` or `127.0.0.1`. Both reach the
-guest's own loopback. Anything else refuses with a message that points at
-the `-R` direction, which is the one that reaches daemon-side services.
-The connection on the far end is made by the workspace's bridge, the ssh
-session the next section covers.
+`-L`: `localhost` and `127.0.0.1` reach the guest's own loopback, and any
+other name or address reaches whatever the workspace itself can reach —
+the guest's sshd makes the connection and resolves it. The reach is the
+workspace's own: workspaces cannot talk to each other (the daemon drops
+traffic between taps), and a daemon-side service is the `-R` direction's
+job. The connection on the far end is made by the workspace's bridge, the
+holder the next section covers.
 
 The daemon connects to a remote proxy's target from the daemon's host. In
 the spec `-R 9200:localhost:9200`, the `localhost` is the daemon's own
@@ -86,8 +88,14 @@ the daemon goes away, and it exits then by itself. `msks proxy hold
 
 The rows work while a holder serves. A start over the raw API, or from a
 client without the key, still boots the workspace; its local rows record
-`failed` with the cause until a holder connects. The client's ssh pins the
-guest's host key in its own cache, the same file `msks ssh` uses.
+`failed` with the cause until a holder connects. When several holders
+stand, the first to connect serves the connections. The client's ssh pins
+the guest's host key in its own cache, the same file `msks ssh` uses.
+
+The listener binds on the daemon host, so whoever can reach
+`listen_host:listen_port` — loopback only by default — connects through
+the workspace's reach. A bind beyond loopback widens that audience
+deliberately, the same way it does for any daemon-side listener.
 
 ### Reach and consent
 
@@ -190,12 +198,12 @@ it.
 
 A local proxy binds at once, on a stopped workspace too. Each connection
 refuses until a holder serves the workspace: `msks start` leaves one
-behind, and `msks proxy hold` runs one on demand. A remote proxy on a
-stopped workspace records the row, and the workspace's next start brings
-its listener up. A stop closes every listener the workspace owns and ends
-its holders; each start leaves a fresh holder behind. A proxy whose bind
-fails records the failure as its status with the cause, and every later
-start retries it.
+behind (a row already reading `listening` means one stands, and the start
+spawns nothing), and `msks proxy hold` runs one on demand. A remote proxy
+on a stopped workspace records the row, and the workspace's next start
+brings its listener up. A stop closes every listener the workspace owns
+and ends its holders. A proxy whose bind fails records the failure as its
+status with the cause, and every later start retries it.
 
 ## Managing proxies from the TUI
 

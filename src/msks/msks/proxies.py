@@ -370,7 +370,9 @@ class ProxyManager:
         channel_writer = None
         try:
             channel_reader, channel_writer = await bridge.open_channel(
-                row["workspace_id"], row["target_port"]
+                row["workspace_id"],
+                row["target_port"],
+                row.get("target_host"),
             )
             await pump(reader, writer, channel_reader, channel_writer)
         except Exception as exc:
