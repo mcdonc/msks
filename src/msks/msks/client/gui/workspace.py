@@ -83,6 +83,14 @@ EVENTS_LABEL = "Events"
 #: feeds the policy's spawn gate.
 REHOLD_KEY = "rehold:"
 
+#: The re-hold deferrals' poll, milliseconds (#1127): the
+#: failure frames are edge-triggered, so a signal the window
+#: swallowed waits as a mark — the shell's timer re-rules each
+#: one whose window closed, exactly as a fresh signal would.
+#: The TUI's own 1s tick drives its drain; the GUI carries this
+#: timer because nothing else in it polls.
+REHOLD_POLL_MS = 5000
+
 #: The Egress tab's label (#1042): the workspace's egress
 #: posture and the in-place mode switch (#1049).
 EGRESS_LABEL = "Egress"
@@ -588,6 +596,11 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         bridge.feed_reconnected.connect(self.feed_back)
         bridge.feed_served.connect(self.feed_served)
         bridge.decider_rejected.connect(self.decider_refused)
+        # The re-hold deferrals' poll (#1127): parented to the
+        # shell, so the widget's teardown stops it with it.
+        self.rehold_timer = QtCore.QTimer(self)
+        self.rehold_timer.timeout.connect(self.drain_rehold)
+        self.rehold_timer.start(REHOLD_POLL_MS)
         # The quit path closes every shell (#954): the window's
         # children never see a close event of their own, and a
         # session left open would outlive the loop that reads

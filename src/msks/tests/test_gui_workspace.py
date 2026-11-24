@@ -11,6 +11,7 @@ bridge's own tests holding the real worker's contract.
 import importlib.util
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -1390,3 +1391,36 @@ def test_the_shell_names_the_watchs_give_up(qt) -> None:
     text = shell.listing.status.text()
     assert "bridge not re-held" in text
     assert "msks proxy hold" in text
+
+
+def test_the_shells_timer_drains_the_deferrals(qt) -> None:
+    """#1127: the poll's own path — a deferral whose windows
+    closed re-rules through the timer, not by hand: the failure
+    the window swallowed takes its rows read once the shell's
+    clockwork fires, and a second spawn lands."""
+    shell, window, bridge = make_shell(qt)
+    bridge.calls.clear()
+    shell.frame_landed(gui_lost_frame())
+    assert ("rehold:ws-a", "workspace_proxies", ("ws-a",)) in bridge.calls
+    bridge.succeeded.emit("rehold:ws-a", gui_failed_rows())
+    assert bridge.holder_spawns == ["ws-a"]
+    # The crash-loop death lands inside the window: deferred.
+    shell.frame_landed(gui_lost_frame())
+    force_rehold_windows(bridge)
+    # The timer alone drives the drain from here.
+    shell.rehold_timer.setInterval(10)
+    shell.rehold_timer.start(10)
+    deadline = time.monotonic() + 10.0
+    answered = 0
+    while time.monotonic() < deadline and len(bridge.holder_spawns) < 2:
+        qt.app.processEvents()
+        time.sleep(0.01)
+        reads = [
+            call for call in bridge.calls if call[0].startswith("rehold:")
+        ]
+        while answered < len(reads):
+            # Answer each drained read the way the daemon would.
+            key = reads[answered][0]
+            bridge.succeeded.emit(key, gui_failed_rows())
+            answered += 1
+    assert bridge.holder_spawns == ["ws-a", "ws-a"]
