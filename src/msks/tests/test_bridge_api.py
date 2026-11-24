@@ -4,6 +4,7 @@ client's ssh would drive it, over a real bound proxy row."""
 
 import contextlib
 import errno
+import itertools
 import json
 import logging
 import socket as pysocket
@@ -16,7 +17,7 @@ import pytest
 from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 from msks.app import build_app
-from msks.bridge import NO_HOLDER
+from msks.bridge import NO_HOLDER, BridgeHub
 from msks.server.api import build_api
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 from msks.spec.proxy import CLOSE, OPEN, pack_frame
@@ -34,7 +35,11 @@ BIND_ATTEMPTS = 3
 
 
 @pytest.fixture
-def bridge_api(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+def bridge_api(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+):
     # The relay's refusals log at INFO (proxies.bridge_forward) and
     # pytest's capture keeps WARNING and up by default. The level
     # is set here so a frame a test awaits and never gets has the
@@ -57,17 +62,18 @@ def bridge_api(tmp_path: Path, caplog: pytest.LogCaptureFixture):
     # the cancel scope it tears down aborts that read's session
     # close mid-flight: the connection stays checked out, and the GC
     # reports it (the SAWarning this suite keeps at zero). The
-    # wrapper marks the moment publish_down finished, for
-    # held_bridge to wait on before the exit's cancel.
+    # class-level wrapper marks the moment publish_down finished, for
+    # held_bridge to wait on before the exit's cancel; patched on the
+    # class so a call through the type wakes it too.
     hub = app.state.bridge
     settled = threading.Event()
-    publish_down = hub.publish_down
+    publish_down = BridgeHub.publish_down
 
-    async def settled_publish_down(workspace_id: str) -> None:
-        await publish_down(workspace_id)
-        settled.set()
+    async def settled_publish_down(self: BridgeHub, workspace_id: str) -> None:
+        await publish_down(self, workspace_id)
+        self.settled.set()
 
-    hub.publish_down = settled_publish_down
+    monkeypatch.setattr(BridgeHub, "publish_down", settled_publish_down)
     hub.settled = settled
     api = build_api(app)
     yield api, app
@@ -153,7 +159,11 @@ def held_bridge(client, app, wid: str):
     (the fixture's settled wrapper marks it), and only then does
     the session's own exit cancel the route — the cancel that
     would otherwise land inside publish_down's model read and
-    leak its connection."""
+    leak its connection. This covers the holder's own departure,
+    the one path that runs publish_down; a close the daemon
+    starts (close_workspace) skips it and would trip the wait. The
+    session's exit then sends a second disconnect behind the ended
+    route: the buffered frame is dropped with the session."""
     settled: threading.Event = app.state.bridge.settled
     with client.websocket_connect(
         f"/api/v1/workspaces/{wid}/bridge", headers=offer()
@@ -199,7 +209,8 @@ def receive_within(session: WebSocketTestSession, seconds: float) -> dict:
 def peer_saw_eof(peer) -> bool:
     """Whether the daemon already ended the peer's connection,
     read without consuming what is queued (MSG_PEEK) and without
-    blocking (MSG_DONTWAIT); a closed peer reads as not ended."""
+    blocking (MSG_DONTWAIT). A peer the test itself closed (EBADF)
+    reads as not ended too."""
     try:
         return peer.recv(1, pysocket.MSG_PEEK | pysocket.MSG_DONTWAIT) == b""
     except OSError:
@@ -411,7 +422,9 @@ def test_a_taken_port_gets_the_row_a_fresh_one(
     squatter.bind(("127.0.0.1", 0))
     squatter.listen(1)
     taken = squatter.getsockname()[1]
-    ports = iter([taken, free_port(), free_port()])
+    # The squatted port first, then a real free port on every later
+    # ask: a second collision cannot exhaust the helper's retries.
+    ports = itertools.chain([taken], iter(free_port, None))
     monkeypatch.setitem(globals(), "free_port", lambda: next(ports))
     try:
         with TestClient(api) as client:
