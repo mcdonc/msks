@@ -330,15 +330,16 @@ class WorkspaceDetail(StatusFlash, QtWidgets.QWidget):
     def refresh(self) -> None:
         """One page refresh through the bridge (#945, #971,
         #1019) — the row-affecting pushed frames and the feed's
-        serve poke share it. A row read already out carries the
-        ask (#470's one-flight rule, #1129's carry): the landing
+        serve poke share it. A read already out carries the ask
+        (#470's one-flight rule, #1129's carry): the landing
         takes the read the guard refused, so a frame or a poke
         landing mid-flight still gets its read — the TUI
-        listing's own arm (#1019). The row read is the one a
-        frame moves, so a standing storage read alone arms
-        nothing. The tabs stand until the answers replace
-        them."""
-        if self.row_pending:
+        listing's own arm (#1019). Either read: a volume frame
+        moves the storage strip as a lifecycle frame moves the
+        row, and the row read landing first leaves the storage
+        read the one standing. The tabs stand until the answers
+        replace them."""
+        if self.row_pending or self.storage_pending:
             self.refresh_due = True
         self.read_page()
 
@@ -390,18 +391,21 @@ class WorkspaceDetail(StatusFlash, QtWidgets.QWidget):
         find. A listing without it emits ``removed``; a standing
         outage resolves with it."""
         self.row_pending = False
-        self.resolve_outage()
         fresh = find_row(rows, self.workspace_id)
         if fresh is None:
             # The TUI's own-current guard (#309's close_removed):
             # an answer landing after Back hands the operator the
             # list already — the notice would name a close that
             # already happened. The page leaves with it: a
-            # deferred refresh has nothing left to read.
+            # deferred refresh has nothing left to read, and an
+            # outage resolves without the recovery's words on a
+            # page going away — the list's own read says it.
+            self.resolve()
             self.refresh_due = False
             if not self.isHidden():
                 self.removed.emit(self.workspace_id)
             return
+        self.resolve_outage()
         self.row = fresh
         self.rebuild()
         self.serve_due()
@@ -419,7 +423,7 @@ class WorkspaceDetail(StatusFlash, QtWidgets.QWidget):
             self.row_pending = False
         else:
             self.storage_pending = False
-        self.flash(str(failure), outage=failure.reach)
+        self.refuse(str(failure), reach=failure.reach)
         self.serve_due()
 
     def storage_landed(self, report: object) -> None:
@@ -862,6 +866,10 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         notice on its status line."""
         model = self.listing.rows_by_id.get(workspace_id)
         label = model.label if model else workspace_id
+        # The row's read is a daemon answer: an outage standing
+        # on the list resolves behind the notice, which keeps
+        # the line (#776's mask).
+        self.listing.resolve()
         self.listing.flash(f"{label} removed — closing its page")
         self.unname_window()
         self.setCurrentWidget(self.listing)

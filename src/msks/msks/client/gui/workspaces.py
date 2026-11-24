@@ -542,6 +542,10 @@ class WorkspaceList(StatusFlash, QtWidgets.QWidget):
         if key in (START_KEY, STOP_KEY, DELETE_KEY, CLONE_KEY):
             label = self.action_flight[1] if self.action_flight else ""
             self.action_landed()
+            # The daemon answered the action: an outage standing
+            # behind the outcome resolves without the recovery's
+            # words, the outcome keeping the line (#776's mask).
+            self.resolve()
             self.flash(action_reply(key, label, result))
             self.refresh()
             return
@@ -585,14 +589,15 @@ class WorkspaceList(StatusFlash, QtWidgets.QWidget):
     def on_failed(self, key: str, failure: RestFailure) -> None:
         """One refused call (#939, #940): the failure flashes on
         the status line — an outage (the daemon answered nothing)
-        stands until an answer resolves it — and the rows already
-        on screen stand: the operator keeps the list the last
-        answer built, and a failed action takes nothing away
-        either. Another key's failure is not this screen's to
-        show."""
+        stands until an answer resolves it, and a refusal is an
+        answer: a standing outage resolves behind the refusal's
+        own flash — and the rows already on screen stand: the
+        operator keeps the list the last answer built, and a
+        failed action takes nothing away either. Another key's
+        failure is not this screen's to show."""
         if key in (START_KEY, STOP_KEY, DELETE_KEY, CLONE_KEY):
             self.action_landed()
-            self.flash(str(failure), outage=failure.reach)
+            self.refuse(str(failure), reach=failure.reach)
             return
         if key == STORAGE_KEY:
             # The TUI strip's own silence (#849): the strip is a
@@ -604,7 +609,7 @@ class WorkspaceList(StatusFlash, QtWidgets.QWidget):
         if key != LIST_KEY:
             return
         self.pending = False
-        self.flash(str(failure), outage=failure.reach)
+        self.refuse(str(failure), reach=failure.reach)
         self.serve_due()
 
     @QtCore.Slot(QtCore.QModelIndex)

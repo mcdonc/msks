@@ -67,6 +67,30 @@ class StatusFlash:
         if seq == self.flash_seq:
             self.status.setText(self.outage_text if self.daemon_down else "")
 
+    def refuse(self, message: str, *, reach: bool) -> None:
+        """A refused call's flash, the two kinds #904 tells apart:
+        an outage (the daemon answered nothing) stands and marks
+        the daemon down; a refusal is an answer, and a standing
+        outage resolves behind the refusal's own flash — without
+        the recovery's words, so the answer the operator just
+        read keeps the line (#776's mask). The TUI's marker
+        leaves the same way on a refusal."""
+        if reach:
+            self.flash(message, outage=True)
+            return
+        self.resolve()
+        self.flash(message)
+
+    def resolve(self) -> None:
+        """The daemon answered through another door while the
+        outage stood — an action's outcome, a refusal, a removed
+        row's notice: the state clears without the recovery's
+        words, the answer's own flash keeping the line (#776's
+        mask). The feed's flashes never call it: a drop is no
+        answer, and a reconnect's flash follows the serve poke's
+        re-read, which carries the recovery itself."""
+        self.daemon_down = False
+
     def recover(self, text: str) -> None:
         """A standing outage's resolve (#904, #1129): an answer
         landed while the daemon was down, and the recovery
@@ -74,5 +98,5 @@ class StatusFlash:
         words, clearing with the span."""
         if not self.daemon_down:
             return
-        self.daemon_down = False
+        self.resolve()
         self.flash(text)

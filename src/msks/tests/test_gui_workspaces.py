@@ -405,6 +405,51 @@ def test_an_outage_stands_until_an_answer(qt, monkeypatch) -> None:
     window.close()
 
 
+def test_an_actions_answer_resolves_the_outage_behind_its_outcome(
+    qt, monkeypatch
+) -> None:
+    """The #776 mask over a standing outage (#1129): an action's
+    answer is the daemon answering, and the outage resolves behind
+    the outcome's own flash, without the recovery's words — the
+    listing read the action triggers lands without wiping the
+    outcome, which clears with its span over the resolved state.
+    A refusal is an answer the same way: its flash runs its span
+    and the line clears after it, instead of taking the outage's
+    text back."""
+    screen, window, _bridge = make_screen(qt)
+    monkeypatch.setattr(statusflash, "FLASH_MS", 5)
+    screen.on_failed(
+        "workspaces-list",
+        clientdata.RestFailure("msks: the daemon is unreachable", reach=True),
+    )
+    assert screen.daemon_down
+    screen.row_actions["ws-1"].click()  # the action's flight opens
+    screen.on_succeeded(
+        "workspaces-start", {"id": "ws-1", "status": "running"}
+    )
+    assert screen.status.text() == "alpha running"
+    assert not screen.daemon_down  # the action's answer resolved it
+    screen.on_succeeded("workspaces-list", daemon_rows())  # the action's read
+    assert screen.status.text() == "alpha running"  # no recovery over it
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and screen.status.text():
+        qt.app.processEvents()
+        time.sleep(TICK)
+    assert screen.status.text() == ""  # cleared, not the outage's text
+    screen.on_failed(
+        "workspaces-list",
+        clientdata.RestFailure("msks: the daemon is unreachable", reach=True),
+    )
+    screen.on_failed(
+        "workspaces-list",
+        clientdata.RestFailure("409: nope", reach=False),
+    )
+    assert not screen.daemon_down  # a refusal is an answer
+    screen.clear_stale(screen.flash_seq)  # the refusal's span ends
+    assert screen.status.text() == ""
+    window.close()
+
+
 def test_a_later_flash_outlives_an_earlier_timeout(qt) -> None:
     """The flash serial (#939): a second refusal inside the
     first's flash span keeps its own message — the first's

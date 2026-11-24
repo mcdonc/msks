@@ -943,6 +943,34 @@ def test_a_failed_refresh_flashes_and_keeps_the_tabs(qt) -> None:
     assert page.status.text() == "daemon back — page resumed"
 
 
+def test_a_volume_frame_under_a_standing_storage_read_is_carried(qt) -> None:
+    """The carry arms on either read (#1129): a volume frame moves
+    the storage strip as a lifecycle frame moves the row, and the
+    row read landing first is the common half-landed state. The
+    row re-reads at once when ``home.imported`` arrives, and the
+    standing storage read is re-read behind it — the carried
+    refresh served once no read stands — so the footer's figure
+    follows the import."""
+    page, window, bridge = make_page(qt)
+    land(qt, page, bridge)
+    row = (qt.page_mod.ROW_KEY, "workspaces", ())
+    storage = (qt.page_mod.STORAGE_KEY, "storage", ())
+
+    def reads() -> list:
+        return [c for c in bridge.calls if c[0] in (row[0], storage[0])]
+
+    page.refresh()  # both reads out
+    page.on_succeeded(qt.page_mod.ROW_KEY, [daemon_row()])  # the row first
+    bridge.calls.clear()
+    frame = {"event": "home.imported", "data": {"workspace_id": "ws-a"}}
+    page.push_frame(frame)
+    assert reads() == [row]  # the row re-reads; the storage read stands
+    page.on_succeeded(qt.page_mod.STORAGE_KEY, {"workspaces": []})
+    assert reads() == [row]  # the frame's row read still stands
+    page.on_succeeded(qt.page_mod.ROW_KEY, [daemon_row()])
+    assert reads() == [row, row, storage]  # no read stands: served
+
+
 def test_a_refusal_flash_clears_on_its_timeout(qt) -> None:
     """A refusal's own span (#945): the flash clears when its
     timeout lands, and a later flash outlives an earlier
@@ -1007,10 +1035,21 @@ def test_the_removed_workspace_closes_its_page(qt) -> None:
     close_removed shape): the page emits, the list returns with
     the notice on its status line."""
     shell, window, bridge = make_shell(qt)
+    # An outage standing on the list resolves behind the notice —
+    # the row's read is a daemon answer — and the listing's own
+    # read lands without the recovery's words over it (#1129,
+    # #776's mask).
+    shell.listing.on_failed(
+        "workspaces-list",
+        clientdata.RestFailure("daemon away", reach=True),
+    )
     shell.listing.opened.emit("ws-a")
     shell.detail.on_succeeded("detail-row", [other_row()])
     assert shell.currentWidget() is shell.listing
     assert "alpha removed" in shell.listing.status.text()
+    assert not shell.listing.daemon_down
+    shell.listing.on_succeeded("workspaces-list", [daemon_row()])
+    assert "alpha removed" in shell.listing.status.text()  # the notice stood
 
 
 def test_opening_resets_the_page(qt) -> None:
