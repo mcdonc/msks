@@ -165,6 +165,7 @@ def test_the_record_covers_every_artifact_the_wrappers_fetch():
         (["--uninstall"], "none", "1"),
         (["--uninstall", "--no-service"], "none", "1"),
         (["--uninstall", "--wheel", "/tmp/c.whl"], "/tmp/c.whl", "1"),
+        (["--uninstall", "--wheel=/tmp/d.whl"], "/tmp/d.whl", "1"),
     ],
 )
 @pytest.mark.parametrize("name", sorted(WRAPPERS))
