@@ -301,8 +301,8 @@ class MountsTab(QtWidgets.QWidget):
         clicked row takes the selection and the entries drive
         the buttons' own paths — the paths read the selection
         when they run, so a repaint while the menu stands can
-        move them, exactly as it moves the buttons. A press on
-        no row opens nothing."""
+        move the row they act on, the same exposure the
+        buttons carry. A press on no row opens nothing."""
         row = self.table.rowAt(pos.y())
         if row < 0:
             return
@@ -312,8 +312,10 @@ class MountsTab(QtWidgets.QWidget):
     def row_menu(self, row: int) -> QtWidgets.QMenu | None:
         """The row's menu (#1098) — ``None`` for a row the table
         does not hold. Edit and Remove drive the buttons' own
-        paths with the buttons' own gating — a flight already
-        out disables both, and Add stays on the button row."""
+        paths with the buttons' own gating read at the build:
+        a flight already out disables both, and one that lands
+        under an open menu leaves its entries dark until the
+        next open. Add stays on the button row."""
         if not 0 <= row < self.table.rowCount():
             return None
         menu = QtWidgets.QMenu(self.table)
