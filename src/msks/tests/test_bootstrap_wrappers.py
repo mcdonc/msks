@@ -9,7 +9,9 @@ venv phase's ``UV_PIN``; the VMM's release and aarch64 digest
 match the macOS tool's pinned upstream), and the checksum
 record's shape — every artifact name a wrapper can fetch
 carries one sha256 line, and the release job appends exactly
-that file to SHASUMS beside the wrappers.
+that file to SHASUMS beside the wrappers. The job's own
+checksum step runs over a staged dist/: each line carries a
+bare asset name, the name a wrapper fetches (#1136).
 
 The root-and-network path itself never executes here: fetching,
 verification, and the tool run need root on a targeted host.
@@ -20,10 +22,13 @@ step.
 
 import os
 import re
+import shlex
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 from msks.server.hostsetup.profile import DEBIAN_PROFILE
 from msks.server.hostsetup.venv import UV_PIN
 from msks.server.hostsetup_fedora import FEDORA_PROFILE
@@ -79,6 +84,72 @@ def pinned_lines() -> list[tuple[str, str]]:
         assert match is not None, f"not a sha256sum line: {line!r}"
         pairs.append((match.group(1), match.group(2)))
     return pairs
+
+
+#: The release job's step that writes the checksum record
+#: (#1136): the suite runs it over a staged dist/.
+RECORD_STEP = "Record the checksums"
+
+#: A cut release's dist/ in miniature: the pure wheel, the
+#: manylinux wheels, one per architecture, and the sdist.
+STAGED_ASSETS = (
+    "msks-0.0.0-py3-none-any.whl",
+    "msks-0.0.0-py3-none-manylinux_2_17_x86_64.whl",
+    "msks-0.0.0-py3-none-manylinux_2_17_aarch64.whl",
+    "msks-0.0.0.tar.gz",
+)
+
+#: The release job hashes on its Linux runner; a macOS host
+#: ships no sha256sum, so the record's probes wait for a host
+#: that has one.
+needs_sha256sum = pytest.mark.skipif(
+    shutil.which("sha256sum") is None, reason="the sha256sum binary is absent"
+)
+
+
+def record_step() -> str:
+    """The release job's checksum step as the workflow runs
+    it."""
+    workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+    named = [
+        step
+        for step in workflow["jobs"]["release"]["steps"]
+        if step.get("name") == RECORD_STEP
+    ]
+    assert len(named) == 1, f"the release job carries one {RECORD_STEP} step"
+    return named[0]["run"]
+
+
+def staged_record(tmp_path: Path) -> Path:
+    """The record step run as the workflow runs it, over a
+    staged tree: the assets in dist/, the pin file beside it.
+    Returns dist/, the record inside it."""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    for name in STAGED_ASSETS:
+        (dist / name).write_bytes(name.encode("utf-8"))
+    (tmp_path / "bootstrap").mkdir()
+    (tmp_path / "bootstrap" / "pinned-sums").write_text(
+        PINNED_SUMS.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    done = subprocess.run(
+        ["sh", "-ec", record_step()],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert done.returncode == 0, done.stderr
+    return dist
+
+
+def wheel_lookup(name: str) -> str:
+    """The wrapper's record lookup for the manylinux wheel,
+    sliced verbatim from the asset: the lines from the grep to
+    the name the fetch uses."""
+    body = text(name)
+    start = body.index("  wheel_line=$(grep")
+    end = body.index("\n  wheel=$(fetch_verified", start)
+    return body[start:end]
 
 
 @pytest.mark.parametrize("name", sorted(WRAPPERS))
@@ -223,3 +294,72 @@ def test_the_release_job_attaches_the_wrappers_and_the_record():
     for wrapper in ("msks-setup-debian.sh", "msks-setup-fedora.sh"):
         assert f"bootstrap/{wrapper}" in workflow
     assert "cat bootstrap/pinned-sums >> dist/SHASUMS" in workflow
+
+
+@needs_sha256sum
+def test_the_record_names_each_asset_by_its_download_name(tmp_path):
+    """The record step, run over a staged dist/ (#1136): one
+    well-formed line per asset and per pin, each under its bare
+    name. A wrapper fetches its second field at
+    <release-url>/<name> and a release asset downloads by its
+    basename; the dist/ the step hashes from is a workspace
+    path no download has."""
+    record = (staged_record(tmp_path) / "SHASUMS").read_text(encoding="utf-8")
+    names = []
+    for line in record.splitlines():
+        match = LINE_SHAPE.match(line)
+        assert match is not None, f"not a sha256sum line: {line!r}"
+        assert "/" not in match.group(2), line
+        names.append(match.group(2))
+    assert sorted(names) == sorted([*STAGED_ASSETS, *PINNED_NAMES])
+
+
+@needs_sha256sum
+@pytest.mark.parametrize(
+    ("name", "arch"),
+    [
+        ("debian", "x86_64"),
+        ("debian", "aarch64"),
+        ("fedora", "x86_64"),
+        ("fedora", "aarch64"),
+    ],
+)
+def test_the_wheel_lookup_names_an_asset_the_release_holds(
+    name, arch, tmp_path
+):
+    """The wrapper's lookup, sliced verbatim from the asset and
+    run over the staged record on each host architecture: the
+    wheel it goes on to fetch is a file the release holds, under
+    that exact name, and it carries the host's own tag."""
+    dist = staged_record(tmp_path)
+    record = shlex.quote(str(dist / "SHASUMS"))
+    probe = (
+        'die() { echo "$1" >&2; exit 1; }\n'
+        f"sums={record}\n"
+        f"wheel_arch={arch}\n"
+        f"{wheel_lookup(name)}\n"
+        'printf "%s\\n" "$wheel_name"\n'
+    )
+    done = subprocess.run(["sh", "-c", probe], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    wheel_name = done.stdout.rstrip("\n")
+    assert wheel_name.endswith(f"manylinux_2_17_{arch}.whl"), wheel_name
+    assert (dist / wheel_name).is_file(), wheel_name
+
+
+@needs_sha256sum
+def test_the_by_hand_check_passes_beside_the_assets(tmp_path):
+    """The installation chapter's by-hand check over the staged
+    record: `sha256sum -c SHASUMS --ignore-missing`, run where
+    the downloaded assets sit beside the record, verifies each
+    one."""
+    dist = staged_record(tmp_path)
+    done = subprocess.run(
+        ["sha256sum", "-c", "SHASUMS", "--ignore-missing"],
+        cwd=dist,
+        capture_output=True,
+        text=True,
+    )
+    assert done.returncode == 0, done.stderr
+    for name in STAGED_ASSETS:
+        assert f"{name}: OK" in done.stdout

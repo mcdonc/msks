@@ -231,8 +231,8 @@ jobs:
           fetch-depth: 0
 
       # Every wheel — pure and both manylinux legs — plus the
-      # sdist land in dist/, so the SHASUMS line below and the
-      # dist/* upload above carry them with no further plumbing.
+      # sdist land in dist/, so the record step and the dist/*
+      # upload below carry them with no further plumbing.
       - name: Download the wheels
         uses: actions/download-artifact@v4
         with:
@@ -283,17 +283,28 @@ jobs:
             printf '[]' > images.json
           fi
 
+      # The checksum record the bootstrap wrappers verify
+      # against (#1119): the wheels' digests plus the pinned
+      # upstream artifacts — uv per arch, the VMM per arch —
+      # so the one-command flow verifies every fetch. Each
+      # line carries a bare asset name (#1136): a wrapper
+      # fetches its second field at <release-url>/<name>, a
+      # release asset downloads by its basename, and the
+      # installation chapter's by-hand check runs
+      # `sha256sum -c` beside the downloaded files. The hash
+      # runs from inside dist/, so the directory stays out of
+      # the record, and the two globs cannot match the record
+      # itself.
+      - name: Record the checksums
+        run: |
+          (cd dist && sha256sum -- *.whl *.tar.gz) > dist/SHASUMS
+          cat bootstrap/pinned-sums >> dist/SHASUMS
+
       - name: Create the release with the wheel
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          sha256sum dist/* > dist/SHASUMS
-          # The checksum record the bootstrap wrappers verify
-          # against (#1119): the wheels' digests plus the pinned
-          # upstream artifacts — uv per arch, the VMM per arch —
-          # so the one-command flow verifies every fetch.
-          cat bootstrap/pinned-sums >> dist/SHASUMS
           # The fallback upload makes a re-run after the release
           # exists refresh the assets instead of failing at
           # create.
