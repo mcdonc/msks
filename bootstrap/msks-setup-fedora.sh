@@ -12,7 +12,8 @@
 # host-side piece (#1118's phases); the throwaway venv is
 # discarded afterwards. The trust profile is the by-hand
 # chapter's: shipped code over TLS plus pinned checksums, and
-# nothing stronger — the record itself rides the same TLS.
+# nothing stronger — the record itself is fetched over the
+# same TLS.
 #
 # Flags after `-s --` pass through to the tool (--no-service,
 # --uninstall); --wheel <path> installs a wheel in hand and
@@ -53,6 +54,8 @@ esac
 
 command -v curl >/dev/null 2>&1 ||
   die "curl is required — the wrapper fetches every artifact over HTTPS"
+command -v tar >/dev/null 2>&1 ||
+  die "tar is required — the wrapper unpacks uv's tarball"
 
 case "$(uname -m)" in
 x86_64)
@@ -70,9 +73,15 @@ aarch64)
   ;;
 esac
 
-# --wheel detection only: every argument forwards to the tool
-# verbatim, and the tool owns the flag's own refusals.
+# --wheel and --uninstall detection only: every argument
+# forwards to the tool verbatim, and the tool owns each flag's
+# own refusals. The two detections change what the wrapper
+# itself does: a wheel in hand skips the release fetch, and an
+# uninstall run takes no --wheel append (the tool refuses the
+# pair) and no VMM fetch (it would land a binary only to
+# remove it).
 wheel_in_hand=
+uninstall_asked=0
 next_is_wheel_value=0
 for argument in "$@"; do
   if [ "$next_is_wheel_value" = 1 ]; then
@@ -82,6 +91,7 @@ for argument in "$@"; do
   case $argument in
   --wheel) next_is_wheel_value=1 ;;
   --wheel=*) wheel_in_hand=${argument#--wheel=} ;;
+  --uninstall) uninstall_asked=1 ;;
   esac
 done
 
@@ -106,9 +116,9 @@ record_digest() {
 }
 
 fetch_verified() {
-  # <base-url> <name>: fetch one artifact to the work dir, verify
-  # it against the record, and print its local path — nothing
-  # unverified lands anywhere the host keeps.
+  # <base-url> <name>: fetch one artifact to the work dir and
+  # verify it against the record before anything uses it — the
+  # install steps below run only on a matching digest.
   base=$1
   name=$2
   expected=$(record_digest "$sums" "$name")
@@ -141,7 +151,11 @@ fi
 # unverified download never fires in this flow: it finds the
 # binary present and leaves it alone. A present binary stays
 # untouched (an operator's own install, a pinned release, wins).
-if command -v cloud-hypervisor >/dev/null 2>&1; then
+# An uninstall run fetches nothing here: the tool's mirror
+# removes a landed VMM, so fetching one would only add work.
+if [ "$uninstall_asked" = 1 ]; then
+  say "skipping the VMM fetch (--uninstall removes what is there)"
+elif command -v cloud-hypervisor >/dev/null 2>&1; then
   say "cloud-hypervisor already present (left untouched)"
 else
   vmm=$(fetch_verified "$vmm_url" "$vmm_name")
@@ -179,9 +193,10 @@ say "building the throwaway venv (uv-managed Python 3.14)"
 "$uv" venv --python 3.14 "$work/venv"
 "$uv" pip install --python "$work/venv/bin/python" "$wheel"
 
-if [ -z "$wheel_in_hand" ]; then
+if [ -z "$wheel_in_hand" ] && [ "$uninstall_asked" = 0 ]; then
   # The verified wheel forwards as --wheel, so /opt/msks/venv
-  # installs the exact bytes the record pinned.
+  # installs the exact bytes the record pinned. An uninstall
+  # run takes no --wheel: the tool refuses the pair.
   set -- "$@" --wheel "$wheel"
 fi
 

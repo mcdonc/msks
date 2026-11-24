@@ -10,6 +10,12 @@ match the macOS tool's pinned upstream), and the checksum
 record's shape — every artifact name a wrapper can fetch
 carries one sha256 line, and the release job appends exactly
 that file to SHASUMS beside the wrappers.
+
+The root-and-network path itself never executes here: fetching,
+verification, and the tool run need root on a targeted host.
+The live proof is the container run recorded on the PR, and
+the stock-host acceptance the issue names stays a by-hand
+step.
 """
 
 import os
@@ -50,6 +56,16 @@ LINE_SHAPE = re.compile(r"^([0-9a-f]{64})  (\S+)$")
 
 def text(name: str) -> str:
     return WRAPPERS[name].read_text(encoding="utf-8")
+
+
+def detection_loop(name: str) -> str:
+    """The wrapper's real flag-detection loop, sliced verbatim
+    from the asset — the block a behavioral probe runs under
+    ``sh`` with argv of the test's choosing."""
+    body = text(name)
+    start = body.index("# --wheel and --uninstall detection")
+    end = body.index("\ndone\n", start) + len("\ndone\n")
+    return body[start:end]
 
 
 def pinned_lines() -> list[tuple[str, str]]:
@@ -139,15 +155,50 @@ def test_the_record_covers_every_artifact_the_wrappers_fetch():
     assert names == PINNED_NAMES
 
 
+@pytest.mark.parametrize(
+    ("argv", "wheel", "uninstall"),
+    [
+        ([], "none", "0"),
+        (["--no-service"], "none", "0"),
+        (["--wheel", "/tmp/a.whl", "--no-service"], "/tmp/a.whl", "0"),
+        (["--wheel=/tmp/b.whl"], "/tmp/b.whl", "0"),
+        (["--uninstall"], "none", "1"),
+        (["--uninstall", "--no-service"], "none", "1"),
+        (["--uninstall", "--wheel", "/tmp/c.whl"], "/tmp/c.whl", "1"),
+    ],
+)
+@pytest.mark.parametrize("name", sorted(WRAPPERS))
+def test_the_detection_loop_reads_the_real_argv(name, argv, wheel, uninstall):
+    """The loop the asset actually ships, run under sh with the
+    argv of each case — both --wheel spellings, --uninstall, and
+    the plain pass-throughs it must leave alone."""
+    probe = detection_loop(name) + (
+        '\nprintf "wheel=%s uninstall=%s\\n" "${wheel_in_hand:-none}" '
+        '"$uninstall_asked"\n'
+    )
+    done = subprocess.run(
+        ["sh", "-c", probe, "wrapper", *argv],
+        capture_output=True,
+        text=True,
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == f"wheel={wheel} uninstall={uninstall}\n"
+
+
 @pytest.mark.parametrize("name", sorted(WRAPPERS))
 def test_the_wrappers_forward_flags_and_pin_the_fetched_wheel(name):
     """The flag vocabulary is the tool's own: every argument
-    forwards verbatim, a fetched wheel forwards as ``--wheel``
-    (so /opt/msks/venv installs the exact verified bytes), and a
-    mismatch names the artifact with its expected digest."""
+    forwards verbatim, and a fetched wheel forwards as
+    ``--wheel`` (so /opt/msks/venv installs the exact verified
+    bytes) — but an uninstall run takes no --wheel append (the
+    tool refuses the pair) and no VMM fetch (the tool's mirror
+    would only remove it), and a mismatch names the artifact
+    with its expected digest."""
     body = text(name)
     assert '"$@"' in body
+    assert '[ -z "$wheel_in_hand" ] && [ "$uninstall_asked" = 0 ]' in body
     assert 'set -- "$@" --wheel "$wheel"' in body
+    assert "skipping the VMM fetch" in body
     assert "checksum did not match" in body
     assert "expected $expected" in body
 
