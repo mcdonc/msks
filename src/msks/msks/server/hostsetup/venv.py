@@ -236,6 +236,18 @@ def verify_installed(error: type[Exception]) -> str:
     return landed
 
 
+def tell_refresh(held: str, tell: Tell) -> None:
+    """The progress word over an existing venv: a named wheel at
+    the same version names the overwrite (a rebuild in hand), a
+    version change names both words."""
+    if held == tool_version():
+        tell(f"installing the named wheel over msks {held}")
+    else:
+        tell(
+            f"refreshing the wheel in {VENV_DIR} ({held} -> {tool_version()})"
+        )
+
+
 def refresh_venv(wheel: str | None, error: type[Exception], tell: Tell) -> str:
     """The shared middle of the phase: the equal-state answer
     (the #546 contract — a re-run at the same version runs no uv
@@ -248,9 +260,7 @@ def refresh_venv(wheel: str | None, error: type[Exception], tell: Tell) -> str:
     if held == tool_version() and wheel is None:
         return f"{VENV_DIR}: already msks {held} ({python_word()})"
     if held is not None:
-        tell(
-            f"refreshing the wheel in {VENV_DIR} ({held} -> {tool_version()})"
-        )
+        tell_refresh(held, tell)
     uv = ensure_uv(error, tell)
     if held is None:
         create_venv(uv, error, tell)

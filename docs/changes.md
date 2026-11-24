@@ -16,13 +16,15 @@ tagged `vX.Y.Z`.
   against that venv: the system unit's `ExecStart`, the
   `/usr/local/bin` links, and a second user's `msks` runs
   through them. `--wheel <path>` installs a wheel in hand
-  instead of the fetched release; a re-run with a newer tool
-  refreshes the wheel (the upgrade path); `--uninstall`
+  instead of the fetched release, and a re-run with a newer
+  tool refreshes the wheel (the upgrade path). `--uninstall`
   removes `/opt/msks`, keeps `/var/lib/msksd`, and the summary
-  names the kept directory with its size — and on macOS, the
-  brew-prefix links point at the same shared install. Existing
-  installs hold state under the user's home: uninstall and
-  re-run — the state directory does not move.
+  names the kept directory with its size; on macOS, the
+  brew-prefix links point at the same shared install.
+- **The clean cut for existing installs (#1118, #1080).** An
+  install holding state under a user's home uninstalls and
+  re-runs with the system-unit tool. The state directory does
+  not move.
 - **A right-click on a Mounts tab row (#1098).** The click
   selects the row and opens a menu with **Edit** and
   **Remove**. The entries carry the same paths and the same

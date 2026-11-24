@@ -857,7 +857,7 @@ def test_an_equal_state_rerun_runs_no_uv_command(
 
 
 def test_a_named_wheel_installs_at_the_same_version(
-    debian_host: Host, tmp_path: Path
+    debian_host: Host, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """A wheel the operator named is state he asserted (#1118
     review): the equal-state skip is the unnamed release's alone,
@@ -871,6 +871,12 @@ def test_a_named_wheel_installs_at_the_same_version(
     assert len(uv) == 1
     assert uv[0][1:3] == ["pip", "install"]
     assert uv[0][-1] == str(wheel)
+    # The progress line names the overwrite, not a version
+    # change that is not there.
+    assert (
+        f"installing the named wheel over msks "
+        f"{hostsetup.tool_version()}" in capsys.readouterr().out
+    )
 
 
 def test_uninstall_takes_no_wheel(

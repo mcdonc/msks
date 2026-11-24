@@ -181,18 +181,31 @@ def uninstall_closing_line(link_note: str, venv_note: str) -> str:
     )
 
 
+def refuse_uninstall_wheel(args: argparse.Namespace) -> None:
+    """#1118: the wheel the uninstall arm would never install
+    refuses before any phase runs — the tree the wheel targets
+    is what --uninstall removes."""
+    if args.uninstall and args.wheel:
+        raise MacSetupError(
+            "--uninstall takes no --wheel; the venv leaves with "
+            "the /opt/msks tree"
+        )
+
+
 def refuse_readonly_shape(args: argparse.Namespace) -> None:
-    """The read-only passes take no sizing flags (#721): --check
-    and --uninstall mutate nothing, so a flag that would change
-    the VM refuses before any phase runs."""
+    """The read-only passes take no mutating flags (#721, #1118):
+    --check and --uninstall mutate nothing, so a flag that would
+    change the VM refuses before any phase runs — and the wheel
+    the uninstall arm would never install refuses beside them
+    (refuse_uninstall_wheel)."""
+    refuse_uninstall_wheel(args)
     if not (args.check or args.uninstall):
         return
-    if shape_from_args(args) is None:
-        return
-    raise MacSetupError(
-        "--check and --uninstall mutate nothing; the sizing "
-        "flags belong to the setup pass"
-    )
+    if shape_from_args(args) is not None:
+        raise MacSetupError(
+            "--check and --uninstall mutate nothing; the sizing "
+            "flags belong to the setup pass"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:

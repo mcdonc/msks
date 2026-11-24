@@ -631,6 +631,14 @@ def test_the_read_only_passes_refuse_the_sizing_flags(capsys) -> None:
     assert "sizing flags" in capsys.readouterr().err
 
 
+def test_the_uninstall_takes_no_wheel(capsys) -> None:
+    """#1118: the wheel the uninstall arm would never install
+    refuses beside the sizing flags — the tree the wheel targets
+    is what --uninstall removes."""
+    assert mac.main(["--uninstall", "--wheel", "/builds/w.whl"]) == 1
+    assert "--uninstall takes no --wheel" in capsys.readouterr().err
+
+
 # --- the bootstrap ----------------------------------------------------
 
 
