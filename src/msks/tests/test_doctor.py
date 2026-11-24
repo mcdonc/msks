@@ -780,11 +780,21 @@ def systemd_seam(
     an access group the caller holds, a live session carrying
     it, an active unit, and a shared socket that answers. The
     platform gate is pinned to Linux with them — the rows are
-    Linux-only surfaces."""
+    Linux-only surfaces — and systemctl resolves even on a host
+    whose PATH carries none (a CI container), wrapping whatever
+    which a prior seam installed so its misses survive."""
     monkeypatch.setattr(doctor_mod.sys, "platform", "linux")
     manager = tmp_path / "systemd"
     manager.mkdir(exist_ok=True)
     patch_phase(monkeypatch, "SYSTEMD_MANAGER", manager)
+    outer_which = doctor_mod.shutil.which
+
+    def rescuing_which(name: str):
+        if name == "systemctl":
+            return "/usr/bin/systemctl"
+        return outer_which(name)
+
+    monkeypatch.setattr(doctor_mod.shutil, "which", rescuing_which)
     patch_phase(monkeypatch, "group_present", lambda name: True)
     patch_phase(monkeypatch, "in_group", lambda user, name: True)
     monkeypatch.setattr(doctor_mod.os, "geteuid", lambda: 1000)
