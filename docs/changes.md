@@ -8,10 +8,10 @@ tagged `vX.Y.Z`.
 
 ### Added
 
-- **A right-click on a Mounts tab row (#1098).** The menu
-  opens **Edit** and **Remove** on the clicked row — the same
-  paths and the same gating as the button row under the table.
-  A press below the rows opens nothing.
+- **A right-click on a Mounts tab row (#1098).** The click
+  selects the row and opens a menu with **Edit** and **Remove**
+  — the same paths and the same gating as the button row under
+  the table. A press below the rows opens nothing.
 - **Owner-scoped secret events (#1090).** The live `secret.*`
   frames on the events websocket now reach the row's owner
   alone — mint, revoke, unlock, expiry, and the per-request swap

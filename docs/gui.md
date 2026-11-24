@@ -169,10 +169,10 @@ HOST, GUEST, MODE, STATE, REASON. **Add** opens the form, **Edit**
 changes the selected row, and **Remove** drops it. Every change
 posts the whole list to the daemon.
 
-A right-click on a row opens its menu with **Edit** and
-**Remove**. The entries act on the clicked row and carry the
-same gating as the buttons. A press below the rows opens
-nothing.
+A right-click on a row selects it and opens its menu with
+**Edit** and **Remove** — the same paths, over the selection,
+and with the same gating as the buttons. A press below the
+rows opens nothing.
 
 The daemon owns the rules. A host path outside the allowed roots
 is refused with the remedy stated, and the refusal appears on

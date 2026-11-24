@@ -298,9 +298,11 @@ class MountsTab(QtWidgets.QWidget):
     @QtCore.Slot(QtCore.QPoint)
     def menu_requested(self, pos: QtCore.QPoint) -> None:
         """A right-click on a row opens its menu (#1098): the
-        clicked row takes the selection first — the entries
-        read the row the pointer named, the buttons' own paths.
-        A press on no row opens nothing."""
+        clicked row takes the selection and the entries drive
+        the buttons' own paths — the paths read the selection
+        when they run, so a repaint while the menu stands can
+        move them, exactly as it moves the buttons. A press on
+        no row opens nothing."""
         row = self.table.rowAt(pos.y())
         if row < 0:
             return

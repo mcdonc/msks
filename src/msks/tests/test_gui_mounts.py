@@ -347,6 +347,10 @@ def test_the_row_menu_carries_edit_and_remove(qt) -> None:
         "Edit",
         "Remove",
     ]
+    assert [action.isEnabled() for action in menu.actions()] == [
+        True,
+        True,
+    ]
     menu.actions()[1].trigger()  # Remove: the clicked row's slot drops
     assert bridge.calls == [
         (
