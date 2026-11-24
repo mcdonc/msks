@@ -542,11 +542,7 @@ class WorkspaceList(StatusFlash, QtWidgets.QWidget):
         if key in (START_KEY, STOP_KEY, DELETE_KEY, CLONE_KEY):
             label = self.action_flight[1] if self.action_flight else ""
             self.action_landed()
-            # The daemon answered the action: an outage standing
-            # behind the outcome resolves without the recovery's
-            # words, the outcome keeping the line (#776's mask).
-            self.resolve()
-            self.flash(action_reply(key, label, result))
+            self.outcome(action_reply(key, label, result))
             self.refresh()
             return
         if key == STORAGE_KEY:

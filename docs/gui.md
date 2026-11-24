@@ -280,7 +280,12 @@ page's re-reads.
 
 A dropped events feed flashes the page while it is open. The
 page re-reads whole when the feed serves again, so the gap
-between the drop and the recovery lands on screen.
+between the drop and the recovery lands on screen. A daemon
+outage keeps its text on the status line between the feed's
+retry flashes. The first answered read after it says
+`daemon back — images resumed` once. An action's answer also ends
+the outage. The status line shows the action's result, not the
+recovery line.
 
 ## The Secrets tab
 
@@ -328,7 +333,12 @@ batch.
 
 A dropped events feed flashes the page while it is open. The
 page re-reads whole when the feed serves again, so the gap
-between the drop and the recovery lands on screen.
+between the drop and the recovery lands on screen. A daemon
+outage keeps its text on the status line between the feed's
+retry flashes. The first answered read after it says
+`daemon back — secrets resumed` once. An action's answer also ends
+the outage. The status line shows the action's result, not the
+recovery line.
 
 ## The zoom keys
 

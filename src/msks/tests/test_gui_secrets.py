@@ -28,6 +28,7 @@ from msks.client import ages as ages_mod  # noqa: E402
 from msks.client.data import RestFailure  # noqa: E402
 from msks.client.frames import secrets_frame  # noqa: E402
 from msks.client.gui import secretrows as secretrows_mod  # noqa: E402
+from msks.client.gui import statusflash  # noqa: E402
 from msks.client.gui.listtable import fill_columns  # noqa: E402
 from msks.client.gui.secrets import (  # noqa: E402
     cells as cells,
@@ -705,8 +706,67 @@ def test_a_failed_page_fetch_flashes_and_the_groups_stand(
     tab.on_failed(secrets_mod.PAGE_KEY, RestFailure("daemon gone", reach=True))
     assert not tab.pending
     assert tab.status.text() == "daemon gone"
-    assert tab.flash_outage
+    assert tab.daemon_down  # the mixin's state, not the flash's (#1132)
     assert rows_texts(tab.table) == standing
+    window.close()
+
+
+def test_an_outage_stands_through_the_heartbeat_and_recovers(
+    qt, monkeypatch
+) -> None:
+    """The mixin's contract on the tab (#1132, #904): an
+    outage's text stands under the feed's heartbeat — each flash
+    runs its span and the text takes the line back — and the
+    first answered read while the daemon is down says the
+    recovery once, then clears with its span."""
+    tab, window, bridge = make_tab(qt, monkeypatch)
+    monkeypatch.setattr(statusflash, "FLASH_MS", 5)
+    tab.pending = True
+    tab.on_failed(secrets_mod.PAGE_KEY, RestFailure("daemon gone", reach=True))
+    assert tab.status.text() == "daemon gone"
+    assert tab.daemon_down
+    bridge.feed_dropped.emit("the dial failed: connection refused")
+    assert "the dial failed" in tab.status.text()
+    assert tab.daemon_down  # the heartbeat touches nothing
+    tab.clear_stale(tab.flash_seq)  # the heartbeat's span ends
+    assert tab.status.text() == "daemon gone"  # the outage stood
+    tab.refresh()  # the serve poke's read
+    tab.on_succeeded(secrets_mod.PAGE_KEY, page_answer())
+    assert tab.status.text() == "daemon back — secrets resumed"
+    assert not tab.daemon_down
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and tab.status.text():
+        qt.app.processEvents()
+        time.sleep(0.01)
+    assert tab.status.text() == ""  # the recovery's own span
+    window.close()
+
+
+def test_an_actions_answer_resolves_the_outage_behind_its_outcome(
+    qt, monkeypatch
+) -> None:
+    """The #776 mask on the tab (#1132): a renew's answer is the
+    daemon answering — the standing outage resolves behind the
+    outcome's own flash, and the read the action triggers lands
+    without the recovery's words."""
+    tab, window, bridge = make_tab(qt, monkeypatch)
+    monkeypatch.setattr(statusflash, "FLASH_MS", 5)
+    tab.pending = True
+    tab.on_failed(secrets_mod.PAGE_KEY, RestFailure("daemon gone", reach=True))
+    assert tab.daemon_down
+    tab.action_pending = True
+    tab.action_model = tab.secret_models[0]
+    outcome = cells.renewed_text(tab.action_model, {})
+    tab.on_succeeded(secrets_mod.RENEW_KEY, {})
+    assert tab.status.text() == outcome
+    assert not tab.daemon_down
+    tab.on_succeeded(secrets_mod.PAGE_KEY, page_answer())  # the action's read
+    assert tab.status.text() == outcome  # the outcome keeps the line
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and tab.status.text():
+        qt.app.processEvents()
+        time.sleep(0.01)
+    assert tab.status.text() == ""  # its own span, no recovery's words
     window.close()
 
 
@@ -1055,8 +1115,10 @@ def test_a_refused_mint_keeps_the_fields(qt) -> None:
 
 def test_the_flash_clears_after_its_span(qt, monkeypatch) -> None:
     """The flash machinery (#939's, the tab's own): a refusal's
-    message clears after its span, the standing counts retire a
-    timeout still pending."""
+    message clears after its span, and a flash in its span keeps
+    the line through a landing (#776's mask, #1132) — the
+    standing counts clear only the fetch's own text, the
+    flash's own timeout clearing it."""
     tab, window, _bridge = make_tab(qt, monkeypatch)
     tab.flash("a refusal")
     assert tab.status.text() == "a refusal"
@@ -1065,8 +1127,33 @@ def test_the_flash_clears_after_its_span(qt, monkeypatch) -> None:
     tab.flash("another")
     stale = tab.flash_seq
     tab.standing()
+    assert tab.status.text() == "another"  # the landing kept it
     tab.clear_stale(stale)
     assert tab.status.text() == ""
+    window.close()
+
+
+def test_the_recovery_stays_visible_through_a_carried_read(
+    qt, monkeypatch
+) -> None:
+    """The carried ask after an outage (#1132, #1060): the
+    recovery's flash lands on the first answer and the carried
+    read's own landing does not clear it — the line was the
+    recovery's, not the fetch's."""
+    tab, window, bridge = make_tab(qt, monkeypatch)
+    tab.pending = True
+    tab.on_failed(secrets_mod.PAGE_KEY, RestFailure("daemon gone", reach=True))
+    tab.refresh()  # the flight out
+    assert tab.status.text().startswith("fetching")
+    tab.refresh()  # carried: the gather's landing takes the read
+    assert tab.refresh_due
+    bridge.calls.clear()
+    tab.on_succeeded(secrets_mod.PAGE_KEY, page_answer())
+    assert tab.status.text() == "daemon back — secrets resumed"
+    read = ("secrets-page", "secrets_page", ())
+    assert tab.pending and bridge.calls == [read]  # the carried read, out
+    tab.on_succeeded(secrets_mod.PAGE_KEY, page_answer())  # the carried read
+    assert tab.status.text() == "daemon back — secrets resumed"  # still shown
     window.close()
 
 
