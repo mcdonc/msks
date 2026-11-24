@@ -28,7 +28,10 @@ if importlib.util.find_spec("PySide6") is None:
 
 from msks.client import ages as ages_mod  # noqa: E402
 from msks.client import data as clientdata  # noqa: E402
-from msks.client.gui import listlayout  # noqa: E402
+from msks.client.gui import (
+    listlayout,  # noqa: E402
+    statusflash,  # noqa: E402
+)
 from msks.client.gui import rows as gui_rows  # noqa: E402
 
 #: The poll cadence for the offscreen event loop, seconds — the
@@ -279,35 +282,40 @@ def test_a_later_answer_replaces_the_rows(qt) -> None:
     window.close()
 
 
-def test_a_refresh_in_flight_is_skipped(qt) -> None:
-    """The in-flight guard (#939, the TUI listing's own #470
-    rule): while a refresh waits on its answer, the tick and the
-    button add nothing — a slow call does not stack identical
-    requests behind itself. Whichever answer comes (a listing or
-    a refusal) retires the flight, and the next refresh
-    runs."""
+def test_a_refresh_in_flight_is_carried(qt) -> None:
+    """The in-flight guard carries the ask (#939, #470's one
+    flight at a time, #1129's carry — the TUI listing's own arm
+    over #1019): a refresh asked while the listing's read is out
+    adds no second request, and the landing takes the read the
+    guard refused — one more flight, not a dropped poke. A
+    refusal's landing serves it the same way, and a landing with
+    nothing carried asks nothing."""
     screen, window, bridge = make_screen(qt)
+    read = ("workspaces-list", "workspaces", ())
     bridge.calls.clear()
-    screen.refresh()  # the flight opens
-    assert bridge.calls == [("workspaces-list", "workspaces", ())]
-    screen.refresh()
-    screen.refresh()
-    assert bridge.calls == [("workspaces-list", "workspaces", ())]
+    screen.refresh()  # the read goes out
+    screen.refresh()  # a poke, mid-flight: carried
+    screen.refresh()  # and another: one carry, not a queue
+    assert bridge.calls == [read]
     screen.on_succeeded("workspaces-list", daemon_rows()[:1])
-    bridge.calls.clear()
+    assert bridge.calls == [read, read]  # the landing took it
+    screen.on_succeeded("workspaces-list", daemon_rows()[:1])
+    assert bridge.calls == [read, read]  # nothing carried, nothing asked
     screen.refresh()
-    assert bridge.calls == [("workspaces-list", "workspaces", ())]
-    screen.refresh()
-    assert bridge.calls == [
-        ("workspaces-list", "workspaces", ())
-    ]  # one flight at a time
+    screen.refresh()  # carried again
     screen.on_failed(
         "workspaces-list",
         clientdata.RestFailure("409: workspace is running", reach=False),
     )
+    assert bridge.calls == [read, read, read, read]  # served through a refusal
     bridge.calls.clear()
-    screen.refresh()  # a refusal retired the flight the same way
-    assert bridge.calls == [("workspaces-list", "workspaces", ())]
+    screen.on_failed(
+        "workspaces-list",
+        clientdata.RestFailure("409: workspace is running", reach=False),
+    )
+    assert (
+        bridge.calls == []
+    )  # the served flight's own refusal carries nothing
     window.close()
 
 
@@ -338,7 +346,7 @@ def test_a_refusal_flash_clears_on_its_timeout(qt, monkeypatch) -> None:
     its timeout lands — proven by elapsed time, a tiny flash
     span pumped through the real event queue."""
     screen, window, _bridge = make_screen(qt)
-    monkeypatch.setattr(qt.screen_mod, "FLASH_MS", 5)
+    monkeypatch.setattr(statusflash, "FLASH_MS", 5)
     screen.on_failed(
         "workspaces-list",
         clientdata.RestFailure("nope", reach=False),
@@ -356,9 +364,13 @@ def test_an_outage_stands_until_an_answer(qt, monkeypatch) -> None:
     """An outage is not a flash (#939, #904's contract): a
     failure the daemon never answered (``reach``) stands on the
     status line — the same tiny flash span proves nothing clears
-    it — and the next successful answer resolves it."""
+    it — and the feed's heartbeat flashing over it gives the
+    outage's text back when its span ends, the daemon-down state
+    the screen's own (#1129). The next successful answer
+    resolves it: the recovery flashes once in the outage's place,
+    the TUI listing's own words, and clears with the span."""
     screen, window, _bridge = make_screen(qt)
-    monkeypatch.setattr(qt.screen_mod, "FLASH_MS", 5)
+    monkeypatch.setattr(statusflash, "FLASH_MS", 5)
     screen.on_failed(
         "workspaces-list",
         clientdata.RestFailure("msks: the daemon is unreachable", reach=True),
@@ -369,8 +381,72 @@ def test_an_outage_stands_until_an_answer(qt, monkeypatch) -> None:
         qt.app.processEvents()
         time.sleep(TICK)
     assert "unreachable" in screen.status.text()  # it stood
+    # The feed's heartbeat (#946): its flash runs its span over
+    # the outage, whose text takes the line back when it ends.
+    screen.flash("the events feed dropped — the dial failed")
+    assert "the dial failed" in screen.status.text()
+    deadline = time.monotonic() + 10.0
+    while (
+        time.monotonic() < deadline
+        and "unreachable" not in screen.status.text()
+    ):
+        qt.app.processEvents()
+        time.sleep(TICK)
+    assert screen.status.text() == (
+        "msks: the daemon is unreachable"  # the outage stood under it
+    )
     screen.on_succeeded("workspaces-list", [])
-    assert screen.status.text() == ""  # the answer resolved it
+    assert screen.status.text() == "daemon back — listing resumed"
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and screen.status.text():
+        qt.app.processEvents()
+        time.sleep(TICK)
+    assert screen.status.text() == ""  # the recovery's own span
+    window.close()
+
+
+def test_an_actions_answer_resolves_the_outage_behind_its_outcome(
+    qt, monkeypatch
+) -> None:
+    """The #776 mask over a standing outage (#1129): an action's
+    answer is the daemon answering, and the outage resolves behind
+    the outcome's own flash, without the recovery's words — the
+    listing read the action triggers lands without wiping the
+    outcome, which clears with its span over the resolved state.
+    A refusal is an answer the same way: its flash runs its span
+    and the line clears after it, instead of taking the outage's
+    text back."""
+    screen, window, _bridge = make_screen(qt)
+    monkeypatch.setattr(statusflash, "FLASH_MS", 5)
+    screen.on_failed(
+        "workspaces-list",
+        clientdata.RestFailure("msks: the daemon is unreachable", reach=True),
+    )
+    assert screen.daemon_down
+    screen.row_actions["ws-1"].click()  # the action's flight opens
+    screen.on_succeeded(
+        "workspaces-start", {"id": "ws-1", "status": "running"}
+    )
+    assert screen.status.text() == "alpha running"
+    assert not screen.daemon_down  # the action's answer resolved it
+    screen.on_succeeded("workspaces-list", daemon_rows())  # the action's read
+    assert screen.status.text() == "alpha running"  # no recovery over it
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and screen.status.text():
+        qt.app.processEvents()
+        time.sleep(TICK)
+    assert screen.status.text() == ""  # cleared, not the outage's text
+    screen.on_failed(
+        "workspaces-list",
+        clientdata.RestFailure("msks: the daemon is unreachable", reach=True),
+    )
+    screen.on_failed(
+        "workspaces-list",
+        clientdata.RestFailure("409: nope", reach=False),
+    )
+    assert not screen.daemon_down  # a refusal is an answer
+    screen.clear_stale(screen.flash_seq)  # the refusal's span ends
+    assert screen.status.text() == ""
     window.close()
 
 
@@ -1585,13 +1661,14 @@ def test_a_stale_listing_answer_keeps_the_outcome_flash(qt) -> None:
     # The stale listing answer lands: same rows, no rebuild.
     screen.on_succeeded("workspaces-list", daemon_rows())
     assert screen.status.text() == "alpha running"  # it stood
-    # A standing outage, though, an answer resolves.
+    # A standing outage, though, an answer resolves — the
+    # recovery flashes once in its place (#1129).
     screen.on_failed(
         "workspaces-list",
         clientdata.RestFailure("daemon away", reach=True),
     )
     screen.on_succeeded("workspaces-list", daemon_rows())
-    assert screen.status.text() == ""
+    assert screen.status.text() == "daemon back — listing resumed"
     window.close()
 
 

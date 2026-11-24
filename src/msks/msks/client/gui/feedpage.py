@@ -23,10 +23,11 @@ class FeedPage:
     drops, both only while it owns the window — a hidden page
     re-reads at its next show, whatever moved while it stood
     unseen. The drop's recovery carries no flash of its own: the
-    serve poke fires on every connection's first frame,
-    reconnects included, and the re-read's own status line tells
-    the story. The host page supplies ``refresh``, ``flash``,
-    and the QWidget it mixes beside."""
+    serve poke fires on every connection that comes to serve,
+    frame or no frame (#1129), reconnects included, and the
+    re-read's own status line tells the story. The host page
+    supplies ``refresh``, ``flash``, and the QWidget it mixes
+    beside."""
 
     @QtCore.Slot()
     def feed_served(self) -> None:
