@@ -47,6 +47,7 @@ from .users import (
     ensure_accounts,
     ensure_kvm_membership,
     executing_user,
+    kept_state_note,
     remove_accounts,
     remove_kvm_membership,
     uplink,
@@ -61,6 +62,7 @@ from .util import (
     version_tuple,
     which,
 )
+from .venv import drop_venv, install_venv
 from .wrapper import (
     CAPS,
     WRAPPER,
@@ -125,6 +127,7 @@ def summary(
     uplink_name: str,
     login_path: str = "",
     client_link: str = "",
+    venv: str = "",
     profile: HostProfile = DEBIAN_PROFILE,
 ) -> None:
     say(profile.tool, "done —")
@@ -132,6 +135,7 @@ def summary(
     print(f"  wrapper:    {WRAPPER} (setpriv, {CAPS}+ep, {grant})")
     print(f"               dev-daemon use: DEV_CAPS={WRAPPER} msks-dev")
     print(f"  account:    {accounts}")
+    print(f"  venv:       {venv}")
     print(f"  forwarding: net.ipv4.ip_forward=1 ({SYSCTL_FILE}, active now)")
     print(f"  modules:    {MODULES_FILE} ({','.join(MODULES)})")
     print(
@@ -156,15 +160,20 @@ def summary(
 
 
 def run_setup(
-    service: bool = True, profile: HostProfile = DEBIAN_PROFILE
+    service: bool = True,
+    profile: HostProfile = DEBIAN_PROFILE,
+    wheel: str | None = None,
 ) -> None:
     """Every phase in order; the first refusal stops the run. The
-    profile's admin PATH (sudo can strip /usr/sbin, where setcap
-    and friends live) holds for the run and is restored after it."""
+    venv phase (#1118) lands first — every later phase resolves
+    against /opt/msks/venv — then the profile's admin PATH (sudo
+    can strip /usr/sbin, where setcap and friends live) holds for
+    the run and is restored after it."""
     saved = os.environ.get("PATH", "")
     os.environ["PATH"] = profile.admin_path + ":" + saved
     try:
         check_root_and_platform(profile)
+        venv_note = install_venv(wheel, profile)
         missing = list(
             dict.fromkeys(
                 missing_packages(profile) + missing_soname_packages(profile)
@@ -200,6 +209,7 @@ def run_setup(
             the_uplink,
             login_path=path_note,
             client_link=client_link,
+            venv=venv_note,
             profile=profile,
         )
         # The VMM lands last and after the summary: it is the one
@@ -229,21 +239,26 @@ def uninstall_summary(
     vmm: str,
     packages: list[str],
     client_link: str = "",
+    state: str = "",
+    venv: str = "",
     profile: HostProfile = DEBIAN_PROFILE,
 ) -> None:
     """The uninstall summary: every piece the run removed, in the
-    install summary's shape, plus the removal line — the
-    dependency packages stay, and the operator removes the ones
-    present himself when nothing else uses them."""
+    install summary's shape, plus the kept lines — /var/lib/msksd
+    with its size (#1118) and the dependency packages, which
+    stay for the operator to remove himself when nothing else
+    uses them."""
     say(profile.tool, "done —")
     print(f"  service:    {service}")
     print(f"  account:    {accounts}")
+    print(f"  state:      {state}")
     print(f"  forwarding: {forwarding}")
     print(f"  modules:    {modules}")
     print(f"  wrapper:    {wrapper}")
     print(f"  /dev/kvm:   {kvm}")
     print(f"  login PATH: {login_path}")
     print(f"  client:     {client_link}")
+    print(f"  venv:       {venv}")
     print(f"  VMM:        {vmm}")
     if not packages:
         print("  packages:   none of the msks dependency packages are present")
@@ -260,10 +275,11 @@ def run_uninstall(
 ) -> None:
     """The setup's mirror (#604), in teardown order: the service
     stops first — the accounts and caps it ran under leave next
-    — then every host piece leaves, and the summary names the
-    dependency packages for the operator's own package-manager
-    call. The first refusal stops the run, the install run's
-    rule."""
+    — then every host piece leaves (the /opt/msks venv with
+    them, #1118), and the summary names the dependency packages
+    for the operator's own package-manager call and the kept
+    state directory with its size. The first refusal stops the
+    run, the install run's rule."""
     saved = os.environ.get("PATH", "")
     os.environ["PATH"] = profile.admin_path + ":" + saved
     try:
@@ -279,6 +295,7 @@ def run_uninstall(
         kvm = remove_kvm_membership(user, profile)
         login_path = drop_user_path(home, uid, gid, profile)
         client_link = drop_client_link()
+        venv_note = drop_venv()
         vmm = drop_cloud_hypervisor()
         uninstall_summary(
             service_note,
@@ -291,6 +308,8 @@ def run_uninstall(
             vmm,
             present_packages(profile),
             client_link=client_link,
+            state=kept_state_note(),
+            venv=venv_note,
             profile=profile,
         )
     finally:
@@ -305,6 +324,13 @@ def parse_args(
         description=profile.description,
     )
     parser.add_argument(
+        "--wheel",
+        metavar="PATH",
+        help="install this wheel into /opt/msks/venv instead of "
+        "the PyPI release matching this tool's version (an "
+        "offline or prebuilt build)",
+    )
+    parser.add_argument(
         "--no-service",
         action="store_true",
         help="land every host piece but the systemd unit (a "
@@ -316,10 +342,11 @@ def parse_args(
         action="store_true",
         help="undo the setup (#604): stop and remove the msksd "
         "system service, remove the msksd account and the msks "
-        "group, the wrapper, the client links, the routing "
-        "kernel files, the cloud-hypervisor binary, the kvm "
-        "membership, and the profile block — /var/lib/msksd stays, "
-        "and the apt packages stay, and the summary names them",
+        "group, the wrapper, the client links, the /opt/msks "
+        "venv (#1118), the routing kernel files, the "
+        "cloud-hypervisor binary, the kvm membership, and the "
+        "profile block — /var/lib/msksd stays, and the apt "
+        "packages stay, and the summary names them",
     )
     return parser.parse_args(argv)
 
@@ -333,7 +360,11 @@ def main(
         if args.uninstall:
             run_uninstall(service=not args.no_service, profile=profile)
         else:
-            run_setup(service=not args.no_service, profile=profile)
+            run_setup(
+                service=not args.no_service,
+                profile=profile,
+                wheel=args.wheel,
+            )
     except HostSetupError as exc:
         print(f"{profile.tool}: {exc}", file=sys.stderr)
         return 1

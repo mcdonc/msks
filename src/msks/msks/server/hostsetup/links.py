@@ -1,9 +1,11 @@
 """The client console-script links.
 
-``msks`` and ``msks-term-popup`` link at ``/usr/local/bin``, each
-pointing at the bin sibling this tool's own venv ships (#719,
-#755); a live link or a regular file refuses by name, a dangling
-link re-points.
+``msks`` and ``msks-term-popup`` link at ``/usr/local/bin``,
+each pointing into the shared venv's bin — ``/opt/msks/venv/bin``
+(#1118), the install every account on the host shares — with
+the bin sibling this tool's own deployment shipped as the
+fallback; a live link or a regular file refuses by name, a
+dangling link re-points.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import sys
 from pathlib import Path
 
 from .util import HostSetupError
+from .venv import VENV_BIN
 
 #: Where the client's console scripts link (#719, #755): the
 #: /usr/local/bin real estate the wrapper and the VMM already
@@ -34,20 +37,26 @@ CLIENT_LINKS = (
 
 
 def bin_sibling(name: str) -> str | None:
-    """A console script beside this tool's own, when the venv
-    that shipped the tool shipped it, or None — the
-    deployment's bin dir is the one path that locates the
-    install (invoked_as()'s reasoning)."""
+    """A console script the install answers: the shared venv's
+    bin first (#1118 — ``/opt/msks/venv/bin``, the venv phase's
+    landing, where every later phase resolves), then the bin
+    beside this tool's own (the venv that shipped the tool
+    shipped it — the deployment's bin dir is the one path that
+    locates the install, invoked_as()'s reasoning), or None."""
+    shared = Path(VENV_BIN) / name
+    if shared.exists():
+        return str(shared)
     sibling = Path(sys.argv[0]).resolve().parent / name
     return str(sibling) if sibling.exists() else None
 
 
 def msksd_sibling() -> str | None:
-    """The msksd the deployment brought, as this tool's own bin
-    sibling (the venv that shipped the tool ships the daemon),
-    or None when no sibling exists — the deployment runs its
-    daemon from elsewhere and the service phase names that and
-    stands down."""
+    """The msksd the deployment answers, as the shared venv's
+    own ``/opt/msks/venv/bin/msksd`` (#1118 — the unit's
+    ``ExecStart`` execs it) with this tool's bin sibling as the
+    fallback, or None when neither exists — the deployment runs
+    its daemon from elsewhere and the service phase names that
+    and stands down."""
     return bin_sibling("msksd")
 
 
@@ -114,11 +123,12 @@ def link_client() -> str:
     consent-terminal launcher a GUI-opened window resolves on its
     own PATH — into /usr/local/bin, the real estate the wrapper
     and the VMM already occupy, so no profile edits and no
-    login-shell gamble. Each command points at the bin sibling
-    this tool's own venv ships; a command with no sibling stands
-    down with a note (the deployment runs its client from
-    elsewhere — invoked_as()'s reasoning again); the arms at each
-    path are :func:`claim_link`'s."""
+    login-shell gamble. Each command points into the shared
+    venv's bin (``bin_sibling``'s resolution, #1118) so a second
+    user's ``msks`` runs through the same links; a command with
+    no resolution stands down with a note (the deployment runs
+    its client from elsewhere — invoked_as()'s reasoning again);
+    the arms at each path are :func:`claim_link`'s."""
     notes = []
     for name, path in CLIENT_LINKS:
         sibling = bin_sibling(name)

@@ -8,6 +8,21 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The `/opt/msks` venv install (#1118).** The Debian and
+  Fedora setup tools gain a first phase that creates
+  `/opt/msks/venv` — Python 3.14 provisioned through uv when
+  the host holds none — and installs the msks release matching
+  the tool's version into it. Every later phase resolves
+  against that venv: the system unit's `ExecStart`, the
+  `/usr/local/bin` links, and a second user's `msks` runs
+  through them. `--wheel <path>` installs a wheel in hand
+  instead of the fetched release; a re-run with a newer tool
+  refreshes the wheel (the upgrade path); `--uninstall`
+  removes `/opt/msks` and the summary names the kept
+  `/var/lib/msksd` with its size. On macOS, the brew-prefix
+  links point at the same shared install. Existing installs
+  hold state under the user's home: uninstall and re-run —
+  the state directory does not move.
 - **A right-click on a Mounts tab row (#1098).** The click
   selects the row and opens a menu with **Edit** and
   **Remove**. The entries carry the same paths and the same

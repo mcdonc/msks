@@ -15,6 +15,7 @@ from .agent import ensure_agent, remove_agent
 from .base import PORT, SHAPE_FLOORS, TOOL, VM_NAME, MacSetupError, say
 from .bootstrap import bootstrap_vm, refuse_dev_build
 from .hostcheck import check_host
+from .hostvenv import install_host_venv, remove_host_venv
 from .links import link_client_mac, remove_client_link
 from .skew import check_rows
 from .verify import client_preset, verify_daemon
@@ -38,8 +39,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--wheel",
         metavar="PATH",
-        help="install this wheel into the VM instead of the PyPI "
-        "release matching this tool's version (a build in hand)",
+        help="install this wheel into the VM and the host-side venv "
+        "instead of the PyPI release matching this tool's version "
+        "(a build in hand)",
     )
     parser.add_argument(
         "--port",
@@ -85,9 +87,10 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--uninstall",
         action="store_true",
-        help="stop and delete the msksd VM, its login agent, and "
-        "the brew-prefix client links (Lima and the client config "
-        "stay, and the summary names them)",
+        help="stop and delete the msksd VM, its login agent, the "
+        "brew-prefix client links, and the shared /opt/msks host "
+        "install (Lima and the client config stay, and the "
+        "summary names them)",
     )
     return parser.parse_args(argv)
 
@@ -122,7 +125,10 @@ def validate_shape(shape: dict | None) -> dict | None:
 
 def run_setup(args: argparse.Namespace) -> str:
     """The phases in order; the preset block returns for the
-    caller to print. The verify pass runs before the client
+    caller to print. The host-side venv lands before the VM
+    phases (#1118): the links point into it, and a refusal
+    (no PyPI, a bad wheel) names itself before minutes of VM
+    work. The verify pass runs before the client
     files and the login agent so a green run is what they
     provision — the preset's token and CA are real, and the agent
     earns its login slot. The port the phases share is the one
@@ -138,6 +144,7 @@ def run_setup(args: argparse.Namespace) -> str:
     shape = validate_shape(shape_from_args(args))
     check_host()
     refuse_dev_build(args.wheel)
+    say(install_host_venv(args.wheel))
     home = str(Path.home())
     port = ensure_vm(host_port=args.port, shape=shape)
     bootstrap_vm(args.wheel, home)
@@ -148,22 +155,26 @@ def run_setup(args: argparse.Namespace) -> str:
     return preset
 
 
-def uninstall_closing_line(link_note: str) -> str:
+def uninstall_closing_line(link_note: str, venv_note: str) -> str:
     """The uninstall arm's closing print: the removal sentence
     gates on the link's note (#719 review) — a sweep that found
     no link says so in the parenthetical instead of claiming
-    one gone."""
+    one gone — and the shared host install's departure rides on
+    its own note's word (#1118)."""
     if "gone" in link_note:
-        return (
+        head = (
             f"{TOOL}: the {VM_NAME} VM, its login agent, and the "
-            f"brew-prefix client links are gone. "
-            "Lima itself, the client config, and the CA and token "
-            "under ~/.config/msks/ stay; remove them by hand when "
-            "you want them gone."
+            "brew-prefix client links are gone"
         )
+    else:
+        head = (
+            f"{TOOL}: the {VM_NAME} VM and its login agent are gone "
+            f"({link_note})"
+        )
+    if "removed" in venv_note:
+        head += ", the shared /opt/msks host install with them"
     return (
-        f"{TOOL}: the {VM_NAME} VM and its login agent are gone "
-        f"({link_note}). "
+        head + ". "
         "Lima itself, the client config, and the CA and token "
         "under ~/.config/msks/ stay; remove them by hand when "
         "you want them gone."
@@ -195,7 +206,8 @@ def main(argv: list[str] | None = None) -> int:
             say(f"removing the login agent and the {VM_NAME} VM")
             remove_agent()
             delete_vm(VM_NAME)
-            print(uninstall_closing_line(remove_client_link()))
+            link_note = remove_client_link()
+            print(uninstall_closing_line(link_note, remove_host_venv()))
             return 0
         if args.check:
             check_host(install=False)

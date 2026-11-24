@@ -75,8 +75,9 @@ CH_SHA256 = "e8a6d9786ea678e739f1a386682846e93742dcb9c7b6e3e0c62e3bda6cff0ef3"
 
 #: The uv release the bootstrap installs from PyPI — pinned like
 #: every fetched artifact; uv provisions the VM's Python 3.14
-#: from its own standalone builds.
-UV_PIN = "0.9.7"
+#: from its own standalone builds. The pin lives in the shared
+#: venv phase (hostsetup.venv): the host-side install of #1118
+#: provisions through the same one.
 
 VM_CONF = "/etc/msksd.yaml"
 

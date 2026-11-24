@@ -10,7 +10,6 @@ did; CI has no consumer of the retired script.
 
 import os
 import subprocess
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -86,9 +85,26 @@ class Host:
         self.files: set[str] = set()
         self.removals: list[str] = []
         self.fail_remove: set[str] = set()
+        # The venv phase's dials (#1118): the version the shared
+        # venv's probe answers (None answers absent or broken),
+        # and the paths the fixture relocates under tmp_path —
+        # the uv commands' effects land on the same tree the
+        # phase reads back through bin_sibling().
+        self.installed_msks: str | None = None
+        self.venv_python = "/opt/msks/venv/bin/python"
+        self.uv_python = "/opt/msks/uv/bin/python"
+        self.uv_bin = "/opt/msks/uv/bin/uv"
+        self.venv_dir = Path("/opt/msks/venv")
+        self.command_envs: list[dict | None] = []
+        # The failure dials: a wheel install whose probe never
+        # answers (the verify refusal), and a venv interpreter
+        # that will not speak its version (the unreadable word).
+        self.venv_install_lands = True
+        self.venv_python_answers = True
 
     def sh(self, cmd, timeout=10.0, env=None):
         self.commands.append(cmd)
+        self.command_envs.append(env)
         head = cmd[0]
         if head == "getcap":
             return 0, self.getcap_answer, ""
@@ -136,6 +152,36 @@ class Host:
             # The binary verification's drop to the msksd account.
             if self.verify_rc != 0:
                 return self.verify_rc, "", "test: Permission denied\n"
+        if head == self.venv_python:
+            # The venv phase's probes (#1118): the installed msks
+            # the venv holds, and the interpreter's own word.
+            if "importlib.metadata" in cmd[-1]:
+                if self.installed_msks is None:
+                    return 1, "", f"{head}: no module named msks\n"
+                return 0, f"{self.installed_msks}\n", ""
+            if not self.venv_python_answers:
+                return 1, "", f"{head}: bad interpreter\n"
+            return 0, "Python 3.14.10\n", ""
+        if Path(head).name == "uv":
+            # The uv calls' effects (PATH's own or the bootstrap
+            # one): the venv skeleton, then the console scripts
+            # the wheel's install lands — the same tree the
+            # later phases resolve against.
+            if "venv" in cmd:
+                self.venv_dir.mkdir(parents=True, exist_ok=True)
+                (self.venv_dir / "pyvenv.cfg").write_text("home = /python\n")
+            if cmd[1:2] == ["pip"]:
+                bindir = self.venv_dir / "bin"
+                bindir.mkdir(parents=True, exist_ok=True)
+                for name in ("python", "msks", "msksd", "msks-term-popup"):
+                    (bindir / name).write_text("#!/bin/sh\n")
+                if self.venv_install_lands:
+                    self.installed_msks = hostsetup.tool_version()
+        if head == self.uv_python:
+            # The bootstrap uv's install (#1118): the pin lands at
+            # the path the phase drives afterwards.
+            Path(self.uv_bin).parent.mkdir(parents=True, exist_ok=True)
+            Path(self.uv_bin).write_text("#!/bin/sh\n")
         return 0, "", ""
 
     def write(self, path: str, text: str) -> None:
@@ -164,6 +210,40 @@ class Host:
 
     def ran(self, head: str) -> list[list[str]]:
         return [c for c in self.commands if c[0] == head]
+
+    def env_of(self, head: str) -> dict | None:
+        """The environment the first command under *head* ran with
+        (#1118: the uv calls carry the managed-interpreter
+        variables)."""
+        for cmd, env in zip(self.commands, self.command_envs, strict=True):
+            if cmd[0] == head:
+                return env
+        return None
+
+
+def patch_venv_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, host: Host
+) -> None:
+    """Relocate the venv phase's paths under tmp_path (#1118):
+    the phase's uv calls, probes, and the uninstall's rmtree
+    never touch the host's real /opt/msks, and the fake's
+    effects land on the same tree the later phases read."""
+    root = tmp_path / "opt" / "msks"
+    patch_phase(monkeypatch, "VENV_ROOT", str(root))
+    patch_phase(monkeypatch, "VENV_DIR", str(root / "venv"))
+    patch_phase(monkeypatch, "VENV_BIN", str(root / "venv" / "bin"))
+    patch_phase(
+        monkeypatch, "VENV_PYTHON", str(root / "venv" / "bin" / "python")
+    )
+    patch_phase(monkeypatch, "VENV_MARKER", str(root / "venv" / "pyvenv.cfg"))
+    patch_phase(monkeypatch, "UV_VENV", str(root / "uv"))
+    patch_phase(monkeypatch, "UV_PYTHON", str(root / "uv" / "bin" / "python"))
+    patch_phase(monkeypatch, "UV_BIN", str(root / "uv" / "bin" / "uv"))
+    patch_phase(monkeypatch, "PYTHON_INSTALL_DIR", str(root / "python"))
+    host.venv_python = str(root / "venv" / "bin" / "python")
+    host.uv_python = str(root / "uv" / "bin" / "python")
+    host.uv_bin = str(root / "uv" / "bin" / "uv")
+    host.venv_dir = root / "venv"
 
 
 @pytest.fixture()
@@ -237,6 +317,10 @@ def debian_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         ),
     )
     (tmp_path / "client").mkdir()
+    # The venv phase's paths (#1118): under tmp_path like the
+    # links', so the phase's uv calls and the uninstall's rmtree
+    # never reach the host's real /opt/msks.
+    patch_venv_paths(monkeypatch, tmp_path, host)
     patch_phase(monkeypatch, "OS_RELEASE", str(release))
     monkeypatch.setattr(hostsetup.os, "geteuid", lambda: 0)
     patch_phase(monkeypatch, "which", lambda tool: f"/usr/bin/{tool}")
@@ -658,6 +742,416 @@ def test_a_missing_profile_is_created(
     )
 
 
+# --- the venv phase (#1118) ----------------------------------------
+
+
+def test_the_venv_phase_lands_the_shared_venv(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """The first phase (#1118): uv provisions the managed 3.14
+    and the wheel installs from PyPI pinned to the tool's own
+    version, every uv call carrying the managed-interpreter
+    variables, and the summary's venv row names the landing."""
+    assert main() == 0
+    venv = Path(hostsetup.VENV_DIR)
+    uv = debian_host.ran("/usr/bin/uv")
+    assert uv[0] == [
+        "/usr/bin/uv",
+        "venv",
+        "--python",
+        "3.14",
+        hostsetup.VENV_DIR,
+    ]
+    assert uv[1] == [
+        "/usr/bin/uv",
+        "pip",
+        "install",
+        "--python",
+        hostsetup.VENV_PYTHON,
+        f"msks=={hostsetup.tool_version()}",
+    ]
+    env = debian_host.env_of("/usr/bin/uv")
+    assert env is not None
+    assert env["UV_PYTHON_INSTALL_DIR"] == hostsetup.PYTHON_INSTALL_DIR
+    assert env["UV_PYTHON_PREFERENCE"] == "only-managed"
+    # The phase's effects: the venv the later phases resolve
+    # against — the marker, the console scripts, the summary's
+    # word for the interpreter.
+    assert (venv / "pyvenv.cfg").is_file()
+    for name in ("msks", "msksd", "msks-term-popup"):
+        assert (venv / "bin" / name).is_file()
+    out = capsys.readouterr().out
+    assert "Python 3.14.10 (uv-managed," in out
+    assert (
+        f"venv:       {hostsetup.VENV_DIR}: Python 3.14.10, "
+        f"msks {hostsetup.tool_version()}" in out
+    )
+
+
+def test_no_uv_on_the_host_provisions_it(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The by-hand shape: no uv on PATH, so the phase builds the
+    bootstrap venv at /opt/msks/uv with the tool's own
+    interpreter and installs the pin into it, then drives that
+    uv for the landing."""
+    real_which = hostsetup.which
+
+    def without_uv(tool):
+        return None if tool == "uv" else real_which(tool)
+
+    patch_phase(monkeypatch, "which", without_uv)
+    assert main() == 0
+    assert hostsetup.sys.executable in [c[0] for c in debian_host.commands]
+    bootstrap = debian_host.ran(hostsetup.UV_PYTHON)
+    assert bootstrap == [
+        [
+            hostsetup.UV_PYTHON,
+            "-m",
+            "pip",
+            "install",
+            "-q",
+            f"uv=={hostsetup.UV_PIN}",
+        ]
+    ]
+    assert debian_host.ran(hostsetup.UV_BIN)
+
+
+def test_an_equal_state_rerun_runs_no_uv_command(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """#546's contract over the new phase: a re-run at the same
+    version probes the venv, answers already, and runs no uv
+    command at all."""
+    debian_host.installed_msks = hostsetup.tool_version()
+    assert main() == 0
+    assert debian_host.ran("/usr/bin/uv") == []
+    out = capsys.readouterr()
+    assert (
+        f"venv:       {hostsetup.VENV_DIR}: already msks "
+        f"{hostsetup.tool_version()} (Python 3.14.10)" in out.out
+    )
+
+
+def test_a_newer_tool_refreshes_the_wheel(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """The upgrade story (#1118): a re-run whose tool version
+    moved past the venv's installs the new release into the
+    existing venv — no recreation, no uv venv — and says the
+    refresh."""
+    debian_host.installed_msks = "0.9.1"
+    assert main() == 0
+    uv = debian_host.ran("/usr/bin/uv")
+    assert len(uv) == 1
+    assert uv[0][1:3] == ["pip", "install"]
+    assert uv[0][-1] == f"msks=={hostsetup.tool_version()}"
+    assert "refreshing the wheel" in capsys.readouterr().out
+
+
+def test_wheel_flag_installs_the_named_file(
+    debian_host: Host, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--wheel: the file the operator named installs in place of
+    the fetched release, by absolute path."""
+    wheel = tmp_path / f"msks-{hostsetup.tool_version()}-py3-none-any.whl"
+    wheel.write_bytes(b"PK")
+    assert main(["--wheel", str(wheel)]) == 0
+    uv = debian_host.ran("/usr/bin/uv")
+    assert uv[1][-1] == str(wheel)
+
+
+def test_a_missing_wheel_file_refuses(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    assert main(["--wheel", "/no/such/wheel.whl"]) == 1
+    assert "--wheel /no/such/wheel.whl: no such file" in (
+        capsys.readouterr().err
+    )
+    assert debian_host.ran("/usr/bin/uv") == []
+
+
+def test_a_wheel_with_the_wrong_version_refuses(
+    debian_host: Host, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The skew guard, converged on the macOS tool's spelling: a
+    wheel that disagrees with the tool's version refuses with
+    the --wheel remedy and both versions named, before any side
+    effect."""
+    wheel = tmp_path / "msks-0.9.1-py3-none-any.whl"
+    wheel.write_bytes(b"PK")
+    assert main(["--wheel", str(wheel)]) == 1
+    err = capsys.readouterr().err
+    assert "the wheel at" in err and "msks 0.9.1" in err
+    assert (
+        f"not this tool's {hostsetup.tool_version()} — pass --wheel "
+        "with a build of this tree" in err
+    )
+    assert debian_host.ran("/usr/bin/uv") == []
+
+
+def test_a_wheel_whose_name_carries_no_version_refuses(
+    debian_host: Host, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A file that is not the project's wheel shape (the name
+    carries no msks-version pair) refuses the same way."""
+    wheel = tmp_path / "wheel-latest.whl"
+    wheel.write_bytes(b"PK")
+    assert main(["--wheel", str(wheel)]) == 1
+    assert "a name that carries no version" in capsys.readouterr().err
+
+
+def test_a_dev_build_without_a_wheel_refuses(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """#704's shape on the Linux tools: a dev build has no release
+    to install, and the refusal names the flag before any side
+    effect — the packages, the accounts, nothing else runs."""
+    patch_phase(monkeypatch, "tool_version", lambda: "9.9.9.dev0")
+    assert main() == 1
+    assert (
+        "this tool is a development build (9.9.9.dev0); the venv "
+        "installs a release from PyPI or a wheel in hand — build one "
+        "(uv build) and pass --wheel" in capsys.readouterr().err
+    )
+    assert debian_host.commands == []
+
+
+def test_a_landing_that_holds_the_wrong_version_refuses(
+    debian_host: Host, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """The landing proof: an install whose probe answers anything
+    but the tool's version refuses with the --wheel spelling —
+    a resolution that landed a stale same-numbered release never
+    reaches the phases that build on the venv."""
+    wheel = tmp_path / f"msks-{hostsetup.tool_version()}-py3-none-any.whl"
+    wheel.write_bytes(b"PK")
+    debian_host.venv_install_lands = False
+    assert main(["--wheel", str(wheel)]) == 1
+    assert (
+        f"the venv holds msks nothing, not this tool's "
+        f"{hostsetup.tool_version()} — pass --wheel with a build of "
+        "this tree" in capsys.readouterr().err
+    )
+
+
+def test_a_venv_creation_failure_refuses(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    real_sh = debian_host.sh
+
+    def failing(cmd, timeout=10.0, env=None):
+        if cmd[:2] == ["/usr/bin/uv", "venv"]:
+            return 1, "", "uv: no managed python\n"
+        return real_sh(cmd, timeout, env=env)
+
+    patch_phase(monkeypatch, "sh", failing)
+    assert main() == 1
+    assert "uv failed: uv: no managed python" in capsys.readouterr().err
+
+
+def test_a_wheel_install_failure_refuses(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    real_sh = debian_host.sh
+
+    def failing(cmd, timeout=10.0, env=None):
+        if cmd[:2] == ["/usr/bin/uv", "pip"]:
+            return 1, "", "uv: network is unreachable\n"
+        return real_sh(cmd, timeout, env=env)
+
+    patch_phase(monkeypatch, "sh", failing)
+    assert main() == 1
+    assert "uv failed: uv: network is unreachable" in (capsys.readouterr().err)
+
+
+def test_a_uv_provisioning_failure_refuses(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """The bootstrap venv's two steps each name their failure —
+    the venv build and the pin's install."""
+    real_which = hostsetup.which
+
+    def without_uv(tool):
+        return None if tool == "uv" else real_which(tool)
+
+    patch_phase(monkeypatch, "which", without_uv)
+    real_sh = debian_host.sh
+
+    def failing(cmd, timeout=10.0, env=None):
+        if cmd[0] == hostsetup.sys.executable:
+            return 1, "", "python: ensurepip missing\n"
+        return real_sh(cmd, timeout, env=env)
+
+    patch_phase(monkeypatch, "sh", failing)
+    assert main() == 1
+    assert "python failed: python: ensurepip missing" in (
+        capsys.readouterr().err
+    )
+
+
+def test_a_uv_pin_install_failure_refuses(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    real_which = hostsetup.which
+
+    def without_uv(tool):
+        return None if tool == "uv" else real_which(tool)
+
+    patch_phase(monkeypatch, "which", without_uv)
+    real_sh = debian_host.sh
+
+    def failing(cmd, timeout=10.0, env=None):
+        if cmd[0] == hostsetup.UV_PYTHON:
+            return 1, "", "pip: no index\n"
+        return real_sh(cmd, timeout, env=env)
+
+    patch_phase(monkeypatch, "sh", failing)
+    assert main() == 1
+    assert f"{hostsetup.UV_PYTHON} failed: pip: no index" in (
+        capsys.readouterr().err
+    )
+
+
+def test_an_unwritable_opt_refuses(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """The root the phase cannot create is a named refusal, not
+    a traceback."""
+
+    def refusing(path, mode=0o755, exist_ok=False):
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr(hostsetup.os, "makedirs", refusing)
+    assert main() == 1
+    assert (
+        f"cannot create {hostsetup.VENV_ROOT} "
+        "([Errno 13] Permission denied)" in capsys.readouterr().err
+    )
+
+
+def test_an_unreadable_venv_python_names_itself(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The summary's word degrades, never refuses: an interpreter
+    that will not speak its version reads unreadable."""
+    debian_host.venv_python_answers = False
+    note = hostsetup.install_venv(None)
+    assert "an unreadable Python" in note
+
+
+def test_bin_sibling_resolves_the_venv_first(debian_host: Host) -> None:
+    """#1118: the shared venv's bin answers before the tool's own
+    sibling — and the sibling remains the fallback when the venv
+    holds nothing."""
+    venv = Path(hostsetup.VENV_BIN)
+    venv.mkdir(parents=True, exist_ok=True)
+    (venv / "msksd").write_text("#!/bin/sh\n")
+    assert hostsetup.bin_sibling("msksd") == str(venv / "msksd")
+    (venv / "msksd").unlink()
+    fallback = Path(hostsetup.sys.argv[0]).resolve().parent / "msksd"
+    assert hostsetup.bin_sibling("msksd") == str(fallback)
+
+
+def test_wheel_version_reads_the_name() -> None:
+    assert (
+        hostsetup.wheel_version("/builds/msks-0.9.2-py3-none-any.whl")
+        == "0.9.2"
+    )
+    assert hostsetup.wheel_version("/builds/other-1.0.whl") is None
+    assert hostsetup.wheel_version("/builds/msks.whl") is None
+
+
+def test_parse_args_gains_the_wheel_flag() -> None:
+    args = hostsetup.parse_args(["--wheel", "/builds/w.whl"])
+    assert args.wheel == "/builds/w.whl"
+    assert not args.uninstall and not args.no_service
+    assert hostsetup.parse_args([]).wheel is None
+
+
+def test_drop_venv_removes_the_shared_tree(
+    debian_host: Host, tmp_path: Path
+) -> None:
+    marker = Path(hostsetup.VENV_MARKER)
+    marker.parent.mkdir(parents=True)
+    marker.write_text("home = /python\n")
+    (Path(hostsetup.VENV_ROOT) / "python" / "cpython").mkdir(parents=True)
+    note = hostsetup.drop_venv()
+    assert not Path(hostsetup.VENV_ROOT).exists()
+    assert note == (
+        f"{hostsetup.VENV_ROOT} removed (the venv, the provisioned Python, uv)"
+    )
+
+
+def test_drop_venv_leaves_a_strangers_root_alone(
+    debian_host: Host, tmp_path: Path
+) -> None:
+    stranger = Path(hostsetup.VENV_ROOT)
+    stranger.mkdir(parents=True)
+    (stranger / "mine.txt").write_text("not yours\n")
+    assert hostsetup.drop_venv() == (
+        f"{hostsetup.VENV_ROOT} holds no venv (left as-is)"
+    )
+    assert (stranger / "mine.txt").is_file()
+
+
+def test_drop_venv_names_an_absent_root(debian_host: Host) -> None:
+    assert hostsetup.drop_venv() == f"{hostsetup.VENV_ROOT} already absent"
+
+
+def test_drop_venv_refuses_a_failing_rmtree(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker = Path(hostsetup.VENV_MARKER)
+    marker.parent.mkdir(parents=True)
+    marker.write_text("home = /python\n")
+
+    def refusing(path):
+        raise OSError(1, "Operation not permitted")
+
+    monkeypatch.setattr(hostsetup.venv, "rmtree", refusing)
+    with pytest.raises(hostsetup.HostSetupError, match="cannot remove"):
+        hostsetup.drop_venv()
+
+
+def test_human_size_names_each_unit() -> None:
+    assert hostsetup.human_size(0) == "0 B"
+    assert hostsetup.human_size(512) == "512 B"
+    assert hostsetup.human_size(1024) == "1.0 KiB"
+    assert hostsetup.human_size(5 * 1024 * 1024) == "5.0 MiB"
+    assert hostsetup.human_size(3 * 1024**3) == "3.0 GiB"
+    assert hostsetup.human_size(2 * 1024**4) == "2.0 TiB"
+    assert hostsetup.human_size(7 * 1024**5) == "7168.0 TiB"
+
+
+def test_tree_size_walks_the_tree(tmp_path: Path) -> None:
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "one").write_bytes(b"12345")
+    (tmp_path / "sub" / "two").write_bytes(b"1234567890")
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "one")
+    # The files' own bytes plus the symlink's own size (its
+    # target string, never the target's bytes).
+    expected = 15 + len(os.readlink(link))
+    assert hostsetup.tree_size(str(tmp_path)) == expected
+    # A walk that cannot read counts what it could; a missing
+    # tree is empty.
+    assert hostsetup.tree_size(str(tmp_path / "nope")) == 0
+
+
+def test_kept_state_note_names_the_size_and_the_repair(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    state = tmp_path / "msksd"
+    (state / "images" / "debian13").mkdir(parents=True)
+    (state / "images" / "debian13" / "root.img").write_bytes(b"x" * 2048)
+    patch_phase(monkeypatch, "DAEMON_HOME", str(state))
+    note = hostsetup.kept_state_note()
+    assert note.startswith(f"{state} stays (2.0 KiB): ")
+    assert "remove it by hand" in note
+    assert "chown -R msksd:msksd" in note
+
+
 def test_cloud_hypervisor_lands_from_upstream_when_absent(
     debian_host: Host,
     monkeypatch: pytest.MonkeyPatch,
@@ -1065,8 +1559,9 @@ def test_install_failure_refuses(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
 ) -> None:
-    def failing(cmd, timeout=10.0):
+    def failing(cmd, timeout=10.0, env=None):
         debian_host.commands.append(cmd)
+        debian_host.command_envs.append(env)
         if cmd[0] == "install":
             return 1, "", "no space left"
         return debian_host.sh(cmd, timeout)
@@ -1083,8 +1578,9 @@ def test_setcap_failure_refuses(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
 ) -> None:
-    def failing(cmd, timeout=10.0):
+    def failing(cmd, timeout=10.0, env=None):
         debian_host.commands.append(cmd)
+        debian_host.command_envs.append(env)
         if cmd[0] == "setcap":
             return 1, "", "operation not supported"
         return debian_host.sh(cmd, timeout)
@@ -1101,8 +1597,9 @@ def test_wrapper_proof_command_failure_refuses(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
 ) -> None:
-    def failing(cmd, timeout=10.0):
+    def failing(cmd, timeout=10.0, env=None):
         debian_host.commands.append(cmd)
+        debian_host.command_envs.append(env)
         if cmd[0] == WRAPPER:
             return 1, "", "setpriv: capset failed"
         return debian_host.sh(cmd, timeout)
@@ -1196,12 +1693,12 @@ def test_apt_install_runs_noninteractive(
     """The script's guarantee, kept: the install env carries
     DEBIAN_FRONTEND=noninteractive so debconf never reaches for
     the terminal."""
-    seen: list[dict | None] = []
+    seen: list[tuple[list[str], dict | None]] = []
     real_sh = debian_host.sh
 
     def recording(cmd, timeout=10.0, env=None):
-        seen.append(env)
-        return real_sh(cmd, timeout)
+        seen.append((cmd, env))
+        return real_sh(cmd, timeout, env=env)
 
     patch_phase(monkeypatch, "sh", recording)
     release = Path(hostsetup.OS_RELEASE)
@@ -1210,12 +1707,13 @@ def test_apt_install_runs_noninteractive(
     patch_phase(
         monkeypatch,
         "which",
-        lambda tool: None if tool == "nft" else "/usr/bin/x",
+        lambda tool: None if tool == "nft" else f"/usr/bin/{tool}",
     )
     assert main() == 0
-    installs = [e for e in seen if e is not None]
+    installs = [e for cmd, e in seen if cmd[:2] == ["apt-get", "install"]]
     assert installs and all(
-        e.get("DEBIAN_FRONTEND") == "noninteractive" for e in installs
+        e is not None and e.get("DEBIAN_FRONTEND") == "noninteractive"
+        for e in installs
     )
 
 
@@ -1452,7 +1950,9 @@ def test_service_lands_the_system_unit(
     patch_phase(monkeypatch, "read_file", strict_unit_read)
     assert main() == 0
     text = debian_host.writes[hostsetup.UNIT_PATH]
-    msksd = str(Path(hostsetup.sys.argv[0]).resolve().parent / "msksd")
+    # #1118: the venv phase landed first, so ExecStart resolves
+    # the shared venv's msksd — not the tool's own bin sibling.
+    msksd = f"{hostsetup.VENV_BIN}/msksd"
     assert text.startswith("# Generated by msks-setup-debian-host")
     assert "User=msksd" in text
     assert "Group=msksd" in text
@@ -1530,10 +2030,12 @@ def test_the_binary_the_msksd_account_cannot_exec_refuses(
 def test_service_skips_when_no_msksd_beside_the_tool(
     debian_host: Host, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A deployment whose msksd lives elsewhere (no bin sibling)
-    keeps a working host: the skip names the cause, no unit is
-    written, systemctl never runs."""
+    """A deployment whose msksd lives elsewhere — no venv and no
+    bin sibling, the resolution's both arms empty — keeps a
+    working host: the skip names the cause, no unit is written,
+    systemctl never runs."""
     Path(hostsetup.sys.argv[0]).parent.joinpath("msksd").unlink()
+    patch_phase(monkeypatch, "bin_sibling", lambda name: None)
     assert main() == 0
     assert unit_writes(debian_host) == {}
     assert debian_host.ran("systemctl") == []
@@ -1832,6 +2334,16 @@ def landed_host(debian_host: Host, monkeypatch: pytest.MonkeyPatch) -> Host:
             hostsetup.CLOUD_HYPERVISOR_BIN,
         }
     )
+    # The venv phase's landing (#1118), in the fake's own shape:
+    # the shared tree the uninstall's rmtree mirror reads — the
+    # fake records commands, and the venv mirror reads the real
+    # tmp tree, so the landing is seeded here the same way the
+    # uv arm seeds it.
+    venv_bin = debian_host.venv_dir / "bin"
+    venv_bin.mkdir(parents=True, exist_ok=True)
+    (debian_host.venv_dir / "pyvenv.cfg").write_text("home = /python\n")
+    for name in ("python", "msks", "msksd", "msks-term-popup"):
+        (venv_bin / name).write_text("#!/bin/sh\n")
     debian_host.writes[f"{home}/.profile"] = (
         "export EDITOR=vi\n" + hostsetup.PROFILE_PATH_BLOCK
     )
@@ -1860,6 +2372,9 @@ def test_uninstall_removes_every_piece(
     names the apt line for the packages that stay."""
     host = landed_host(debian_host, monkeypatch)
     patch_phase(monkeypatch, "in_group", lambda user, name: True)
+    # The kept-state line's evidence: a rigged walk answers a
+    # known tree, so the row pins the human word (#1118).
+    patch_phase(monkeypatch, "tree_size", lambda path: 13_000_000_000)
     assert main(["--uninstall"]) == 0
     home = hostsetup.executing_user()[3]
     # The service teardown, in order: disable --now (waited out),
@@ -1901,11 +2416,17 @@ def test_uninstall_removes_every_piece(
     assert (
         "account:    removed chrism from msks (adduser chrism msks "
         "restores it); the msksd account removed; the msks group "
-        "removed; /var/lib/msksd stays (VM overlays, images, and "
-        "secrets survive by design; a reinstall that draws a new "
-        "system uid repairs the ownership: chown -R msksd:msksd "
-        "/var/lib/msksd)" in out
+        "removed" in out
     )
+    assert (
+        "state:      /var/lib/msksd stays (12.1 GiB): the VM "
+        "overlays, images, and secrets survive the uninstall by "
+        "design; remove it by hand when you want it gone (a "
+        "reinstall that draws a new system uid repairs the "
+        "ownership: chown -R msksd:msksd /var/lib/msksd)" in out
+    )
+    assert f"venv:       {hostsetup.VENV_ROOT} removed" in out
+    assert "(the venv, the provisioned Python, uv)" in out
     assert f"wrapper:    {WRAPPER} removed" in out
     assert f"VMM:        {hostsetup.CLOUD_HYPERVISOR_BIN} removed" in out
     assert "removed chrism from kvm (adduser chrism kvm restores it)" in out
@@ -2320,13 +2841,14 @@ def test_the_client_link_lands_idempotently(
     assert main() == 0
     link = Path(hostsetup.CLIENT_LINK)
     popup = Path(hostsetup.POPUP_LINK)
+    # #1118: the links point into the shared venv's bin — the
+    # same tree the venv phase landed, what a second user's
+    # `msks` runs through.
+    venv_bin = Path(hostsetup.VENV_BIN)
     assert link.is_symlink()
-    assert link.resolve() == Path(sys.argv[0]).resolve().parent / "msks"
+    assert link.resolve() == venv_bin / "msks"
     assert popup.is_symlink()
-    assert (
-        popup.resolve()
-        == Path(sys.argv[0]).resolve().parent / "msks-term-popup"
-    )
+    assert popup.resolve() == venv_bin / "msks-term-popup"
     out = capsys.readouterr().out
     assert "client:    " in out and "-> " in out
     assert main() == 0
@@ -2353,11 +2875,8 @@ def test_the_client_link_repoints_a_dangling_link(
     popup = Path(hostsetup.POPUP_LINK)
     popup.symlink_to("/no/such/venv/bin/msks-term-popup")
     assert main() == 0
-    assert link.resolve() == Path(sys.argv[0]).resolve().parent / "msks"
-    assert (
-        popup.resolve()
-        == Path(sys.argv[0]).resolve().parent / "msks-term-popup"
-    )
+    assert link.resolve() == Path(hostsetup.VENV_BIN) / "msks"
+    assert popup.resolve() == Path(hostsetup.VENV_BIN) / "msks-term-popup"
 
 
 def test_a_foreign_thing_at_the_link_path_refuses(
