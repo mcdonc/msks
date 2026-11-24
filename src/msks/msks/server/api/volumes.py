@@ -138,7 +138,7 @@ async def locked_export(
     """
     lock = await acquire_move_lock(app, workspace_id)
     try:
-        await rechecked_row(app, workspace_id, caller)
+        row = await rechecked_row(app, workspace_id, caller)
         try:
             fd, size = await asyncio.to_thread(open_sized, home)
         except OSError:
@@ -154,7 +154,7 @@ async def locked_export(
         lock.release()
         raise
     return HoldingStreamingResponse(
-        export_body(hub, workspace_id, fd),
+        export_body(hub, workspace_id, fd, row.get("owner_uid")),
         teardown=volume_teardown(fd, lock),
         media_type="application/octet-stream",
         headers={
@@ -166,15 +166,23 @@ async def locked_export(
     )
 
 
-async def export_body(hub, workspace_id: str, fd: int) -> AsyncIterator[bytes]:
+async def export_body(
+    hub, workspace_id: str, fd: int, owner: int | None
+) -> AsyncIterator[bytes]:
     """The streamed half: the volume's windows. The completion event
     fires only on a clean end of file — a client that disconnects
-    mid-download cancelled no export."""
+    mid-download cancelled no export. The frame's audience is the
+    workspace's owner (#1095), resolved under the lock the stream
+    carries the closure over."""
     moved = 0
     async for window in read_volume(fd):
         moved += len(window)
         yield window
-    await hub.publish("home.exported", {"id": workspace_id, "bytes": moved})
+    await hub.publish(
+        "home.exported",
+        {"id": workspace_id, "bytes": moved},
+        owner=owner,
+    )
 
 
 async def installed_volume(
@@ -212,10 +220,14 @@ async def locked_import(
     refuses) or is waiting (the boot opens the installed volume).
     The re-read carries the owner filter (#1082).
     """
-    await rechecked_row(app, workspace_id, caller)
+    row = await rechecked_row(app, workspace_id, caller)
     state_dir = app.state.settings.vmm.state_dir
     total = await installed_volume(state_dir, workspace_id, request)
-    await hub.publish("home.imported", {"id": workspace_id, "bytes": total})
+    await hub.publish(
+        "home.imported",
+        {"id": workspace_id, "bytes": total},
+        owner=row.get("owner_uid"),
+    )
     return Response(
         status_code=200,
         content=json.dumps({"id": workspace_id, "bytes": total}),
@@ -411,6 +423,7 @@ def router(app, hub) -> APIRouter:
                     "mem_mib": updated["mem_mib"],
                     "changes": moved,
                 },
+                owner=updated["owner_uid"],
             )
             return {**updated, "changes": moved}
 

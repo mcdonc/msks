@@ -35,17 +35,24 @@ from .schemas import MountsSet, WorkspaceCreate
 from .volumes import move_lock
 
 
-async def announce_status(app, workspace_id: str, status: str) -> None:
+async def announce_status(
+    app, workspace_id: str, status: str, owner: int | None
+) -> None:
     """Write one request-path status and publish it (#1019). The
     watcher publishes the transitions its scan finds between the
     row and the seam, but a status this request itself wrote
     reads steady on the next scan — nothing would ever publish
     it. Attached clients learn the move from the frame and re-read
     the listing on it; the frame's shape is the watcher's own
-    (``workspace.status``, the id and the word)."""
+    (``workspace.status``, the id and the word). The frame's
+    audience is the workspace's owner (#1095) — the row the
+    route resolved carries it.
+    """
     await app.state.model.set_status(workspace_id, status)
     await app.state.hub.publish(
-        "workspace.status", {"id": workspace_id, "status": status}
+        "workspace.status",
+        {"id": workspace_id, "status": status},
+        owner=owner,
     )
 
 
@@ -227,9 +234,12 @@ def router(app) -> APIRouter:
         # just validated it healthy against the config it read.
         row["mount_issues"] = issue_payloads(await row_mount_issues(app, row))
         # The listing's clients learn the row from the frame
-        # (#1019), not from a poll: the create announces itself.
+        # (#1019), not from a poll: the create announces itself,
+        # to the creating owner (#1095).
         await app.state.hub.publish(
-            "workspace.created", {"id": workspace_id, "name": name}
+            "workspace.created",
+            {"id": workspace_id, "name": name},
+            owner=row["owner_uid"],
         )
         return Response(
             status_code=201,
@@ -382,8 +392,12 @@ def router(app) -> APIRouter:
         # The mounts move announces itself (#1019): the row's
         # mounts, its derived issues, and the pending marker all
         # moved, and the clients that paint them re-read on the
-        # frame.
-        await app.state.hub.publish("workspace.mounts", {"id": row["id"]})
+        # frame. The audience is the row's owner (#1095).
+        await app.state.hub.publish(
+            "workspace.mounts",
+            {"id": row["id"]},
+            owner=row["owner_uid"],
+        )
         fresh["mount_issues"] = issue_payloads(
             await row_mount_issues(app, fresh)
         )
@@ -436,22 +450,30 @@ def router(app) -> APIRouter:
             in_flight = starting_workspaces(app)
             in_flight.add(workspace_id)
             try:
-                await announce_status(app, workspace_id, "starting")
+                await announce_status(
+                    app, workspace_id, "starting", row["owner_uid"]
+                )
                 # The mount skips publish before the launch (#620,
                 # part #621): a start proceeds without a mount the
                 # #667 gates refuse — every skip is state, an event
                 # now, derived again on every later read. The seam
-                # (#622) attaches exactly the remainder.
+                # (#622) attaches exactly the remainder. The skip
+                # frames name the workspace, so their audience is
+                # its owner (#1095).
                 attachable, issues = await mount_state(app, row)
                 for issue in issues:
                     await app.state.hub.publish(
-                        issue.event, issue.payload(workspace_id)
+                        issue.event,
+                        issue.payload(workspace_id),
+                        owner=row["owner_uid"],
                     )
                 await app.state.microvm.launch(
                     spec_for(row, mounts=attachable)
                 )
             except MicrovmError:
-                await announce_status(app, workspace_id, prior_status)
+                await announce_status(
+                    app, workspace_id, prior_status, row["owner_uid"]
+                )
                 raise
             finally:
                 # The whole marked region sits inside the finally's
@@ -481,7 +503,9 @@ def router(app) -> APIRouter:
                 row["mem_mib"],
                 row["root_mib"],
             )
-            await announce_status(app, workspace_id, "running")
+            await announce_status(
+                app, workspace_id, "running", row["owner_uid"]
+            )
         return {"id": workspace_id, "status": "running"}
 
     @api.post("/api/v1/workspaces/{workspace_id}/stop")
@@ -512,17 +536,21 @@ def router(app) -> APIRouter:
         in_flight = stopping_workspaces(app)
         in_flight.add(workspace_id)
         try:
-            await announce_status(app, workspace_id, "stopping")
+            await announce_status(
+                app, workspace_id, "stopping", row["owner_uid"]
+            )
             await app.state.microvm.shutdown(workspace_id)
         except MicrovmError:
-            await announce_status(app, workspace_id, prior_status)
+            await announce_status(
+                app, workspace_id, prior_status, row["owner_uid"]
+            )
             raise
         finally:
             # The marker dies with the request on every path: a
             # marker left behind would wedge the row at
             # ``stopping`` against every scan forever.
             in_flight.discard(workspace_id)
-        await announce_status(app, workspace_id, "stopped")
+        await announce_status(app, workspace_id, "stopped", row["owner_uid"])
         return {"id": workspace_id, "status": "stopped"}
 
     @api.post("/api/v1/workspaces/{workspace_id}/reset")
@@ -545,7 +573,7 @@ def router(app) -> APIRouter:
         except MicrovmError:
             await app.state.microvm.kill(workspace_id)
         await app.state.microvm.reset(workspace_id)
-        await announce_status(app, workspace_id, "created")
+        await announce_status(app, workspace_id, "created", row["owner_uid"])
         return {"id": workspace_id, "status": "created"}
 
     @api.delete("/api/v1/workspaces/{workspace_id}")
@@ -574,10 +602,12 @@ def router(app) -> APIRouter:
             await app.state.model.delete_workspace(workspace_id)
         # The removal announces itself (#1019): the clients that
         # hold the row close its page and drop it from their
-        # listings on the frame.
+        # listings on the frame. The audience is the row's owner
+        # (#1095) — the frame carries the id and name.
         await app.state.hub.publish(
             "workspace.removed",
             {"id": workspace_id, "name": row.get("name")},
+            owner=row["owner_uid"],
         )
         return {"deleted": workspace_id}
 

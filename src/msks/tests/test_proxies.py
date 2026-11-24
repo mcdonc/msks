@@ -535,3 +535,22 @@ async def test_stop_one_is_bounded_by_grace(monkeypatch) -> None:
     await asyncio.wait_for(manager.stop_one(1), timeout=3.0)
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, timeout=1.0)
+
+
+async def test_a_stop_after_the_workspace_row_vanished_broadcasts(
+    proxies,
+) -> None:
+    """#1095: the manager reads the frame's owner off the
+    workspace row at publish. A row already gone names no owner,
+    so the close broadcasts unscoped — the journal still records
+    the transition, the deletion race leaks nothing an owner
+    filter would have hidden."""
+    manager, model, _net, queue, _app = proxies
+    row = await create_forward_row(model, await free_port())
+    await manager.start_one(row, None)
+    assert (await next_event(queue))[0] == "proxy.listening"
+    await model.delete_workspace("ws-a")
+    await manager.stop_one(row["id"])
+    event, data = await next_event(queue)
+    assert event == "proxy.closed"
+    assert data["id"] == "ws-a"

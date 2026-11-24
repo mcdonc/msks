@@ -486,6 +486,18 @@ kvm` and `cap_net_admin`/`cap_net_bind_service` granted
 
 ### Changed
 
+- **Owner-scoped event frames (#1095).** Every frame on the
+  events websocket that names a workspace now reaches that
+  workspace's owner alone: the workspace lifecycle, mounts,
+  resize, and home-volume import/export frames, the consent
+  hold and rules frames, and the proxy and forward frames join
+  the `secret.*` frames #1090 scoped, so one operator's socket
+  no longer receives another operator's workspace ids, names,
+  or hosts on a shared daemon. Root and the daemon's own uid
+  keep receiving every owner's frames, the daemon-wide families
+  (`image.changed`, `storage.pressure`) still reach every
+  socket, and the daemon's journal still records every publish.
+
 - **Proxy direction terms (#1032).** The TUI's proxy form, the
   `msks proxy add` help and listings, and the docs chapters now
   call the two directions local (`-L`) and remote (`-R`), ssh's

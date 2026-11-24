@@ -1713,7 +1713,8 @@ async def test_apply_policy_out_of_interactive_fail_closes_and_unbinds(
     from msks.spec.egress import EgressPolicy
 
     request = await held_request(app, "ws-i", "203.0.113.9")
-    hold = app.state.consent.register_hold(request)
+    owner = (await app.state.model.get_workspace("ws-i"))["owner_uid"]
+    hold = app.state.consent.register_hold(request, owner)
     switched = await app.state.net.apply_policy(
         "ws-i", EgressPolicy("ws-i", "allow", ())
     )

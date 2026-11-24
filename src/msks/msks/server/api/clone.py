@@ -287,9 +287,11 @@ def router(app) -> APIRouter:
         row["mount_issues"] = issue_payloads(await row_mount_issues(app, row))
         # The clone is a create (#1019): the listing's clients
         # learn the row from the same frame the create route
-        # publishes.
+        # publishes, to the creating owner (#1095).
         await app.state.hub.publish(
-            "workspace.created", {"id": row["id"], "name": row.get("name")}
+            "workspace.created",
+            {"id": row["id"], "name": row.get("name")},
+            owner=row["owner_uid"],
         )
         return Response(
             status_code=201,

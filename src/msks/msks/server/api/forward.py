@@ -100,8 +100,12 @@ def router(app, hub) -> APIRouter:
         try:
             # The opened publish lives inside the try so a cancellation
             # between dial and pump cannot skip the writer's cleanup.
+            # The frame names the workspace: its audience is the
+            # row's owner (#1095).
             await hub.publish(
-                "forward.opened", {"id": workspace_id, "port": target_port}
+                "forward.opened",
+                {"id": workspace_id, "port": target_port},
+                owner=row.get("owner_uid"),
             )
             app.state.net.track_forward(workspace_id, writer)
             try:
@@ -119,7 +123,9 @@ def router(app, hub) -> APIRouter:
             # lands — the loop keeps only weak ones.
             closed = asyncio.create_task(
                 hub.publish(
-                    "forward.closed", {"id": workspace_id, "port": target_port}
+                    "forward.closed",
+                    {"id": workspace_id, "port": target_port},
+                    owner=row.get("owner_uid"),
                 )
             )
             DETACHED_PUBLISHES.add(closed)

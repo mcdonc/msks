@@ -356,10 +356,17 @@ class ProxyManager:
         self, row: dict, event: str, detail: str | None = None
     ) -> None:
         """One proxy transition on the hub (and its journal line,
-        the hub's own #762 rule)."""
+        the hub's own #762 rule). The frame names the workspace, so
+        its audience is the workspace's owner (#1095) — read from
+        the row here, the one source every path (the attach hook,
+        the API routes' start/stop) reaches this method with. A
+        workspace row already gone publishes unscoped: the row
+        cannot name an owner, and the journal still records the
+        transition."""
         hub = self.app.state.hub
         if hub is None:
             return
+        owner = await self.workspace_owner(row["workspace_id"])
         payload = {
             "id": row["workspace_id"],
             "proxy": row["id"],
@@ -369,7 +376,13 @@ class ProxyManager:
         }
         if detail is not None:
             payload["reason"] = detail
-        await hub.publish(event, payload)
+        await hub.publish(event, payload, owner=owner)
+
+    async def workspace_owner(self, workspace_id: str) -> int | None:
+        """The workspace row's owning uid (#1095), None when the row
+        is already gone."""
+        row = await self.app.state.model.get_workspace(workspace_id)
+        return None if row is None else row.get("owner_uid")
 
 
 def bind_point(row: dict, attachment) -> tuple[str, int] | None:
