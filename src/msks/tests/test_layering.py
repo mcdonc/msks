@@ -81,6 +81,10 @@ spec.loader.exec_module(check_import_cycles)
 
 ALLOWED_EDGES = {
     # app composes the daemon; the hub is a root leaf (#408)
+    # #1102: the bridge subsystem's composition seam; its wire
+    # vocabulary is the shared spec leaf
+    ("app", "bridge"),
+    ("bridge", "spec"),
     ("app", "consent"),
     ("app", "events"),
     ("app", "interceptor"),
@@ -155,6 +159,9 @@ ALLOWED_EDGES = {
     # the HTTP surface orchestrates; main.py pulls the composer,
     # the hub relay comes from the events root leaf (#408)
     ("server", "app"),
+    # #1102: the relay route reads the bridge's own refusal
+    # class (rows' websocket resolver owns the model vocabulary)
+    ("server", "bridge"),
     # #689: the macOS setup tool writes the client's own config —
     # the path resolution, the first-run template it may replace,
     # and the validated read come from the module that owns them

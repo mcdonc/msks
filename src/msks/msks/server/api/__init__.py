@@ -28,6 +28,7 @@ from ...microvm.errors import MicrovmError
 from ...spec.version import __version__
 from ..watcher import watch_loop
 from . import (
+    bridge,
     clone,
     console,
     egress,
@@ -199,6 +200,7 @@ def build_api(app) -> FastAPI:
         volumes.router(app, hub),
         console.router(app),
         forward.router(app, hub),
+        bridge.router(app, hub),
         proxies.router(app, hub),
         events.router(app, hub),
         egress.router(app),

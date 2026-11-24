@@ -7,6 +7,7 @@ klangk ownership rule. Settings are read live at call time
 propagates without per-subsystem reconfiguration.
 """
 
+from .bridge import BridgeHub
 from .consent.coordinator import ConsentEngine
 from .consent.deciders import DeciderRegistry
 from .events import EventHub
@@ -46,6 +47,9 @@ class AppState:
         # The workspace proxy subsystem (#807, #808): the persisted
         # forward and remote TCP proxies the daemon owns.
         self.proxies: ProxyManager | None = None
+        # The loopback bridge (#1102): the registry of clients
+        # holding the forward proxies' bridge.
+        self.bridge: BridgeHub | None = None
 
 
 class App:
@@ -64,6 +68,7 @@ class App:
         self.state.llm = LlmProxy(self)
         self.state.probe = ProbeService(self)
         self.state.proxies = ProxyManager(self)
+        self.state.bridge = BridgeHub(self)
 
 
 def build_app(settings: Settings | None = None) -> App:

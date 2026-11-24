@@ -14,8 +14,11 @@ own data modules (:mod:`msks.client.tui.data`,
 matching CLI subcommand makes.
 """
 
+import sys
+
 from .create import create_workspace_core, invoking_user
 from .env import env_token, env_url, shared_ssl
+from .hold import holder_due, spawn_holder
 from .jsonio import ApiExit
 from .rest import api_call, fetch_health
 
@@ -191,10 +194,31 @@ class RestData:
         )
 
     async def start(self, workspace_id: str) -> dict:
-        """POST the boot — the same call ``msks start`` makes."""
-        return await self.rest(
+        """POST the boot — the same call ``msks start`` makes —
+        and leave the bridge holder behind the CLI start leaves
+        (#1102): the TUI and the GUI cross this seam, and a
+        workspace with forward rows serves them through the holder
+        this spawns. Best-effort like the CLI's own hook: a rows
+        read that fails or a holder that cannot start leaves the
+        boot's answer untouched."""
+        row = await self.rest(
             "POST", f"/api/v1/workspaces/{workspace_id}/start"
         )
+        try:
+            rows = await self.rest(
+                "GET", f"/api/v1/workspaces/{workspace_id}/proxies"
+            )
+            if holder_due(rows):
+                spawn_holder(workspace_id)
+        except Exception, SystemExit:
+            # Best-effort by contract (#1102): the boot's answer
+            # stands, and the rows carry the cause.
+            print(
+                "msks: bridge not held from this client; "
+                "'msks proxy hold' serves it",
+                file=sys.stderr,
+            )
+        return row
 
     async def stop(self, workspace_id: str) -> dict:
         """POST the graceful power-off — ``msks stop``."""

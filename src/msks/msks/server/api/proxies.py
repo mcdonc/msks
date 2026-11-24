@@ -17,15 +17,11 @@ from .schemas import ProxyCreate
 
 def direction_refusal(body: ProxyCreate) -> str | None:
     """The named refusal when a direction's host fields disagree
-    with it: a forward row carries the daemon-side listen host and
-    no target host (its target is the guest); a remote row carries
-    the daemon-side target host and no listen host (its bind is
-    the workspace's tap address, a runtime fact)."""
-    if body.direction == "forward" and body.target_host is not None:
-        return (
-            "a forward proxy reaches the guest's port; "
-            "target_host names nothing"
-        )
+    with it: a remote row carries the daemon-side target host and
+    no listen host (its bind is the workspace's tap address, a
+    runtime fact). A forward row carries either host: its listen
+    host is the daemon-side bind, its target host the far-end
+    name the holder's ssh resolves (#1102)."""
     if body.direction == "remote" and body.listen_host is not None:
         return (
             "a remote proxy binds the workspace's tap; "
@@ -183,7 +179,7 @@ def router(app, hub) -> APIRouter:
             (
                 body.target_host or DEFAULT_TARGET_HOST
                 if body.direction == "remote"
-                else None
+                else body.target_host
             ),
             body.target_port,
             body.label,
@@ -285,7 +281,7 @@ def router(app, hub) -> APIRouter:
             (
                 body.target_host or DEFAULT_TARGET_HOST
                 if body.direction == "remote"
-                else None
+                else body.target_host
             ),
             body.target_port,
             body.label,

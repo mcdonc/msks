@@ -186,6 +186,8 @@ class NetManager(ConsentMixin, SwitchMixin, ForwardMixin):
                 await self.stop_probe(workspace_id)
             with contextlib.suppress(Exception):
                 await self.stop_proxies(workspace_id)
+            with contextlib.suppress(Exception):
+                await self.stop_bridge(workspace_id)
             if attachment is None and residue is None:
                 return
             if attachment is None:
@@ -519,6 +521,8 @@ class NetManager(ConsentMixin, SwitchMixin, ForwardMixin):
             await self.stop_probe(workspace_id)
         with contextlib.suppress(Exception):
             await self.stop_proxies(workspace_id)
+        with contextlib.suppress(Exception):
+            await self.stop_bridge(workspace_id)
         services = self._services.pop(workspace_id, None)
         if services is not None:
             await stop_services(services)
