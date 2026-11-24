@@ -1147,11 +1147,11 @@ def test_the_recovery_stays_visible_through_a_carried_read(
     assert tab.status.text().startswith("fetching")
     tab.refresh()  # carried: the gather's landing takes the read
     assert tab.refresh_due
+    bridge.calls.clear()
     tab.on_succeeded(secrets_mod.PAGE_KEY, page_answer())
     assert tab.status.text() == "daemon back — secrets resumed"
-    assert ("secrets-page", "secrets_page", ()) in [
-        (c[0], c[1], c[2]) for c in bridge.calls
-    ]
+    read = ("secrets-page", "secrets_page", ())
+    assert tab.pending and bridge.calls == [read]  # the carried read, out
     tab.on_succeeded(secrets_mod.PAGE_KEY, page_answer())  # the carried read
     assert tab.status.text() == "daemon back — secrets resumed"  # still shown
     window.close()

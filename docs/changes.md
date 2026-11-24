@@ -664,9 +664,9 @@ gui`. The nix package keeps the daemon's closure lean, so on
   text only until the events feed's next retry flash, then the
   line went blank, and the recovery said nothing. Both tabs now
   keep the outage's text between the feed's retries and say the
-  recovery once when a read answers. An action's outcome on
-  either tab also stays on the status line for its four seconds:
-  the refresh the action triggered used to clear it at once.
+  recovery once when a read answers. The refresh an action
+  triggers no longer clears the action's result from the status
+  line.
 - **The GUI's workspace list recovers when the daemon comes up
   late (#1129).** A window opened while msksd was down showed an
   empty list and a standing outage message, and nothing re-read

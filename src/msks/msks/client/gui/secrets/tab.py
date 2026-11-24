@@ -278,11 +278,8 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         takes and the serve poke's (#1060) — the status line
         saying the fetch is out, the serial bump retiring any
         pending flash timeout so none clears it mid-flight. A
-        refresh already in flight carries the ask instead: its
-        landing takes the flight the gate refused, so an
-        action's refresh is never dropped — the stale answer a
-        read issued before the action lands once, then the
-        fresh read replaces it."""
+        read already out carries the ask instead
+        (:meth:`take_flight`)."""
         if self.pending:
             self.refresh_due = True
             return

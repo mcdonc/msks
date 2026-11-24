@@ -381,9 +381,9 @@ class ImagesTab(FeedPage, StatusFlash, QtWidgets.QWidget):
             self.catalog_raw = list(page.get("catalog") or [])
         self.rebuild()
         # The carried ask's read goes out before the standing line
-        # (#1132): the fetch text it writes lands under the line,
-        # and the recovery a standing outage flashes below stays
-        # visible for its span instead of being written over.
+        # (#1132): the standing line clears its fetch text at
+        # once, and a recovery flash then takes the line for its
+        # span instead of being written over.
         self.carried_page()
         self.standing(counts_text(self.catalog_raw, self.published_raw))
 
