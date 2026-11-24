@@ -226,7 +226,8 @@ def activate_unit(changed: bool) -> None:
 
 def service_skip_cause(msksd: str | None) -> str | None:
     """Why the service phase stands down, as the summary's line
-    states it: no msksd beside the tool, or no systemd manager.
+    states it: no msksd beside the tool, no systemd manager, or
+    no kvm group for the unit's SupplementaryGroups to name.
     None means the phase proceeds."""
     if msksd is None:
         return (

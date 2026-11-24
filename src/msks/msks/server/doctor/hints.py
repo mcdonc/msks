@@ -283,12 +283,13 @@ def manager_install(manager: str, pkg: str) -> str:
     return f"sudo {manager} install {pkg}"
 
 
-# The /dev/kvm fix is a group add, not a package install (#559),
-# so its table keys on the detected manager the way the hint
-# table does, with one command shape per platform family. A
-# manager the table lacks — brew on a brew-only Linux host,
-# above all — falls back to the Debian form, the documented
-# deployment host.
+# A group-membership fix is a group add, not a package install
+# (#559's /dev/kvm row; #1080's msks row beside it), so the
+# table keys on the detected manager the way the hint table
+# does, with one command shape per platform family. A manager
+# the table lacks — brew on a brew-only Linux host, above all —
+# falls back to the Debian form, the documented deployment
+# host.
 GROUP_ADD: dict[str, str] = {
     "apt": "sudo adduser {user} {group}",
     "dnf": "sudo usermod -aG {group} {user}",

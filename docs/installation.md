@@ -70,7 +70,7 @@ same login carries the fix to both shapes.
 
 **The accounts.** The setup creates the `msksd` system account: `nologin`,
 with `/var/lib/msksd` as its home. That directory is the daemon's state
-directory — the unit's `StateDirectory` creates it and its
+directory: the unit's `StateDirectory` creates it, and its
 `MSKSD_STATE_DIR` line points the daemon at it. The setup also creates the
 `msks` access group. Membership in `msks` is the deliberate grant that
 gates the shared socket: the daemon binds `/run/msks/msksd.sock` and hands
@@ -405,7 +405,7 @@ images, and secrets there survive by design, and the summary names the kept
 directory. A reinstall creates the `msksd` account again with the next
 free system uid. When that uid differs from the one that owned the kept
 tree, repair the ownership before the daemon starts:
-`chown -R msksd:msksd /var/lib/msksd`. The uninstall summary names the
+`chown -R msksd:msksd /var/lib/msksd`. The uninstall summary prints the
 same command. It removes the two `/etc` files the
 run landed, and removes the capability wrapper. It takes the executing user
 out of the `kvm` group; the tool keeps no record of which run added a

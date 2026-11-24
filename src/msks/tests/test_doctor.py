@@ -856,6 +856,9 @@ def test_the_group_row_names_the_missing_pieces(
     row = msks_group_result()
     assert not row.ok and row.is_warning
     assert "op is not in the msks group" in row.message
+    # The fix names the group command the detected manager runs —
+    # the kvm row's distro awareness, not a Debian-only spelling.
+    assert "adduser op msks" in row.hint
     patch_phase(monkeypatch, "in_group", lambda user, name: True)
     # A run whose effective uid is not the caller's own (a sudo
     # lift to a non-root service account) cannot read that
@@ -872,6 +875,22 @@ def test_the_group_row_names_the_missing_pieces(
     row = msks_group_result()
     assert not row.ok and row.is_warning
     assert "this session predates the membership" in row.message
+
+
+def test_the_membership_hint_matches_the_manager(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """The not-a-member fix rides GROUP_ADD: dnf's usermod shape,
+    not the Debian adduser the fallback carries (#1094 review)."""
+    systemd_seam(monkeypatch, tmp_path)
+    patch_phase(
+        monkeypatch,
+        "executing_user",
+        lambda: ("op", 1000, 1000, "/home/op"),
+    )
+    patch_phase(monkeypatch, "in_group", lambda user, name: False)
+    row = msks_group_result("dnf")
+    assert row.hint == ("sudo usermod -aG msks op, then log out and back in")
 
 
 def test_the_group_row_passes_root(
