@@ -8,7 +8,8 @@ msks ships as a Python distribution with everything inside: the client
 
 The wheel needs Python 3.14 or newer. A stock Debian or Fedora host
 holds no 3.14, so the installer provisions its own interpreter (see
-below). Nothing needs installing first.
+below). The script needs `curl` and `tar`, which a stock server
+install carries. Beyond that, nothing needs installing first.
 
 ## The one-command install
 
@@ -16,7 +17,7 @@ Every release carries two bootstrap scripts, one per platform family.
 The script is the whole installer: it fetches the release's artifacts,
 verifies them, and runs the platform setup tool.
 
-Debian-derived hosts (Debian 13, Ubuntu 24.04 or newer, Linux Mint 22
+Debian-derived hosts (Debian, Ubuntu 24.04 or newer, Linux Mint 22
 or newer):
 
 ```console
@@ -60,8 +61,9 @@ Flags after `-s --` reach the tool:
 curl -LsSf https://github.com/mcdonc/msks/releases/latest/download/msks-setup-debian.sh | sudo sh -s -- --no-service
 ```
 
-`--wheel <path>` installs a wheel in hand and skips the release fetch.
-`--uninstall` reverses the install (see [Uninstalling
+`--wheel <path>` installs a wheel in hand: only the wheel fetch is
+skipped (the checksum record still downloads, for the VMM and uv
+pins). `--uninstall` reverses the install (see [Uninstalling
 msks](#uninstalling-msks)).
 
 The three download bases answer to environment overrides for mirrors:
@@ -88,10 +90,10 @@ user's bare `msks` all reach the same install. The venv runs on a
 standalone CPython 3.14 provisioned by uv at `/opt/msks/python` (the
 host needs no Python of its own). The run installs the release from
 PyPI, or the wheel `--wheel` named. A wheel whose version disagrees
-with the tool's refuses. A re-run at the same version installs
-nothing, and a re-run with a newer tool refreshes the wheel: that
-re-run is the upgrade story. Every file lands world-readable, so the
-`msksd` account can traverse the whole chain.
+with the tool's refuses. A re-run with the same release and no
+`--wheel` installs nothing, and a re-run with a newer tool refreshes
+the wheel: that re-run is the upgrade story. Every file lands
+world-readable, so the `msksd` account can traverse the whole chain.
 
 **Packages.** The packages required by the server and the client.
 
@@ -164,7 +166,7 @@ account. A venv behind a permission the account cannot cross (a 0700
 home) refuses at install time with the cause stated.
 
 **Cloud Hypervisor's static release binary.** So guest VMs can be
-started. The bootstrap script lands it verified; the tool downloads it
+started. The bootstrap script lands it verified. The tool downloads it
 itself only when nothing carries it.
 
 **The client links.** `/usr/local/bin/msks` and
@@ -180,8 +182,10 @@ removes both.
 **The owner-exec helper.** The platform wheel bundles the
 `virtiofsd-as` binary inside the package, so the venv carries it. A
 cross-owner share execs its virtiofsd through the helper as the
-workspace's owner. The [mounts chapter](mounts.md) documents the
-helper's contract and its setuid install.
+workspace's owner. The helper needs a setuid-root install to serve
+that. Today the NixOS host performs it (`security.wrappers`); the
+setup tools' install is #1080's remaining work. The [mounts
+chapter](mounts.md) documents the helper's contract.
 
 The run ends with a summary: the venv, the wrapper and its caps, the
 account line, the sysctl, the modules file, the tools' paths,
@@ -229,7 +233,8 @@ the same shipped code the script runs.
 
 The example is Debian on x86-64. Fedora takes the Fedora tool's name
 (`msks-setup-fedora-host`). An aarch64 host takes the
-`manylinux_2_17_aarch64` wheel and the `-aarch64` VMM asset.
+`manylinux_2_17_aarch64` wheel, the `-aarch64` VMM asset, and the
+`aarch64` uv tarball.
 
 Fetch the artifacts and verify them against the release's checksum
 record:
@@ -242,13 +247,16 @@ grep -E 'msks-.*manylinux_2_17_x86_64\.whl$' SHASUMS
 
 The grep prints the wheel line (its filename carries the version).
 Take the wheel and the VMM binary beside the record, then verify
-them against it:
+them against it. The record pins the VMM release by checksum
+(v54.0 when this was written): take the asset from that release's
+own URL, not `latest`, or the bytes drift from the record the day
+upstream cuts a newer one:
 
 ```console
 curl -LsSf -o msks-<version>-py3-none-manylinux_2_17_x86_64.whl \
   "$base/msks-<version>-py3-none-manylinux_2_17_x86_64.whl"
 curl -LsSf -o cloud-hypervisor-static \
-  https://github.com/cloud-hypervisor/cloud-hypervisor/releases/latest/download/cloud-hypervisor-static
+  https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/v54.0/cloud-hypervisor-static
 sha256sum -c SHASUMS --ignore-missing
 ```
 
@@ -264,21 +272,34 @@ install -m 0755 cloud-hypervisor-static /usr/local/bin/cloud-hypervisor
 /usr/local/bin/cloud-hypervisor --version
 ```
 
-Provision the interpreter and build a throwaway venv for the tool. The
+Provision uv (skip this block when the host holds a `uv` on PATH).
+The checksum record pins the uv tarball the same way (0.9.7 when
+this was written): fetch that tarball, not the astral installer,
+which puts its uv outside the login PATH a root shell carries:
+
+```console
+curl -LsSf -o uv-x86_64-unknown-linux-gnu.tar.gz \
+  https://github.com/astral-sh/uv/releases/download/0.9.7/uv-x86_64-unknown-linux-gnu.tar.gz
+sha256sum -c SHASUMS --ignore-missing
+mkdir -p /tmp/uv
+tar -xzf uv-x86_64-unknown-linux-gnu.tar.gz -C /tmp/uv --strip-components=1
+/tmp/uv/uv --version
+```
+
+Then the interpreter and the throwaway venv for the tool. The
 interpreter parks under `/opt/msks/python`, the same directory the
 tool's venv phase provisions into: the throwaway and the real install
 share one interpreter and one download, and the interpreter survives
 the throwaway:
 
 ```console
-curl -LsSf https://astral.sh/uv/install.sh | sh
 export UV_PYTHON_INSTALL_DIR=/opt/msks/python
 export UV_PYTHON_PREFERENCE=only-managed
 mkdir -p /opt/msks
 chmod 0755 /opt/msks
 umask 022
-uv venv --python 3.14 /tmp/msks-tool
-uv pip install --python /tmp/msks-tool/bin/python \
+/tmp/uv/uv venv --python 3.14 /tmp/msks-tool
+/tmp/uv/uv pip install --python /tmp/msks-tool/bin/python \
   ./msks-<version>-py3-none-manylinux_2_17_x86_64.whl
 ```
 
@@ -302,7 +323,9 @@ The macOS install keeps its user-run shape: the daemon already runs
 inside a Lima VM with vz as the host boundary, so it holds no host
 privilege to tighten. `msks-setup-macos-host` installs the Lima
 virtual machine system (via Brew), and runs msksd within a Lima VM.
-The msks client runs on the Mac itself.
+The msks client runs on the Mac itself. The installer is expected to
+work on M3 and newer Macs (it refuses older Apple Silicon hosts by
+name).
 
 Install `uv` (from Brew or [astral.sh](https://docs.astral.sh/uv/)),
 then run the tool through it. The tool provisions its own Python 3.14:
@@ -368,7 +391,8 @@ system service and removes its unit file and its enablement symlink.
 The stop lets the daemon finish its shutdown cycle, workspaces
 included. It removes the `msksd` account and the `msks` group (the
 executing user's grant leaves with them, and the summary prints the
-`adduser` line that restores it). It removes the whole `/opt/msks`
+restore line: `adduser` on Debian, `usermod -aG` on Fedora). It
+removes the whole `/opt/msks`
 tree: the venv, the provisioned Python, the bootstrap uv, the bundled
 owner-exec helper, and the client links that pointed into it. It
 removes the two `/etc`
@@ -389,8 +413,9 @@ sudo rm -rf /var/lib/msksd
 
 A reinstall creates the `msksd` account again with the next free
 system uid. When that uid differs from the one that owned the kept
-tree, repair the ownership before the daemon starts: `chown -R
-msksd:msksd /var/lib/msksd`. The uninstall summary prints the same
+tree, repair the ownership before the daemon starts
+(`chown -R msksd:msksd /var/lib/msksd`). The uninstall summary prints
+the same
 command.
 
 After the sysctl file leaves, `sysctl --system` re-applies every
@@ -398,8 +423,9 @@ remaining sysctl.d file, the same set a boot applies. A second owner
 that wrote its own forwarding file keeps its setting. A live-only
 forwarder the tool never saw keeps its value too. On a host where no
 remaining file sets `net.ipv4.ip_forward`, the live value the setup
-run set stays on until the next reboot. The summary prints `sysctl -w
-net.ipv4.ip_forward=0` for the operator who wants it off immediately.
+run set stays on until the next reboot. The summary prints
+`sysctl -w net.ipv4.ip_forward=0` for the operator who wants it off
+immediately.
 
 The packages the run installed stay installed: they are shared
 packages, and other software on the host may use them. The uninstall
@@ -418,12 +444,12 @@ An install from the user-unit era holds its state under a user's home
 (`~/.local/state/msksd`). The system-unit install does not read that
 directory: it holds its state under `/var/lib/msksd`. Stop and remove
 the old unit, remove the old tool install, and run the one command.
-The home state directory stays behind; remove it yourself when nothing
-needs it. The state directory does not move.
+The home state directory stays behind. Remove it yourself when
+nothing needs it. The state directory does not move.
 
 ## The host doctor
 
-The [The host doctor](doctor.md) chapter documents the `msksd doctor`
+The [host doctor](doctor.md) chapter documents the `msksd doctor`
 command that can diagnose installation issues.
 
 ## The alternative paths
