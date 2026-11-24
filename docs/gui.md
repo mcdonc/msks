@@ -73,8 +73,9 @@ A refusal clears itself after four seconds. A daemon outage
 stands on the line until an answer resolves it, and the rows
 already on screen stand the whole time. A window opened while
 the daemon is down recovers by itself when the daemon comes
-up: the events feed reconnects within a few seconds, and every
-connection it makes re-reads the page.
+up. The events feed reconnects within five seconds, and every
+connection it makes re-reads the page. The status line then
+says `daemon back — listing resumed` once.
 
 The strip at the bottom reads the held row's quick facts: the
 name, id, image, cpu count, memory, egress mode, mounts marker,

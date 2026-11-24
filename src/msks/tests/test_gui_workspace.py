@@ -294,6 +294,11 @@ def test_opening_a_row_shows_the_page(qt) -> None:
     # daemon's facts are not the workspace's, and the page asks
     # for no doc it renders nowhere.
     assert not [call for call in bridge.calls if call[1] == "health"]
+    # The show that follows the open adds no carried read (#1129):
+    # the open's own reads stand for it, and their landing asks
+    # nothing more — one pair of reads per open.
+    land(qt, shell.detail, bridge)
+    assert bridge.calls == []
 
 
 def test_the_page_carries_the_tab_strip(qt) -> None:
@@ -927,7 +932,10 @@ def test_a_failed_refresh_flashes_and_keeps_the_tabs(qt) -> None:
     page.clear_stale(page.flash_seq - 1)  # the armed timeout's slot
     assert page.status.text() == "the daemon is gone"
     land(qt, page, bridge)
-    assert page.status.text() == ""
+    # The answer resolves it with the recovery's one flash
+    # (#1129), the row's landing — the storage answer landing
+    # after it finds no outage standing and flashes nothing.
+    assert page.status.text() == "daemon back — page resumed"
 
 
 def test_a_refusal_flash_clears_on_its_timeout(qt) -> None:
@@ -1060,7 +1068,7 @@ def test_a_storage_answer_resolves_the_standing_outage(qt) -> None:
     )
     assert page.status.text() == "the daemon is gone"
     page.on_succeeded(qt.page_mod.STORAGE_KEY, {"workspaces": []})
-    assert page.status.text() == ""
+    assert page.status.text() == "daemon back — page resumed"  # #1129's tell
 
 
 def test_the_rows_own_name_refines_the_window_title(qt) -> None:
@@ -1248,7 +1256,9 @@ def test_a_late_daemon_recovers_the_listing_on_the_feed_connection(
     bridge.feed_served.emit()  # the connection's poke, no frame
     assert bridge.calls == [("workspaces-list", "workspaces", ())]
     bridge.succeeded.emit("workspaces-list", [daemon_row()])
-    assert shell.listing.status.text() == ""  # the answer resolved it
+    # The answer resolves the outage with the recovery's one
+    # flash (#1129), and the row stands on the table.
+    assert shell.listing.status.text() == "daemon back — listing resumed"
     assert shell.listing.table.rowCount() == 1
 
 
@@ -1280,17 +1290,29 @@ def test_the_feed_outage_flashes_the_current_screen(qt) -> None:
     )
 
 
-def test_a_refresh_in_flight_is_not_stacked(qt) -> None:
-    """The in-flight guard (#945, the listing's own #470): a
-    tick under a slow call adds nothing — the landing answer
-    retires the guard and the next refresh flies."""
+def test_a_refresh_in_flight_is_carried(qt) -> None:
+    """The in-flight guard carries the ask (#945, #470's one
+    flight at a time, #1129's carry — the TUI listing's own arm
+    over #1019): a refresh asked while a read is out adds no
+    second request, and the moment no read stands the deferred
+    refresh goes out whole — the row read and the storage read
+    again, the two flights the page's refresh takes. Not before:
+    one read landing while the other stands serves nothing yet.
+    Another key's answer is not this page's to take."""
     page, window, bridge = make_page(qt)
+    row = (qt.page_mod.ROW_KEY, "workspaces", ())
+    storage = (qt.page_mod.STORAGE_KEY, "storage", ())
     assert page.row_pending and page.storage_pending
-    page.refresh()
+    page.refresh()  # carried: nothing stacked
     assert bridge.calls == []
     page.on_succeeded(qt.page_mod.ROW_KEY, [daemon_row()])
-    page.refresh()
-    assert bridge.calls == [(qt.page_mod.ROW_KEY, "workspaces", ())]
+    assert bridge.calls == []  # the storage read still stands
+    page.on_succeeded(qt.page_mod.STORAGE_KEY, {"workspaces": []})
+    assert bridge.calls == [row, storage]  # no read stands: served
+    bridge.calls.clear()
+    page.on_succeeded(qt.page_mod.ROW_KEY, [daemon_row()])
+    page.on_succeeded(qt.page_mod.STORAGE_KEY, {"workspaces": []})
+    assert bridge.calls == []  # nothing carried, nothing asked
     # Another key's answer is not this page's to take.
     page.on_succeeded("workspaces-list", [])
     page.on_failed("workspaces-list", clientdata.RestFailure("x", reach=False))

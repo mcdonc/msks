@@ -662,10 +662,11 @@ gui`. The nix package keeps the daemon's closure lean, so on
 - **The GUI's workspace list recovers when the daemon comes up
   late (#1129).** A window opened while msksd was down showed an
   empty list and a standing outage message, and nothing re-read
-  the list once the daemon answered. The events feed now pokes
-  one re-read on every connection it makes. The Workspaces,
-  Images, and Secrets tabs fill by themselves when the daemon
-  comes up. See [docs/gui.md](gui.md#the-workspace-list).
+  the list once the daemon answered. The events feed now
+  triggers one re-read on every connection it makes. The open
+  tab fills by itself when the daemon comes up, a hidden tab
+  at its next show, and the status line says the recovery once.
+  See [docs/gui.md](gui.md#the-workspace-list).
 - **GUI terminal rendering on scaled and Wayland displays
   (#1113).** The terminal's cells now paint straight onto the
   widget, one damaged row at a time over its own background

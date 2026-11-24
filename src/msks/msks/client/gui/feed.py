@@ -106,7 +106,12 @@ class EventsFeed:
         by one that never reached its serve loop. An auth-refused
         close takes the fixed slow interval instead — a token the
         daemon does not hold cannot become valid by
-        reconnecting."""
+        reconnecting. A daemon that accepts and then closes
+        cleanly without a frame resets the ladder like any
+        served connection, and each such connection costs the
+        screens one re-read (#1129) — msksd itself closes an
+        events socket only when the client does or its relay
+        fails."""
         attempt = 0
         while True:
             served, refused = await self.pump_one()

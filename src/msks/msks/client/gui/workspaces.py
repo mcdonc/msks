@@ -83,6 +83,11 @@ STORAGE_KEY = "workspaces-storage"
 #: contract the TUI's own listing keeps.
 FLASH_MS = 4000
 
+#: The recovery's flash (#904, #1129 — the TUI listing's own
+#: words): the first answered listing after an outage names the
+#: recovery once, and the flash clears with its span.
+RECOVERY_TEXT = "daemon back — listing resumed"
+
 #: The state cell's sort data (#939): the lifecycle rank the
 #: presenter carries, so a column click sorts by the vocabulary's
 #: own sequence rather than the alphabet.
@@ -127,6 +132,7 @@ class WorkspaceList(QtWidgets.QWidget):
         super().__init__()
         self.bridge = bridge
         self.pending = False
+        self.refresh_due = False
         self.flash_seq = 0
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
@@ -286,12 +292,14 @@ class WorkspaceList(QtWidgets.QWidget):
         """One listing refresh through the bridge (#939, #1019)
         — the screen's own open, a listing-affecting frame the
         events feed pushed, and the feed's serve poke share it.
-        A refresh already in flight is skipped, exactly the TUI
-        listing's own guard (#470): pokes that outlive a slow
-        call would stack identical requests while the first
-        answer has yet to land. The rows on screen stand until
-        the answer replaces them."""
+        A refresh already in flight carries the ask instead of
+        stacking a second request (#470's one-flight rule): the
+        landing takes the read the guard refused (#1129), so a
+        poke that lands mid-flight still gets its read — the
+        TUI listing's own arm (#1019). The rows on screen stand
+        until the answer replaces them."""
         if self.pending:
+            self.refresh_due = True
             return
         self.pending = True
         self.bridge.call(LIST_KEY, "workspaces")
@@ -548,10 +556,11 @@ class WorkspaceList(QtWidgets.QWidget):
     def listing_landed(self, result: object) -> None:
         """One answered listing (#939, #940): the table rebuilds
         from the answer, and a standing outage resolves — the
-        daemon answered. A refusal or an action's outcome flash
-        runs its own span (#776's mask): a listing answer landing
-        inside it cannot wipe the outcome the operator just
-        read."""
+        daemon answered, and the recovery flashes once in the
+        outage's place (#1129). A refusal or an action's outcome
+        flash runs its own span (#776's mask): a listing answer
+        landing inside it cannot wipe the outcome the operator
+        just read."""
         self.pending = False
         # The daemon's own rows stand beside the models (#986):
         # the editor seeds from the row's whole facts — the
@@ -560,8 +569,19 @@ class WorkspaceList(QtWidgets.QWidget):
         self.daemon_rows = {row.get("id"): row for row in result or []}
         self.set_rows(workspace_rows(result))
         if self.flash_outage:
-            self.clear_flash()
+            self.flash(RECOVERY_TEXT)
         self.load_storage()
+        self.serve_due()
+
+    def serve_due(self) -> None:
+        """The poke a flight skipped (#1129): served the moment
+        no flight stands — one more read, the TUI listing's own
+        arm (#1019), so a serve poke or a frame landing mid-flight
+        still gets its read."""
+        if not self.refresh_due:
+            return
+        self.refresh_due = False
+        self.refresh()
 
     @QtCore.Slot(str, object)
     def on_failed(self, key: str, failure: RestFailure) -> None:
@@ -587,6 +607,7 @@ class WorkspaceList(QtWidgets.QWidget):
             return
         self.pending = False
         self.flash(str(failure), outage=failure.reach)
+        self.serve_due()
 
     @QtCore.Slot(QtCore.QModelIndex)
     def open_current(self, index: QtCore.QModelIndex) -> None:
@@ -866,15 +887,6 @@ class WorkspaceList(QtWidgets.QWidget):
         this timeout's flash is still the one on it."""
         if seq == self.flash_seq:
             self.status.clear()
-
-    def clear_flash(self) -> None:
-        """The flash's whole clear — the path a successful
-        refresh takes when it resolves the outage the flash
-        named. The serial bump retires any timeout still
-        pending."""
-        self.flash_seq += 1
-        self.flash_outage = False
-        self.status.clear()
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         """The screen's refresh at open (#939, #1019): the

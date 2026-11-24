@@ -279,35 +279,40 @@ def test_a_later_answer_replaces_the_rows(qt) -> None:
     window.close()
 
 
-def test_a_refresh_in_flight_is_skipped(qt) -> None:
-    """The in-flight guard (#939, the TUI listing's own #470
-    rule): while a refresh waits on its answer, the tick and the
-    button add nothing — a slow call does not stack identical
-    requests behind itself. Whichever answer comes (a listing or
-    a refusal) retires the flight, and the next refresh
-    runs."""
+def test_a_refresh_in_flight_is_carried(qt) -> None:
+    """The in-flight guard carries the ask (#939, #470's one
+    flight at a time, #1129's carry — the TUI listing's own arm
+    over #1019): a refresh asked while the listing's read is out
+    adds no second request, and the landing takes the read the
+    guard refused — one more flight, not a dropped poke. A
+    refusal's landing serves it the same way, and a landing with
+    nothing carried asks nothing."""
     screen, window, bridge = make_screen(qt)
+    read = ("workspaces-list", "workspaces", ())
     bridge.calls.clear()
-    screen.refresh()  # the flight opens
-    assert bridge.calls == [("workspaces-list", "workspaces", ())]
-    screen.refresh()
-    screen.refresh()
-    assert bridge.calls == [("workspaces-list", "workspaces", ())]
+    screen.refresh()  # the read goes out
+    screen.refresh()  # a poke, mid-flight: carried
+    screen.refresh()  # and another: one carry, not a queue
+    assert bridge.calls == [read]
     screen.on_succeeded("workspaces-list", daemon_rows()[:1])
-    bridge.calls.clear()
+    assert bridge.calls == [read, read]  # the landing took it
+    screen.on_succeeded("workspaces-list", daemon_rows()[:1])
+    assert bridge.calls == [read, read]  # nothing carried, nothing asked
     screen.refresh()
-    assert bridge.calls == [("workspaces-list", "workspaces", ())]
-    screen.refresh()
-    assert bridge.calls == [
-        ("workspaces-list", "workspaces", ())
-    ]  # one flight at a time
+    screen.refresh()  # carried again
     screen.on_failed(
         "workspaces-list",
         clientdata.RestFailure("409: workspace is running", reach=False),
     )
+    assert bridge.calls == [read, read, read, read]  # served through a refusal
     bridge.calls.clear()
-    screen.refresh()  # a refusal retired the flight the same way
-    assert bridge.calls == [("workspaces-list", "workspaces", ())]
+    screen.on_failed(
+        "workspaces-list",
+        clientdata.RestFailure("409: workspace is running", reach=False),
+    )
+    assert (
+        bridge.calls == []
+    )  # the served flight's own refusal carries nothing
     window.close()
 
 
@@ -356,7 +361,9 @@ def test_an_outage_stands_until_an_answer(qt, monkeypatch) -> None:
     """An outage is not a flash (#939, #904's contract): a
     failure the daemon never answered (``reach``) stands on the
     status line — the same tiny flash span proves nothing clears
-    it — and the next successful answer resolves it."""
+    it — and the next successful answer resolves it: the
+    recovery flashes once in the outage's place, the TUI
+    listing's own words (#1129), and clears with the span."""
     screen, window, _bridge = make_screen(qt)
     monkeypatch.setattr(qt.screen_mod, "FLASH_MS", 5)
     screen.on_failed(
@@ -370,7 +377,12 @@ def test_an_outage_stands_until_an_answer(qt, monkeypatch) -> None:
         time.sleep(TICK)
     assert "unreachable" in screen.status.text()  # it stood
     screen.on_succeeded("workspaces-list", [])
-    assert screen.status.text() == ""  # the answer resolved it
+    assert screen.status.text() == "daemon back — listing resumed"
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and screen.status.text():
+        qt.app.processEvents()
+        time.sleep(TICK)
+    assert screen.status.text() == ""  # the recovery's own span
     window.close()
 
 
@@ -1585,13 +1597,14 @@ def test_a_stale_listing_answer_keeps_the_outcome_flash(qt) -> None:
     # The stale listing answer lands: same rows, no rebuild.
     screen.on_succeeded("workspaces-list", daemon_rows())
     assert screen.status.text() == "alpha running"  # it stood
-    # A standing outage, though, an answer resolves.
+    # A standing outage, though, an answer resolves — the
+    # recovery flashes once in its place (#1129).
     screen.on_failed(
         "workspaces-list",
         clientdata.RestFailure("daemon away", reach=True),
     )
     screen.on_succeeded("workspaces-list", daemon_rows())
-    assert screen.status.text() == ""
+    assert screen.status.text() == "daemon back — listing resumed"
     window.close()
 
 

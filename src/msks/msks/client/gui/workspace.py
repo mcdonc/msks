@@ -95,6 +95,11 @@ REHOLD_POLL_MS = 5000
 #: posture and the in-place mode switch (#1049).
 EGRESS_LABEL = "Egress"
 
+#: The page's recovery flash (#904, #1129 — the TUI listing's
+#: words for its own screen): the first answer after an outage
+#: names the recovery once, and the flash clears with its span.
+RECOVERY_TEXT = "daemon back — page resumed"
+
 
 def find_row(rows: list[dict] | None, workspace_id: str) -> dict | None:
     """This workspace's row out of a listing (#945): the same
@@ -149,6 +154,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.row: dict | None = None
         self.row_pending = False
         self.storage_pending = False
+        self.refresh_due = False
         self.storage_costs: dict[str, int] = {}
         self.flash_seq = 0
         self.flash_outage = False
@@ -311,28 +317,66 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.proxies_tab.host(workspace_id)
         self.egress_tab.host(workspace_id)
         self.events_tab.clear()
-        self.refresh()
+        self.refresh_standing()
 
     @QtCore.Slot()
     def refresh(self) -> None:
         """One page refresh through the bridge (#945, #971,
-        #1019) — the row-affecting pushed frames and the page's
-        own open share it. A flight
-        already out is not stacked, the listing's own guard
-        (#470); the tabs stand until the answers replace
-        them."""
+        #1019) — the row-affecting pushed frames and the feed's
+        serve poke share it. A read already out carries the ask
+        (#470's one-flight rule, #1129's carry): the landing
+        takes the read the guard refused, so a frame or a poke
+        landing mid-flight still gets its read — the TUI
+        listing's own arm (#1019). The tabs stand until the
+        answers replace them."""
+        if self.row_pending or self.storage_pending:
+            self.refresh_due = True
+        self.read_page()
+
+    def refresh_standing(self) -> None:
+        """The open's and the show's own read (#945, #1019): a
+        read already out stands for it. The row read is a whole
+        listing, so a flight issued before the open lands on the
+        opened workspace the same, and the open and the show a
+        stacked widget's switch puts back to back add no second
+        pair of reads. Only a frame's or a poke's refresh
+        carries (#1129): those re-read for a change an older
+        flight cannot hold. The tabs take their pokes either
+        way: at a show before the open their host was still
+        empty, and their own guards skip a read already out."""
+        if self.row_pending or self.storage_pending:
+            self.poke_tabs()
+            return
+        self.read_page()
+
+    def read_page(self) -> None:
+        """The page's reads themselves: each goes out unless its
+        own flight stands (#470), and the Proxies and Egress
+        tabs ride the page's refresh (#988, #1042)."""
         if not self.row_pending:
             self.row_pending = True
             self.bridge.call(ROW_KEY, "workspaces")
         if not self.storage_pending:
             self.storage_pending = True
             self.bridge.call(STORAGE_KEY, "storage")
-        # The Proxies tab rides the page's own refresh (#988):
-        # its listing is its own read, refreshed beside the row.
-        # The Egress tab rides it the same way (#1042): its
-        # posture read is its own.
+        self.poke_tabs()
+
+    def poke_tabs(self) -> None:
+        """The Proxies and Egress tabs' reads (#988, #1042):
+        their listings are their own, refreshed beside the row,
+        and each skips a read of its own already out."""
         self.proxies_tab.poke()
         self.egress_tab.poke()
+
+    def serve_due(self) -> None:
+        """The refresh a standing read deferred (#1129): served
+        the moment no read stands — one more read, the TUI
+        listing's own arm (#1019), so a serve poke or a frame
+        landing mid-flight still gets its read."""
+        if not self.refresh_due or self.row_pending or self.storage_pending:
+            return
+        self.refresh_due = False
+        self.refresh()
 
     @QtCore.Slot(str, object)
     def on_succeeded(self, key: str, result: object) -> None:
@@ -358,12 +402,15 @@ class WorkspaceDetail(QtWidgets.QWidget):
             # The TUI's own-current guard (#309's close_removed):
             # an answer landing after Back hands the operator the
             # list already — the notice would name a close that
-            # already happened.
+            # already happened. The page leaves with it: a
+            # deferred refresh has nothing left to read.
+            self.refresh_due = False
             if not self.isHidden():
                 self.removed.emit(self.workspace_id)
             return
         self.row = fresh
         self.rebuild()
+        self.serve_due()
 
     @QtCore.Slot(str, object)
     def on_failed(self, key: str, failure: RestFailure) -> None:
@@ -379,6 +426,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         else:
             self.storage_pending = False
         self.flash(str(failure), outage=failure.reach)
+        self.serve_due()
 
     def storage_landed(self, report: object) -> None:
         """The capacity report into the footer's cache (#971):
@@ -392,13 +440,15 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.resolve_outage()
         self.storage_costs = workspace_costs(report or {})
         self.rebuild()
+        self.serve_due()
 
     def resolve_outage(self) -> None:
         """A standing outage's resolve (#945, #904's contract):
-        an answer landed, and the flash it held clears — the
-        tabs keep the content they have."""
+        an answer landed, and the recovery flashes once in the
+        outage's place (#1129) — the tabs keep the content they
+        have."""
         if self.flash_outage:
-            self.clear_flash()
+            self.flash(RECOVERY_TEXT)
 
     def rebuild(self) -> None:
         """The page from its standing facts (#945, #1017): the
@@ -516,13 +566,6 @@ class WorkspaceDetail(QtWidgets.QWidget):
         if seq == self.flash_seq:
             self.status.clear()
 
-    def clear_flash(self) -> None:
-        """The whole clear — the path a landing answer takes
-        when it resolves the outage the flash held."""
-        self.flash_seq += 1
-        self.flash_outage = False
-        self.status.clear()
-
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         """The page's first refresh at open (#945, #1019: the
         standing tick is gone — the row re-reads on the
@@ -541,7 +584,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         return, a tab switch back to Workspaces)."""
         if getattr(self, "back_button", None) is not None:
             self.anchor_focus()
-            self.refresh()
+            self.refresh_standing()
             if self.workspace_id and self.consent is not None:
                 self.bridge.start_decider(
                     self.workspace_id, self.consent.controller
