@@ -8,8 +8,8 @@ msks ships as a Python distribution with everything inside: the client
 
 The wheel needs Python 3.14 or newer. A stock Debian or Fedora host
 holds no 3.14, so the installer provisions its own interpreter (see
-below). The script needs `curl` and `tar`, which a stock server
-install carries. Beyond that, nothing needs installing first.
+below). The script needs `curl` and `tar` on the host. Beyond that,
+nothing needs installing first.
 
 ## The one-command install
 
@@ -166,8 +166,8 @@ account. A venv behind a permission the account cannot cross (a 0700
 home) refuses at install time with the cause stated.
 
 **Cloud Hypervisor's static release binary.** So guest VMs can be
-started. The bootstrap script lands it verified. The tool downloads it
-itself only when nothing carries it.
+started. The bootstrap script lands it verified. The tool performs
+its own download only when nothing carries the binary.
 
 **The client links.** `/usr/local/bin/msks` and
 `/usr/local/bin/msks-term-popup` are symlinks into the venv's bin
@@ -272,10 +272,11 @@ install -m 0755 cloud-hypervisor-static /usr/local/bin/cloud-hypervisor
 /usr/local/bin/cloud-hypervisor --version
 ```
 
-Provision uv (skip this block when the host holds a `uv` on PATH).
-The checksum record pins the uv tarball the same way (0.9.7 when
-this was written): fetch that tarball, not the astral installer,
-which puts its uv outside the login PATH a root shell carries:
+Provision uv (skip this block when the host holds a `uv` on PATH,
+and use `uv` in place of `/tmp/uv/uv` below). The checksum record
+pins the uv tarball the same way (0.9.7 when this was written):
+fetch that tarball, not the astral installer, which puts its uv
+outside the login PATH a root shell carries:
 
 ```console
 curl -LsSf -o uv-x86_64-unknown-linux-gnu.tar.gz \
@@ -434,8 +435,8 @@ copy-paste `apt-get remove --purge ...` line. You can remove the ones
 nothing else needs yourself.
 
 The uninstall run is idempotent the same way: a piece already gone is
-a line in the summary, not an error, and the first real refusal stops
-the run: the setup run's rule. `--no-service` holds its meaning: the
+a line in the summary, not an error. The first real refusal stops the
+run (the setup run's rule). `--no-service` holds its meaning: the
 unit is left alone, every other piece still leaves.
 
 ### The clean cut for an existing install
