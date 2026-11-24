@@ -6,6 +6,8 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.10.0] - 2026-11-24
+
 ### Added
 
 - **The TUI and GUI re-hold the bridge (#1127).** An open
