@@ -43,8 +43,11 @@ from .profile import (
 )
 from .unit import install_service, uninstall_service
 from .users import (
+    ACCESS_GROUP,
+    ensure_accounts,
     ensure_kvm_membership,
     executing_user,
+    remove_accounts,
     remove_kvm_membership,
     uplink,
 )
@@ -115,6 +118,7 @@ def consent_line(states: dict[str, str]) -> str:
 
 def summary(
     ambient: str,
+    accounts: str,
     states: dict[str, str],
     kvm: str,
     service: str,
@@ -124,8 +128,10 @@ def summary(
     profile: HostProfile = DEBIAN_PROFILE,
 ) -> None:
     say(profile.tool, "done —")
-    print(f"  wrapper:    {WRAPPER} (setpriv, {CAPS}+ep)")
+    grant = f"0750 root:{ACCESS_GROUP}"
+    print(f"  wrapper:    {WRAPPER} (setpriv, {CAPS}+ep, {grant})")
     print(f"               dev-daemon use: DEV_CAPS={WRAPPER} msks-dev")
+    print(f"  account:    {accounts}")
     print(f"  forwarding: net.ipv4.ip_forward=1 ({SYSCTL_FILE}, active now)")
     print(f"  modules:    {MODULES_FILE} ({','.join(MODULES)})")
     print(
@@ -144,8 +150,8 @@ def summary(
     print(f"  service:    {service}")
     if "started" in service:
         print(
-            "               same-user clients connect token-free "
-            "(#555): $XDG_RUNTIME_DIR/msks/msksd.sock"
+            "               members of the msks group connect token-free "
+            "(#1093): /run/msks/msksd.sock"
         )
 
 
@@ -166,6 +172,8 @@ def run_setup(
         )
         if missing:
             install_packages(missing, profile)
+        user, uid, gid, home = executing_user()
+        accounts_note = ensure_accounts(user, profile)
         install_wrapper()
         ambient = wrapper_ambient_proof()
         say(
@@ -174,18 +182,18 @@ def run_setup(
         )
         land_sysctl()
         states = land_modules(profile)
-        user, uid, gid, home = executing_user()
         the_uplink = uplink()
         kvm_note, _kvm_added = ensure_kvm_membership(user, profile)
         path_note = land_user_path(home, uid, gid, profile)
         service_note = (
-            install_service(user, uid, gid, home, the_uplink, profile)
+            install_service(the_uplink, profile)
             if service
             else "skipped (--no-service)"
         )
         client_link = link_client()
         summary(
             ambient,
+            accounts_note,
             states,
             kvm_note,
             service_note,
@@ -212,6 +220,7 @@ def run_setup(
 
 def uninstall_summary(
     service: str,
+    accounts: str,
     forwarding: str,
     modules: str,
     wrapper: str,
@@ -228,6 +237,7 @@ def uninstall_summary(
     present himself when nothing else uses them."""
     say(profile.tool, "done —")
     print(f"  service:    {service}")
+    print(f"  account:    {accounts}")
     print(f"  forwarding: {forwarding}")
     print(f"  modules:    {modules}")
     print(f"  wrapper:    {wrapper}")
@@ -249,20 +259,20 @@ def run_uninstall(
     service: bool = True, profile: HostProfile = DEBIAN_PROFILE
 ) -> None:
     """The setup's mirror (#604), in teardown order: the service
-    stops first — its wrapper and caps vanish next — then every
-    host piece leaves, and the summary names the dependency
-    packages for the operator's own package-manager call. The
-    first refusal stops the run, the install run's rule."""
+    stops first — the accounts and caps it ran under leave next
+    — then every host piece leaves, and the summary names the
+    dependency packages for the operator's own package-manager
+    call. The first refusal stops the run, the install run's
+    rule."""
     saved = os.environ.get("PATH", "")
     os.environ["PATH"] = profile.admin_path + ":" + saved
     try:
         check_root_and_platform(profile)
         user, uid, gid, home = executing_user()
         service_note = (
-            uninstall_service(user, uid, home)
-            if service
-            else "skipped (--no-service)"
+            uninstall_service(profile) if service else "skipped (--no-service)"
         )
+        accounts_note = remove_accounts(user, profile)
         forwarding = drop_sysctl(profile)
         modules = drop_modules_file()
         wrapper = drop_wrapper()
@@ -272,6 +282,7 @@ def run_uninstall(
         vmm = drop_cloud_hypervisor()
         uninstall_summary(
             service_note,
+            accounts_note,
             forwarding,
             modules,
             wrapper,
@@ -304,11 +315,11 @@ def parse_args(
         "--uninstall",
         action="store_true",
         help="undo the setup (#604): stop and remove the msksd "
-        "service, remove the wrapper, the client links, the routing "
-        "kernel files, "
-        "the cloud-hypervisor binary, the kvm membership, and the "
-        "profile block — the apt packages stay, and the summary "
-        "names them",
+        "system service, remove the msksd account and the msks "
+        "group, the wrapper, the client links, the routing "
+        "kernel files, the cloud-hypervisor binary, the kvm "
+        "membership, and the profile block — /var/lib/msksd stays, "
+        "and the apt packages stay, and the summary names them",
     )
     return parser.parse_args(argv)
 

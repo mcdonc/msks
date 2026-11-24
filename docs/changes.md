@@ -13,6 +13,20 @@ tagged `vX.Y.Z`.
   **Remove**. The entries carry the same paths and the same
   gating as the button row under the table. A press below the
   rows opens nothing.
+- **The system unit install (#1094).** The Debian and Fedora
+  setup tools now land `/etc/systemd/system/msksd.service`:
+  the daemon runs under a dedicated `msksd` system account
+  (nologin, `/var/lib/msksd`) with `SupplementaryGroups=msks
+kvm` and `cap_net_admin`/`cap_net_bind_service` granted
+  natively, serving the shared `/run/msks/msksd.sock` to the
+  new `msks` access group — the executing user gains the
+  membership, so members connect with no token and no CA. The
+  `msks-caps` wrapper narrows to root:`msks` 0750 (the system
+  unit no longer runs through it), `msksd doctor` gains rows
+  for the group grant, the unit state, and the socket, and
+  `--uninstall` mirrors the service, the account, and the
+  group while naming `/var/lib/msksd` as kept. The user-unit
+  machinery (runuser, linger, bus-race retries) is gone.
 - **Owner-scoped secret events (#1090).** The live `secret.*`
   frames on the events websocket now reach the row's owner
   alone — mint, revoke, unlock, expiry, and the per-request swap

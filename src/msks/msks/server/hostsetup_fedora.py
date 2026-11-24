@@ -116,7 +116,7 @@ FEDORA_PROFILE = HostProfile(
     kernel_package=fedora_kernel_package,
     group_add=lambda user, group: ["usermod", "-a", "-G", group, user],
     group_remove=lambda user, group: ["gpasswd", "-d", user, group],
-    group_restore=lambda user: f"usermod -aG kvm {user}",
+    group_restore=lambda user, group: f"usermod -aG {group} {user}",
 )
 
 

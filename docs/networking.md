@@ -162,7 +162,7 @@ Debian and Fedora deployment hosts run their setup tool,
 `msks-setup-debian-host` or `msks-setup-fedora-host`, and [the Installation
 chapter](installation.md) describes the tool end to end. For egress it matters
 that the tool installs a capability wrapper, lands the sysctl and the module
-set this section lists, and registers the daemon's systemd user service with
+set this section lists, and registers the daemon's systemd system service with
 `MSKSD_EGRESS_ENABLED=true` and the detected uplink. An operator who sets
 `MSKSD_EGRESS_ENABLED=false` arms nothing, and every egress workspace then
 refuses to boot with the cause given.

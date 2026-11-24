@@ -27,6 +27,11 @@ from .probes import (
     session_lacks_admin_dirs,
 )
 from .report import CheckResult, DoctorReport, format_report
+from .systemd import (
+    msks_group_result,
+    msks_unit_result,
+    shared_socket_result,
+)
 
 
 def add_path_note(report: DoctorReport) -> None:
@@ -67,6 +72,14 @@ def run_doctor(settings: Settings) -> DoctorReport:
         apple_kvm = apple_silicon_kvm_result()
         if apple_kvm is not None:
             report.add(apple_kvm)
+        # The system deployment's rows (#1080): the access group
+        # with the caller's grant, the msksd unit's state, the
+        # shared socket — Linux-only like the kvm row (systemd
+        # and /run/msks are Linux surfaces), and warning grade:
+        # a daemon serving TCP alone stays green without them.
+        report.add(msks_group_result(manager))
+        report.add(msks_unit_result())
+        report.add(shared_socket_result())
     report.add(
         check_binary(
             vmm.mkfs_ext4,

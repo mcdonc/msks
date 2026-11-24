@@ -30,11 +30,14 @@ from msks.server.doctor import (
     install_hint,
     kvm_access_result,
     library_probe_result,
+    msks_group_result,
+    msks_unit_result,
     parse_tmux_version,
     result_marker,
     run,
     run_doctor,
     settings_for_doctor,
+    shared_socket_result,
 )
 from msks.server.hostsetup import cloud_hypervisor_assets
 from msks.settings import Settings, VmmSettings
@@ -750,7 +753,9 @@ def test_run_doctor_off_linux_skips_the_library_rows(
 ) -> None:
     """Off Linux the two library rows stay off the report — their
     install candidates there are Linux-only packages — and the
-    binding row carries the contract (#542)."""
+    binding row carries the contract (#542). The system
+    deployment's rows stay off with them (#1080): systemd and
+    /run/msks are Linux surfaces."""
     all_found(monkeypatch)
     monkeypatch.setattr(doctor_mod.sys, "platform", "darwin")
     report = run_doctor(Settings())
@@ -758,6 +763,190 @@ def test_run_doctor_off_linux_skips_the_library_rows(
     assert "libnetfilter_queue" not in names
     assert "libnfnetlink" not in names
     assert "nfq-binding" in names
+    assert "msks-group" not in names
+    assert "msksd-unit" not in names
+    assert "shared-socket" not in names
+
+
+# ---------------------------------------------------------------------------
+# The system deployment's rows (#1080)
+# ---------------------------------------------------------------------------
+
+
+def systemd_seam(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Pin the system-deployment rows' seams: a systemd manager,
+    an access group the caller holds, a live session carrying
+    it, an active unit, and a shared socket that answers. The
+    platform gate is pinned to Linux with them — the rows are
+    Linux-only surfaces — and systemctl resolves even on a host
+    whose PATH carries none (a CI container), wrapping whatever
+    which a prior seam installed so its misses survive."""
+    monkeypatch.setattr(doctor_mod.sys, "platform", "linux")
+    manager = tmp_path / "systemd"
+    manager.mkdir(exist_ok=True)
+    patch_phase(monkeypatch, "SYSTEMD_MANAGER", manager)
+    outer_which = doctor_mod.shutil.which
+
+    def rescuing_which(name: str):
+        if name == "systemctl":
+            return "/usr/bin/systemctl"
+        return outer_which(name)
+
+    monkeypatch.setattr(doctor_mod.shutil, "which", rescuing_which)
+    patch_phase(monkeypatch, "group_present", lambda name: True)
+    patch_phase(monkeypatch, "in_group", lambda user, name: True)
+    monkeypatch.setattr(doctor_mod.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(
+        doctor_mod.grp, "getgrnam", lambda name: SimpleNamespace(gr_gid=110)
+    )
+    monkeypatch.setattr(doctor_mod.os, "getgroups", lambda: [110])
+    monkeypatch.setattr(doctor_mod.os, "getgid", lambda: 1000)
+    patch_phase(monkeypatch, "is_socket_file", lambda path: True)
+    patch_phase(
+        monkeypatch,
+        "system_socket_path",
+        lambda: pathlib.Path("/run/msks/msksd.sock"),
+    )
+
+
+def test_the_system_rows_read_green(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """A serving deployment answers green on all three rows: the
+    group with the caller's membership, the active unit, the
+    answering socket."""
+    systemd_seam(monkeypatch, tmp_path)
+    patch_phase(
+        monkeypatch,
+        "executing_user",
+        lambda: ("op", 1000, 1000, "/home/op"),
+    )
+    patch_phase(
+        monkeypatch, "run", lambda cmd, timeout=10.0: (0, "active\n", "")
+    )
+    group = msks_group_result()
+    assert group.ok and "op is a member" in group.message
+    unit = msks_unit_result()
+    assert unit.ok and "msksd.service is active" in unit.message
+    socket = shared_socket_result()
+    assert socket.ok and "/run/msks/msksd.sock answers" in socket.message
+
+
+def test_the_group_row_names_the_missing_pieces(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """The access-group row walks its misses: an absent group, a
+    non-member caller, and a session that predates the grant —
+    warning grade every one, the kvm row's shapes on the client
+    side."""
+    systemd_seam(monkeypatch, tmp_path)
+    patch_phase(
+        monkeypatch,
+        "executing_user",
+        lambda: ("op", 1000, 1000, "/home/op"),
+    )
+    patch_phase(monkeypatch, "group_present", lambda name: False)
+    row = msks_group_result()
+    assert not row.ok and row.is_warning
+    assert "the msks group is absent" in row.message
+    patch_phase(monkeypatch, "group_present", lambda name: True)
+    patch_phase(monkeypatch, "in_group", lambda user, name: False)
+    row = msks_group_result()
+    assert not row.ok and row.is_warning
+    assert "op is not in the msks group" in row.message
+    # The fix names the group command the detected manager runs —
+    # the kvm row's distro awareness, not a Debian-only spelling.
+    assert "adduser op msks" in row.hint
+    patch_phase(monkeypatch, "in_group", lambda user, name: True)
+    # A run whose effective uid is not the caller's own (a sudo
+    # lift to a non-root service account) cannot read that
+    # login's live groups — the row stands on the database
+    # answer alone and passes.
+    monkeypatch.setattr(doctor_mod.os, "geteuid", lambda: 1001)
+    monkeypatch.setattr(doctor_mod.os, "getgroups", lambda: [])
+    row = msks_group_result()
+    assert row.ok
+    patch_phase(monkeypatch, "in_group", lambda user, name: True)
+    monkeypatch.setattr(doctor_mod.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(doctor_mod.os, "getgroups", lambda: [24, 27])
+    monkeypatch.setattr(doctor_mod.os, "getgid", lambda: 1000)
+    row = msks_group_result()
+    assert not row.ok and row.is_warning
+    assert "this session predates the membership" in row.message
+
+
+def test_the_membership_hint_matches_the_manager(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """The not-a-member fix rides GROUP_ADD: dnf's usermod shape,
+    not the Debian adduser the fallback carries (#1094 review)."""
+    systemd_seam(monkeypatch, tmp_path)
+    patch_phase(
+        monkeypatch,
+        "executing_user",
+        lambda: ("op", 1000, 1000, "/home/op"),
+    )
+    patch_phase(monkeypatch, "in_group", lambda user, name: False)
+    row = msks_group_result("dnf")
+    assert row.hint == ("sudo usermod -aG msks op, then log out and back in")
+
+
+def test_the_group_row_passes_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Root passes the membership read without holding the group
+    — the bypass every owner check takes."""
+    systemd_seam(monkeypatch, tmp_path)
+    patch_phase(
+        monkeypatch,
+        "executing_user",
+        lambda: ("root", 0, 0, "/root"),
+    )
+    monkeypatch.setattr(doctor_mod.os, "geteuid", lambda: 0)
+    patch_phase(monkeypatch, "in_group", lambda user, name: False)
+    row = msks_group_result()
+    assert row.ok and "root passes" in row.message
+
+
+def test_the_unit_row_names_the_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """The unit row reads the manager's own answer: inactive
+    warns with the journal named, and a host without systemd (or
+    the tool to reach it) warns with that named instead."""
+    systemd_seam(monkeypatch, tmp_path)
+    inactive = {
+        ("is-active", "msksd.service"): (3, "failed\n", ""),
+    }
+
+    def answering(cmd: list[str], timeout: float = 10.0):
+        probe = inactive.get(tuple(cmd[1:]), (0, "active\n", ""))
+        return probe
+
+    patch_phase(monkeypatch, "run", answering)
+    row = msks_unit_result()
+    assert not row.ok and row.is_warning
+    assert "not active (failed)" in row.message
+    assert "journalctl -u msksd" in row.message
+    patch_phase(monkeypatch, "SYSTEMD_MANAGER", tmp_path / "absent")
+    row = msks_unit_result()
+    assert not row.ok and row.is_warning
+    assert "no systemd manager" in row.message
+
+
+def test_the_socket_row_names_the_absent_socket(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """A path that is not a socket warns naming what is missing:
+    no daemon serves the shared socket, local clients have
+    nothing to dial."""
+    systemd_seam(monkeypatch, tmp_path)
+    patch_phase(monkeypatch, "is_socket_file", lambda path: False)
+    row = shared_socket_result()
+    assert not row.ok and row.is_warning
+    assert "no daemon is serving the shared socket" in row.message
 
 
 # ---------------------------------------------------------------------------
@@ -1023,13 +1212,13 @@ def test_the_kvm_row_errors_when_the_user_is_not_a_member(
 
 
 def test_the_kvm_group_add_hint_matches_the_manager() -> None:
-    assert group_add_hint("op", "dnf") == "sudo usermod -aG kvm op"
-    assert group_add_hint("op", "zypper") == "sudo usermod -aG kvm op"
-    assert group_add_hint("op", "pacman") == "sudo gpasswd -a op kvm"
-    assert group_add_hint("op", "apk") == "sudo addgroup op kvm"
+    assert group_add_hint("op", "kvm", "dnf") == "sudo usermod -aG kvm op"
+    assert group_add_hint("op", "kvm", "zypper") == "sudo usermod -aG kvm op"
+    assert group_add_hint("op", "kvm", "pacman") == ("sudo gpasswd -a op kvm")
+    assert group_add_hint("op", "kvm", "apk") == "sudo addgroup op kvm"
     # No manager detected falls back to the Debian form — the
     # documented deployment host.
-    assert group_add_hint("op", None) == "sudo adduser op kvm"
+    assert group_add_hint("op", "kvm", None) == "sudo adduser op kvm"
 
 
 def test_the_kvm_row_names_a_session_that_predates_the_group(
@@ -1245,7 +1434,9 @@ def test_run_doctor_carries_the_apple_kvm_row_where_it_applies(
     assert report.passed is True  # the warning does not fail the run
 
 
-def test_run_doctor_warning_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_doctor_warning_rows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
     monkeypatch.setattr(
         doctor_mod.shutil,
         "which",
@@ -1256,6 +1447,7 @@ def test_run_doctor_warning_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_phase(monkeypatch, "admin_dir_candidate", lambda name: None)
     patch_phase(monkeypatch, "run", probes_ok)
     kvm_seam(monkeypatch)  # the kvm row's answer is host state
+    systemd_seam(monkeypatch, tmp_path)  # #1080's rows green
     # The apple-kvm row reads cpu0's MIDR — real host state on an
     # Apple dev machine; the full-run tests pin it off so the
     # report is the same on every host.
@@ -1336,20 +1528,24 @@ def test_settings_for_doctor_explicit_failure_warns(
 
 
 def test_doctor_main_exit_codes_and_output(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     all_found(monkeypatch)
     kvm_seam(monkeypatch)  # the kvm row's answer is host state
     # Ditto the apple-kvm row's MIDR: pinned off so the check
-    # count (17) holds on Apple dev machines.
+    # count (20) holds on Apple dev machines, and the system
+    # deployment's rows seam green (#1080).
     patch_phase(monkeypatch, "MIDR_EL1", pathlib.Path("/nonexistent-midr"))
+    systemd_seam(monkeypatch, tmp_path)
     patch_phase(
         monkeypatch, "load_settings", lambda config, generate: Settings()
     )
     assert doctor_main(None) == 0
     out = capsys.readouterr().out
     assert "msksd doctor" in out
-    assert "All 17 checks passed." in out
+    assert "All 20 checks passed." in out
 
 
 def test_doctor_main_appends_config_notice(
