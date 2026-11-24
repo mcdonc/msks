@@ -76,10 +76,11 @@ class Bridge(QtCore.QObject):
     thread, ``feed_dropped(reason)`` and ``feed_reconnected()``
     carry the subscription's outage and recovery — the screens
     flash the one and refresh on the other — and
-    ``feed_served()`` tells every connection's first frame
-    (#1019): the poke the screens re-read on, first connection
-    included, because frames published while no connection
-    stood never landed. The workspace
+    ``feed_served()`` tells every connection that reaches its
+    serve loop (#1019, #1129): the poke the screens re-read on,
+    frame or no frame, first connection included, because
+    frames published while no connection stood never landed.
+    The workspace
     page's decider registration (#999) rides the same loop as
     its own task: ``start_decider(workspace)`` claims a
     workspace's holds for the page's lifetime —

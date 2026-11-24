@@ -199,12 +199,13 @@ def test_a_drop_tells_and_a_frame_proves_the_recovery() -> None:
         ]
         # One recovery, proven by the second connection's frame;
         # the parked tail delivered none. The serve pokes told
-        # twice (#1019): the first connection and the recovery
-        # both served — each is a re-read moment for the screens,
-        # frames published while no connection stood never
-        # landed.
+        # three times (#1019, #1129): the first connection, the
+        # recovery, and the parked tail — each connection's
+        # entry is a re-read moment for the screens, its frames
+        # or the lack of them notwithstanding, because frames
+        # published while no connection stood never landed.
         assert seen.reconnects == 1
-        assert seen.serves == 2
+        assert seen.serves == 3
         task.cancel()
 
     asyncio.run(scenario())
@@ -282,6 +283,69 @@ def test_a_refused_token_retries_slowly_and_tells_no_recovery(
         assert seen.reconnects == 1
         assert feed_mod.refused_close(refused_closed(4401))
         assert not feed_mod.refused_close(refused_closed(1000))
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_a_connection_pokes_its_serve_before_any_frame() -> None:
+    """The serve poke rides the connection (#1129 over #1019):
+    a connection that reaches its serve loop tells ``on_serve``
+    once at its entry, before any frame — a GUI opened against
+    a daemon that was down gets its listing re-read when the
+    feed's dial finally connects, with no frame to wait for on
+    an idle daemon. The reconnect tell still waits for a frame:
+    frames flowing again is what it reports."""
+
+    async def scenario() -> None:
+        sockets: list = [BrokenDial(), BrokenDial(), hang_socket()]
+
+        def dial():
+            return sockets.pop(0) if sockets else hang_socket()
+
+        feed = feed_mod.EventsFeed(ws_factory=dial)
+        seen = Recorder()
+        seen.wire(feed)
+        task = drive(feed)
+        await settle(task)
+        assert seen.drops == [
+            "the dial failed: connection refused",
+            "the dial failed: connection refused",
+        ]
+        assert seen.serves == 1  # the parked connection, no frame
+        assert seen.reconnects == 0  # the frame-proven tell waits
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_a_refused_connection_pokes_once_and_tells_no_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A connection the daemon refuses after the accept (#216,
+    #1129): the serve loop was entered, so the poke told once —
+    the re-read's own refusal is the screens' honest answer —
+    and the drop tells the refusal; no frame came, so no
+    reconnect tell. The slow retry that follows takes the
+    fixed interval (#946)."""
+
+    async def scenario() -> None:
+        monkeypatch.setattr(feed_mod, "REFUSED_RETRY_S", 0.001)
+        sockets: list = [FakeWS([refused_closed(4401)])]
+
+        def dial():
+            return sockets.pop(0) if sockets else hang_socket()
+
+        feed = feed_mod.EventsFeed(ws_factory=dial)
+        seen = Recorder()
+        seen.wire(feed)
+        task = drive(feed)
+        await settle(task)
+        assert seen.drops == ["the daemon refused the token"]
+        # The refused connection's own poke, then the parked
+        # retry's.
+        assert seen.serves == 2
+        assert seen.reconnects == 0
         task.cancel()
 
     asyncio.run(scenario())

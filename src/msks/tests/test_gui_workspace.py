@@ -1206,11 +1206,12 @@ def test_a_catalog_move_re_reads_the_open_row(qt) -> None:
 
 
 def test_a_serving_feed_re_reads_the_current_screen(qt) -> None:
-    """The feed's serve poke (#1019): every connection's first
-    frame refreshes the screen the operator sees — first
-    connection included — because frames published while no
-    connection stood never landed. The listing answers while it
-    owns the window; the page answers once Back swapped it."""
+    """The feed's serve poke (#1019): every connection that
+    comes to serve refreshes the screen the operator sees —
+    first connection included — because frames published while
+    no connection stood never landed. The listing answers
+    while it owns the window; the page answers once Back
+    swapped it."""
     shell, window, bridge = make_shell(qt)
     bridge.succeeded.emit("workspaces-list", [])
     bridge.calls.clear()
@@ -1222,6 +1223,33 @@ def test_a_serving_feed_re_reads_the_current_screen(qt) -> None:
     bridge.calls.clear()
     bridge.feed_served.emit()
     assert ("detail-row", "workspaces", ()) in bridge.calls
+
+
+def test_a_late_daemon_recovers_the_listing_on_the_feed_connection(
+    qt,
+) -> None:
+    """The window opened against a daemon that was down (#1129):
+    the listing's opening read failed as an outage, and the
+    message stands on an empty table. The daemon comes up and
+    the feed connects — no frame yet, an idle daemon publishes
+    none — and the connection's serve poke re-reads the
+    listing, whose answer fills the row and resolves the
+    outage. The poke waits for no frame (#1129 over #1019): the
+    feed's own tests pin the connection's entry as its
+    moment."""
+    shell, window, bridge = make_shell(qt, rows=[])
+    bridge.failed.emit(
+        "workspaces-list",
+        clientdata.RestFailure("msks: the daemon is unreachable", reach=True),
+    )
+    assert "unreachable" in shell.listing.status.text()
+    assert shell.listing.table.rowCount() == 0
+    bridge.calls.clear()
+    bridge.feed_served.emit()  # the connection's poke, no frame
+    assert bridge.calls == [("workspaces-list", "workspaces", ())]
+    bridge.succeeded.emit("workspaces-list", [daemon_row()])
+    assert shell.listing.status.text() == ""  # the answer resolved it
+    assert shell.listing.table.rowCount() == 1
 
 
 def test_the_feed_outage_flashes_the_current_screen(qt) -> None:

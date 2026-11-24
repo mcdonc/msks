@@ -806,7 +806,7 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
     def feed_back(self) -> None:
         """The feed's recovery (#946): one flash says the frames
         flow again; the re-read is the serve poke's own — every
-        connection's first frame refreshes the screen the
+        connection that comes to serve refreshes the screen the
         operator sees, because frames published while no
         connection stood never landed."""
         screen = self.currentWidget()
@@ -822,7 +822,11 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         frame published between a REST answer and the
         server-side subscribe misses the socket but shows in
         the re-read, whose REST answer postdates the
-        subscribe."""
+        subscribe. The poke fires on the connection itself,
+        before any frame (#1129): a window opened while the
+        daemon was down gets its listing re-read when the
+        feed's dial finally connects, with no frame to wait
+        for on an idle daemon."""
         self.currentWidget().refresh()
 
     @QtCore.Slot(str)

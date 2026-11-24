@@ -71,7 +71,10 @@ flashes on the status line.
 A failed refresh flashes the status line at the top of the page.
 A refusal clears itself after four seconds. A daemon outage
 stands on the line until an answer resolves it, and the rows
-already on screen stand the whole time.
+already on screen stand the whole time. A window opened while
+the daemon is down recovers by itself when the daemon comes
+up: the events feed reconnects within a few seconds, and every
+connection it makes re-reads the page.
 
 The strip at the bottom reads the held row's quick facts: the
 name, id, image, cpu count, memory, egress mode, mounts marker,
