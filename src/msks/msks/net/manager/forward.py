@@ -80,6 +80,15 @@ class ForwardMixin:
         and stop_probe carry."""
         await self.app.state.proxies.stop_workspace(workspace_id)
 
+    async def stop_bridge(self, workspace_id: str) -> None:
+        """End the workspace's bridge session (#1102), the same
+        best-effort, idempotent contract the other detach stops
+        carry: the master's graceful exit; nothing to do when no
+        session stands."""
+        bridge = self.app.state.bridge
+        if bridge is not None:
+            await bridge.stop(workspace_id)
+
     async def start_proxies(self, attachment: NetAttachment) -> None:
         """Bring up the workspace's persisted proxy listeners
         (#807) — the same best-effort posture the LLM and probe

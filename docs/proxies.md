@@ -36,11 +36,13 @@ want there more permanently.
 
 ### What each side connects to
 
-A local proxy's target is the workspace itself. The spec's host field names
-the workspace, the way ssh's `-L` host names the far end, and it accepts
-exactly two spellings: `localhost` or `127.0.0.1`. Anything else refuses with
-a message that points at the `-R` direction, which is the one that reaches
-daemon-side services.
+A local proxy's target is the workspace itself. The spec's host field
+resolves at the far end, inside the guest, exactly as it does in ssh's
+`-L`. It accepts two spellings: `localhost` or `127.0.0.1`. Both reach the
+guest's own loopback. Anything else refuses with a message that points at
+the `-R` direction, which is the one that reaches daemon-side services.
+The connection on the far end is made by the workspace's bridge, the ssh
+session the next section covers.
 
 The daemon connects to a remote proxy's target from the daemon's host. In
 the spec `-R 9200:localhost:9200`, the `localhost` is the daemon's own
@@ -61,6 +63,36 @@ curl http://$(ip route show default | awk '{print $3}'):9200
 A workspace created without egress has no NIC. Adding a proxy to it is
 refused: `workspace … has no NIC (created without egress)`.
 
+### The bridge
+
+A local proxy reaches the guest through the workspace's bridge: an ssh
+session the daemon holds, one per workspace. The session logs in over the
+tap as the workspace's login user, with the operator's key the create
+seeded into the guest. Each connection to the proxy's port opens one
+channel on that session, and the guest's sshd connects to `127.0.0.1` on
+the spec's port inside the guest. A service bound to the guest's loopback
+answers. This is the ssh `-L` behavior: the host field resolves where the
+session ends.
+
+The private half of the key stays on the client machine. `msks start`
+opens a relay to the daemon and answers the session's signature requests
+from the client's agent (`SSH_AUTH_SOCK`) or its configured identity file.
+Only signature requests cross the API. The daemon stores no private key
+material under any row.
+
+Establishment happens at start, from a client that holds the workspace
+identity. A start over the raw API, or from a client without the key, still
+boots the workspace. The local rows record `failed` with the cause.
+`msks proxy bridge <workspace>` establishes the session on demand. It is
+the repair path after a drop.
+
+A session can end while the workspace runs: the guest's sshd restarted,
+the connection dropped, or the daemon crashed and the VM survived it. The
+local rows record `failed` with the cause, and the next client that holds
+the identity restores them. A workspace restart restores them too. The
+daemon pins the guest's host key at the first bridge and refuses a changed
+key afterward, the same posture an ssh client's known_hosts file carries.
+
 ### Reach and consent
 
 The daemon connects to a remote proxy's target itself. The consent machinery
@@ -77,8 +109,10 @@ one nft transaction, so the rule and the service always agree.
 ### Status and events
 
 Every proxy carries a live status. `listening` means the daemon holds the
-listener. `failed` means the bind refused, and the cause follows the
-word (a taken port, an address the host cannot bind). `stopped` means
+listener. For a local row that also means the workspace's bridge stands:
+its connections reach the guest. `failed` means the bind refused, or the
+bridge is down, and the cause follows the word (a taken port, an address
+the host cannot bind, the bridge's named cause). `stopped` means
 nothing serves the row: a remote proxy on a workspace that is not running,
 for example. A `listening` remote row whose admission swap failed carries
 the cause the same way. The listener serves, and the guest cannot reach it.
@@ -103,7 +137,10 @@ msks proxy add my-workspace -L 8080:localhost:8080
 ```
 
 The daemon binds `127.0.0.1:8080` on its own host. A browser there opens
-`http://127.0.0.1:8080` and reaches the guest's server.
+`http://127.0.0.1:8080` and reaches the guest's server. The server may
+bind the guest's loopback: the bridge resolves the spec's `localhost`
+inside the guest. Start the workspace from a client that holds its
+identity, and the bridge comes up with it.
 
 ### Reaching a guest service from other machines
 
@@ -156,11 +193,13 @@ row. A different spec on the same bind is refused with the row that holds
 it.
 
 A local proxy binds at once, on a stopped workspace too. Each connection
-refuses until the guest runs. A remote proxy on a stopped workspace records
-the row, and the workspace's next start brings its listener up. A stop
-closes every listener the workspace owns. Each start binds them again. A
-proxy whose bind fails records the failure as its status with the cause,
-and every later start retries it.
+refuses until the workspace's bridge serves: `msks start` from a client
+that holds the identity establishes it. A remote proxy on a stopped
+workspace records the row, and the workspace's next start brings its
+listener up. A stop closes every listener the workspace owns and ends its
+bridge session. Each start binds the listeners again and waits for the
+next bridge-bearing client. A proxy whose bind fails records the failure
+as its status with the cause, and every later start retries it.
 
 ## Managing proxies from the TUI
 

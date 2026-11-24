@@ -29,6 +29,9 @@ async def client(tmp_path: Path):
     app = build_app(settings)
     stub = StubMicrovm()
     app.state.microvm = stub
+    from test_proxies import FakeBridge
+
+    app.state.bridge = FakeBridge()
     api = build_api(app)
     async with api.router.lifespan_context(api):
         transport = httpx.ASGITransport(app=api)

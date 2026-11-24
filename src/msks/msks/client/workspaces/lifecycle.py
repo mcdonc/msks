@@ -16,6 +16,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..bridge import run_bridge
 from ..context import (
     call,
     env_token,
@@ -35,6 +36,7 @@ from ..create import (
     read_pubkey,
 )
 from ..jsonio import ApiExit, emit, json_line, outcome
+from ..proxies import needs_bridge, workspace_proxies
 from ..resize import display_name, resize_message
 
 
@@ -231,6 +233,32 @@ async def start_stop_row(
         return row
 
 
+def bridge_hook(workspace_id: str, transport=None) -> None:
+    """The start's bridge step (#1102): a workspace with forward
+    proxy rows takes its bridge — the ssh session those rows ride
+    — at once, from this client's identity. Best-effort by
+    design: a start that arrives without the identity (a raw API
+    call, a client without the key) keeps its exit code, the
+    refusal is one stderr line, and the rows carry the named
+    cause until the next bridge-bearing client visit."""
+    try:
+        rows = asyncio.run(workspace_proxies(workspace_id, transport))
+        if not needs_bridge(rows):
+            return
+        run_bridge(workspace_id, transport)
+    except SystemExit as exc:
+        print(
+            f"msks: forward proxies need the bridge, not established ({exc})",
+            file=sys.stderr,
+        )
+    except Exception as exc:
+        print(
+            f"msks: bridge not established ({exc}); 'msks proxy "
+            f"bridge {workspace_id}' retries",
+            file=sys.stderr,
+        )
+
+
 def cmd_start(
     workspace_id: str, as_json: bool = False, transport=None, owner=None
 ) -> int:
@@ -240,6 +268,7 @@ def cmd_start(
     row = asyncio.run(
         start_stop_row("start", workspace_id, as_json, transport, owner)
     )
+    bridge_hook(row["id"], transport)
     outcome(as_json, row, lambda: f"{workspace_id} {row['status']}")
     return 0
 

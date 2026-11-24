@@ -1173,19 +1173,24 @@ msks proxy add my-workspace -R 5432:db.internal:5432 --label db
 ```
 
 The `-L` spec is `[BIND:]PORT:HOST:PORT`; the `-R` spec is `RPORT:HOST:TPORT`
-(its bind is the workspace's tap, a runtime fact). The host field plays the
-same role it plays in ssh: it names the end that makes the connection. In
-`-L` that end is the workspace itself, so the field accepts exactly two
-spellings — `localhost` or `127.0.0.1` — and anything else refuses:
+(its bind is the workspace's tap, a runtime fact). In `-L` the host field
+carries ssh's own meaning: it resolves at the far end, inside the guest.
+The two spellings (`localhost`, `127.0.0.1`) both reach the guest's own
+loopback through the workspace's bridge, and anything else refuses:
 
 ```text
-msks: -L's host field names the workspace itself; only localhost or
-127.0.0.1 is allowed — to reach a daemon-side service, use -R
+msks: -L's host field resolves inside the workspace, ssh's own far-end
+meaning; only localhost or 127.0.0.1 is allowed — to reach a daemon-side
+service, use -R
 ```
 
-The workspace cannot connect out on a local proxy's behalf, because no
-agent runs inside it. A local proxy always lands on the workspace itself.
-Reaching a daemon-side service is the `-R` direction.
+The connection on the far end is the guest's own. The workspace's bridge
+is an ssh session the daemon holds, and the guest's sshd connects to the
+host field's address inside the guest, so a service bound to the guest's
+loopback answers. [The proxies chapter](proxies.md#the-bridge) covers the
+bridge: the identity its establishment needs, the relay that keeps the
+private half on the client machine, and the failure model of a dropped
+session. Reaching a daemon-side service stays the `-R` direction.
 
 A remote proxy is the other direction. The guest connects to `host.msks`
 on the listen port. The workspace's resolver answers that name with its DHCP
@@ -1202,7 +1207,9 @@ remote row therefore reaches its target without a verdict.
 `add` is declarative. Asking twice for the same spec returns the standing
 row. A different spec on the same bind is refused with the row that holds it.
 A local proxy binds at once, on a stopped workspace too. Each connection
-refuses until the guest runs. A remote proxy on a stopped workspace records
+refuses until the workspace's bridge serves: `msks start` from a client
+that holds the identity establishes it, and `msks proxy bridge` does it on
+demand. A remote proxy on a stopped workspace records
 the row, and the workspace's next start brings its listener up. A stop
 closes every listener the workspace owns. A proxy whose bind fails (the
 port is taken) records the failure as its status with the cause, and every
@@ -1214,12 +1221,19 @@ until a later swap lands.
 msks proxy ls            # every stored proxy, with live status
 msks proxy ls --json     # the same rows as JSON
 msks proxy rm my-workspace 3   # remove one (listener closes at once)
+msks proxy bridge my-workspace # establish the bridge by hand
 ```
 
 The listing shows each row's direction, listen and target endpoints, and live
 status (`listening`, `stopped`, `failed` with the cause). Removing a proxy
 closes its listener when one serves and drops the row from the daemon's
 database.
+
+`bridge` establishes the workspace's bridge from the client it runs on. It
+resolves the workspace identity the same way `msks ssh` does (the agent
+first, then the configured identity file), serves the session's signature
+requests, and exits once the daemon reports the session up. A workspace
+whose local rows read `failed` with a bridge cause is the one it repairs.
 
 ## `msks egress`
 

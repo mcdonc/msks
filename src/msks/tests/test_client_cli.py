@@ -1150,6 +1150,9 @@ def test_cmd_start_boots_and_prints(
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/proxies"):
+            # The start's bridge hook (#1102) reads the rows; none.
+            return httpx.Response(200, json=[])
         seen["path"] = request.url.path
         seen["auth"] = request.headers.get("authorization")
         return httpx.Response(200, json={"id": "ws1", "status": "running"})
@@ -1191,6 +1194,9 @@ def test_cmd_start_carries_the_owner_scope(
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/proxies"):
+            # The start's bridge hook (#1102): no rows, no bridge.
+            return httpx.Response(200, json=[])
         seen["params"] = dict(request.url.params)
         return httpx.Response(200, json={"id": "ws1", "status": "running"})
 
@@ -1576,7 +1582,14 @@ def test_main_start_dispatch(
     rc = cli.main(
         ["start", "ws1"],
         transport=mock(
-            lambda req: httpx.Response(200, json={"status": "running"})
+            lambda req: httpx.Response(
+                200,
+                json=(
+                    []
+                    if req.url.path.endswith("/proxies")
+                    else {"id": "ws1", "status": "running"}
+                ),
+            )
         ),
     )
     assert rc == 0
@@ -6940,3 +6953,31 @@ def test_json_requested_scans_before_the_separator() -> None:
     assert not cli.json_requested(["egress", "requests", "ws1"])
     assert not cli.json_requested(["ssh", "ws", "--", "--json"])
     assert not cli.json_requested(["ssh", "ws"])
+
+
+def test_cmd_start_bridge_refusal_keeps_the_start_green(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A start whose bridge cannot establish (this client holds no
+    identity) keeps its exit code: one stderr line, the rows carry
+    the cause (#1102)."""
+    from msks.client.workspaces import lifecycle
+
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/proxies"):
+            return httpx.Response(
+                200, json=[{"id": 5, "direction": "forward"}]
+            )
+        return httpx.Response(200, json={"id": "ws1", "status": "running"})
+
+    def refusing(workspace_id, transport=None):
+        raise SystemExit("this client holds no private half")
+
+    monkeypatch.setattr(lifecycle, "run_bridge", refusing)
+    rc = cli.cmd_start("ws1", transport=mock(handler))
+    assert rc == 0
+    out = capsys.readouterr()
+    assert "ws1 running" in out.out
+    assert "not established" in out.err

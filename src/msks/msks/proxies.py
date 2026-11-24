@@ -5,9 +5,10 @@ Two directions, both one row in the database and one listener in
 this process:
 
 - **forward** (the ssh ``-L`` shape): the daemon binds a port on
-  its own host and every accepted connection opens a guest TCP
-  connection through the same dial the forward websocket rides
-  (#109) — one guest connection per accepted connection.
+  its own host and every accepted connection opens one channel
+  to the guest's own loopback port over the workspace's bridge
+  — the ssh session the daemon holds (#1102), the reach ssh's
+  own ``-L`` spelling promises.
 - **remote** (the ssh ``-R`` shape): the daemon binds a port on
   the workspace's tap address, and every connection a guest
   process makes to it is bridged to a daemon-side service.
@@ -230,19 +231,36 @@ class ProxyManager:
 
     # --- reads ---------------------------------------------------------
 
+    def forward_status(self, row: dict) -> tuple[str, str | None]:
+        """A bound forward row's state: listening while the
+        workspace's bridge stands (#1102), failed with the
+        bridge's named cause while none does."""
+        bridge = self.app.state.bridge
+        if bridge is not None and bridge.up(row["workspace_id"]):
+            return "listening", None
+        cause = (
+            bridge.cause(row["workspace_id"])
+            if bridge is not None
+            else "no bridge (the daemon runs no bridge)"
+        )
+        return "failed", cause
+
     def status(self, row: dict) -> tuple[str, str | None]:
         """One row's live state: ``(listening, None)``,
         ``(failed, cause)``, or ``(stopped, None)``. A forward
         row binds without its workspace running (each connection
-        refuses until the guest does); ``stopped`` is a remote
-        row whose workspace is not up, or a row no listener
-        serves. A listening remote row whose admission swap failed
-        carries the cause — the listener serves, the guest cannot
-        reach it."""
+        refuses until the bridge serves) and reads ``failed`` with
+        the bridge's named cause while no session stands (#1102);
+        ``stopped`` is a remote row whose workspace is not up, or
+        a row no listener serves. A listening remote row whose
+        admission swap failed carries the cause — the listener
+        serves, the guest cannot reach it."""
         live = self._live.get(row["id"])
         if live is None:
             return "stopped", None
         if live.server is not None:
+            if row["direction"] == "forward":
+                return self.forward_status(row)
             note = self._admission_notes.get(row["id"])
             return "listening", note
         return "failed", live.failure
@@ -341,32 +359,32 @@ class ProxyManager:
                 await target_writer.wait_closed()
 
     async def bridge_forward(self, row: dict, reader, writer) -> None:
-        """The forward direction: one guest TCP connection through
-        the same dial the forward websocket rides, tracked so a
-        detach ends it with the tap."""
-        net = self.app.state.net
-        guest_writer = None
+        """The forward direction: one channel to the guest's own
+        loopback port over the workspace's bridge — the ssh session
+        the daemon holds (#1102), the reach ssh's own ``-L``
+        spelling promises. A refusal (no bridge session, the
+        guest's service down) ends the connection — the listener
+        stays up for the next one, the same contract the forward
+        client's ``--local`` listener keeps."""
+        bridge = self.app.state.bridge
+        channel_writer = None
         try:
-            guest_reader, guest_writer = await net.forward_stream(
+            channel_reader, channel_writer = await bridge.dial(
                 row["workspace_id"], row["target_port"]
             )
-            net.track_forward(row["workspace_id"], guest_writer)
-            try:
-                await pump(reader, writer, guest_reader, guest_writer)
-            finally:
-                net.untrack_forward(row["workspace_id"], guest_writer)
+            await pump(reader, writer, channel_reader, channel_writer)
         except Exception as exc:
             logger.info(
-                "proxy %s: guest port %s refused: %s",
+                "proxy %s: guest loopback port %s refused: %s",
                 row["id"],
                 row["target_port"],
                 exc,
             )
         finally:
-            if guest_writer is not None:
-                guest_writer.close()
+            if channel_writer is not None:
+                channel_writer.close()
                 with contextlib.suppress(Exception):
-                    await guest_writer.wait_closed()
+                    await channel_writer.wait_closed()
 
     async def publish(
         self,

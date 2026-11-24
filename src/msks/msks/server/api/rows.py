@@ -162,6 +162,22 @@ async def close_ambiguous(socket, exc: AmbiguousRef) -> None:
     )
 
 
+async def ws_row_or_close(app, socket, workspace_id: str, viewer: int):
+    """The row a websocket route serves, or None when the socket
+    answered itself: the plural-name close (#1084) or the 4404 a
+    missing row takes. The forward and bridge dials share it, so
+    the model's ambiguity vocabulary stays behind this seam."""
+    try:
+        row = await app.state.model.get_workspace(workspace_id, viewer=viewer)
+    except AmbiguousRef as exc:
+        await close_ambiguous(socket, exc)
+        return None
+    if row is None:
+        await socket.close(code=4404)
+        return None
+    return row
+
+
 async def workspace_or_404(app, workspace_id: str, caller: int) -> dict:
     """The workspace a route's ref names — its immutable id or its
     name (#246) — or the 404.

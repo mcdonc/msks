@@ -31,6 +31,7 @@ from urllib.parse import quote
 
 import typer
 
+from . import bridge as bridge_flow
 from .context import call
 from .jsonio import json_line, outcome, set_json_mode
 from .tabular import listing_text
@@ -74,9 +75,9 @@ LOCAL_FORM = (
 LOOPBACK_HOSTS = ("localhost", "127.0.0.1")
 
 LOCAL_HOST_RULE = (
-    "-L's host field names the workspace itself; only localhost "
-    "or 127.0.0.1 is allowed — to reach a daemon-side service, "
-    "use -R"
+    "-L's host field resolves inside the workspace, ssh's own "
+    "far-end meaning; only localhost or 127.0.0.1 is allowed — "
+    "to reach a daemon-side service, use -R"
 )
 
 
@@ -237,6 +238,22 @@ async def remove_proxy(
     )
 
 
+async def workspace_proxies(workspace_id: str, transport=None) -> list[dict]:
+    """One workspace's proxy rows, live status attached — the
+    read the start-time bridge hook runs on."""
+    return await call(
+        "GET",
+        f"/api/v1/workspaces/{quote(workspace_id, safe='')}/proxies",
+        transport=transport,
+    )
+
+
+def needs_bridge(rows: list[dict]) -> bool:
+    """Whether any row is a forward proxy — the rows the bridge
+    serves. Remote rows bridge nothing."""
+    return any(row["direction"] != "remote" for row in rows)
+
+
 @app.command("add")
 def cmd_proxy_add(
     ctx: typer.Context,
@@ -249,8 +266,8 @@ def cmd_proxy_add(
         "--local",
         metavar="[BIND:]PORT:HOST:PORT",
         help="local: the daemon binds PORT (loopback, or BIND) and "
-        "bridges to the workspace's port — HOST names the workspace "
-        "itself (localhost)",
+        "bridges to the workspace's port — HOST resolves inside "
+        "the guest (localhost, its own loopback)",
     ),
     remote: str | None = typer.Option(
         None,
@@ -313,6 +330,18 @@ def cmd_proxy_ls(
         )
     )
     return 0
+
+
+@app.command("bridge")
+def cmd_proxy_bridge(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(
+        ..., help="the workspace whose bridge is established (name or id)"
+    ),
+) -> int:
+    """Establish the workspace's bridge: the ssh session its
+    forward proxies ride, signed through this client's identity."""
+    return bridge_flow.run_bridge(workspace_id, ctx.obj)
 
 
 @app.command("rm")
