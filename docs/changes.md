@@ -8,6 +8,16 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The one-command install (#1119).** Every release carries
+  two bootstrap wrapper assets, `msks-setup-debian.sh` and
+  `msks-setup-fedora.sh`, so a stock host installs with
+  `curl -LsSf <release-url>/msks-setup-debian.sh | sudo sh`:
+  the wrapper fetches the release wheel, verifies every
+  artifact it fetches against the release's checksum record,
+  provisions Python 3.14 through uv when the host holds none,
+  and runs the platform setup tool from a throwaway venv that
+  is discarded afterwards. Flags after `-s --` pass through to
+  the tool (`--no-service`, `--wheel`, `--uninstall`).
 - **The `/opt/msks` venv install (#1118).** The Debian and
   Fedora setup tools gain a first phase that creates
   `/opt/msks/venv` — Python 3.14 provisioned through uv when
