@@ -18,6 +18,19 @@ tagged `vX.Y.Z`.
   and runs the platform setup tool from a throwaway venv that
   is discarded afterwards. Flags after `-s --` pass through to
   the tool (`--no-service`, `--wheel`, `--uninstall`).
+- **The rewritten installation chapter (#1120).** The
+  chapter's install step is the one-command bootstrap, and its
+  "what the setup lands" section inventories the full host
+  shape: the `/opt/msks` venv, the system unit, the accounts
+  and the shared socket, the client links, and the bundled
+  `virtiofsd-as` helper. The by-hand chapter spells out the
+  bootstrap's steps (interpreter, venv, wheel, tool
+  invocation), and the uninstall chapter covers the removals
+  and the kept `/var/lib/msksd` with its size report. The
+  `uv tool install` step, the env-source step, and the quoted
+  `command -v` invocation leave the docs. An install holding
+  state under a user's home takes the clean cut #1118's entry
+  states.
 - **The `/opt/msks` venv install (#1118).** The Debian and
   Fedora setup tools gain a first phase that creates
   `/opt/msks/venv` — Python 3.14 provisioned through uv when
