@@ -10,9 +10,32 @@ no desktop window: the widgets paint offscreen and
 ``QWidget.grab()`` reads the pixels.
 
 Run from the devenv shell (the project's Python carries
-PySide6):
+PySide6, and the shell exports the font directory below):
 
     devenv --quiet shell -- python scripts/gui_screens.py
+
+The pixels do not vary with the host's fonts (#1172). On Linux
+Qt resolves every family through fontconfig, so the run pins
+``FONTCONFIG_FILE`` to a file it writes: one directory,
+``GUI_SCREENS_FONT_DIR``, with the generic families aliased to
+DejaVu Sans. DejaVu Sans is the chrome's face: the one face
+with every marker the GUI paints (``✗``, ``↻``, ``·``) in a
+single file, where Noto Sans and Liberation Sans lack some and
+fall back to whatever the host holds. ``devenv.nix`` exports
+the directory as the DejaVu package the devenv lock pins; a
+Linux host needs no system-level step, the font is in the shell,
+and without the variable the script refuses — an empty pin hands
+the chrome to Qt's box engine, every glyph a hollow rectangle,
+the shape the first Linux render came out in. The terminal's
+face is the wheel's own bundled JetBrains Mono, registered as
+an application font, so it reads no fontconfig. On macOS Qt
+resolves through CoreText and reads none either; the pin leaves
+that platform's system font alone. The chrome's size is the
+window's own anchor, the terminal face's 15 logical pixels
+through the screen's dpi (#939, #1056): the capture shows the
+window at the size the operator sees on the platform, where a
+bare scale of the offscreen platform's own default (9pt) left
+the chrome a fifth smaller than the window it documents.
 
 The fixed clock pins every relative label (``2d ago``, the
 TTL countdown) to one moment, so re-running the script
@@ -32,7 +55,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs" / "screens"
 
-#: The pinned moment every relative label reads (#1008's
+#: The directory the pinned fontconfig lists (#1172): devenv.nix
+#: exports the DejaVu package's font directory the devenv lock
+#: pins, and the chrome resolves to CHROME_FAMILY from it.
+FONT_DIR_ENV = "GUI_SCREENS_FONT_DIR"
+
+#: The chrome's face under the pin (#1172): one file with every
+#: marker the GUI paints — ✗, ↻, · — where the other Linux
+#: defaults (Noto Sans, Liberation Sans) lack some.
+CHROME_FAMILY = "DejaVu Sans"
+
+#: The moment every relative label reads (#1008's
 #: captures): an aware local datetime, the shape the shared
 #: leaf's own clock returns — a naive pin would read as local
 #: time against the daemon's UTC stamps and skew every label
@@ -40,6 +73,40 @@ OUT = ROOT / "docs" / "screens"
 #: as UTC around this moment, the daemon's own convention.
 PINNED = datetime(2026, 1, 4, 12, 0, 0).astimezone()
 PINNED_UTC = PINNED.astimezone(UTC)
+
+
+def pinned_fontconfig() -> str:
+    """Write the fontconfig the run pins (#1172) and return its
+    path: one directory, ``GUI_SCREENS_FONT_DIR``, with the two
+    generic families Qt asks the chrome with aliased to
+    CHROME_FAMILY. Without the alias fontconfig hands the generic
+    to the first face in its sort — DejaVu Math TeX Gyre over
+    DejaVu Sans with the DejaVu directory listed. An unset or
+    missing directory stops the run with one line: the capture
+    belongs in the devenv shell, and a directory fontconfig cannot
+    find renders the same boxes as no font at all."""
+    font_dir = os.environ.get(FONT_DIR_ENV)
+    if not font_dir:
+        sys.exit(
+            f"gui_screens: {FONT_DIR_ENV} is unset — run from the "
+            "devenv shell (docs/development.md)"
+        )
+    if not Path(font_dir).is_dir():
+        sys.exit(f"gui_screens: {FONT_DIR_ENV} names no directory: {font_dir}")
+    fonts = tempfile.NamedTemporaryFile(suffix=".conf", delete=False, mode="w")
+    fonts.write(
+        "<?xml version='1.0'?>\n"
+        "<!DOCTYPE fontconfig SYSTEM 'fonts.dtd'>\n"
+        "<fontconfig>\n"
+        f"  <dir>{font_dir}</dir>\n"
+        "  <alias><family>sans-serif</family><prefer>"
+        f"<family>{CHROME_FAMILY}</family></prefer></alias>\n"
+        "  <alias><family>Sans Serif</family><prefer>"
+        f"<family>{CHROME_FAMILY}</family></prefer></alias>\n"
+        "</fontconfig>\n"
+    )
+    fonts.close()
+    return fonts.name
 
 
 def utc_stamp(offset: timedelta) -> str:
@@ -229,10 +296,7 @@ def preset_rows():
 
 def main() -> int:
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
-    fonts = tempfile.NamedTemporaryFile(suffix=".conf", delete=False, mode="w")
-    fonts.write("<fontconfig/>\n")
-    fonts.close()
-    os.environ["FONTCONFIG_FILE"] = fonts.name
+    os.environ["FONTCONFIG_FILE"] = pinned_fontconfig()
     os.environ.setdefault("QT_STYLE_OVERRIDE", "Fusion")
     try:
         capture()
@@ -252,7 +316,7 @@ def main() -> int:
                     hub.shutdown()
                 except Exception as exc:
                     print(f"msks-screens: {exc}", file=sys.stderr)
-        os.unlink(fonts.name)
+        os.unlink(os.environ["FONTCONFIG_FILE"])
     return 0
 
 
@@ -268,9 +332,15 @@ def capture() -> None:
     from msks.client.gui import secretrows as secretrows_mod
     from msks.client.gui import workspace as workspace_mod
     from msks.client.gui import workspaces as workspaces_mod
-    from msks.client.gui.app import FONT_SCALE, FUSION_STYLE
+    from msks.client.gui.app import (
+        FONT_SCALE,
+        FUSION_STYLE,
+        chrome_pt,
+        screen_dpi,
+    )
     from msks.client.gui.images import tab as images_mod
     from msks.client.gui.secrets import tab as secrets_mod
+    from msks.client.gui.terminal.fonts import DEFAULT_PT
     from PySide6 import QtWidgets
 
     ages_mod.clock_now = lambda: PINNED
@@ -280,8 +350,15 @@ def capture() -> None:
         ["msks-screens"]
     )
     app.setStyle(FUSION_STYLE)
+    # The window's own chrome anchor (open_window's write, #939,
+    # #1056): the terminal face's 15 logical pixels converted
+    # through the screen's dpi, so the capture shows the chrome
+    # at the size the operator's window opens at — the
+    # offscreen platform's own default (9pt) is no desktop
+    # session's font, and a bare scale of it left the chrome a
+    # fifth smaller than the window it documents.
     font = app.font()
-    font.setPointSizeF(font.pointSizeF() * FONT_SCALE)
+    font.setPointSizeF(chrome_pt(DEFAULT_PT * FONT_SCALE, screen_dpi(app)))
     app.setFont(font)
 
     list_bridge = StubBridge()

@@ -260,6 +260,18 @@ in
   # the msksd process exec or a hand-run script from a shell.
   env.GUEST_NIXPKGS = pkgs.path;
 
+  # The GUI docs chapter's screenshots (#1172): scripts/gui_screens.py
+  # renders the window offscreen under a fontconfig the script writes
+  # with this one directory in it, so the chrome's pixels do not vary
+  # with the host's fonts. The directory is the store path the devenv
+  # lock pins, and its DejaVu Sans is the face the script resolves the
+  # chrome to: the one face with every marker the GUI paints (✗, ↻,
+  # ·) in a single file. The terminal's face is the wheel's own bundled
+  # JetBrains Mono and needs no fontconfig. A host needs nothing else,
+  # and the script refuses without the variable; the setup is written
+  # in docs/development.md.
+  env.GUI_SCREENS_FONT_DIR = "${pkgs.dejavu_fonts}/share/fonts/truetype";
+
   # The msks client (#21) targets the DEV DAEMON (#231) by default,
   # so `msks ls` / `msks ssh` work from any devenv shell with no
   # exports. The URL, token, and CA all resolve per shell in
