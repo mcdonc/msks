@@ -18,6 +18,8 @@ import re
 from PySide6 import QtCore, QtWidgets
 
 from ..secretrows import (
+    COVERAGE_SCOPED,
+    COVERAGE_WIDE,
     MINT_TTLS,
     SecretRow,
     coverage_text,
@@ -46,6 +48,31 @@ RANK_ROLE = QtCore.Qt.ItemDataRole.UserRole + 2
 #: created label, and the lock state word.
 LIST_COLUMNS = ("COVERAGE", "NAME", "DESTS", "EXPIRES", "CREATED", "STATE")
 
+#: The coverage column (#1165): its header carries the cell's
+#: two spellings as a tooltip.
+COVERAGE_COLUMN = 0
+
+#: The coverage header's tooltip (#1165): the cell's words in the
+#: mint form's own — the picker's choices — so the listing reads
+#: back as the choice the operator made, and the TUI's ``*``
+#: never shows up unexplained.
+COVERAGE_TIP = (
+    f"{COVERAGE_WIDE}: every accepting workspace honors the row. "
+    f"{COVERAGE_SCOPED}: the row serves the workspaces listed after "
+    "the word, the ones the mint form's picker held."
+)
+
+
+def coverage_tip(table: QtWidgets.QTableWidget) -> None:
+    """The COVERAGE header's tooltip (#1165): the cell's two
+    spellings on the column's own header, so a hover on the
+    column reads the words without the docs — a table with no
+    header labels yet answers nothing."""
+    item = table.horizontalHeaderItem(COVERAGE_COLUMN)
+    if item is not None:
+        item.setToolTip(COVERAGE_TIP)
+
+
 #: The countdown column (#966): a rank cell — the deadline
 #: epoch the presenter lands, the unbounded row last.
 EXPIRES_COLUMN = 3
@@ -55,38 +82,14 @@ STATE_COLUMN = 5
 #: the undated row last.
 CREATED_COLUMN = 4
 
-#: The audit table's columns (#966) — the TUI audit line's own
-#: cells: the sighting marker, the local wall-clock label, the
-#: kind, the workspace/name identity, and the destination.
-AUDIT_COLUMNS = ("!", "TIME", "KIND", "PLACEHOLDER", "DEST")
-
-#: The audit marker column (#966): the ``!`` that marks a
-#: sighting — the exfiltration signal, the one row kind the
-#: view colors.
-MARKER_COLUMN = 0
-
-#: The audit marker header's tooltip (#1064): the ``!``
-#: column's meaning in the TUI's own words, and where the
-#: marker fires — the daemon's recorded rows are the four
-#: lifecycle kinds, so this table's marker column stays blank
-#: and the sighting reaches the TUI's audit view live.
-MARKER_TIP = (
-    "! marks a sighting: a placeholder token reached a host "
-    "its mint did not allow — the exfiltration signal. "
-    "Sightings stream live to the TUI's audit view; the "
-    "recorded rows this table lists are mint, revoke, expiry, "
-    "and unlock only."
-)
-
-
-def marker_tip(table: QtWidgets.QTableWidget) -> None:
-    """The ``!`` header's tooltip (#1064): the marker's meaning
-    on the column's own header, so a hover on the column
-    names its reading — the pane carries no standing note
-    line, the tooltip is the explanation."""
-    item = table.horizontalHeaderItem(MARKER_COLUMN)
-    if item is not None:
-        item.setToolTip(MARKER_TIP)
+#: The audit table's columns (#966, #1165) — the TUI audit line's
+#: cells with the sighting marker left out: the local
+#: wall-clock label, the kind, the workspace/name identity, and
+#: the destination. The daemon's recorded rows are the four
+#: lifecycle kinds, so a marker column stood blank on every
+#: render (#1165); a sighting reaches the TUI's audit view
+#: live, and a GUI sighting view is its own issue.
+AUDIT_COLUMNS = ("TIME", "KIND", "PLACEHOLDER", "DEST")
 
 
 #: The first group's label (#966).
@@ -95,16 +98,9 @@ LIST_GROUP = "Placeholders"
 #: The audit group's label (#966).
 AUDIT_GROUP = "Audit"
 
-#: The mint form's daemon-wide choice (#393, the GUI's read):
-#: one row every accepting workspace honors.
-COVERAGE_WIDE = "daemon-wide"
-
-#: The mint form's scoped choice (#393): one row whose coverage
-#: set is the workspaces the form's picker holds.
-COVERAGE_SCOPED = "scoped"
-
-#: The coverage picker's choices (#966): the label names what
-#: each pick mints — the TUI select's own pair.
+#: The mint form's coverage choices (#966): the label names what
+#: each pick mints — the TUI select's own pair, the words the
+#: listing's COVERAGE cell spells (#1165).
 COVERAGE_CHOICES = (
     ("daemon-wide — every accepting workspace", COVERAGE_WIDE),
     ("scoped — the picked workspaces", COVERAGE_SCOPED),
@@ -256,11 +252,12 @@ def revoke_question(model: SecretRow) -> str:
 
 
 def renewed_text(model: SecretRow, reply: dict) -> str:
-    """The renew's landing flash (#966): the extended row's
-    label with its new remaining lifetime, read off the
-    daemon's own reply — the page speaks the countdown's
-    vocabulary, not the CLI's absolute stamp, and the label is
-    the lifetime the daemon actually wrote."""
+    """The renew's landing flash (#966, #1165): the extended
+    row's label with its new remaining lifetime, read off the
+    daemon's own reply — the page speaks the EXPIRES cell's own
+    text, the countdown then the deadline's clock, not the
+    CLI's absolute stamp, and the label is the lifetime the
+    daemon actually wrote."""
     return f"renewed {model.coverage}/{model.name} · expires {ttl_text(reply)}"
 
 
@@ -336,8 +333,8 @@ def list_cells(model: SecretRow) -> tuple[tuple[str, object], ...]:
 
 
 def audit_cells(model) -> tuple[str, ...]:
-    """One audit model's cells in column order (#966): the
-    marker, the time label, the kind, the identity, the
-    destination — the presenter's own fields, one source for the
-    fill."""
-    return (model.marker, model.when, model.kind, model.who, model.dest)
+    """One audit model's cells in column order (#966, #1165): the
+    time label, the kind, the identity, the destination — the
+    presenter's own fields, one source for the fill; the
+    model's marker stays off the table."""
+    return (model.when, model.kind, model.who, model.dest)

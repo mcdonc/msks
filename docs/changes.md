@@ -43,6 +43,21 @@ tagged `vX.Y.Z`.
   disabled until one is selected. The right-click menus stay
   beside them. See [docs/gui.md](gui.md#the-images-tab).
 
+### Changed
+
+- **The GUI Secrets tab's coverage, buttons, expiry cell, and
+  audit columns (#1165).** The COVERAGE cell reads `daemon-wide`
+  or `scoped: ws-a, ws-b`, the mint form's own words, and the
+  column's header explains them as a tooltip. **Renew…** and
+  **Revoke…** sit on the button row beside **Mint…** and
+  **Unlock…**, enabled on a selected placeholder row, and the
+  right-click menu stays. The EXPIRES cell reads `2h · 14:20`, the
+  countdown then the deadline's local clock, with the full date
+  and time as its tooltip. The audit table shows TIME, KIND,
+  PLACEHOLDER, and DEST. The `!` column never held a value (the
+  daemon records no sighting rows) and is gone. See
+  [docs/gui.md](gui.md#the-secrets-tab).
+
 ### Fixed
 
 - **Enter in the GUI's lists on macOS (#1161).** Enter on the

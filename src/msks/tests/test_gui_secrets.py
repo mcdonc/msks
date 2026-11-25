@@ -1,19 +1,22 @@
-"""The GUI secrets tab (#966, #997, #1060): the presenter's
+"""The GUI secrets tab (#966, #997, #1060, #1165): the presenter's
 models rendered as the placeholder listing with the audit
 group beneath, both tables' columns filling the pane's whole
-width — the TTL countdown repainted from the deadline epochs,
-the mint form, the renew picker, the revoke gate, the pushed
-secret family's frames coalesced into one re-read, every
-daemon exchange through the stub bridge's signal emits, the
-bridge's own tests holding the real worker's contract. The
-sentinel pane is gone (#997). The widget runs
-under the offscreen platform on every host (#939's fixture
-shape)."""
+width — the TTL countdown and the deadline's clock repainted
+from the deadline epochs, the coverage in the mint form's own
+words, the audit table without its marker column, Renew and
+Revoke on the bar beside Mint and Unlock, the mint form, the
+renew picker, the revoke gate, the pushed secret family's
+frames coalesced into one re-read, every daemon exchange
+through the stub bridge's signal emits, the bridge's own tests
+holding the real worker's contract. The sentinel pane is gone
+(#997). The widget runs under the offscreen platform on every
+host (#939's fixture shape)."""
 
 import importlib.util
 import os
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -225,6 +228,14 @@ def rows_texts(table) -> list[list[str]]:
     ]
 
 
+def clock(expires_ts: float) -> str:
+    """A deadline's local clock (#1165's fakes read): the host's
+    own spelling of the EXPIRES cell's stamp, computed the way
+    the presenter computes it, so the labels land deterministically
+    on every host's timezone."""
+    return time.strftime("%H:%M", time.localtime(expires_ts))
+
+
 def row_of_id(tab, secret_id: int) -> int:
     """The listing row an id shows on (#966's fakes read):
     resolved through the row's own id key, wherever the
@@ -253,15 +264,18 @@ def test_the_open_tab_issues_its_first_refresh(qt) -> None:
 
 
 def test_the_page_answer_renders_both_groups(qt, monkeypatch) -> None:
-    """The two groups from the presenter's models (#966): the
-    placeholder rows with their coverage, name, destinations,
-    countdown, created label, and lock state; the audit rows
-    newest first with their marker, time, kind, identity, and
-    destination — the standing counts on the bottom line."""
+    """The two groups from the presenter's models (#966, #1165):
+    the placeholder rows with their coverage — the mint form's
+    own words — name, destinations, the countdown beside the
+    deadline's clock, created label, and lock state; the audit
+    rows newest first with their time, kind, identity, and
+    destination, no marker column — the standing counts on the
+    bottom line."""
     tab, window, _bridge = make_tab(qt, monkeypatch)
+    deadline = (NOW + timedelta(hours=2)).timestamp()
     assert rows_texts(tab.table) == [
         [
-            "*",
+            "daemon-wide",
             "github_api",
             "api.github.com",
             "never",
@@ -269,15 +283,15 @@ def test_the_page_answer_renders_both_groups(qt, monkeypatch) -> None:
             "open",
         ],
         [
-            "ws1,ws2",
+            "scoped: ws1,ws2",
             "deploy_key",
             "-",
-            "2h",
+            f"2h · {clock(deadline)}",
             "yesterday",
             "locked",
         ],
     ]
-    assert [row[2:4] for row in rows_texts(tab.audit_table)] == [
+    assert [row[1:3] for row in rows_texts(tab.audit_table)] == [
         ["mint", "*/github_api"],
         ["revoke", "*/github_api"],
     ]
@@ -287,14 +301,16 @@ def test_the_page_answer_renders_both_groups(qt, monkeypatch) -> None:
     window.close()
 
 
-def test_the_audit_rows_carry_their_dates_and_the_marker_tip(
+def test_the_audit_rows_carry_their_dates_and_no_marker_column(
     qt, monkeypatch
 ) -> None:
-    """The audit group's own columns (#1064): a row from the
-    pinned clock's own day keeps the clock alone in its TIME
-    cell, a row from an earlier day carries its date beside
-    the clock — and the ``!`` header carries the sighting's
-    tooltip, the marker's meaning and where it fires."""
+    """The audit group's own columns (#1064, #1165): a row from
+    the pinned clock's own day keeps the clock alone in its TIME
+    cell, a row from an earlier day carries its date beside the
+    clock — and the table carries TIME, KIND, PLACEHOLDER, and
+    DEST alone. The daemon records the four lifecycle kinds, so
+    the sighting marker's column stood blank on every render and
+    is gone; nothing in the secrets package names it."""
     pinned = NOW + timedelta(days=3)
     tab, window, _bridge = make_tab(qt, monkeypatch)
     pin_clock(monkeypatch, pinned)
@@ -307,7 +323,13 @@ def test_the_audit_rows_carry_their_dates_and_the_marker_tip(
             ]
         ),
     )
-    cells_by_kind = {row[2]: row[1] for row in rows_texts(tab.audit_table)}
+    assert cells.AUDIT_COLUMNS == ("TIME", "KIND", "PLACEHOLDER", "DEST")
+    assert tab.audit_table.columnCount() == 4
+    assert [
+        tab.audit_table.horizontalHeaderItem(column).text()
+        for column in range(tab.audit_table.columnCount())
+    ] == list(cells.AUDIT_COLUMNS)
+    cells_by_kind = {row[1]: row[0] for row in rows_texts(tab.audit_table)}
     assert cells_by_kind["mint"] == time.strftime(
         "%H:%M:%S",
         time.localtime(secretrows_mod.audit_stamp_epoch(pinned.isoformat())),
@@ -318,14 +340,13 @@ def test_the_audit_rows_carry_their_dates_and_the_marker_tip(
             secretrows_mod.audit_stamp_epoch("2030-01-02T03:04:05")
         ),
     )
-    marker = tab.audit_table.horizontalHeaderItem(cells.MARKER_COLUMN)
-    assert marker.text() == "!"
-    assert marker.toolTip() == cells.MARKER_TIP
-    # A table with no header labels yet answers nothing: the
-    # tip's own guard.
-    bare = qt.QtWidgets.QTableWidget(0, len(cells.AUDIT_COLUMNS))
-    cells.marker_tip(bare)
-    assert bare.horizontalHeaderItem(cells.MARKER_COLUMN) is None
+    assert [row[2:] for row in rows_texts(tab.audit_table)] == [
+        ["*/github_api", ""],
+        ["*/github_api", ""],
+    ]
+    # Nothing in the package names the marker column or its tip.
+    for module in sorted(Path(cells.__file__).parent.glob("*.py")):
+        assert "MARKER_" not in module.read_text(), module
     window.close()
 
 
@@ -485,20 +506,28 @@ def test_fill_columns_keeps_the_contents_on_a_tight_pane(qt) -> None:
 def test_the_ttl_column_counts_down_without_a_daemon_call(
     qt, monkeypatch
 ) -> None:
-    """The countdown's own read (#966): the TTL cells repaint
-    from the deadline epochs the presenter landed — paint-time
-    math over the cached models, the bridge asked nothing per
-    tick — and a row without an epoch keeps its frozen cell."""
+    """The countdown's own read (#966, #1165): the EXPIRES cells
+    repaint from the deadline epochs the presenter landed — the
+    countdown half alone moves, the deadline's clock beside it
+    standing — paint-time math over the cached models, the
+    bridge asked nothing per tick, and a row without an epoch
+    keeps its frozen cell."""
     tab, window, bridge = make_tab(qt, monkeypatch)
     bridge.calls.clear()
+    deadline = (NOW + timedelta(hours=2)).timestamp()
     assert tab.table.item(row_of_id(tab, 2), cells.EXPIRES_COLUMN).text() == (
-        "2h"
+        f"2h · {clock(deadline)}"
     )
-    pin_clock(monkeypatch, NOW + timedelta(hours=3))
+    pin_clock(monkeypatch, NOW + timedelta(minutes=90))
     tab.on_tick()
     assert bridge.calls == []  # no daemon call per tick
     assert tab.table.item(row_of_id(tab, 2), cells.EXPIRES_COLUMN).text() == (
-        "expired"
+        f"30m · {clock(deadline)}"
+    )
+    pin_clock(monkeypatch, NOW + timedelta(hours=3))
+    tab.on_tick()
+    assert tab.table.item(row_of_id(tab, 2), cells.EXPIRES_COLUMN).text() == (
+        f"expired · {clock(deadline)}"
     )
     # The unbounded row keeps its frozen cell.
     assert tab.table.item(row_of_id(tab, 1), cells.EXPIRES_COLUMN).text() == (
@@ -837,10 +866,11 @@ def test_the_page_carries_no_sentinel_pane(qt, monkeypatch) -> None:
 
 
 def test_the_action_buttons_sit_at_the_bottom(qt, monkeypatch) -> None:
-    """The page's action row (#1011, #1060, #1147): Mint and
-    Unlock on the row at the bottom of the page — no Refresh
-    button stands — below the two groups and above the
-    standing counts, the flash line taking the row's rest."""
+    """The page's action row (#1011, #1060, #1147, #1165): Mint,
+    Unlock, Renew, and Revoke on the row at the bottom of the
+    page in the reading order — no Refresh button stands — below
+    the two groups and above the standing counts, the flash line
+    taking the row's rest."""
     tab, window, _bridge = make_tab(qt, monkeypatch)
     layout = tab.layout()
     assert layout.itemAt(0).widget().title() == cells.LIST_GROUP
@@ -848,7 +878,11 @@ def test_the_action_buttons_sit_at_the_bottom(qt, monkeypatch) -> None:
     bar = layout.itemAt(2)  # the page's bottom row
     assert bar.itemAt(0).widget() is tab.mint_button
     assert bar.itemAt(1).widget() is tab.unlock_button
-    assert bar.itemAt(2).widget() is tab.status
+    assert bar.itemAt(2).widget() is tab.renew_button
+    assert bar.itemAt(3).widget() is tab.revoke_button
+    assert tab.renew_button.text() == "Renew…"
+    assert tab.revoke_button.text() == "Revoke…"
+    assert bar.itemAt(4).widget() is tab.status
     assert layout.itemAt(3).widget() is tab.counts
     window.close()
 
@@ -888,7 +922,10 @@ def test_renew_picks_the_ttl_and_posts_it(qt, monkeypatch) -> None:
         secrets_mod.RENEW_KEY,
         {"id": 2, "expires_at": (NOW + timedelta(hours=6)).isoformat()},
     )
-    assert tab.status.text() == ("renewed ws1,ws2/deploy_key · expires 6h")
+    assert tab.status.text() == (
+        "renewed scoped: ws1,ws2/deploy_key · expires "
+        f"6h · {clock((NOW + timedelta(hours=6)).timestamp())}"
+    )
     assert bridge.calls[-1] == (secrets_mod.PAGE_KEY, "secrets_page", ())
     window.close()
 
@@ -928,7 +965,7 @@ def test_revoke_asks_first_and_posts_the_delete(qt, monkeypatch) -> None:
     tab.revoke_row(model)
     assert bridge.calls == [(secrets_mod.REVOKE_KEY, "revoke_secret", (1,))]
     tab.on_succeeded(secrets_mod.REVOKE_KEY, {"revoked": 1})
-    assert tab.status.text() == "revoked */github_api"
+    assert tab.status.text() == "revoked daemon-wide/github_api"
     assert bridge.calls[-1] == (secrets_mod.PAGE_KEY, "secrets_page", ())
     window.close()
 
@@ -1107,7 +1144,7 @@ def test_the_mint_dialog_posts_and_lands(qt, monkeypatch) -> None:
     )
     tab.open_mint()
     assert bridge.calls == [(secrets_mod.PAGE_KEY, "secrets_page", ())]
-    assert tab.status.text() == "minted */github_api"
+    assert tab.status.text() == "minted daemon-wide/github_api"
     window.close()
 
 
@@ -1251,10 +1288,10 @@ def test_the_mint_checks_match_the_tui_form() -> None:
 
 def test_the_bar_buttons_cross_by_arrows(qt, monkeypatch) -> None:
     """The bar buttons' arrow bridges (#962's rule, the tab's
-    own — Unlock beside Mint, #1147): Up and Down answer
-    themselves — handing the keyboard onward from where the
-    operator stands — and leave every other event to Qt's own
-    handling."""
+    own — Unlock beside Mint, #1147, and Renew and Revoke beside
+    them, #1165): Up and Down answer themselves — handing the
+    keyboard onward from where the operator stands — and leave
+    every other event to Qt's own handling."""
     tab, window, _bridge = make_tab(qt, monkeypatch)
     key = qt.QtCore.Qt.Key
     press = qt.QtCore.QEvent.Type.KeyPress
@@ -1262,10 +1299,11 @@ def test_the_bar_buttons_cross_by_arrows(qt, monkeypatch) -> None:
     down = qt.QtGui.QKeyEvent(press, key.Key_Down, mods)
     up = qt.QtGui.QKeyEvent(press, key.Key_Up, mods)
     other = qt.QtGui.QKeyEvent(press, key.Key_Left, mods)
-    for button in (tab.mint_button, tab.unlock_button):
+    for button in tab.bar_buttons:
         assert tab.eventFilter(button, down) is True
         assert tab.eventFilter(button, up) is True
         assert tab.eventFilter(button, other) is False
+    assert len(tab.bar_buttons) == 4
     assert tab.eventFilter(tab.table, down) is False
     window.close()
 
@@ -1338,10 +1376,13 @@ def test_the_tick_skips_a_half_filled_row(qt, monkeypatch) -> None:
     answers nothing, and the filled rows still repaint."""
     tab, window, _bridge = make_tab(qt, monkeypatch)
     row_of_2 = row_of_id(tab, 2)
+    deadline = (NOW + timedelta(hours=2)).timestamp()
     tab.table.setRowCount(tab.table.rowCount() + 1)
     pin_clock(monkeypatch, NOW + timedelta(hours=3))
     tab.on_tick()
-    assert tab.table.item(row_of_2, cells.EXPIRES_COLUMN).text() == "expired"
+    assert tab.table.item(row_of_2, cells.EXPIRES_COLUMN).text() == (
+        f"expired · {clock(deadline)}"
+    )
     window.close()
 
 
@@ -1360,12 +1401,13 @@ def test_a_rebuild_with_no_hold_keeps_the_rows(qt, monkeypatch) -> None:
 
 
 def test_the_revoke_question_names_the_row(qt, monkeypatch) -> None:
-    """The revoke's question (#966): the row's coverage and name
-    beside what a yes does."""
+    """The revoke's question (#966, #1165): the row's coverage in
+    the mint form's own words and its name beside what a yes
+    does."""
     tab, window, _bridge = make_tab(qt, monkeypatch)
     model = next(m for m in tab.secret_models if m.id == 2)
     assert cells.revoke_question(model) == (
-        "revoke ws1,ws2/deploy_key? the row retires everywhere at once"
+        "revoke scoped: ws1,ws2/deploy_key? the row retires everywhere at once"
     )
     window.close()
 
@@ -1567,13 +1609,13 @@ def test_the_listing_keeps_the_daemons_order_until_a_click(
 
 
 def test_the_listing_edges_hand_the_page_order(qt, monkeypatch) -> None:
-    """The listing's Left/Right edges (#966, #997, #1147): Right on
-    the last column hands the keyboard down to the audit group —
-    the page's reading order, measured where the focus actually
-    went — Left on the first hands it back up the page to the
-    bar's last button (Unlock, the end of the reading order,
-    Mint before it), and the interior columns still walk
-    cells."""
+    """The listing's Left/Right edges (#966, #997, #1147, #1165):
+    Right on the last column hands the keyboard down to the
+    audit group — the page's reading order, measured where the
+    focus actually went — Left on the first hands it back up the
+    page to the bar's last button (Revoke, the end of the reading
+    order: Mint, Unlock, Renew before it), and the interior
+    columns still walk cells."""
     tab, window, _bridge = make_tab(qt, monkeypatch)
     key = qt.QtCore.Qt.Key
     press = qt.QtCore.QEvent.Type.KeyPress
@@ -1595,7 +1637,7 @@ def test_the_listing_edges_hand_the_page_order(qt, monkeypatch) -> None:
     table.setCurrentCell(0, 0)
     assert (
         pressed(table, qt.QtGui.QKeyEvent(press, key.Key_Left, mods))
-        is tab.unlock_button
+        is tab.revoke_button
     )
     # An interior column's Right still walks the cells — the
     # base table's own move, handed back to Qt.
@@ -1709,3 +1751,141 @@ def test_a_fetch_line_wears_the_chromes_own_text(qt, monkeypatch) -> None:
     tab.refresh()
     assert tab.status.text().startswith("fetching")
     assert tab.status.kind is None
+
+
+def test_the_coverage_header_carries_the_mint_forms_words(
+    qt, monkeypatch
+) -> None:
+    """The COVERAGE header's tooltip (#1165): the cell's two
+    spellings in the mint form's own words on the column's own
+    header — the daemon-wide row reads ``daemon-wide`` in its
+    cell, a scoped one ``scoped:`` and its ids — so a hover on
+    the column reads the words without the docs. A table with no
+    header labels yet answers nothing: the tip's own guard."""
+    tab, window, _bridge = make_tab(qt, monkeypatch)
+    header = tab.table.horizontalHeaderItem(cells.COVERAGE_COLUMN)
+    assert header.text() == "COVERAGE"
+    assert header.toolTip() == cells.COVERAGE_TIP
+    assert cells.COVERAGE_WIDE in cells.COVERAGE_TIP
+    assert cells.COVERAGE_SCOPED in cells.COVERAGE_TIP
+    assert rows_texts(tab.table)[0][cells.COVERAGE_COLUMN] == "daemon-wide"
+    assert rows_texts(tab.table)[1][cells.COVERAGE_COLUMN] == "scoped: ws1,ws2"
+    bare = qt.QtWidgets.QTableWidget(0, len(cells.LIST_COLUMNS))
+    cells.coverage_tip(bare)
+    assert bare.horizontalHeaderItem(cells.COVERAGE_COLUMN) is None
+    window.close()
+
+
+def test_renew_and_revoke_follow_the_held_row(qt, monkeypatch) -> None:
+    """The bar's row buttons (#1165): dark on a page that holds
+    no rows, lit once the first fill holds its first row, dark
+    again when the rebuild drops the held row — the menu's
+    entries reading the same state — and lit at the next pick. A
+    flight out darkens both until its landing, the one-flight
+    gate seen on the bar."""
+    pin_clock(monkeypatch, NOW)
+    bridge = StubBridge()
+    tab = secrets_mod.SecretsTab(bridge)
+    window = qt.QtWidgets.QMainWindow()
+    window.setCentralWidget(tab)
+    window.resize(1600, 1000)
+    window.show()
+    assert not tab.renew_button.isEnabled()
+    assert not tab.revoke_button.isEnabled()
+    tab.on_succeeded(secrets_mod.PAGE_KEY, page_answer())
+    assert tab.renew_button.isEnabled()  # the first fill holds row 0
+    assert tab.revoke_button.isEnabled()
+    # The held row vanishes under the rebuild: nothing is held
+    # and both darken, the menu with them.
+    tab.table.selectRow(row_of_id(tab, 2))
+    assert tab.revoke_button.isEnabled()
+    tab.on_succeeded(
+        secrets_mod.PAGE_KEY, page_answer(secrets=[placeholder()])
+    )
+    assert not tab.renew_button.isEnabled()
+    assert not tab.revoke_button.isEnabled()
+    menu = tab.row_menu(row_of_id(tab, 1))
+    assert [action.isEnabled() for action in menu.actions()] == [False, False]
+    # A pick lights them; the flight darkens both until it lands.
+    tab.table.selectRow(0)
+    assert tab.renew_button.isEnabled()
+    monkeypatch.setattr(tab, "pick_ttl", lambda model: "1h")
+    bridge.calls.clear()
+    tab.renew_button.click()
+    assert bridge.calls == [(secrets_mod.RENEW_KEY, "renew_secret", (1, 3600))]
+    assert not tab.renew_button.isEnabled()
+    assert not tab.revoke_button.isEnabled()
+    menu = tab.row_menu(0)
+    assert [action.isEnabled() for action in menu.actions()] == [False, False]
+    tab.on_failed(secrets_mod.RENEW_KEY, RestFailure("refused", reach=False))
+    assert tab.renew_button.isEnabled()
+    assert tab.revoke_button.isEnabled()
+    window.close()
+
+
+def test_the_row_buttons_run_the_held_rows_flight(qt, monkeypatch) -> None:
+    """The Revoke and Renew buttons (#1165): with a row held, the
+    press runs the held row's action — the menu items' own
+    flights, the revoke behind its confirmation — and with
+    nothing held the slots themselves send nothing, whatever lit
+    the button."""
+    tab, window, bridge = make_tab(qt, monkeypatch)
+    bridge.calls.clear()
+    monkeypatch.setattr(tab, "confirm_revoke", lambda model: True)
+    tab.table.selectRow(row_of_id(tab, 2))
+    tab.revoke_button.click()
+    assert bridge.calls == [(secrets_mod.REVOKE_KEY, "revoke_secret", (2,))]
+    tab.on_failed(secrets_mod.REVOKE_KEY, RestFailure("refused", reach=False))
+    monkeypatch.setattr(tab, "pick_ttl", lambda model: "1h")
+    tab.renew_button.click()
+    assert bridge.calls[-1] == (
+        secrets_mod.RENEW_KEY,
+        "renew_secret",
+        (2, 3600),
+    )
+    tab.on_failed(secrets_mod.RENEW_KEY, RestFailure("refused", reach=False))
+    tab.table.clearSelection()
+    tab.table.selectionModel().clearCurrentIndex()
+    assert not tab.revoke_button.isEnabled()
+    assert not tab.renew_button.isEnabled()
+    calls = list(bridge.calls)
+    tab.revoke_button.click()  # a dark button's click
+    tab.renew_button.click()
+    tab.revoke_selected()  # and the slots' own guards
+    tab.renew_selected()
+    assert bridge.calls == calls
+    window.close()
+
+
+def test_the_expires_cell_carries_the_deadline_clock_and_its_tooltip(
+    qt, monkeypatch
+) -> None:
+    """The EXPIRES cell's stamp (#1165): a bounded row reads its
+    countdown then the deadline's clock in the operator's own
+    zone — ``2h · 14:20`` for a deadline at 14:20 — with the full
+    local date and time as the cell's tooltip; the tick repaints
+    the countdown half alone; an unbounded row keeps ``never``
+    and carries no tooltip."""
+    deadline = datetime(2030, 1, 2, 14, 20).astimezone()
+    tab, window, _bridge = make_tab(qt, monkeypatch)
+    pin_clock(monkeypatch, deadline - timedelta(hours=2))
+    tab.on_succeeded(
+        secrets_mod.PAGE_KEY,
+        page_answer(
+            secrets=[
+                placeholder(expires_at=deadline.isoformat()),
+                placeholder(id=2, name="deploy_key"),
+            ]
+        ),
+    )
+    cell = tab.table.item(row_of_id(tab, 1), cells.EXPIRES_COLUMN)
+    assert cell.text() == "2h · 14:20"
+    assert cell.toolTip() == "2030-01-02 14:20"
+    never = tab.table.item(row_of_id(tab, 2), cells.EXPIRES_COLUMN)
+    assert never.text() == "never"
+    assert never.toolTip() == ""
+    pin_clock(monkeypatch, deadline - timedelta(minutes=30))
+    tab.on_tick()
+    assert cell.text() == "30m · 14:20"
+    assert cell.toolTip() == "2030-01-02 14:20"
+    window.close()

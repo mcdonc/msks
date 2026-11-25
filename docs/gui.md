@@ -363,23 +363,33 @@ recovery line.
 
 The third top-level tab manages the daemon's secret
 placeholders. The **Placeholders** group lists every row with its
-coverage (the owner-wide `*` or its workspace ids), name,
-destinations, remaining lifetime, created label, and lock state.
-The lifetime cell is a live countdown, repainted every second.
-An unbounded row reads `never`.
+coverage, name, destinations, expiry, created label, and lock
+state. The COVERAGE cell uses the words the mint form's coverage
+picker uses. A row that every accepting workspace honors reads
+`daemon-wide`. A row that serves picked workspaces reads
+`scoped: ws-a, ws-b`. The COVERAGE header carries both meanings
+as its tooltip. The EXPIRES cell is a live countdown with the
+deadline's clock beside it. `2h · 14:20` means the row expires in
+two hours, at 14:20 local time. The countdown repaints every
+second and the clock stands still. The cell's tooltip shows the
+full local date and time of the deadline. An unbounded row reads
+`never`.
 
-A right-click on a row opens Renew…, with the TTL choices (`1h`
-to `30d`, the one nearest the row's remaining lifetime
-pre-selected), and Revoke…, which asks first. A revoked row
-retires everywhere at once.
+**Renew…** and **Revoke…** sit on the button row beside Mint and
+Unlock. Both stay disabled until a placeholder row is selected,
+and both stay disabled while a renew or a revoke is in flight.
+Renew… opens the TTL picker (`1h` to `30d`, with the choice
+nearest the row's remaining lifetime pre-selected). Revoke… asks
+first. A revoked row retires everywhere at once. A right-click
+on a row opens a menu with the same two actions.
 
 **Mint** opens the mint form: name, comma-separated destinations,
-coverage (owner-wide, or scoped to a workspace multi-select),
-the TTL choice, and the value. A landed mint closes the form and
-the listing refreshes. The GUI shows no sentinel panel: the flash
-reports the minted row, and the sentinel itself reads back
-through the CLI or the TUI. The [secrets chapter](secrets.md)
-explains placeholders and sentinels.
+coverage (`daemon-wide`, or `scoped` with a workspace
+multi-select), the TTL choice, and the value. A landed mint
+closes the form and the listing refreshes. The GUI shows no
+sentinel panel: the flash reports the minted row, and the
+sentinel itself reads back through the CLI or the TUI. The
+[secrets chapter](secrets.md) explains placeholders and sentinels.
 
 **Unlock** runs the secrets unlock against the daemon's locked rows,
 the TUI's `u` action as a button. An encrypted key file opens a
@@ -393,16 +403,16 @@ on the workspaces list's status line, and the button asks again by
 hand. See the [secrets chapter](secrets.md#the-clients-half).
 
 The **Audit** group beneath lists the daemon's recorded secret
-events, newest first: mint, revoke, expiry, and unlock rows. A
-renew changes a row's deadline without recording an audit row.
-The TIME cell shows the row's local clock. A row from an
-earlier day carries its date beside the clock. The `!` column
-marks a sighting: a placeholder token that reached a host its
-mint did not allow, the exfiltration signal. The daemon's
-recorded rows are the four lifecycle kinds, so this table's
-marker column stays blank. A sighting streams into the TUI's
-audit view live. The column's header carries that meaning as
-its tooltip.
+events, newest first. The daemon records four kinds of rows:
+mint, revoke, expiry, and unlock. A renew changes a row's
+deadline without recording an audit row. The table has four
+columns: TIME, KIND, PLACEHOLDER, and DEST. The TIME cell shows
+the row's local clock. A row from an earlier day carries its
+date beside the clock. PLACEHOLDER reads `*/name` for a
+daemon-wide row and `ws-a/name` for a scoped one. A sighting (a
+placeholder token that reached a host its mint did not allow) is
+a live event. It streams into the TUI's audit view and does not
+appear in this table.
 
 The page re-reads itself. It re-reads at every show and behind
 every action, and the daemon's pushed secret frames re-read it

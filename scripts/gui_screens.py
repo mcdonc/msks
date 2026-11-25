@@ -340,9 +340,8 @@ def unselect(*tables) -> None:
     """Clear each table's selection and current cell (#1172): a
     fresh page holds its first rows selected, and a selected
     row keeps the highlight's own text color (#1160) — cleared,
-    the Secrets page's STATE column shows the open row's green
-    beside the locked row's amber. A click on the empty area
-    below the rows is the operator's own gesture."""
+    the table's tints show in their own colors. A click on the
+    empty area below the rows is the operator's own gesture."""
     for table in tables:
         table.clearSelection()
         table.selectionModel().clearCurrentIndex()
@@ -752,7 +751,13 @@ def capture() -> None:
         },
     )
     settle(app, rounds=4)
-    unselect(secrets.table, secrets.audit_table)
+    # The listing keeps its held first row (#1165): the figure
+    # shows the bar's Renew… and Revoke… lit beside Mint… and
+    # Unlock…, the buttons' state on a page the operator has
+    # clicked into, while the locked row's amber still shows on
+    # the unselected row beneath it. The audit group carries no
+    # tint to show, so its hold clears.
+    unselect(secrets.audit_table)
     settle(app, rounds=4)
     shot(secrets_window, "gui-secrets.png")
     secrets_window.close()

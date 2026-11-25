@@ -4,14 +4,16 @@ form's TTL choices, and the audit view's rows as plain data —
 daemon rows and recorded audit rows in, dataclasses out,
 nothing Qt-bound in between. A placeholder row carries the id
 the renew and revoke actions key on, the mint-time name, the
-coverage label (the workspaces the row serves, ``*`` the
-daemon-wide row — the workspace the listing shows of it), the
-destinations cell, the TTL countdown (the arithmetic the TUI's
-EXPIRES cell repaints per tick, mirrored here) beside the
-deadline epoch the tab's timer repaints it from — no daemon
-call per tick — the created label (the shared
-:mod:`msks.client.ages` leaf both listings read) beside its
-own epoch for the column sort, and the lock state word. The
+coverage label (the mint form's own words, ``daemon-wide`` or
+``scoped:`` the workspaces the row serves — the TUI's listing
+spells the daemon-wide row ``*``, #1165), the destinations
+cell, the EXPIRES cell (the TTL countdown the TUI's cell
+repaints per tick, mirrored here, then the deadline's local
+clock, ``2h · 14:20`` — #1165) beside the deadline epoch the
+tab's timer repaints it from — no daemon call per tick — the
+created label (the shared :mod:`msks.client.ages` leaf both
+listings read) beside its own epoch for the column sort, and the
+lock state word. The
 helpers the TUI's page owns (the secrets cells and the audit
 halves of :mod:`msks.client.tui.consent`) are mirrored here —
 this module imports nothing from the TUI (the decider link's
@@ -26,6 +28,17 @@ from datetime import UTC, datetime
 
 from ..ages import clock_label, clock_now, created_label, parse_stamp
 from .kinds import OK, WARN
+
+#: The mint form's daemon-wide choice (#393, #1165): one row every
+#: accepting workspace honors — the word the listing's COVERAGE
+#: cell and the form's picker share, so the cell reads back as
+#: the choice the operator made. The form's cells import it from
+#: here, the Qt-free leaf both read.
+COVERAGE_WIDE = "daemon-wide"
+
+#: The mint form's scoped choice (#393): one row whose coverage
+#: set is the workspaces the form's picker holds.
+COVERAGE_SCOPED = "scoped"
 
 #: The renew picker's ttl choices (#390): the duration picker
 #: over TTL-appropriate labels — the hours-to-a-month span a
@@ -89,7 +102,9 @@ class SecretRow:
 class AuditRow:
     """One recorded audit row as the audit view renders it
     (#965, over #390): the marker (``!`` on a sighting — the
-    exfiltration signal, the row kind the view highlights),
+    exfiltration signal, the row kind the TUI's view highlights;
+    the GUI's table carries no marker column, #1165, and keeps
+    the field as the TUI line's own mirror, pinned by parity),
     the local wall-clock label beside its epoch (the sort
     key; a row from an earlier day carries its date beside
     the clock (#1064), and an undated row keeps a blank
@@ -108,28 +123,60 @@ class AuditRow:
 
 
 def coverage_text(row: dict) -> str:
-    """The row's coverage cell (#965, over #390): ``*`` on the
-    daemon-wide row, the covered workspace ids joined on a
-    scoped one — sorted and deduplicated, whatever order the
-    row carried. The client keeps its own copy of the label
-    (the client-isolation rule keeps the daemon's table out of
-    this process)."""
-    workspaces = row.get("workspaces") or []
-    return ",".join(sorted(set(workspaces))) if workspaces else "*"
+    """The row's coverage cell (#965 over #390, #1165): the mint
+    form's own words — ``daemon-wide`` on the row every
+    accepting workspace honors, ``scoped:`` and the covered
+    workspace ids joined on a comma on a scoped one, sorted and
+    deduplicated, whatever order the row carried. The TUI's
+    listing spells the daemon-wide row ``*``; the GUI's table
+    has the width for the word, and the audit's compact ``who``
+    column keeps the ``*`` alone. The client keeps its own copy
+    of the label (the client-isolation rule keeps the daemon's
+    table out of this process)."""
+    workspaces = sorted(set(row.get("workspaces") or []))
+    if not workspaces:
+        return COVERAGE_WIDE
+    return f"{COVERAGE_SCOPED}: {','.join(workspaces)}"
 
 
 def ttl_text(row: dict, now: datetime | None = None) -> str:
-    """The TTL cell over a daemon row (#965, over #390): the
-    remaining lifetime as the countdown's compact label. An
-    unbounded row reads ``never``, a past deadline ``expired``,
-    a stamp that does not parse its dash."""
+    """The EXPIRES cell over a daemon row (#965, over #390,
+    #1165): the countdown then the deadline's local clock. An
+    unbounded row reads ``never``, a stamp that does not parse
+    its dash."""
     expires = row.get("expires_at")
     if not expires:
         return "never"
     stamp = parse_stamp(expires)
     if stamp is None:
         return "-"
-    return countdown(stamp.timestamp(), now)
+    return expires_text(stamp.timestamp(), now)
+
+
+def expires_text(expires_ts: float, now: datetime | None = None) -> str:
+    """The EXPIRES cell over a deadline epoch (#965, #1165): the
+    countdown, the middle dot, the deadline's local clock —
+    ``2h · 14:20``, so the cell says when ``2h`` ends. A past
+    deadline reads ``expired · 14:20``, the clock it went at.
+    The clock the caller pins reads as an aware moment
+    (:func:`countdown`'s own rule)."""
+    return f"{countdown(expires_ts, now)} · {deadline_clock(expires_ts)}"
+
+
+def deadline_clock(expires_ts: float) -> str:
+    """The deadline's local clock (#1165): ``HH:MM`` in the
+    operator's own zone, the stamp beside the countdown — the
+    audit rows' wall-clock spelling (:func:`clock_label`) at
+    the countdown's own minute."""
+    return datetime.fromtimestamp(expires_ts).astimezone().strftime("%H:%M")
+
+
+def deadline_stamp(expires_ts: float) -> str:
+    """The deadline's full local date and time (#1165): the
+    EXPIRES cell's tooltip, the date a multi-day countdown's
+    clock alone would leave out."""
+    moment = datetime.fromtimestamp(expires_ts).astimezone()
+    return moment.strftime("%Y-%m-%d %H:%M")
 
 
 def countdown(expires_ts: float, now: datetime | None = None) -> str:
