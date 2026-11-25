@@ -32,8 +32,8 @@ from .dialogs import (
     BridgeClose,
     Centered,
     parse_size,
+    read_size,
     seed_size,
-    size_error,
     whole_number,
 )
 
@@ -201,8 +201,7 @@ def read_number(field: str, value: str) -> tuple[int | None, str | None]:
     forms a size field reads — the MiB count — and the
     whole-number rule the vcpu count checks."""
     if field in SIZE_FIELDS:
-        mib = parse_size(value)
-        return mib, None if mib is not None else size_error(field)
+        return read_size(field, value)
     if whole_number(value):
         return int(value), None
     return None, f"{field}: a whole number"

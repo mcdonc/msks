@@ -161,6 +161,9 @@ def test_blank_fields_stay_the_daemons_defaults() -> None:
         ("0.5G", 512),
         ("1.5G", 1536),
         ("0.25GiB", 256),
+        ("1.5625G", 1600),
+        ("1.0G", 1024),
+        ("2.0GiB", 2048),
         ("0", 0),
     ],
 )
@@ -186,19 +189,22 @@ def test_the_size_forms_read(typed: str, mib: int) -> None:
         "3.0",
         "1.5",
         "0.3G",
+        "1.G",
+        ".5G",
         "8 G",
+        "8MB",
         "\u00b2",
         "\u0663",
         "4_096",
     ],
 )
 def test_the_size_forms_refuse(typed: str) -> None:
-    """The refused size forms (#1164): `GB` names 10⁹ bytes,
-    not the daemon's MiB count; a decimal needs its unit, and
-    one whose product is not a whole number of MiB refuses
-    rather than rounding; and every hazard the whole-number
-    rule already refused refuses here too — unicode digits, a
-    sign, an inner space."""
+    """The refused size forms (#1164): `GB` and `MB` name
+    decimal bytes, not the daemon's MiB count; a decimal needs
+    its unit and its leading digit, and one whose product is
+    not a whole number of MiB refuses rather than rounding; and
+    every hazard the whole-number rule already refused refuses
+    here too — unicode digits, a sign, an inner space."""
     body, error = create_body({"name": "a", "mem_mib": typed})
     assert body is None, typed
     assert (
@@ -318,7 +324,15 @@ def test_the_summary_restates_the_sizes() -> None:
         "many vCPU · 8 GiB RAM · 0. root · 8 GiB home"
     )
     assert summary_text({"mem_mib": "0"}, answered).split(" · ")[1] == (
-        "0 KiB RAM"
+        "0 MiB RAM"
+    )
+    # A size the GiB spelling would round shows its MiB count:
+    # the line confirms what was typed, never a MiB off.
+    assert summary_text({"mem_mib": "8193"}, answered).split(" · ")[1] == (
+        "8193 MiB RAM"
+    )
+    assert summary_text({"mem_mib": "1075"}, answered).split(" · ")[1] == (
+        "1075 MiB RAM"
     )
 
 
@@ -375,7 +389,8 @@ def test_the_dialog_loads_its_hints_on_show(qt) -> None:
 def test_the_summary_follows_every_keystroke(qt) -> None:
     """The live summary (#1164): the fields carry the names
     people think in, the line under them restates each edit as
-    it lands — a decimal entry in its resolved size — and a
+    it is typed — a decimal entry in its resolved size, a size
+    the GiB spelling would round in its MiB count — and a
     defaults answer landing late fills the blanks that waited.
     The line reads in the placeholder's muted gray, apart from
     the note line's own job."""
@@ -394,12 +409,15 @@ def test_the_summary_follows_every_keystroke(qt) -> None:
     memory = dialog.fields["mem_mib"]
     for typed, shown in [
         ("", "8 GiB RAM"),
-        ("0", "0 KiB RAM"),
+        ("0", "0 MiB RAM"),
         ("0.", "0. RAM"),
         ("0.5", "0.5 RAM"),
         ("0.5G", "512 MiB RAM"),
         ("0.5Gi", "0.5Gi RAM"),
         ("0.5GiB", "512 MiB RAM"),
+        ("8193", "8193 MiB RAM"),
+        ("1075", "1075 MiB RAM"),
+        ("1540", "1540 MiB RAM"),
         ("8GB", "8GB RAM"),
         ("8G", "8 GiB RAM"),
     ]:

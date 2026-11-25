@@ -29,7 +29,7 @@ from .dialogs import (
     Centered,
     mib_text,
     parse_size,
-    size_error,
+    read_size,
     whole_number,
 )
 
@@ -128,8 +128,7 @@ def read_value(field: str, value: str) -> tuple[object, str | None]:
     whole number, any other field as its text — the note in
     place of the value when the form refuses."""
     if field in SIZE_FIELDS:
-        mib = parse_size(value)
-        return mib, None if mib is not None else size_error(field)
+        return read_size(field, value)
     if field != "cpus":
         return value, None
     if whole_number(value):
@@ -394,9 +393,10 @@ class CreateDialog(BridgeClose, Centered, QtWidgets.QDialog):
             for value, label in image_options(result):
                 picker.addItem(label, value)
         else:
-            for field, hint in size_placeholders(result).items():
+            named = size_defaults(result)
+            for field, hint in size_placeholders(named).items():
                 self.fields[field].setPlaceholderText(hint)
-            self.defaults.update(size_defaults(result))
+            self.defaults.update(named)
             self.restate()
 
     @QtCore.Slot(str, object)
