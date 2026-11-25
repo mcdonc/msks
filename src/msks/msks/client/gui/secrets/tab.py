@@ -191,12 +191,11 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         )
         self.table.customContextMenuRequested.connect(self.menu_requested)
         # The held row drives the bar's Renew and Revoke (#1165):
-        # a selection change — a pick, a rebuild's carry, a
-        # vanished row — re-reads the hold, and the current
-        # row moving on its own (the restore's clear) too. The
-        # two signals are the one source for the hold; the gate
-        # re-reads it by hand at its own turns.
-        self.table.itemSelectionChanged.connect(self.sync_buttons)
+        # every move of the hold — a pick, a rebuild's carry, the
+        # restore's clear — lands on the selection model's
+        # current row, and that change is the one source for the
+        # buttons; the gate re-reads the hold by hand at its own
+        # turns.
         self.table.selectionModel().currentChanged.connect(
             lambda *_: self.sync_buttons()
         )
@@ -431,8 +430,8 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         filling the pane's whole width (#997) — a bounded row's
         EXPIRES cell carrying its deadline's full date and time
         as the tooltip. The bar's Renew and Revoke answer the
-        hold the rebuild leaves through the selection signals
-        alone."""
+        hold the rebuild leaves through the selection model's
+        current-row signal alone."""
         held = self.held_first(self.table)
         was_empty = self.table.rowCount() == 0
         self.table.setSortingEnabled(False)
@@ -585,9 +584,9 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
     def sync_buttons(self) -> None:
         """The bar's row buttons (#1165, the mounts tab's own
         rule): Renew and Revoke answer the held placeholder row
-        beside the one-flight gate — a pick lights them, a
-        cleared or vanished hold darkens them, a flight out
-        darkens both until its landing."""
+        — the table's current row — beside the one-flight gate: a
+        pick lights them, a cleared or vanished hold darkens them,
+        a flight out darkens both until its landing."""
         live = self.selected_model() is not None and not self.action_pending
         self.renew_button.setEnabled(live)
         self.revoke_button.setEnabled(live)

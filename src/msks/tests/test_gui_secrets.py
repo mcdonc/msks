@@ -1787,10 +1787,10 @@ def test_renew_and_revoke_follow_the_held_row(qt, monkeypatch) -> None:
     """The bar's row buttons (#1165): dark on a page that holds
     no rows, lit once the first fill holds its first row, dark
     again when the rebuild drops the held row — through the
-    selection signals alone, the fill itself calling nothing —
-    the menu's entries reading the same state, and lit at the
-    next pick. A flight out darkens both until its landing, the
-    one-flight gate seen on the bar."""
+    selection model's current-row signal alone, the fill itself
+    calling nothing — the menu's entries reading the same state,
+    and lit at the next pick. A flight out darkens both until its
+    landing, the one-flight gate seen on the bar."""
     pin_clock(monkeypatch, NOW)
     bridge = StubBridge()
     tab = secrets_mod.SecretsTab(bridge)
