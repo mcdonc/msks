@@ -37,15 +37,25 @@ tmux client (``tmux -L <socket> new-session ... pane ...``).
 
 The launcher runs detached with stdio on devnull (#341's spawn
 contract), so it keeps its own diagnostics to a log file under
-the tmp dir; the consent app owns the only interactive surface.
+the tmp dir (#1143): a launch that dies before tmux exists (no
+tmux on PATH, a usage error) leaves the window's few frames as
+the only other record of why. The pane role holds the window
+open when the appended command exits nonzero (#1143): the
+command's own refusal — the line ``msks ssh`` prints for an
+encrypted identity the agent does not hold, for instance —
+stays on the pane until Enter, instead of vanishing with the
+window a second after it opened.
 """
 
 import asyncio
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import tempfile
+import time
 
 from .env import env_token, env_url
 from .rest import workspace_row
@@ -172,18 +182,78 @@ PAGE_SCROLL_COMMANDS = (
     ),
 )
 
+#: The diagnostics log's file name (#1143): one file under the
+#: tmp dir, appended by every role's failure. The window a
+#: launch dies in closes within a second, and the log keeps the
+#: reason findable after it is gone.
+DIAGNOSTIC_LOG = "msks-term-popup.log"
+
+#: The pane role's answer for a child it cannot run (#1143): 127,
+#: the shell convention for a command not found.
+NOT_FOUND = 127
+
 ROLES = ("launch", "pane")
+
+
+def diagnostic_log_path() -> str:
+    """The diagnostics log's path: the tmp dir's
+    ``msks-term-popup.log`` (#1143)."""
+    return os.path.join(tempfile.gettempdir(), DIAGNOSTIC_LOG)
+
+
+def log_diagnostic(line: str) -> None:
+    """Append one timestamped line to the tmp-dir diagnostics log
+    (#1143). Best effort by design: a tmp dir that refuses the
+    write (full, unwritable, a symlink or a readerless FIFO
+    planted at the name) never takes the failing role down with
+    it — the refusal still prints to the window and propagates
+    on its own. The open refuses to follow (O_NOFOLLOW) and
+    refuses to wait (O_NONBLOCK, a no-op on a regular file whose
+    readerless-FIFO open answers ENXIO at once): a shared tmp
+    dir is exactly where a planted name would redirect or stall
+    the append."""
+    try:
+        fd = os.open(
+            diagnostic_log_path(),
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_APPEND
+            | os.O_NOFOLLOW
+            | os.O_NONBLOCK,
+            0o644,
+        )
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {line}\n")
+    except OSError:
+        # The log is a courtesy record; the failure it missed —
+        # at the open or at the write — still reaches the
+        # window's stderr and the caller.
+        return
 
 
 def main(argv: list[str] | None = None) -> int:
     """The console entry: dispatch on the first word — a role name
     for the internal invocations, anything else (the appended
-    ``msks ssh`` argv) is the launch role's child."""
+    ``msks ssh`` argv) is the launch role's child. A role's
+    failure lands in the tmp-dir diagnostics log (#1143) before
+    it propagates: the window closes on the failure within a
+    second, and the log keeps the reason findable after it."""
     args = sys.argv[1:] if argv is None else list(argv)
     role, rest = split_role(args)
-    if not rest:
-        raise SystemExit("usage: msks-term-popup <command the TUI appends>")
-    return RUNNERS[role](rest)
+    try:
+        if not rest:
+            raise SystemExit(
+                "usage: msks-term-popup <command the TUI appends>"
+            )
+        return RUNNERS[role](rest)
+    except SystemExit as exc:
+        log_diagnostic(f"{role}: {exc}")
+        raise
+    except Exception as exc:
+        # A bug's traceback flashes in the window with everything
+        # else; the log keeps one line of it findable.
+        log_diagnostic(f"{role}: {type(exc).__name__}: {exc}")
+        raise
 
 
 def split_role(args: list[str]) -> tuple[str, list[str]]:
@@ -219,15 +289,103 @@ def run_launch(argv: list[str]) -> int:
     return 0  # pragma: no cover — execvp replaces the process
 
 
+def absorb_signal(signum, frame) -> None:
+    """The pane wrapper's no-op SIGINT handler (#1143 review): a
+    handler, never ``SIG_IGN`` — see :func:`run_pane` for why the
+    distinction is load-bearing."""
+
+
+def child_exit(child: list[str]) -> int | None:
+    """Run the appended command and answer its exit code, or None
+    when the exec itself refused (#1143). The interrupt key must
+    reach the child alone (#1143 review): tmux delivers it as
+    SIGINT to the pane's foreground process group, and the
+    wrapper sits in that group beside the child — unhandled, the
+    KeyboardInterrupt takes the wrapper down mid-cleanup (a
+    traceback flash, no hold) while subprocess.run SIGKILLs the
+    child beneath it. A Python-level no-op handler absorbs the
+    wrapper's copy; a handler (unlike SIG_IGN) resets to SIG_DFL
+    across the execve, so the child keeps its own Ctrl-C, and its
+    death lands with the hold intact. The restore rides the
+    finally, ahead of every hold: an interrupt at a prompt raises
+    KeyboardInterrupt there, which the hold reads as its close."""
+    was = signal.signal(signal.SIGINT, absorb_signal)
+    try:
+        try:
+            return subprocess.run(child).returncode
+        except OSError as exc:
+            print(
+                f"msks-term-popup: cannot run {child[0]}: {exc}",
+                file=sys.stderr,
+            )
+            return None
+    finally:
+        signal.signal(signal.SIGINT, was)
+
+
 def run_pane(argv: list[str]) -> int:
     """The tmux pane's first process: drop the new-window marker
-    (#445) — the window is already titled, :func:`run_launch` wrote
-    it before attaching tmux, and tmux owns the pane's escapes —
-    and become the appended command."""
+    (#445) — the window is already titled, :func:`run_launch`
+    wrote it before attaching tmux, and tmux owns the pane's
+    escapes — and run the appended command. A command that exits
+    nonzero holds the pane open (#1143): its refusal — the one
+    line ``msks ssh`` prints for an encrypted identity the agent
+    does not hold, for instance — stays readable until Enter,
+    where the pane's death used to take the window with it within
+    a second. A clean exit closes the window as before."""
     os.environ.pop(TITLE_MARKER, None)
     child = child_argv(argv)
-    os.execvp(child[0], child)
-    return 0  # pragma: no cover — execvp replaces the process
+    if not child:
+        raise SystemExit("usage: msks-term-popup pane -- <command>")
+    code = child_exit(child)
+    if code is None:
+        hold_pane_open("the command could not run")
+        return NOT_FOUND
+    return hold_and_answer(code)
+
+
+def hold_and_answer(code: int) -> int:
+    """Hold the pane for a child's nonzero exit, then answer the
+    pane's own exit code: the code itself when it is one, and the
+    shell's 128+signal convention for a death on a signal (#1143
+    review — nothing downstream consumes the number; tmux's client
+    exits 0 whenever the session ends)."""
+    if code != 0:
+        hold_pane_open(exit_reason(code))
+    return 128 - code if code < 0 else code
+
+
+def exit_reason(code: int) -> str:
+    """The hold's reason line for one child exit code."""
+    if code < 0:
+        return "the command exited on a signal"
+    return f"the command exited {code}"
+
+
+def hold_pane_open(reason: str) -> None:
+    """Keep the pane's window open after its command refused
+    (#1143): print the close prompt under the command's own last
+    words and wait for Enter, so the refusal stays on screen past
+    the second the window would otherwise live. The read takes a
+    single byte, not a line: on the canonical tty a refused
+    startup leaves behind, Enter completes the line the read
+    waits on, and on a tty a killed child left raw — where
+    ``input()`` would see no line ever — Enter still answers the
+    byte read. EOF (a stdin already closed) and an interrupt end
+    the hold — both are closes, and the hold is a courtesy,
+    never a trap."""
+    print(
+        f"msks-term-popup: {reason}. Press Enter to close this window.",
+        flush=True,
+    )
+    try:
+        # Typed-ahead bytes the child left unread satisfy this
+        # read at once — an accepted miss, not a guarantee: the
+        # hold is for reading the refusal, and the window closes
+        # one keypress early at worst.
+        sys.stdin.read(1)
+    except KeyboardInterrupt:
+        pass
 
 
 # --- the consent popup's tmux edges (#467) -----------------------------------

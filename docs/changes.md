@@ -43,6 +43,13 @@ tagged `vX.Y.Z`.
   still selects it. A click held in the top or bottom row still
   autoscrolls, because a held pointer there scrolls the
   viewport.
+- **`msks-term-popup` keeps a refused shell readable (#1143).** A
+  pane command that exits nonzero now holds its window open with a
+  press-Enter close prompt, so a startup refusal (an encrypted identity
+  the agent does not hold) stays on screen instead of vanishing with the
+  window a second after it opened. A clean exit closes the window as
+  before. The launcher also appends its own startup failures to
+  `msks-term-popup.log` under the tmp dir.
 
 ## \[v0.10.0] - 2026-11-24
 

@@ -8,10 +8,12 @@ retirement, never opening a window.
 """
 
 import asyncio
+import errno
 import fcntl
 import io
 import os
 import pty
+import select
 import shlex
 import shutil
 import struct
@@ -502,7 +504,7 @@ def test_main_defaults_to_launch_for_the_appended_child(
     assert seen["argv"][0] == "tmux"
 
 
-def test_main_spelled_roles_dispatch(monkeypatch) -> None:
+def test_main_spelled_roles_dispatch(monkeypatch, tmp_path) -> None:
     runs = []
 
     def fake_launch(argv):
@@ -511,11 +513,14 @@ def test_main_spelled_roles_dispatch(monkeypatch) -> None:
 
     # The dispatch table holds the bound roles; patch the entry,
     # or the real run_launch would exec a live tmux from the test.
+    # The usage refusal logs like every role failure (#1143).
+    log = log_at(monkeypatch, tmp_path)
     monkeypatch.setattr(tp, "RUNNERS", {"launch": fake_launch})
     assert tp.main(["launch", "cmd"]) == 0
     assert runs == [["cmd"]]
     with pytest.raises(SystemExit, match="usage"):
         tp.main([])
+    assert "launch: usage" in log.read_text()
 
 
 def test_run_launch_names_a_missing_tmux(
@@ -674,11 +679,15 @@ def test_the_launch_line_meets_the_pane_role(
 ) -> None:
     # The boundary the shipped chain crosses: the pane argv that
     # session_argv shell-joins is exactly what the pane role
-    # takes — the marker cleanup and the exec, nothing beside
+    # takes — the marker cleanup and the run, nothing beside
     # (strip the leading interpreter invocation, then spell the
     # pane role the way tmux's sh would hand it over).
     monkeypatch.setenv("TMUX", "/tmp/tmux-0/default,1,sess")
-    monkeypatch.setattr(tp.os, "execvp", lambda binname, argv: None)
+    monkeypatch.setattr(
+        tp.subprocess,
+        "run",
+        lambda child, **kwargs: subprocess.CompletedProcess(child, 0),
+    )
     argv = tp.session_argv(
         SSH_CHILD,
         session="a1b2c3d4e5",
@@ -821,17 +830,386 @@ def test_hidden_has_viewer_reads_the_sessions_clients(
     assert tp.hidden_has_viewer("msks-ws1-7") is False
 
 
-def test_run_pane_drops_the_marker_and_execs(
+def test_run_pane_drops_the_marker_and_runs_the_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen = {}
-    monkeypatch.setattr(
-        tp.os, "execvp", lambda binname, argv: seen.update(argv=argv)
-    )
+
+    def run(argv, **kwargs):
+        seen.update(argv=argv)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(tp.subprocess, "run", run)
     monkeypatch.setenv(tp.TITLE_MARKER, "1")
     assert tp.run_pane(["--", *SSH_CHILD]) == 0
     assert seen["argv"] == SSH_CHILD
     assert tp.TITLE_MARKER not in os.environ
+
+
+def test_run_pane_holds_the_window_open_on_a_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A nonzero child keeps its pane (and so its window) alive:
+    # the refusal it printed stays readable until Enter (#1143).
+    held = []
+    monkeypatch.setattr(
+        tp.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 1),
+    )
+    monkeypatch.setattr(tp, "hold_pane_open", held.append)
+    assert tp.run_pane(["--", *SSH_CHILD]) == 1
+    assert held == ["the command exited 1"]
+
+
+def test_run_pane_holds_a_killed_command_and_answers_its_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A signal death holds too, and the pane answers the shell's
+    # convention for it: 128 + the signal number.
+    held = []
+    monkeypatch.setattr(
+        tp.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, -9),
+    )
+    monkeypatch.setattr(tp, "hold_pane_open", held.append)
+    assert tp.run_pane(["--", *SSH_CHILD]) == 137
+    assert held == ["the command exited on a signal"]
+
+
+def test_run_pane_names_a_command_it_cannot_run(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    held = []
+
+    def explode(argv, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", argv[0])
+
+    monkeypatch.setattr(tp.subprocess, "run", explode)
+    monkeypatch.setattr(tp, "hold_pane_open", held.append)
+    assert tp.run_pane(["--", "/nope/missing"]) == tp.NOT_FOUND
+    assert "cannot run /nope/missing" in capsys.readouterr().err
+    assert held == ["the command could not run"]
+
+
+def test_run_pane_refuses_an_empty_child() -> None:
+    with pytest.raises(SystemExit, match="usage"):
+        tp.run_pane(["--"])
+
+
+class FakeStdin:
+    """A stdin the hold can read: one byte per read, or a raise."""
+
+    def __init__(self, answer: bytes | KeyboardInterrupt) -> None:
+        self.answer = answer
+        self.reads: list[int] = []
+
+    def read(self, size: int = -1) -> str:
+        self.reads.append(size)
+        if isinstance(self.answer, KeyboardInterrupt):
+            raise self.answer
+        return self.answer.decode()
+
+
+def test_hold_pane_open_prints_the_prompt_and_waits(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    stdin = FakeStdin(b"\r")
+    monkeypatch.setattr(tp.sys, "stdin", stdin)
+    tp.hold_pane_open("the command exited 1")
+    out = capsys.readouterr().out
+    assert "the command exited 1" in out
+    assert "Press Enter to close this window." in out
+    # One byte, not a line: a child killed in raw mode leaves the
+    # pane's tty raw, where Enter makes no line to read.
+    assert stdin.reads == [1]
+
+
+def test_hold_pane_open_ends_on_eof_and_interrupt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Both are the operator's close: the hold must never trap a
+    # window shut (#1143).
+    monkeypatch.setattr(tp.sys, "stdin", FakeStdin(b""))
+    tp.hold_pane_open("the command exited 1")
+    monkeypatch.setattr(tp.sys, "stdin", FakeStdin(KeyboardInterrupt()))
+    tp.hold_pane_open("the command exited 1")
+
+
+# --- the tmp-dir diagnostics log (#1143) -----------------------------------
+
+
+def log_at(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    """Point the diagnostics log at the test's own tmp dir."""
+    monkeypatch.setattr(tp.tempfile, "gettempdir", lambda: str(tmp_path))
+    return tmp_path / tp.DIAGNOSTIC_LOG
+
+
+def test_a_refused_role_logs_its_reason(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    log = log_at(monkeypatch, tmp_path)
+    monkeypatch.setattr(tp.shutil, "which", lambda tool: None)
+    with pytest.raises(SystemExit, match="tmux is not on PATH"):
+        tp.main(list(SSH_CHILD))
+    assert "launch: msks-term-popup: tmux is not on PATH" in (log.read_text())
+
+
+def test_an_unexpected_failure_still_reaches_the_log(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    log = log_at(monkeypatch, tmp_path)
+
+    def wedged(argv):
+        raise RuntimeError("wedged")
+
+    monkeypatch.setattr(tp, "RUNNERS", {"launch": wedged})
+    with pytest.raises(RuntimeError, match="wedged"):
+        tp.main(["launch", "cmd"])
+    assert "launch: RuntimeError: wedged" in log.read_text()
+
+
+def test_the_log_never_takes_the_failing_role_down(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    # The log's directory cannot exist (a file sits where it
+    # would), and the role's own refusal still propagates — the
+    # log is a courtesy record, never a dependency.
+    blocker = tmp_path / "blocker"
+    blocker.write_text("in the way")
+    monkeypatch.setattr(tp.tempfile, "gettempdir", lambda: str(blocker))
+
+    def refuse(argv):
+        raise SystemExit("msks-term-popup: no")
+
+    monkeypatch.setattr(tp, "RUNNERS", {"launch": refuse})
+    with pytest.raises(SystemExit, match="no"):
+        tp.main(["launch", "cmd"])
+
+
+def test_the_log_refuses_a_planted_symlink(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    # A symlink at the log's name in a shared tmp dir would
+    # redirect the append; the O_NOFOLLOW open leaves it alone
+    # and the refusal still propagates (#1143).
+    target = tmp_path / "target"
+    target.write_text("")
+    link = tmp_path / tp.DIAGNOSTIC_LOG
+    link.symlink_to(target)
+    monkeypatch.setattr(tp.tempfile, "gettempdir", lambda: str(tmp_path))
+
+    def refuse(argv):
+        raise SystemExit("msks-term-popup: no")
+
+    monkeypatch.setattr(tp, "RUNNERS", {"launch": refuse})
+    with pytest.raises(SystemExit, match="no"):
+        tp.main(["launch", "cmd"])
+    assert target.read_text() == ""
+
+
+def test_a_write_that_fails_leaves_the_caller_its_own_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    # A failed write after a successful open (the fdopen stands
+    # in for the flush): the log takes itself down quietly — best
+    # effort means the whole append, not just its first syscall
+    # (#1143 review).
+    log = log_at(monkeypatch, tmp_path)
+
+    def refuse_fdopen(fd, mode, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(tp.os, "fdopen", refuse_fdopen)
+    tp.log_diagnostic("anything")
+    assert log.read_text() == ""
+
+
+def test_the_log_refuses_to_wait_on_a_readerless_fifo(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """#1143 review: a FIFO planted at the log's name hangs a plain
+    O_WRONLY open (no reader answers), wedging the failing role
+    with nothing shown. The O_NONBLOCK flag must answer ENXIO at
+    once — the daemon-thread join turns a regression into this
+    test's failure instead of the suite's hang."""
+    os.mkfifo(tmp_path / tp.DIAGNOSTIC_LOG)
+    monkeypatch.setattr(tp.tempfile, "gettempdir", lambda: str(tmp_path))
+    done: list[bool] = []
+
+    def write_it() -> None:
+        tp.log_diagnostic("anything")
+        done.append(True)
+
+    writer = threading.Thread(target=write_it, daemon=True)
+    writer.start()
+    writer.join(timeout=5)
+    assert done == [True]
+
+
+#: spawn_pane's fork fires CPython's multi-threaded-fork
+#: DeprecationWarning under xdist (the worker's execnet threads make
+#: the process multi-threaded; a single-process run stays quiet):
+#: the child's post-fork work is the minimal setsid/ctty/dup/close/
+#: exec ladder, the same shape stdlib pty.fork runs, so the warning
+#: is noise here, not a deadlock the suite can hit (the GUI session
+#: modules filter the same one, #951).
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:This process.*multi-threaded.*fork:DeprecationWarning"
+)
+
+
+def spawn_pane(child: list[str]) -> tuple[int, int]:
+    """The pane role on its own pty, the way tmux runs it (#1143
+    review): a session leader whose controlling terminal is the
+    pty, the pane wrapper exec'd onto it — writes to the master
+    reach it the way a terminal's keys would."""
+    master, slave = pty.openpty()
+    pid = os.fork()
+    if pid == 0:
+        os.setsid()
+        fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+        os.dup2(slave, 0)
+        os.dup2(slave, 1)
+        os.dup2(slave, 2)
+        if slave > 2:
+            os.close(slave)
+        if master > 2:
+            os.close(master)
+        os.execv(
+            tp.sys.executable,
+            [tp.sys.executable, "-m", tp.MODULE, "pane", "--", *child],
+        )
+    os.close(slave)
+    return master, pid
+
+
+def pane_read(master: int) -> bytes | None:
+    """One read off a master select called readable: the bytes, or
+    ``None`` at the pane's end. The two kernels end a pty differently
+    once the wrapper's exit hangs it up: Linux answers EIO, macOS the
+    empty read (the pair #951's ``read_once`` carries for the GUI
+    session). Neither is a harness failure — the pane is simply
+    over, and the callers fall through to their own answer."""
+    try:
+        data = os.read(master, 4096)
+    except OSError as exc:
+        if exc.errno != errno.EIO:
+            raise
+        return None
+    return data or None
+
+
+def read_pane(
+    master: int, want: bytes, deadline: float = 10.0, buf: bytes = b""
+) -> bytes:
+    """Read the pane's pty until the wanted bytes arrive, and
+    return everything seen. One chunk can carry the child's last
+    words and the wrapper's close prompt together (under a loaded
+    runner the first read lands after both wrote), so a later
+    ``read_pane`` on the same pane starts from ``buf``, the buffer
+    the previous one returned, instead of from empty."""
+    end = time.monotonic() + deadline
+    while want not in buf and time.monotonic() < end:
+        ready, _, _ = select.select([master], [], [], 0.1)
+        if not ready:
+            continue
+        data = pane_read(master)
+        if data is None:
+            break  # the pane ended first: the assertion below names it
+        buf += data
+    if want in buf:
+        return buf
+    raise AssertionError(f"{want!r} never arrived; saw {buf!r}")
+
+
+def pane_alive(pid: int) -> bool:
+    """Whether the wrapper still runs (a poll, not a reap)."""
+    done, _ = os.waitpid(pid, os.WNOHANG)
+    return done == 0
+
+
+def wait_pane(master: int, pid: int, deadline: float = 10.0) -> int:
+    """The wrapper's exit code, polled. The poll drains the pty's
+    master as it goes: on a macOS pty a session leader that ran a
+    child and then read its stdin finishes exit() only once the
+    master is read (tmux's server polls its masters constantly,
+    which is why the pane never sees this; a harness that stops
+    reading wedges the wrapper in exit, past SIGTERM). The drain
+    stops at the pane's end (``pane_read``'s ``None``, whichever way
+    the kernel reports it) and the poll goes on to the reap."""
+    end = time.monotonic() + deadline
+    pane_open = True
+    while time.monotonic() < end:
+        if pane_open and select.select([master], [], [], 0.05)[0]:
+            pane_open = pane_read(master) is not None
+        done, status = os.waitpid(pid, os.WNOHANG)
+        if done != 0:
+            return os.waitstatus_to_exitcode(status)
+    raise AssertionError("the pane wrapper did not exit")
+
+
+def test_the_hold_keeps_the_pane_until_enter() -> None:
+    """#1143 against a real pty: the refused child's output and
+    the close prompt stay on the pane, a plain keypress does not
+    close the canonical tty's read, and Enter does."""
+    master, pid = spawn_pane(["/bin/sh", "-c", "echo refused; exit 3"])
+    try:
+        seen = read_pane(master, b"refused")
+        read_pane(master, b"Press Enter to close this window.", buf=seen)
+        os.write(master, b"x")  # a plain key: the hold stands
+        time.sleep(0.5)
+        assert pane_alive(pid)
+        os.write(master, b"\r")  # Enter: the hold ends
+        assert wait_pane(master, pid) == 3
+    finally:
+        os.close(master)
+
+
+def test_the_hold_answers_enter_on_a_raw_tty() -> None:
+    """#1143 review: the byte read, not a line read. A child that
+    dies with the pane's tty raw (a killed ssh) leaves no line
+    editing for ``input()`` to wait on — Enter must answer the
+    single-byte read directly. This is the pin that separates
+    ``sys.stdin.read(1)`` from an ``input()`` regression, which
+    the canonical-tty test above cannot tell apart."""
+    master, pid = spawn_pane(["/bin/sh", "-c", "stty raw; exit 5"])
+    try:
+        read_pane(master, b"Press Enter to close this window.")
+        os.write(master, b"\r")
+        assert wait_pane(master, pid) == 5
+    finally:
+        os.close(master)
+
+
+def test_the_interrupt_key_kills_the_child_and_not_the_hold() -> None:
+    """#1143 review against a real pty: the interrupt key is
+    SIGINT to the pane's foreground process group. The child dies
+    on it; the wrapper absorbs its own copy, holds the window
+    open with the signal's name, and Enter closes."""
+    master, pid = spawn_pane(["/bin/sh", "-c", "echo started; exec sleep 30"])
+    try:
+        # The child's own output is the proof the wrapper already
+        # spawned it — the SIGINT handler is installed ahead of
+        # the spawn, so the key cannot race the setup. The exec
+        # pins the interrupted process to sleep itself: its
+        # SIGINT disposition is the default on every shell, so
+        # the death is a signal death everywhere the suite runs.
+        seen = read_pane(master, b"started")
+        os.write(master, b"\x03")  # Ctrl-C: ISIG delivers SIGINT
+        # The reason and the close prompt print as one line.
+        read_pane(master, b"exited on a signal. Press Enter", buf=seen)
+        assert pane_alive(pid)  # the wrapper stood through it
+        os.write(master, b"\r")
+        # 128 + SIGINT(2), the shell convention the pane answers.
+        assert wait_pane(master, pid) == 130
+    finally:
+        os.close(master)
 
 
 # --- the consent chain against a real server (#467) --------------------------
