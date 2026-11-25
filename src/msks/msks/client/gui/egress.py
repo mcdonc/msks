@@ -376,7 +376,7 @@ class EgressTab(QtWidgets.QWidget):
         self.workspace_id = workspace_id
         self.frame = None
         self.rules = None
-        self.note_line("")
+        self.note.say("")
         self.audit.host(workspace_id)
         self.take({})
 
@@ -489,13 +489,6 @@ class EgressTab(QtWidgets.QWidget):
                 self.take(data)
             return
         self.audit.push(frame)
-
-    def note_line(self, text: str, kind=None) -> None:
-        """The tab's note line (#1160): the text, wearing a kind
-        — a refusal the error tint, anything else the chrome's
-        own text."""
-        self.note.setText(text)
-        self.note.set_kind(kind)
 
     @QtCore.Slot()
     def sync(self) -> None:
@@ -612,7 +605,7 @@ class EgressTab(QtWidgets.QWidget):
         self.picked = mode
         self.seq += 1
         self.switch_key = f"{SWITCH_STEM}-{self.seq}"
-        self.note_line("switching …")
+        self.note.say("switching …")
         self.sync()
         self.switch_flight = self.bridge.call(
             self.switch_key,
@@ -691,7 +684,7 @@ class EgressTab(QtWidgets.QWidget):
         self.wrote_mode = mode
         self.seq += 1
         self.write_key = f"{WRITE_STEM}-{self.seq}"
-        self.note_line("saving …")
+        self.note.say("saving …")
         self.repaint_entries()
         self.write_flight = self.bridge.call(
             self.write_key,
@@ -713,10 +706,10 @@ class EgressTab(QtWidgets.QWidget):
         posture the tab has not read, a policy flight already
         out — answers with its own note: the route is one."""
         if not self.editable():
-            self.note_line(WRITE_HELD if self.rules is not None else NO_READ)
+            self.note.say(WRITE_HELD if self.rules is not None else NO_READ)
             return
         if host in self.working:
-            self.note_line(f"{host} {ALREADY_LISTED}")
+            self.note.say(f"{host} {ALREADY_LISTED}")
             return
         self.change([*self.working, host])
 
@@ -741,7 +734,7 @@ class EgressTab(QtWidgets.QWidget):
         self.pending_revoke = True
         self.seq += 1
         self.revoke_key = f"{REVOKE_STEM}-{self.seq}"
-        self.note_line("revoking …")
+        self.note.say("revoking …")
         self.sync_buttons()
         self.revoke_flight = self.bridge.call(
             self.revoke_key, "revoke", self.workspace_id, rule.id
@@ -757,7 +750,7 @@ class EgressTab(QtWidgets.QWidget):
             return False
         self.pending_revoke = False
         self.revoke_flight = None
-        self.note_line(REVOKE_LANDING)
+        self.note.say(REVOKE_LANDING)
         self.sync_buttons()
         self.poke()
         self.audit.poke()
@@ -772,7 +765,7 @@ class EgressTab(QtWidgets.QWidget):
             return False
         self.pending_revoke = False
         self.revoke_flight = None
-        self.note_line(f"refused: {failure}", ERROR)
+        self.note.say(f"refused: {failure}", ERROR)
         self.sync_buttons()
         return True
 
@@ -808,7 +801,7 @@ class EgressTab(QtWidgets.QWidget):
         action — the same two words the switch's and the
         write's landings share."""
         effect = IN_EFFECT_NOW if reply.get("applied") else NEXT_START
-        self.note_line(f"{prefix} — {effect}")
+        self.note.say(f"{prefix} — {effect}")
 
     def write_landed(self, key: str, result: object) -> bool:
         """The write's answer (#1050): the reply is the fresh
@@ -891,7 +884,7 @@ class EgressTab(QtWidgets.QWidget):
         if CONFIRM_MARKER in message:
             self.confirm_write_refusal()
             return
-        self.note_line(f"refused: {message}", ERROR)
+        self.note.say(f"refused: {message}", ERROR)
         self.restore_entries()
 
     def confirm_write_refusal(self) -> None:
@@ -907,7 +900,7 @@ class EgressTab(QtWidgets.QWidget):
         if self.ask_empty_static():
             self.write(sent, mode, confirm_empty=True)
             return
-        self.note_line("")
+        self.note.say("")
         self.restore_entries()
 
     def switch_refused(self, key: str, failure: object) -> None:
@@ -933,10 +926,10 @@ class EgressTab(QtWidgets.QWidget):
             if self.ask_empty_static():
                 self.send(self.picked, confirm_empty=True)
                 return
-            self.note_line("")
+            self.note.say("")
             self.take(self.frame)
             return
-        self.note_line(f"refused: {message}", ERROR)
+        self.note.say(f"refused: {message}", ERROR)
         self.take(self.frame)
 
     def restore_entries(self) -> None:

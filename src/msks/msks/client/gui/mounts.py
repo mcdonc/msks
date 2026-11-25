@@ -207,7 +207,7 @@ class MountsTab(QtWidgets.QWidget):
             # A fresh workspace's note starts blank (#987): the
             # prior one's refusal must not name itself on a page
             # that never asked.
-            self.note_line("")
+            self.note.say("")
         self.pending_row = row
         if not self.pending:
             self.take_row(row)
@@ -380,15 +380,8 @@ class MountsTab(QtWidgets.QWidget):
         self.before = None
         self.flight = None
         self.take_row(fresh)
-        self.note_line(saved_note(fresh))
+        self.note.say(saved_note(fresh))
         self.row_updated.emit(fresh)
-
-    def note_line(self, text: str, kind=None) -> None:
-        """The tab's note line (#1160): the text, wearing a kind
-        — a refusal the error tint, an outcome the chrome's own
-        text."""
-        self.note.setText(text)
-        self.note.set_kind(kind)
 
     @QtCore.Slot(str, object)
     def on_failed(self, key: str, failure: object) -> None:
@@ -408,4 +401,4 @@ class MountsTab(QtWidgets.QWidget):
             self.working = self.before
             self.before = None
         self.repaint_table(self.pending_row or {})
-        self.note_line(f"refused: {failure}", ERROR)
+        self.note.say(f"refused: {failure}", ERROR)

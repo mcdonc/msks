@@ -7,9 +7,11 @@
 # edit: the diff states why.
 
 # Ceiling of distinct importers per module; only goes down. The
-# current record holder is msks.client.env (11); #416 split the
-# failure class out of msks.spec.vm (14 importers then, 7 now),
-# so the ceiling steps down from 14 to 12.
+# current record holder is msks.client.gui.tints (12, #1160),
+# the state tints every state-bearing screen paints through;
+# #416 split the failure class out of msks.spec.vm (14
+# importers then, 7 now), so the ceiling steps down from 14 to
+# 12.
 fan_in_ceiling = 12
 
 # Production entry points (pyproject [project.scripts] plus the

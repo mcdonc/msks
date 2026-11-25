@@ -83,9 +83,10 @@ def status_text(row: dict) -> str:
 
 def status_kind(row: dict) -> str | None:
     """The status cell's tint (#1160): a listening row reads ok,
-    a failed one with its cause reads error. A stopped row
-    wears the chrome's own text: its workspace is not running,
-    and the list shows that beside it."""
+    and warn when it carries a cause — the guest cannot reach
+    it; a failed one reads error. A stopped row wears the
+    chrome's own text: its workspace is not running, and the
+    list shows that beside it."""
     status = row.get("status") or "stopped"
     if status == "failed":
         return ERROR

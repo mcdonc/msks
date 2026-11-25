@@ -154,6 +154,13 @@ class TintedLabel(QtWidgets.QLabel):
         self.kind = kind
         self.retint()
 
+    def say(self, text: str, kind=None) -> None:
+        """Stand ``text`` wearing ``kind``: the note lines' one
+        write — a refusal the error tint, anything else the
+        chrome's own text."""
+        self.setText(text)
+        self.set_kind(kind)
+
     def retint(self) -> None:
         """The palette rewritten for the kind on the base the
         label now sits on. A palette whose mask names the text

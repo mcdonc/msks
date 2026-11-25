@@ -308,3 +308,29 @@ def test_the_rows_action_reads_the_state() -> None:
     stopped = gui_rows.workspace_row({"id": "ws-1", "status": "stopped"})
     running = gui_rows.workspace_row({"id": "ws-2", "status": "running"})
     assert (stopped.action, running.action) == ("start", "stop")
+
+
+def test_the_status_kind_reads_the_lifecycle() -> None:
+    """The status cell's tint (#1160), Qt-free: the resting
+    states split — running ok, created and stopped the chrome's
+    own text — every transition reads warn, a pending change
+    alone (the ↻ marker with no mount issue) reads warn, and the
+    two states the daemon cannot place read error."""
+    for status, kind in (
+        ("running", "ok"),
+        ("created", None),
+        ("stopped", None),
+        ("starting", "warn"),
+        ("stopping", "warn"),
+        ("paused", "warn"),
+        ("absent", "error"),
+        ("unknown", "error"),
+    ):
+        row = gui_rows.workspace_row(daemon_row(status=status))
+        assert gui_rows.state_kind(row) == kind, status
+    waiting = gui_rows.workspace_row(
+        daemon_row(status="stopped", sizes_pending=True)
+    )
+    assert waiting.issue_marker is None
+    assert gui_rows.pending_marker(waiting) == "↻1"
+    assert gui_rows.state_kind(waiting) == "warn"

@@ -193,7 +193,7 @@ class AuditTrail(QtCore.QObject):
         self.key = ""
         self.workspace_id = workspace_id
         self.rows = []
-        self.note_line("")
+        self.note.say("")
         self.repaint_rows()
 
     def decision(self) -> str | None:
@@ -219,13 +219,6 @@ class AuditTrail(QtCore.QObject):
             self.decision(),
             AUDIT_LIMIT,
         )
-
-    def note_line(self, text: str, kind=None) -> None:
-        """The tab's note line (#1160): the text, wearing a kind
-        — a refusal the error tint, anything else the chrome's
-        own text."""
-        self.note.setText(text)
-        self.note.set_kind(kind)
 
     @QtCore.Slot()
     def refly(self) -> None:
@@ -340,7 +333,7 @@ class AuditTrail(QtCore.QObject):
             return
         self.pending = False
         self.flight = None
-        self.note_line("")
+        self.note.say("")
         self.take(result)
 
     @QtCore.Slot(str, object)
@@ -353,4 +346,4 @@ class AuditTrail(QtCore.QObject):
             return
         self.pending = False
         self.flight = None
-        self.note_line(f"refused: {failure}", ERROR)
+        self.note.say(f"refused: {failure}", ERROR)

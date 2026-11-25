@@ -174,7 +174,7 @@ class ProxiesTab(QtWidgets.QWidget):
         self.change_key = ""
         self.workspace_id = workspace_id
         self.rows = []
-        self.note_line("")
+        self.note.say("")
         self.repaint_rows()
 
     def poke(self) -> None:
@@ -260,7 +260,7 @@ class ProxiesTab(QtWidgets.QWidget):
         body posting one proxy row."""
         dialog = ProxyDialog(parent=self)
         if dialog.exec() and dialog.body is not None:
-            self.note_line("adding …")
+            self.note.say("adding …")
             self.change("create_proxy", dialog.body)
 
     @QtCore.Slot()
@@ -273,7 +273,7 @@ class ProxiesTab(QtWidgets.QWidget):
         row = self.rows[index]
         dialog = ProxyDialog(row, self)
         if dialog.exec() and dialog.body is not None:
-            self.note_line("saving …")
+            self.note.say("saving …")
             self.change("update_proxy", row["id"], dialog.body)
 
     @QtCore.Slot()
@@ -287,7 +287,7 @@ class ProxiesTab(QtWidgets.QWidget):
         row = self.rows[index]
         if not self.confirm_remove(row):
             return
-        self.note_line("removing …")
+        self.note.say("removing …")
         self.change("remove_proxy", row["id"], note="removed")
 
     def confirm_remove(self, row: dict) -> bool:
@@ -324,15 +324,8 @@ class ProxiesTab(QtWidgets.QWidget):
         self.change_pending = False
         self.change_flight = None
         self.sync_buttons()
-        self.note_line(self.landing_note)
+        self.note.say(self.landing_note)
         self.poke()
-
-    def note_line(self, text: str, kind=None) -> None:
-        """The tab's note line (#1160): the text, wearing a kind
-        — a refusal the error tint, an outcome or a flight the
-        chrome's own text."""
-        self.note.setText(text)
-        self.note.set_kind(kind)
 
     @QtCore.Slot(str, object)
     def on_failed(self, key: str, failure: object) -> None:
@@ -348,4 +341,4 @@ class ProxiesTab(QtWidgets.QWidget):
         self.change_pending = False
         self.change_flight = None
         self.sync_buttons()
-        self.note_line(f"refused: {failure}", ERROR)
+        self.note.say(f"refused: {failure}", ERROR)

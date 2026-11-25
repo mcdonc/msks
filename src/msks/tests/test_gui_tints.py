@@ -121,9 +121,12 @@ def test_the_delegate_tints_an_unselected_cell_alone(qt):
     assert text_color(table.model().index(1, 0), State.State_Enabled) == (
         base.color(roles.Text)
     )
-    # A disabled cell keeps the style's dimmed text (#1160 review).
+    # A disabled cell keeps the style's dimmed text (#1160 review):
+    # a state without the enabled flag, and without the selected
+    # one, so the exclusion is the disabled path's alone.
     assert text_color(index, State.State_Enabled) == error
-    assert text_color(index, State(-1)) == base.color(roles.Text)
+    assert text_color(index, State.State_None) == base.color(roles.Text)
+    assert text_color(index, State.State_Active) == base.color(roles.Text)
 
 
 def test_a_tinted_label_follows_the_scheme_switch(qt):

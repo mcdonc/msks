@@ -249,12 +249,11 @@ class ConsentPanel(QtWidgets.QWidget):
         self.presenter.retire(key)
         self.flash_seq += 1
         seq = self.flash_seq
-        self.note.setText(f"decide failed: {error}")
-        self.note.set_kind(ERROR)
+        self.note.say(f"decide failed: {error}", ERROR)
         self.note.show()
         QtCore.QTimer.singleShot(4000, self, partial(self.clear_stale, seq))
 
     def clear_stale(self, seq: int) -> None:
         if seq == self.flash_seq:
-            self.note.clear()
+            self.note.say("")
             self.note.hide()

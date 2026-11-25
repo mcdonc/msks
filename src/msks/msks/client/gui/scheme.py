@@ -13,7 +13,6 @@ The module imports PySide6 at module scope, the same contract
 as the screen modules: the window path
 (:func:`msks.client.gui.app.open_window`) loads it, nothing at
 CLI parse time (#927).
-
 """
 
 from PySide6 import QtCore, QtGui
