@@ -68,6 +68,19 @@ behind. All three are warning grade: a daemon serving TCP alone
 (the dev daemon, a remote deployment) keeps a green report
 without them.
 
+One row appears only while the `nested` setting is on
+(`MSKSD_NESTED=true`, or `nested: true` in the config file
+(#1140)), and only on an x86_64 Linux host, where the kernel
+publishes KVM's `nested` switch as the vendor module's parameter.
+`MSKSD_NESTED` is green when the host's KVM lets its guests nest.
+It is a warning when the host does not nest, with the module
+option that turns nesting on. There every workspace still boots,
+without VMX or SVM. The daemon logs the same warning at startup.
+It is also a warning when no `kvm_intel` or `kvm_amd`
+parameter is readable under `/sys/module`, and the row asks for
+the module and a visible `/sys` before a re-run. On other machines
+the kernel publishes no switch, so the row stays off.
+
 The run ends with a tally (`20 passed`, or `18 passed, 1
 error, 1 warning`). When anything failed, a closing block
 repeats every miss with its fix. The exit code is 0 when every

@@ -1,8 +1,9 @@
 """The /dev/kvm access checks.
 
 Node and group presence, membership, the session-predates-group
-stale case, and the nested-virt detection an Apple-Silicon host
-answers with.
+stale case, the nested-virt detection an Apple-Silicon host
+answers with, and the host-side nested switch the
+``MSKSD_NESTED`` setting depends on (#1140).
 """
 
 from __future__ import annotations
@@ -237,6 +238,131 @@ def apple_silicon_kvm_result() -> CheckResult | None:
             "works"
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# The MSKSD_NESTED row (#1140)
+# ---------------------------------------------------------------------------
+
+#: Where sysfs publishes the vendor KVM module's nested switch on
+#: x86_64: one file per vendor, present once the module is loaded.
+KVM_NESTED_PARAMS = (
+    Path("/sys/module/kvm_intel/parameters/nested"),
+    Path("/sys/module/kvm_amd/parameters/nested"),
+)
+
+#: The three answers the host gives the nested question.
+NESTED_ON = "on"
+NESTED_OFF = "off"
+NESTED_UNKNOWN = "unknown"
+
+#: The fix the ``off`` row and the daemon's startup notice
+#: prescribe: the module option that turns a host's nesting on,
+#: in its own file so a distro's own modprobe.d line stays put.
+NESTED_FIX = (
+    'echo "options kvm_intel nested=1" | sudo tee '
+    "/etc/modprobe.d/msks-nested.conf "
+    "(kvm_amd on an AMD host), then reload the module with no VM "
+    "running, or reboot"
+)
+
+
+def linux_x86_64() -> bool:
+    """Whether this is the Linux x86_64 host the nested switch
+    is published on."""
+    return sys.platform == "linux" and os.uname().machine == "x86_64"
+
+
+def nested_param_value(path: Path) -> str | None:
+    """One vendor module's nested switch as sysfs publishes it
+    (``Y`` or ``N``), or None while the file is absent: the module
+    is not loaded, or the host has no such vendor."""
+    try:
+        return path.read_text().strip().upper()
+    except OSError:
+        return None
+
+
+def nested_params() -> list[str]:
+    """The vendor modules' nested switches as sysfs publishes them
+    (``Y`` or ``N``, uppercased), in vendor order; empty while no
+    file is readable or off x86_64."""
+    if not linux_x86_64():
+        return []
+    values = []
+    for param in KVM_NESTED_PARAMS:
+        value = nested_param_value(param)
+        if value is not None:
+            values.append(value)
+    return values
+
+
+def host_nested_support() -> str:
+    """Whether this host's KVM lets its guests use hardware
+    virtualization, the fact ``MSKSD_NESTED`` depends on (#1140).
+    cloud-hypervisor only clears the guest's VMX/SVM bit when the
+    config says not to, so with the flag on the guest sees whatever
+    the host's KVM passes, and nothing, silently, when the host
+    cannot nest. x86_64 publishes the switch as the vendor
+    module's ``nested`` parameter: ``on`` where a readable one
+    says ``Y``, ``off`` where it says ``N``, and ``unknown`` when
+    no file reads as either (the module is not loaded, or the
+    value is not a boolean). On aarch64 the kernel publishes no
+    switch of its own, so the answer stays ``unknown`` there."""
+    values = nested_params()
+    if "Y" in values:
+        return NESTED_ON
+    if "N" in values:
+        return NESTED_OFF
+    return NESTED_UNKNOWN
+
+
+def nested_result(nested: bool) -> CheckResult | None:
+    """The ``MSKSD_NESTED`` row (#1140): none while the setting is
+    off (nothing to verify) or off x86_64 (no switch to read);
+    green when the host's KVM nests; a warning when the host says
+    off, since the daemon still boots workspaces, without the
+    feature, naming the module option that turns it on; and a
+    warning on an x86_64 host whose switch no read answers for,
+    asking for the module and a visible /sys before a re-run."""
+    if not nested:
+        return None
+    support = host_nested_support()
+    if support == NESTED_ON:
+        return CheckResult(
+            name="MSKSD_NESTED",
+            ok=True,
+            message="nested virtualization on; the host's KVM nests",
+        )
+    if support == NESTED_OFF:
+        return CheckResult(
+            name="MSKSD_NESTED",
+            ok=False,
+            is_warning=True,
+            message=(
+                "MSKSD_NESTED is on, but this host's KVM does not "
+                "nest: workspaces boot without VMX/SVM and cannot "
+                "run VMs of their own"
+            ),
+            hint=NESTED_FIX,
+        )
+    if linux_x86_64():
+        return CheckResult(
+            name="MSKSD_NESTED",
+            ok=False,
+            is_warning=True,
+            message=(
+                "MSKSD_NESTED is on, but no kvm_intel or kvm_amd "
+                "nested parameter is readable under /sys/module, "
+                "so the host's answer is unknown"
+            ),
+            hint=(
+                "check that kvm_intel (or kvm_amd on an AMD host) is "
+                "loaded and that /sys/module is visible to this "
+                "shell, then re-run msksd doctor"
+            ),
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------

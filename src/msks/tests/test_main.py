@@ -7,7 +7,7 @@ import msks.server.main as main_mod
 import pytest
 from msks.app import build_app
 from msks.server.main import main, server_config, ssl_paths
-from msks.settings import ServerSettings, Settings
+from msks.settings import ServerSettings, Settings, VmmSettings
 from msks.spec.version import __version__
 
 
@@ -168,3 +168,86 @@ def test_main_configures_msks_logging(
         root.handlers = old_handlers
         root.level = old_root_level
         msks_logger.level = old_msks_level
+
+
+# --- the MSKSD_NESTED startup notice (#1140) ---
+
+
+def test_nested_notice_off_prints_nothing(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A setting left off is the default on every host: the daemon
+    logs nothing about it."""
+    reads: list[str] = []
+    monkeypatch.setattr(
+        main_mod, "host_nested_support", lambda: reads.append("read")
+    )
+    with caplog.at_level(logging.INFO, logger="msks.server.main"):
+        main_mod.nested_notice(Settings())
+    assert caplog.records == []
+    assert reads == []
+
+
+def test_nested_notice_warns_when_the_host_cannot_nest(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#1140: MSKSD_NESTED on a host whose KVM does not nest earns
+    one warning naming the module option, since every workspace
+    boots there without the feature and nothing else says so."""
+    monkeypatch.setattr(main_mod, "host_nested_support", lambda: "off")
+    with caplog.at_level(logging.INFO, logger="msks.server.main"):
+        main_mod.nested_notice(Settings(vmm=VmmSettings(nested=True)))
+    assert [record.levelname for record in caplog.records] == ["WARNING"]
+    assert "nested=1" in caplog.records[0].getMessage()
+
+
+def test_nested_notice_reports_the_on_and_unknown_answers(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A nesting host gets the plain on line. An x86_64 host whose
+    switch no read answered for gets the line that says so (the
+    doctor's row and the daemon's line must agree about one
+    host); a machine that publishes no switch gets the other
+    unverified line. All at info."""
+    cases = (
+        ("on", True, "may run VMs"),
+        ("unknown", True, "no kvm_intel or kvm_amd"),
+        ("unknown", False, "publishes no KVM nested switch"),
+    )
+    for answer, x86, word in cases:
+        caplog.clear()
+        monkeypatch.setattr(
+            main_mod, "host_nested_support", lambda a=answer: a
+        )
+        monkeypatch.setattr(main_mod, "linux_x86_64", lambda: x86)
+        with caplog.at_level(logging.INFO, logger="msks.server.main"):
+            main_mod.nested_notice(Settings(vmm=VmmSettings(nested=True)))
+        assert [record.levelname for record in caplog.records] == ["INFO"]
+        assert word in caplog.records[0].getMessage()
+
+
+def test_main_logs_the_nested_notice_at_startup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """main() emits the notice once the settings load and before
+    serve takes over: the setting came from the environment here,
+    the same path a unit file's Environment= line takes."""
+    monkeypatch.setenv("MSKSD_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MSKSD_NESTED", "true")
+    monkeypatch.setattr(main_mod, "host_nested_support", lambda: "on")
+    seen = {}
+    monkeypatch.setattr(
+        main_mod, "serve", lambda app, no_tls: seen.update(no_tls=no_tls)
+    )
+    previous = signal.getsignal(signal.SIGHUP)
+    try:
+        with caplog.at_level(logging.INFO, logger="msks.server.main"):
+            assert main([]) == 0
+    finally:
+        signal.signal(signal.SIGHUP, previous)
+    assert seen == {"no_tls": False}
+    assert any(
+        "nested virtualization on" in record.getMessage()
+        for record in caplog.records
+    )

@@ -190,6 +190,28 @@ def test_vm_config_matches_v52_schema(tmp_path: Path) -> None:
     assert "initramfs" not in config["payload"]
 
 
+def test_vm_config_sends_nested_only_when_asked(tmp_path: Path) -> None:
+    """#1140: the daemon's ``nested`` setting adds ``cpus.nested``
+    to the vm.create body; off, the key stays out, so the payload
+    keeps the shape every pre-setting cloud-hypervisor release
+    took."""
+    plain = vm_config(
+        VmSpec(workspace_id=WID, kernel=tmp_path / "k", rootfs=tmp_path / "r"),
+        disk_entries(tmp_path, WID),
+    )
+    assert "nested" not in plain["cpus"]
+    asked = vm_config(
+        VmSpec(workspace_id=WID, kernel=tmp_path / "k", rootfs=tmp_path / "r"),
+        disk_entries(tmp_path, WID),
+        nested=True,
+    )
+    assert asked["cpus"] == {"boot_vcpus": 4, "max_vcpus": 4, "nested": True}
+    # The flag is the one difference.
+    assert {k: v for k, v in asked.items() if k != "cpus"} == {
+        k: v for k, v in plain.items() if k != "cpus"
+    }
+
+
 def test_disk_entries_carry_overlay_and_home(tmp_path: Path) -> None:
     """The VM's disks (#14): writable overlay over the base first,
     home volume second — position makes the root device."""
@@ -243,6 +265,31 @@ async def test_launch_puts_create_then_boot(env, fake, tmp_path: Path) -> None:
     # The VM boots its persistent artifacts (#14), never the base.
     assert body["disks"] == disk_entries(state_dir, WID)
     await app.state.microvm.kill(WID)  # reap the stub VMM
+
+
+async def test_launch_sends_the_nested_flag_when_the_setting_is_on(
+    env, fake, tmp_path: Path
+) -> None:
+    """#1140: the daemon's ``nested`` setting reaches vm.create as
+    ``cpus.nested``; off, the key stays out of every launch's
+    payload — the driver reads the setting at each start."""
+    app, _state_dir, _ = env
+
+    def creates() -> list[dict]:
+        return [
+            body
+            for _method, path, body in fake.requests
+            if path == "/api/v1/vm.create"
+        ]
+
+    await app.state.microvm.launch(spec(tmp_path))
+    await app.state.microvm.kill(WID)
+    app.state.settings.vmm.nested = True
+    await app.state.microvm.launch(spec(tmp_path))
+    await app.state.microvm.kill(WID)
+    plain, asked = [dict(body)["cpus"] for body in creates()]
+    assert "nested" not in plain
+    assert asked["nested"] is True
 
 
 async def test_failed_boot_lands_stopped_even_with_a_recycled_pid(

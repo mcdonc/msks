@@ -268,6 +268,7 @@ class LocalCloudHypervisor(FsDaemonMixin, MicrovmDriver):
                 console_socket=vm_dir / "console.sock",
                 net=vm_net(attachment),
                 fs=fs_devices,
+                nested=vmm.nested,
             )
         except BaseException:
             await self._reap(spec.workspace_id, proc)
@@ -362,10 +363,13 @@ class LocalCloudHypervisor(FsDaemonMixin, MicrovmDriver):
         console_socket=None,
         net=None,
         fs=None,
+        nested=False,
     ) -> None:
         api = CloudHypervisorApi(socket_path, timeout_s)
         try:
-            await api.create(vm_config(spec, disks, console_socket, net, fs))
+            await api.create(
+                vm_config(spec, disks, console_socket, net, fs, nested)
+            )
             await api.boot()
         finally:
             await api.aclose()

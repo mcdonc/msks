@@ -68,6 +68,7 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     # VmmSettings — the local cloud-hypervisor driver.
     "MSKSD_VMM_DRIVER",
     "MSKSD_CLOUD_HYPERVISOR",
+    "MSKSD_NESTED",
     "MSKSD_STATE_DIR",
     "MSKSD_SOCKET_WAIT_TIMEOUT_S",
     "MSKSD_REQUEST_TIMEOUT_S",
@@ -545,6 +546,11 @@ def render_template() -> str:
 #                           # per-workspace artifacts
 # cloud_hypervisor: cloud-hypervisor  # the VMM binary the local
 #                           # driver execs
+# nested: false            # let workspaces run VMs of their own
+#                           # (cloud-hypervisor passes VMX/SVM
+#                           # through only when asked, #1140). The
+#                           # host's KVM must nest. On x86_64,
+#                           # msksd doctor says when it does not
 # virtiofsd: virtiofsd       # the daemon that serves host mounts
 #                           # (#620); a daemon without allowed
 #                           # host roots never execs it

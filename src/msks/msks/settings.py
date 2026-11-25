@@ -127,6 +127,13 @@ class VmmSettings:
 
     driver: str = "local"
     cloud_hypervisor: str = "cloud-hypervisor"
+    # Nested virtualization for every workspace the daemon boots
+    # (#1140): cloud-hypervisor v54 stopped passing VMX/SVM through
+    # to guests by default (#9045 upstream — the host kernel's
+    # attack surface), so a workspace that runs VMs of its own needs
+    # the daemon to ask for it. Off keeps the vm.create payload
+    # byte-identical to the pre-setting form.
+    nested: bool = False
     # The virtiofs daemon behind host mounts (#620, part #622):
     # the platform's own binary, exec'd once per attached share.
     virtiofsd: str = "virtiofsd"
@@ -542,6 +549,7 @@ def vmm_settings_from_env(
         cloud_hypervisor=_env(
             env, "MSKSD_CLOUD_HYPERVISOR", cls.cloud_hypervisor
         ),
+        nested=flag_env(env, "MSKSD_NESTED", cls.nested),
         virtiofsd=resolve_virtiofsd(
             _env(env, "MSKSD_VIRTIOFSD", cls.virtiofsd)
         ),

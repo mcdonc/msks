@@ -20,7 +20,11 @@ from .checks import (
     check_virtiofsd,
 )
 from .hints import detect_package_manager
-from .kvm import apple_silicon_kvm_result, kvm_access_result
+from .kvm import (
+    apple_silicon_kvm_result,
+    kvm_access_result,
+    nested_result,
+)
 from .probes import (
     path_note_result,
     rescued_from_admin_dirs,
@@ -72,6 +76,12 @@ def run_doctor(settings: Settings) -> DoctorReport:
         apple_kvm = apple_silicon_kvm_result()
         if apple_kvm is not None:
             report.add(apple_kvm)
+        # The nested switch (#1140) rides the same gate: the row
+        # exists only while MSKSD_NESTED is on, and reads the host's
+        # KVM the way the kvm row reads its node.
+        nested = nested_result(vmm.nested)
+        if nested is not None:
+            report.add(nested)
         # The system deployment's rows (#1080): the access group
         # with the caller's grant, the msksd unit's state, the
         # shared socket — Linux-only like the kvm row (systemd

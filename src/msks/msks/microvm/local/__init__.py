@@ -38,6 +38,7 @@ from .config import (
     disk_entries,
     map_ch_state,
     vm_config,
+    vm_cpus,
     vm_memory,
     vm_net,
 )
@@ -107,6 +108,7 @@ __all__ = [
     "disk_entries",
     "map_ch_state",
     "vm_config",
+    "vm_cpus",
     "vm_memory",
     "vm_net",
     "FS_TERM_GRACE_S",
