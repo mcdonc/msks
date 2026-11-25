@@ -124,11 +124,12 @@ class ConfirmScreen(ModalScreen[bool]):
 
 
 class FailurePanel(ModalScreen):
-    """A failed create, mint, or start (#426, #1139): the daemon's
-    refusal in a panel that waits for dismissal — Enter, Escape,
-    ``q``, or the Close button — where a flash would drop the
-    detail after five seconds and a form note would squeeze it into
-    one line. The title carries the verb and the identity the
+    """A refused action (#426, #1139): a create, a mint, a
+    workspace start, an image page's import, delete, or default.
+    The daemon's refusal waits in a panel for dismissal — Enter,
+    Escape, ``q``, or the Close button — where a flash would drop
+    the detail after five seconds and a form note would squeeze it
+    into one line. The title carries the verb and the identity the
     action named (the form's submission, the workspace a start
     boots); the body carries the daemon's detail verbatim, wrapping
     at the panel's edge."""

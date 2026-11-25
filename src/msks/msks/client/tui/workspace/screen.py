@@ -588,11 +588,11 @@ class WorkspaceScreen(HelpKeys, PageWatches, Screen):
         suggestion and follows with the refusal's first line
         (``msks console``, or the host's ``msksd doctor`` after
         a VMM exit, #1139), and the full refusal is logged. A
-        configured terminal
-        launcher (``terminal_open_cmd``) opens windows beside the
-        running tree instead: the launcher runs the ssh invocation
-        as its child, which inherits the tree's materialized
-        connection, so it reaches the same daemon. A launcher that
+        configured terminal launcher (``terminal_open_cmd``) opens
+        windows beside the running tree instead: the launcher runs
+        the ssh invocation as its child, which inherits the tree's
+        materialized connection, so it reaches the same daemon. A
+        launcher that
         cannot start — a missing binary, one without the execute
         bit, a word the exec itself refuses — seeds the restart's
         flash with its reason and takes the same-terminal shell

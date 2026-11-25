@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 from fake_ch import FakeCH
 from msks.app import build_app
+from msks.client.tui.refusal import VMM_EXITED
 from msks.microvm import (
     MicrovmError,
     MicrovmTimeoutError,
@@ -498,10 +499,11 @@ async def test_launch_binary_exits_early_maps_to_error(
 ) -> None:
     app, _, _ = env
     app.state.settings.vmm.cloud_hypervisor = "false"
-    # The whole phrase is pinned (#1139): the client's TUI copies
-    # it (msks.client.tui.refusal.VMM_EXITED) to key its
-    # msksd doctor hint on a boot the VMM refused at spawn.
-    phrase = r"cloud-hypervisor exited with -?\d+ before serving"
+    # The client's TUI keys its msksd doctor hint on the first words
+    # of this message (msks.client.tui.refusal.VMM_EXITED, #1139):
+    # the regex is built from that constant, so a reword here fails
+    # this test until the client's copy follows.
+    phrase = VMM_EXITED + r" -?\d+ before serving"
     with pytest.raises(MicrovmError, match=phrase):
         await app.state.microvm.launch(spec(tmp_path))
 

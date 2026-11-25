@@ -5611,8 +5611,7 @@ async def test_a_refused_start_naming_a_vmm_exit_adds_the_doctor_hint(
 
 async def test_a_refused_stop_on_the_list_flashes(monkeypatch) -> None:
     """#1139 scopes the failure panel to the start: a refused stop
-    on the list keeps its one-row flash, the outcome a power-off
-    refusal names, and opens no panel."""
+    on the list keeps its one-row flash and opens no panel."""
     scripted_link(monkeypatch, [])
     data = FakeData([row(status="running")])
     data.fail.add("stop")

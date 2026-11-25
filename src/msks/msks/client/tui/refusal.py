@@ -29,20 +29,22 @@ DOCTOR_PARAGRAPH = (
 CONSOLE_HINT = "try msks console"
 DOCTOR_HINT = "run msksd doctor on the daemon's host"
 
-#: The local driver's words for a VMM that died at spawn
-#: (:func:`msks.microvm.local.driver.LocalCloudHypervisor._wait_ready`
+#: The first words of the local driver's message for a VMM that died
+#: at spawn (:func:`msks.microvm.local.driver.LocalCloudHypervisor._wait_ready`
 #: composes ``cloud-hypervisor exited with <code> before serving
 #: <socket>``). The client cannot import the daemon's package, so
-#: the phrase is copied here; the driver's suite pins the daemon's
-#: wording against it (``test_launch_binary_exits_early_maps_to_error``).
+#: the words are copied here; the driver's suite builds its pin on
+#: this constant (``test_launch_binary_exits_early_maps_to_error``),
+#: so a reword on the daemon's side fails there until this copy
+#: follows.
 VMM_EXITED = "cloud-hypervisor exited with"
 
 
 def vmm_exit(detail: str) -> bool:
     """Whether a start refusal's detail carries the VMM's exit:
     the daemon's ``cloud-hypervisor exited with <code> before
-    serving <socket>`` (:data:`VMM_EXITED`), the last log line
-    after it, and the fix is the host's to make."""
+    serving <socket>`` opens with :data:`VMM_EXITED`, the last log
+    line follows it, and the fix is the host's to make."""
     return VMM_EXITED in detail
 
 
