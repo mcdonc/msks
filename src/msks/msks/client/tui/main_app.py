@@ -37,11 +37,12 @@ from textual.screen import Screen
 from ..config import ClientConfig
 from ..data import RestFailure
 from ..env import display_url, env_token, env_url, shared_ssl
+from ..unlock import SPENT_PROMPT_LINE, unlock_flow
 from .consent_ui import FlashLine, flash_safe
 from .data import TuiData
 from .follow import TuiFollow, run_follow_up
 from .main_screen import MainScreen
-from .unlock import PassphraseScreen, unlock_flash, unlock_flow
+from .unlock import PassphraseScreen, unlock_flash
 from .workspace import WorkspaceScreen
 
 
@@ -388,10 +389,8 @@ class MsksTuiApp(App):
                 message = await unlock_flow(
                     self.data,
                     self.ask_passphrase_once,
-                    spent_line=(
-                        "secrets stay locked — this session's "
-                        "passphrase prompt was already asked; the "
-                        "secrets page's u action asks again"
+                    spent_line=SPENT_PROMPT_LINE.format(
+                        "the secrets page's u action"
                     ),
                 )
             if message is not None:

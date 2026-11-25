@@ -191,7 +191,11 @@ settings = 2
 # leaf's identity/decrypt names (a rank-1 to rank-0 edge). #515
 # review round: +2 — the corruption diagnostic (addressed) and
 # the CLI's named AgeCryptoError catch.
-agecrypto = 12
+# #1147: the key loading moved from the TUI's unlock module into
+# the client's shared core — the TUI's statement gone, its two
+# names joining the core's — so the same coupling costs one
+# statement (and its module edge) fewer.
+agecrypto = 10
 # #874: the config split — the validator leaf imports the unique-
 # key loader beside the config module's own writes.
 configio = 4

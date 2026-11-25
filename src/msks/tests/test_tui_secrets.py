@@ -1838,7 +1838,14 @@ async def test_the_unlock_names_a_file_that_is_no_key(
     async with app.run_test() as pilot:
         await open_secrets(pilot, app)
         await pilot.press("u")
-        await wait_for(lambda: "not a private key" in page_status(app))
+        # The crypto's named refusal, not the generic failure a
+        # raised exception would flash (#1147 review).
+        await wait_for(
+            lambda: (
+                "unlock refused: " in page_status(app)
+                and "not a private key" in page_status(app)
+            )
+        )
 
 
 async def test_a_cancelled_passphrase_leaves_the_rows_named_locked(

@@ -1,26 +1,19 @@
-"""The TUI's unlock flow (#515, #504).
+"""The TUI's unlock modal (#515, #504, #1147).
 
-The tree offers the unlock itself: at start (the app's mount
-worker) and from the secrets page's ``u`` action, the configured
-identity file's private half decrypts the pending rows the daemon
-reports locked, and the plaintext rides the authenticated API
-back. The flow is one shared coroutine both surfaces call — the
-only difference is where the one passphrase prompt modal lands
-and which status line flashes the outcome. A start that met an
-unreachable daemon re-runs once when the daemon first answers
-(#920): the flow's fetch never ran to an outcome, so the app
-arms the re-run and the listing's first answered refresh fires
-it — the same flow, the same prompt rule. The flows serialize
-on the app's turnstile and share one prompt seam: whichever
-surface asks, the ask spends the session's prompt, and the
-automatic re-run answers a spent prompt as a cancel.
+The flow itself is the client's shared half
+(:mod:`msks.client.unlock`): the tree offers it at start (the
+app's mount worker) and from the secrets page's ``u`` action, and
+the configured identity file's private half decrypts the pending
+rows the daemon reports locked. What lives here is the tree's
+own prompt seam — the one passphrase modal a session asks
+(:class:`PassphraseScreen`) and the outcome line's escape for the
+status line's markup — the pieces the GUI does not share, its
+prompt being a Qt dialog over the window's own thread.
 
-An agent-held key cannot unlock (#510): ssh-agent exposes
-signing, and the unwrap needs the private scalar directly, so
-the flow reads the file ``identity_file`` /
-``MSKSC_IDENTITY_FILE`` names and prompts once when that file is
-passphrase-encrypted — the one prompt per session the acceptance
-bar names.
+The flows serialize on the app's turnstile and share one prompt
+seam: whichever surface asks, the ask spends the session's
+prompt, and the automatic re-run answers a spent prompt as a
+cancel (#920).
 """
 
 from pathlib import Path
@@ -32,16 +25,6 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Input, Static
-
-from msks.agecrypto import AgeCryptoError, key_is_encrypted, load_identity
-
-from ..ssh import configured_identity_file
-from ..unlock import (
-    decrypt_rows,
-    locked_rows,
-    read_identity_pem,
-    value_items,
-)
 
 
 class PassphraseScreen(ModalScreen[str | None]):
@@ -122,127 +105,6 @@ class PassphraseScreen(ModalScreen[str | None]):
         except NoMatches:
             pass  # teardown already unmounted the field
         self.dismiss(answer)
-
-
-def prompt_refusal(path: Path, spent_line: str | None) -> str:
-    """The empty prompt answer's named line (#515, #920): the
-    spent line the automatic re-run passes — a prompt another
-    surface already asked — else the cancel line that names
-    the passphrase the file needs."""
-    if spent_line:
-        return spent_line
-    return (
-        "secrets stay locked — the unlock needs the "
-        f"key file's passphrase ({path.name})"
-    )
-
-
-async def session_identity(path, ask_passphrase, spent_line=None):
-    """The configured key loaded for this session (#515): the
-    pair of the unwrap-ready identity and the outcome line that
-    ends the flow early — the loaded identity, or the named
-    refusal (a cancelled prompt, an unreadable file, a key the
-    crypto refuses). *ask_passphrase* owns the encrypted-key
-    prompt: the modal in the tree, a constant in tests.
-    *spent_line* re-answers an empty answer the caller knows
-    was a spent prompt rather than a cancel (#920): the
-    automatic re-run passes it; the cancel line stays the
-    default."""
-    try:
-        key_pem = read_identity_pem(path)
-        answer = ""
-        if key_is_encrypted(key_pem):
-            answer = await ask_passphrase(path)
-            if not answer:
-                return None, prompt_refusal(path, spent_line)
-        return load_identity(key_pem, lambda: answer), None
-    except SystemExit as exc:
-        return None, str(exc)
-    except AgeCryptoError as exc:
-        return None, f"unlock refused: {exc}"
-
-
-def locked_refusal(rows: list, corrupt: list) -> str:
-    """The nothing-opened outcome (#515): no stanza matched the
-    key — another operator's rows — with the rows that failed to
-    open named for the re-mint they need."""
-    plural = "" if len(rows) == 1 else "s"
-    line = (
-        f"{len(rows)} placeholder row{plural} stay locked — the "
-        "key opens none of them"
-    )
-    if corrupt:
-        line += f" ({len(corrupt)} failed to open; re-mint them)"
-    return line
-
-
-def unlock_outline(unlocked: list, left: list, corrupt: list) -> str:
-    """The flow's outcome line: the rows the upload unlocked,
-    the ones whose ciphertext failed to open (a re-mint), and
-    the ones that stayed ciphertext — another operator's."""
-    outline = f"unlocked {len(unlocked)} placeholder row"
-    outline += "s" if len(unlocked) != 1 else ""
-    if corrupt:
-        outline += f"; {len(corrupt)} failed to open (re-mint)"
-    if left:
-        outline += (
-            f"; {len(left)} stay ciphertext (no stanza matches this key)"
-        )
-    return outline
-
-
-async def upload_unlocked(data, unlocked: list) -> None:
-    """The flow's upload half (#515): the decrypted values back
-    over the authenticated API — the one item builder the CLI
-    shares."""
-    await data.unlock_secrets(value_items(unlocked))
-
-
-def quiet_line(explicit: bool, named: str) -> str | None:
-    """The two quiet gates' shared shape (#515): the mount-time
-    flow says nothing when there is nothing to do, and an
-    explicit ask — the page's ``u`` action — names the line the
-    operator's question answers."""
-    if not explicit:
-        return None
-    return named
-
-
-async def unlock_flow(
-    data, ask_passphrase, explicit: bool = False, spent_line=None
-) -> str | None:
-    """The shared session unlock (#515): the configured identity
-    against the daemon's locked rows. Returns the outcome line to
-    flash, or None when there is nothing to say (no identity
-    configured, or the daemon already holds every row's
-    plaintext) — *explicit* turns both quiet cases into named
-    lines, the page's ``u`` action answering an operator who
-    asked. *spent_line* rides to the prompt's refusal
-    (:func:`session_identity`)."""
-    path = configured_identity_file()
-    if path is None:
-        return quiet_line(
-            explicit,
-            "the unlock needs the workspace identity's private "
-            "half — point identity_file (the client config) or "
-            "MSKSC_IDENTITY_FILE at your key file",
-        )
-    rows = locked_rows(await data.pending_secrets())
-    if not rows:
-        return quiet_line(
-            explicit,
-            "nothing to unlock — the daemon holds every row's plaintext",
-        )
-    identity, refused = await session_identity(
-        path, ask_passphrase, spent_line
-    )
-    if refused is not None:
-        return refused
-    unlocked, left, corrupt = decrypt_rows(rows, identity)
-    if not unlocked:
-        return locked_refusal(rows, corrupt)
-    await upload_unlocked(data, unlocked)
-    return unlock_outline(unlocked, left, corrupt)
 
 
 def unlock_flash(message: str) -> str:

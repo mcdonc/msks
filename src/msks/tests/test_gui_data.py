@@ -11,7 +11,12 @@ import httpx
 import pytest
 from msks.client import data as clientdata
 from msks.client import env as env_mod
+from msks.client import unlock as unlock_mod
 from msks.client.gui import data as data_mod
+from test_client_unlock import pending_row
+from testkeys import encrypted, mint
+
+from msks import agecrypto
 
 URL = "https://127.0.0.1:9660"
 
@@ -571,3 +576,171 @@ async def test_start_spawns_the_holder_for_forward_rows(
     data = data_mod.GuiData(transport=httpx.MockTransport(handler))
     assert await data.start("ws-1") == reply
     assert spawned == ["ws-1"]
+
+
+async def test_the_unlock_prepare_gathers_the_rows_and_the_key_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The unlock's first flight (#1147): the pending exchange
+    with the configured key file's state — the locked rows, the
+    path, and the passphrase need — under ``line`` the words that
+    end the flow instead: the by-hand ask's warm-store line, the
+    automatic flow's silence (None), the missing identity's line,
+    and an unreadable file's refusal. A warm store asks the
+    daemon once and reads no key file; a missing identity asks
+    the daemon nothing."""
+    gui_env(monkeypatch)
+    pem, _pub = mint("ed25519")
+    keyfile = tmp_path / "enc-key"
+    keyfile.write_text(encrypted(pem))
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(keyfile))
+    seen: list[tuple[str, str, dict | None]] = []
+    row = pending_row(1, "a", [("h", b"x")])
+    data = data_mod.GuiData(
+        transport=scripted(
+            [
+                (
+                    "GET",
+                    "/api/v1/secrets/pending",
+                    httpx.Response(200, json=[row]),
+                )
+            ],
+            seen,
+        )
+    )
+    assert await data.unlock_prepare(False) == {
+        "line": None,
+        "rows": [row],
+        "path": keyfile,
+        "encrypted": True,
+    }
+    data = data_mod.GuiData(
+        transport=scripted(
+            [("GET", "/api/v1/secrets/pending", httpx.Response(200, json=[]))],
+            seen,
+        )
+    )
+    assert await data.unlock_prepare(True) == {
+        "line": unlock_mod.NOTHING_LOCKED_LINE,
+        "rows": None,
+        "path": keyfile,
+        "encrypted": False,
+    }
+    assert [request[:2] for request in seen] == [
+        ("GET", "/api/v1/secrets/pending")
+    ] * 2
+
+    seen.clear()
+    monkeypatch.delenv("MSKSC_IDENTITY_FILE")
+    data = data_mod.GuiData(transport=scripted([], seen))
+    assert await data.unlock_prepare(False) == {
+        "line": None,
+        "rows": None,
+        "path": None,
+        "encrypted": False,
+    }
+    assert (await data.unlock_prepare(True))[
+        "line"
+    ] == unlock_mod.MISSING_IDENTITY_LINE
+    assert seen == []  # the daemon was never asked
+
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(tmp_path / "missing"))
+    data = data_mod.GuiData(
+        transport=scripted(
+            [
+                (
+                    "GET",
+                    "/api/v1/secrets/pending",
+                    httpx.Response(200, json=[row]),
+                )
+            ],
+            seen,
+        )
+    )
+    offering = await data.unlock_prepare(False)
+    assert offering["rows"] is None
+    assert offering["encrypted"] is False
+    assert "cannot read the identity file" in offering["line"]
+
+    # A file that is no key: the crypto's refusal ends the flow
+    # on the worker, the line carried — never an escaped error.
+    junk = tmp_path / "junk"
+    junk.write_text("not a key at all")
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(junk))
+    data = data_mod.GuiData(
+        transport=scripted(
+            [
+                (
+                    "GET",
+                    "/api/v1/secrets/pending",
+                    httpx.Response(200, json=[row]),
+                )
+            ],
+            seen,
+        )
+    )
+    offering = await data.unlock_prepare(False)
+    assert offering["rows"] is None
+    assert offering["line"] == "unlock refused: not a private key file"
+
+
+async def test_the_unlock_finish_loads_and_uploads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The unlock's second flight (#1147): the key file opens
+    under the passphrase, the rows it opens upload over the
+    shared unlock exchange, and the outline comes back; a wrong
+    passphrase answers the crypto's refusal with no exchange,
+    and a refused upload arrives carried like every call's."""
+    gui_env(monkeypatch)
+    pem, pub = mint("ed25519")
+    keyfile = tmp_path / "enc-key"
+    keyfile.write_text(encrypted(pem))
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(keyfile))
+    seen: list[tuple[str, str, dict | None]] = []
+    row = pending_row(7, "a", [("h", agecrypto.encrypt(b"tok", pub))])
+    data = data_mod.GuiData(
+        transport=scripted(
+            [
+                (
+                    "POST",
+                    "/api/v1/secrets/unlock",
+                    httpx.Response(200, json={"unlocked": [7]}),
+                )
+            ],
+            seen,
+        )
+    )
+    assert await data.unlock_finish([row], keyfile, "pw") == (
+        "unlocked 1 placeholder row"
+    )
+    assert seen == [
+        (
+            "POST",
+            "/api/v1/secrets/unlock",
+            {"values": [{"placeholder_id": 7, "value": "tok"}]},
+        )
+    ]
+
+    seen.clear()
+    data = data_mod.GuiData(transport=scripted([], seen))
+    line = await data.unlock_finish([row], keyfile, "wrong")
+    assert line.startswith("unlock refused:")
+    assert seen == []
+
+    data = data_mod.GuiData(
+        transport=scripted(
+            [
+                (
+                    "POST",
+                    "/api/v1/secrets/unlock",
+                    httpx.Response(409, json={"detail": "window closed"}),
+                )
+            ],
+            seen,
+        )
+    )
+    with pytest.raises(clientdata.RestFailure) as refused:
+        await data.unlock_finish([row], keyfile, "pw")
+    assert "window closed" in str(refused.value)
+    assert not refused.value.reach

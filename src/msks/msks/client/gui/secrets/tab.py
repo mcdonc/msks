@@ -19,7 +19,10 @@ request) coalesce behind a short window into one re-read while
 the tab owns the window, so the page holds no Refresh button.
 The TTL column counts down from the deadline epoch the presenter lands
 — a per-second repaint over the cached models, no daemon call
-per tick. Mint opens the form (:mod:`.mint`), renew opens the
+per tick. Mint opens the form (:mod:`.mint`), Unlock hands
+the ask to the window's own flow (:mod:`msks.client.gui.unlock`,
+#1147 — the prompt and the flights are the flow's, the outcome
+lands on this tab's status line), renew opens the
 TTL picker, and revoke asks first — each action landing
 through the bridge with the listing refreshed behind it. The
 sentinel pane is gone (#997): the page renders the two tables
@@ -136,6 +139,11 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
     flashes the status line while the groups already on screen
     stand."""
 
+    #: The Unlock button's ask (#1147): the window's flow takes
+    #: it from there — the passphrase prompt, the flights, and
+    #: the outcome on this tab's status line.
+    unlock_asked = QtCore.Signal()
+
     def __init__(self, bridge) -> None:
         super().__init__()
         self.bridge = bridge
@@ -193,6 +201,9 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         self.mint_button = QtWidgets.QPushButton("Mint…", self)
         self.mint_button.clicked.connect(self.open_mint)
         self.mint_button.installEventFilter(self)
+        self.unlock_button = QtWidgets.QPushButton("Unlock…", self)
+        self.unlock_button.clicked.connect(self.unlock_asked)
+        self.unlock_button.installEventFilter(self)
         self.counts = QtWidgets.QLabel("", self)
         self.counts.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
@@ -213,11 +224,12 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
     def layout_widgets(self) -> None:
         """The tab's panes (#997, #1011, #1060): the placeholder
         listing and the audit group stacked full width — each
-        spanning the window's whole width — the Mint button and
-        the flash line in a row at the bottom of the page, and
-        the standing counts on the bottom line."""
+        spanning the window's whole width — the Mint and Unlock
+        buttons and the flash line in a row at the bottom of the
+        page, and the standing counts on the bottom line."""
         bar = QtWidgets.QHBoxLayout()
         bar.addWidget(self.mint_button)
+        bar.addWidget(self.unlock_button)
         bar.addWidget(self.status, stretch=1)
         listing = QtWidgets.QGroupBox(cells.LIST_GROUP, self)
         listing_rows = QtWidgets.QVBoxLayout(listing)
@@ -673,24 +685,24 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
     def eventFilter(
         self, watched: QtCore.QObject, event: QtCore.QEvent
     ) -> bool:
-        """The Mint button's arrow bridges (#962's rule) beside a
-        pane's own resize (#997): Up from the page's bottom
-        button climbs the reading order — the audit group above
-        it — and Down hands the keyboard out of the page, onward
-        down the chain (the strip the wrap reaches), so the
-        arrows cross the page in reading order without a Tab; a
-        group pane's resize re-flows its columns.
+        """The bar buttons' arrow bridges (#962's rule) beside a
+        pane's own resize (#997): Up from a bottom button climbs
+        the reading order — the audit group above it — and Down
+        hands the keyboard out of the page, onward down the chain
+        (the strip the wrap reaches), so the arrows cross the
+        page in reading order without a Tab; a group pane's
+        resize re-flows its columns.
         """
         self.pane_resized(watched, event)
-        if watched is not self.mint_button or (
+        if watched not in (self.mint_button, self.unlock_button) or (
             event.type() != QtCore.QEvent.Type.KeyPress
         ):
             return super().eventFilter(watched, event)
         if event.key() == QtCore.Qt.Key.Key_Up:
-            QtWidgets.QWidget.focusNextPrevChild(self.mint_button, False)
+            QtWidgets.QWidget.focusNextPrevChild(watched, False)
             return True
         if event.key() == QtCore.Qt.Key.Key_Down:
-            QtWidgets.QWidget.focusNextPrevChild(self.mint_button, True)
+            QtWidgets.QWidget.focusNextPrevChild(watched, True)
             return True
         return super().eventFilter(watched, event)
 

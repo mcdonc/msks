@@ -12,13 +12,24 @@ the two clients share the door, and the per-client surface
 grows here and there as their screens diverge: the images
 tab's gathered read (#964) composes the shared door's own
 calls with the client-side manifest fetch here, so the tab's
-one refresh stays one flight. The screens plug fakes here for
-the tests, and the bridge (:mod:`msks.client.gui.bridge`)
-runs these coroutines off the GUI thread.
+one refresh stays one flight. The unlock (#1147) runs as two
+flights over the same door: the fetch with the key file's state,
+then the load, decrypt, and upload under the passphrase the
+window asked for — the client's shared flow
+(:mod:`msks.client.unlock`) between them. The screens plug fakes
+here for the tests, and the bridge
+(:mod:`msks.client.gui.bridge`) runs these coroutines off the GUI
+thread.
 """
 
 from ..data import RestData
 from ..images import fetch_manifest
+from ..unlock import (
+    key_file_state,
+    open_key_file,
+    prepare_unlock,
+    settle_unlock,
+)
 from .imagerows import daemon_machine, served_rows
 
 
@@ -60,5 +71,49 @@ class GuiData(RestData):
                 "secrets": await self.secrets(),
                 "audit": await self.secret_audit(),
             }
+
+        return await self.carried(build)
+
+    async def unlock_prepare(self, explicit: bool) -> dict:
+        """The unlock's first flight (#1147): the daemon's locked
+        rows and the configured key file's state for the window's
+        prompt decision — the rows, the file's path, and whether
+        it asks for a passphrase. A flow that ends here answers
+        the rows as None: under ``line`` the words that end it
+        (the by-hand ask's name for a warm store or a missing
+        identity, an unreadable file's refusal), or None for the
+        automatic flow's silence. The same fetch the TUI's flow
+        opens with: the fetch precedes the load (#515 review), so
+        a warm store reads no key file at all."""
+
+        async def build() -> dict:
+            rows, path, line = await prepare_unlock(self, explicit)
+            encrypted = False
+            if rows is not None:
+                encrypted, refused = key_file_state(path)
+                if refused is not None:
+                    rows, line = None, refused
+            return {
+                "line": line,
+                "rows": rows,
+                "path": path,
+                "encrypted": encrypted,
+            }
+
+        return await self.carried(build)
+
+    async def unlock_finish(self, rows: list[dict], path, answer: str) -> str:
+        """The unlock's second flight (#1147): the key file loaded
+        under the passphrase answer, the rows the key opens
+        uploaded, and the outcome line — the refusal when the
+        load refuses (a wrong passphrase, a file that is no key),
+        the rows-left-locked line when the key opens nothing, the
+        outline otherwise."""
+
+        async def build() -> str:
+            identity, refused = open_key_file(path, answer)
+            if refused is not None:
+                return refused
+            return await settle_unlock(self, rows, identity)
 
         return await self.carried(build)

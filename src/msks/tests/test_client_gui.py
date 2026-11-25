@@ -610,6 +610,7 @@ def test_open_window_reuses_an_existing_app(
     from msks.client.gui import menubar as menubar_mod
     from msks.client.gui import scheme as scheme_mod
     from msks.client.gui import tabs as tabs_mod
+    from msks.client.gui import unlock as unlock_mod
     from msks.client.gui import workspace as workspace_mod
     from msks.client.gui import zoom as zoom_mod
     from msks.client.gui.bridge import Bridge
@@ -762,6 +763,7 @@ def test_open_window_reuses_an_existing_app(
     monkeypatch.setattr(images_tab_mod, "ImagesTab", FakeImagesTab)
 
     secrets_built: list[object] = []
+    secrets_tabs: list[object] = []
 
     class FakeSecretsTab:
         """The Secrets tab's stub (#966): the window path builds
@@ -770,8 +772,29 @@ def test_open_window_reuses_an_existing_app(
 
         def __init__(self, bridge: object) -> None:
             secrets_built.append(bridge)
+            secrets_tabs.append(self)
 
     monkeypatch.setattr(secrets_tab_mod, "SecretsTab", FakeSecretsTab)
+
+    unlock_windows: list[object] = []
+    unlock_retargets: list[tuple[object, object, object]] = []
+
+    class FakeUnlockFlow:
+        """The unlock flow's stub (#1147): the window path builds
+        one flow over the window before the first tree lands, and
+        every landing retargets it at the fresh tree's bridge,
+        listing, and Secrets tab — the recording pins the
+        handoffs; the flow's own suite runs the real one."""
+
+        def __init__(self, window: object) -> None:
+            unlock_windows.append(window)
+
+        def retarget(
+            self, bridge: object, listing: object, secrets: object
+        ) -> None:
+            unlock_retargets.append((bridge, listing, secrets))
+
+    monkeypatch.setattr(unlock_mod, "UnlockFlow", FakeUnlockFlow)
 
     class FakeTabs:
         """The strip the shell lands under (#962): the stub the
@@ -986,6 +1009,15 @@ def test_open_window_reuses_an_existing_app(
 
     assert images[:1] == [(started[0], channel_url(None))]
     assert secrets_built[:1] == [started[0]]  # the same bridge (#966)
+    # The unlock flow (#1147): one flow over the window, built
+    # before the first tree landed, and each landing's own
+    # retarget — the first tree's and the re-dial's, each at its
+    # bridge, its listing, and its Secrets tab.
+    assert unlock_windows == [windows[0]]
+    assert unlock_retargets == [
+        (started[0], listings[0], secrets_tabs[0]),
+        (started[1], listings[1], secrets_tabs[1]),
+    ]
     assert [label for _page, label in central[0].pages] == [
         "Images",
         "Secrets",
@@ -1030,6 +1062,7 @@ def test_open_window_keeps_a_user_style_choice(
     from msks.client.gui import menubar as menubar_mod
     from msks.client.gui import scheme as scheme_mod
     from msks.client.gui import tabs as tabs_mod
+    from msks.client.gui import unlock as unlock_mod
     from msks.client.gui import workspace as workspace_mod
     from msks.client.gui import zoom as zoom_mod
     from msks.client.gui.bridge import Bridge
@@ -1040,6 +1073,22 @@ def test_open_window_keeps_a_user_style_choice(
     # install is stubbed the same way as the reuse test's, the
     # construction itself pinned in the bar's own suite.
     monkeypatch.setattr(menubar_mod, "install_bar", lambda window: None)
+
+    # The unlock flow's stub (#1147): the style test reads the
+    # environment and the app font only; the flow's retarget
+    # needs the stubs' signals it cannot find, and the real flow
+    # runs in its own suite.
+
+    class FakeUnlockFlow:
+        def __init__(self, window: object) -> None:
+            pass
+
+        def retarget(
+            self, bridge: object, listing: object, secrets: object
+        ) -> None:
+            pass
+
+    monkeypatch.setattr(unlock_mod, "UnlockFlow", FakeUnlockFlow)
 
     # The Ctrl-C wiring's stub (#1037): armed, the settle an
     # identity — the style test reads the environment and the

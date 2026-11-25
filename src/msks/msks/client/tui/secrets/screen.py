@@ -14,10 +14,11 @@ from textual.events import Resize
 from textual.screen import Screen
 from textual.widgets import Footer, ListItem, ListView, Static
 
+from ...unlock import unlock_flow
 from ..detail import status_content
 from ..help import HelpKeys
 from ..link import AuditLink
-from ..unlock import unlock_flash, unlock_flow
+from ..unlock import unlock_flash
 from .audit import SecretAuditScreen
 from .cells import (
     SECRET_COLUMNS,

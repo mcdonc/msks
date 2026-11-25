@@ -88,10 +88,13 @@ in memory as an unencrypted OpenSSH-format key (`ed25519`, `ecdsa`
 P-256/P-384/P-521, or `rsa`). msks never types a passphrase.
 
 A passphrase-encrypted `identity_file` raises the session's one passphrase
-prompt when the daemon's locked secret rows need it. The TUI asks once when
-the tree opens, and the answer unlocks every locked secret row for the
-session. Escape or Cancel leaves the secrets locked. They stay named on the
-secrets page and re-askable there.
+prompt when the daemon's locked secret rows need it. The TUI asks once per
+session, when the tree opens. The GUI asks once per window session: the window
+offers the unlock when it opens and after each connection pick, and one ask
+serves the session. The answer unlocks every locked secret row for the
+session. Escape or Cancel leaves the secrets locked. They stay named as
+`locked`, on the TUI's secrets page and the GUI's Secrets tab, and the `u`
+action or the Unlock button asks again.
 
 ### `pubkey_file`: the public half
 

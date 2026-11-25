@@ -8,6 +8,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI unlocks secrets (#1147).** `msks gui` offers the secrets
+  unlock when the window opens and after a connection pick, and the
+  Secrets tab's new **Unlock…** button asks for it by hand. A
+  passphrase-encrypted `identity_file` opens one masked passphrase
+  dialog per window session, the same rule the TUI keeps: the
+  automatic flow asks once, the button asks again. The outcome shows
+  on the status line of the screen the ask stood on. See
+  [docs/secrets.md](secrets.md#the-clients-half).
 - **`nested` / `MSKSD_NESTED` (#1140).** A daemon setting, off by
   default, that lets workspaces run VMs of their own: every
   workspace start passes cloud-hypervisor's `nested` flag, so the
@@ -17,6 +25,7 @@ tagged `vX.Y.Z`.
   until the setting is on. On x86_64 the daemon warns at startup
   and `msksd doctor` names the module option when the host's KVM
   does not nest. See [docs/config.md](config.md).
+
 ### Fixed
 
 - **A refused start in the TUI opens the failure panel (#1139).** `s`
