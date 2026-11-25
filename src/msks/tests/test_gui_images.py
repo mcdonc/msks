@@ -3,8 +3,9 @@ the two labeled groups, the import behind its progress dialog,
 the remove behind its confirmation, and the default designation
 — every daemon exchange through the stub bridge's signal
 emits, the bridge's own tests holding the real worker's
-contract. The widget runs under the offscreen platform on every
-host (#939's fixture shape).
+contract. The button rows under the groups (#1161) act on the
+held row, the menus' own paths. The widget runs under the
+offscreen platform on every host (#939's fixture shape).
 """
 
 import importlib.util
@@ -203,6 +204,28 @@ def row_of(tab, ref: str) -> int:
         if item is not None and (item.data(images_mod.ROW_KEY_ROLE) == url):
             return row
     raise AssertionError(f"{ref!r} shows on no row")
+
+
+def catalog_row_of(tab, ref: str) -> int:
+    """The row a catalog ref shows on (#1161's fakes read): the
+    row's own hash key resolves it, wherever its sort lands it."""
+    model = next(m for m in tab.catalog_models if m.ref == ref)
+    table = tab.catalog_table
+    for row in range(table.rowCount()):
+        item = table.item(row, 0)
+        if item is not None and (
+            item.data(images_mod.ROW_KEY_ROLE) == model.hash
+        ):
+            return row
+    raise AssertionError(f"{ref!r} shows on no row")
+
+
+def clear_hold(table) -> None:
+    """The operator's cleared hold (#1161's fakes read): no
+    selected row and no current one, the way a rebuild that
+    drops the held image leaves the table."""
+    table.clearSelection()
+    table.selectionModel().clearCurrentIndex()
 
 
 def test_the_open_tab_issues_its_first_refresh(qt) -> None:
@@ -736,11 +759,18 @@ def test_the_flash_clears_after_its_span(qt) -> None:
 
 
 def test_the_tab_carries_no_refresh_button(qt) -> None:
-    """#1060: the page holds no button — the pushed frames and
-    the show re-read the page, so nothing stands on it to
-    press."""
+    """#1060: the page holds no Refresh button — the pushed
+    frames and the show re-read the page. The push buttons it
+    carries (#1161) are the two groups' action rows, and no
+    other."""
     tab, window, _bridge = make_tab(qt)
-    assert not tab.findChildren(qt.QtWidgets.QPushButton)
+    buttons = tab.findChildren(qt.QtWidgets.QPushButton)
+    assert [button.text() for button in buttons] == [
+        "Details…",
+        "Set as the default",
+        "Remove…",
+        "Import…",
+    ]
     window.close()
 
 
@@ -1551,7 +1581,10 @@ def channel_rows() -> list[dict]:
 
 def make_channel_tab(qt, width: int) -> tuple:
     """The tab over the screenshot-shaped channel, at the width
-    the pane reads (#964's fakes)."""
+    the pane reads (#964's fakes). The published pane's own box
+    takes that width: the button rows under the groups (#1161)
+    hold the window wider than a tight pane, and the fakes read
+    the pane, not the window."""
     bridge = StubBridge()
     tab = images_mod.ImagesTab(bridge, CHANNEL)
     window = qt.QtWidgets.QMainWindow()
@@ -1561,6 +1594,7 @@ def make_channel_tab(qt, width: int) -> tuple:
     tab.on_succeeded(
         images_mod.PAGE_KEY, page_answer(catalog_raw(), channel_rows())
     )
+    tab.published_table.parentWidget().setMaximumWidth(width)
     qt.app.processEvents()
     return tab, window
 
@@ -1654,9 +1688,10 @@ def test_a_spare_pane_spreads_the_room(qt) -> None:
 
 
 def test_the_flash_line_sits_below_the_groups(qt) -> None:
-    """The page's standing shape (#964, #1011, #1060): the
-    flash line below the two groups it reads, the standing
-    counts beneath it — no button on the page, the pushed
+    """The page's standing shape (#964, #1011, #1060, #1161):
+    the flash line below the two groups it reads — each with
+    its button row inside it (#1161) — the standing counts
+    beneath them, and no Refresh button on the page: the pushed
     frames re-read it."""
     tab, window, _bridge = make_tab(qt)
     layout = tab.layout()
@@ -1731,4 +1766,268 @@ def test_a_fetch_line_wears_the_chromes_own_text(qt) -> None:
     tab.refresh()
     assert tab.status.text().startswith("fetching")
     assert tab.status.kind is None
+
+
+# -- the button rows (#1161) -----------------------------------------------
+
+
+def fake_detail(monkeypatch, opened: list[dict]) -> None:
+    """The detail dialog's stub (#1161's fakes read): every open
+    records its raw row and answers at once."""
+    monkeypatch.setattr(
+        images_mod,
+        "ImageDetailDialog",
+        lambda row, parent=None: (
+            opened.append(row) or SimpleNamespace(exec=lambda: 0)
+        ),
+    )
+
+
+def test_the_groups_carry_their_button_rows(qt) -> None:
+    """The button rows' place (#1161): under each group's table,
+    inside its labeled box — the buttons from the left, the
+    spare stretching away, the Workspaces tab's own row. The
+    catalog's three and the published pane's Import…; the page's
+    own layout stands as it was."""
+    tab, window, _bridge = make_tab(qt)
+    groups = (
+        (
+            tab.catalog_table,
+            tab.detail_button,
+            tab.default_button,
+            tab.remove_button,
+        ),
+        (tab.published_table, tab.import_button),
+    )
+    for table, *buttons in groups:
+        box = table.parentWidget()
+        assert isinstance(box, qt.QtWidgets.QGroupBox)
+        inner = box.layout()
+        assert inner.itemAt(0).widget() is table
+        row = inner.itemAt(1)
+        assert [row.itemAt(i).widget() for i in range(len(buttons))] == buttons
+        assert row.itemAt(len(buttons)).spacerItem() is not None  # the spare
+    layout = tab.layout()
+    assert layout.itemAt(0).widget().title() == cells.CATALOG_GROUP
+    assert layout.itemAt(1).widget().title() == cells.PUBLISHED_GROUP
+    assert layout.itemAt(2).widget() is tab.status
+    assert layout.itemAt(3).widget() is tab.counts
+    window.close()
+
+
+def test_an_empty_selection_disables_every_button(qt, monkeypatch) -> None:
+    """The rows' rule (#1161, the Workspaces tab's): every button
+    stands disabled while no row of its group is held — a page
+    with no rows, and a hold the operator cleared, alike — and
+    the slots behind them decide nothing with no hold: a
+    disabled button's click never reaches them, and a direct
+    call answers the same silence."""
+    opened: list[dict] = []
+    fake_detail(monkeypatch, opened)
+    bridge = StubBridge()
+    tab = images_mod.ImagesTab(bridge, CHANNEL)
+    window = qt.QtWidgets.QMainWindow()
+    window.setCentralWidget(tab)
+    window.show()
+    tab.on_succeeded(
+        images_mod.PAGE_KEY, page_answer(catalog=[], published=[])
+    )
+    monkeypatch.setattr(tab, "confirm_remove", lambda ref: True)
+    buttons = tab.findChildren(qt.QtWidgets.QPushButton)
+    assert len(buttons) == 4
+    assert not any(button.isEnabled() for button in buttons)
+    # A filled page holds its first rows: every button stands
+    # enabled...
+    tab.on_succeeded(images_mod.PAGE_KEY, page_answer())
+    assert all(button.isEnabled() for button in buttons)
+    # ...and a cleared hold in one group disables that group's
+    # buttons alone.
+    clear_hold(tab.catalog_table)
+    assert not tab.detail_button.isEnabled()
+    assert not tab.default_button.isEnabled()
+    assert not tab.remove_button.isEnabled()
+    assert tab.import_button.isEnabled()
+    clear_hold(tab.published_table)
+    assert not tab.import_button.isEnabled()
+    bridge.calls.clear()
+    tab.detail_held()
+    tab.default_held()
+    tab.remove_held()
+    tab.import_held()
+    assert opened == []
+    assert bridge.calls == []
+    window.close()
+
+
+def test_the_catalog_buttons_take_the_menus_own_paths(qt, monkeypatch) -> None:
+    """The catalog group's buttons (#1161): Details… opens the
+    held row's detail, Set as the default posts its designation,
+    and Remove… asks first — the three paths the row's menu
+    drives, on the row the operator holds."""
+    opened: list[dict] = []
+    fake_detail(monkeypatch, opened)
+    tab, window, bridge = make_tab(qt)
+    bridge.calls.clear()
+    tab.catalog_table.selectRow(catalog_row_of(tab, "ubuntu:24.04"))
+    tab.detail_button.click()
+    assert opened == [catalog_raw()[1]]
+    tab.default_button.click()
+    assert bridge.calls == [
+        (images_mod.DEFAULT_KEY, "set_default_image", ("b" * 64,))
+    ]
+    tab.on_succeeded(images_mod.DEFAULT_KEY, {"ref": "ubuntu:24.04"})
+    monkeypatch.setattr(tab, "confirm_remove", lambda ref: False)
+    tab.remove_button.click()
+    assert len(bridge.calls) == 2  # the catalog read; the No sent nothing
+    monkeypatch.setattr(tab, "confirm_remove", lambda ref: True)
+    tab.remove_button.click()
+    assert bridge.calls[-1] == (
+        images_mod.REMOVE_KEY,
+        "remove_image",
+        ("b" * 64,),
+    )
+    window.close()
+
+
+def test_the_import_button_starts_the_menus_import(qt) -> None:
+    """The published group's Import… (#1161): the held row starts
+    the same import its menu starts — the URL's flight behind
+    the progress dialog — and the exact build already in the
+    catalog flashes the skip the menu names."""
+    tab, window, bridge = make_tab(qt)
+    bridge.calls.clear()
+    tab.published_table.selectRow(row_of(tab, "alpine:3.21"))
+    tab.import_button.click()
+    flight = (
+        images_mod.IMPORT_KEY,
+        "import_image",
+        ("https://ch.example/alpine.tar.zst",),
+    )
+    assert bridge.calls == [flight]
+    assert tab.progress is not None and tab.progress.isVisible()
+    tab.land_import()
+    bridge.calls.clear()
+    tab.published_menu(row_of(tab, "alpine:3.21")).actions()[0].trigger()
+    assert bridge.calls == [flight]  # the menu makes the same flight
+    tab.land_import()
+    tab.published_table.selectRow(row_of(tab, "debian:13.6"))
+    tab.import_button.click()
+    assert tab.progress is None
+    assert tab.status.text() == "debian:13.6 is already in the catalog"
+    window.close()
+
+
+def test_the_button_rows_follow_the_flights(qt, monkeypatch) -> None:
+    """The rows' gates (#1161, the Workspaces tab's rule): a
+    remove or default flight out holds the catalog's three, the
+    import's dialog holds Import… back, each landing frees its
+    row, and the other row stands throughout."""
+    tab, window, bridge = make_tab(qt)
+    bridge.calls.clear()
+    monkeypatch.setattr(tab, "confirm_remove", lambda ref: True)
+    tab.remove_button.click()
+    assert bridge.calls == [
+        (images_mod.REMOVE_KEY, "remove_image", ("a" * 64,))
+    ]
+    assert not tab.detail_button.isEnabled()
+    assert not tab.default_button.isEnabled()
+    assert not tab.remove_button.isEnabled()
+    assert tab.import_button.isEnabled()  # the import's gate is its own
+    tab.on_failed(images_mod.REMOVE_KEY, RestFailure("in use", reach=False))
+    assert tab.detail_button.isEnabled()
+    assert tab.default_button.isEnabled()
+    assert tab.remove_button.isEnabled()
+    tab.published_table.selectRow(row_of(tab, "alpine:3.21"))
+    tab.import_button.click()
+    assert tab.progress is not None
+    assert not tab.import_button.isEnabled()
+    assert tab.detail_button.isEnabled()  # the catalog's three stand
+    tab.on_succeeded(
+        images_mod.IMPORT_KEY, {"ref": "alpine:3.21", "hash": "c" * 64}
+    )
+    assert tab.import_button.isEnabled()
+    window.close()
+
+
+def test_enter_on_a_held_row_takes_the_groups_action(qt, monkeypatch) -> None:
+    """Enter on a held row (#1161): a catalog row opens its detail
+    and a published row starts its import — the lists' own
+    activations, with the button rows on the page taking no
+    Enter from the list that holds the focus."""
+    opened: list[dict] = []
+    fake_detail(monkeypatch, opened)
+    tab, window, bridge = make_tab(qt)
+    bridge.calls.clear()
+    enter = qt.QtCore.Qt.Key.Key_Return
+    tab.catalog_table.selectRow(catalog_row_of(tab, "ubuntu:24.04"))
+    qt.QtTest.QTest.keyClick(tab.catalog_table, enter)
+    assert opened == [catalog_raw()[1]]
+    tab.published_table.selectRow(row_of(tab, "alpine:3.21"))
+    qt.QtTest.QTest.keyClick(tab.published_table, enter)
+    assert bridge.calls == [
+        (
+            images_mod.IMPORT_KEY,
+            "import_image",
+            ("https://ch.example/alpine.tar.zst",),
+        )
+    ]
+    assert tab.progress is not None
+    window.close()
+
+
+def test_the_button_rows_inherit_the_whole_client(qt) -> None:
+    """The rows' chrome (#1161): the buttons set no font and no
+    palette of their own, so the whole-client zoom's application
+    font and either desktop scheme's application palette reach
+    them like every other widget on the page."""
+    tab, window, _bridge = make_tab(qt)
+    attributes = qt.QtCore.Qt.WidgetAttribute
+    buttons = tab.findChildren(qt.QtWidgets.QPushButton)
+    assert not any(
+        button.testAttribute(attributes.WA_SetFont)
+        or button.testAttribute(attributes.WA_SetPalette)
+        for button in buttons
+    )
+    font, palette = qt.app.font(), qt.QtGui.QPalette(qt.app.palette())
+    try:
+        grown = qt.QtGui.QFont(font)
+        grown.setPointSizeF(font.pointSizeF() + 3)
+        qt.app.setFont(grown)
+        dark = qt.QtGui.QPalette(palette)
+        dark.setColor(
+            qt.QtGui.QPalette.ColorRole.ButtonText,
+            qt.QtGui.QColor("#ff00ff"),
+        )
+        qt.app.setPalette(dark)
+        qt.app.processEvents()  # the change events reach the widgets
+        for button in buttons:
+            assert button.font().pointSizeF() == grown.pointSizeF()
+            assert button.palette().color(
+                qt.QtGui.QPalette.ColorRole.ButtonText
+            ) == qt.QtGui.QColor("#ff00ff")
+    finally:
+        qt.app.setFont(font)
+        qt.app.setPalette(palette)
+    window.close()
+
+
+def test_the_hold_reads_only_what_stands(qt, monkeypatch) -> None:
+    """The hold's defensive reads (#1161, the Workspaces tab's
+    rule): a selection without a current row still holds its
+    first selected row; a held row whose first cell is gone
+    holds nothing, and a first cell carrying no row index holds
+    nothing — the buttons' slots decide nothing on either."""
+    opened: list[dict] = []
+    fake_detail(monkeypatch, opened)
+    tab, window, _bridge = make_tab(qt)
+    table = tab.catalog_table
+    held = tab.catalog_models[0]
+    table.selectionModel().clearCurrentIndex()
+    assert tab.held_catalog() is held  # the selected row stands in
+    table.setItem(0, 0, None)  # the first cell gone
+    assert tab.held_catalog() is None
+    tab.detail_held()
+    assert opened == []
+    table.setItem(0, 0, qt.QtWidgets.QTableWidgetItem("stranger"))
+    assert tab.held_catalog() is None  # no index behind the cell
     window.close()

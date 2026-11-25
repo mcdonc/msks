@@ -19,8 +19,12 @@ floor-checks, and the catalog refreshes when the import lands;
 a catalog row opens its detail (the shared ``image info``
 renderer's own lines); remove asks for confirmation, the same
 DELETE ``image rm`` makes; the default-image choice posts the
-designation. Refusals and failures flash the status line, the
-listing's own contract (#904).
+designation. Each group carries its button row under its table
+(#1161, :mod:`.buttons`): the actions the context menus hold,
+acting on the held row and standing disabled until one holds —
+Details…, Set as the default, and Remove… under the catalog,
+Import… under the published pane. Refusals and failures flash
+the status line, the listing's own contract (#904).
 
 This module imports PySide6 at module scope — the same contract
 as the screens' modules: the package's init imports none of it
@@ -50,6 +54,7 @@ from ..listtable import ListTable, bold_header, resized_viewport
 from ..statusflash import StatusFlash
 from ..tints import TintedLabel
 from . import layout
+from .buttons import ButtonRows
 from .cells import (
     CATALOG_COLUMNS,
     CATALOG_GROUP,
@@ -132,7 +137,7 @@ class ImageDetailDialog(Centered, QtWidgets.QDialog):
         layout.addLayout(buttons)
 
 
-class ImagesTab(FeedPage, StatusFlash, QtWidgets.QWidget):
+class ImagesTab(FeedPage, StatusFlash, ButtonRows, QtWidgets.QWidget):
     """The Images tab of the main window's strip (#964, #1060):
     the two labeled groups the presenter's models fill — at
     every show, on the feed's serve poke, and behind every
@@ -216,6 +221,10 @@ class ImagesTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         self.published_table.customContextMenuRequested.connect(
             self.published_menu_requested
         )
+        # The button rows (#1161): the mixin's four buttons over
+        # the tables and the gates, built before the layout
+        # takes them.
+        self.build_buttons()
         self.status = TintedLabel("", self)
         self.import_timer = QtCore.QTimer(self)
         self.import_timer.setInterval(IMPORT_TICK_MS)
@@ -239,18 +248,40 @@ class ImagesTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         # re-read the page now (#1060), so no button stands
         # beside it — the line takes the bar whole.
         layout = QtWidgets.QVBoxLayout(self)
-        layout.addWidget(self.group(CATALOG_GROUP, self.catalog_table))
-        layout.addWidget(self.group(PUBLISHED_GROUP, self.published_table))
+        layout.addWidget(
+            self.group(
+                CATALOG_GROUP,
+                self.catalog_table,
+                self.detail_button,
+                self.default_button,
+                self.remove_button,
+            )
+        )
+        layout.addWidget(
+            self.group(
+                PUBLISHED_GROUP, self.published_table, self.import_button
+            )
+        )
         layout.addWidget(self.status)
         layout.addWidget(self.counts)
         self.setLayout(layout)
 
-    def group(self, title: str, table: ListTable) -> QtWidgets.QGroupBox:
+    def group(
+        self, title: str, table: ListTable, *buttons: QtWidgets.QPushButton
+    ) -> QtWidgets.QGroupBox:
         """One labeled group's box (#565, the GUI's read): the
-        TUI page's own two headings, each over its table."""
+        TUI page's own two headings, each over its table, and
+        the group's button row under it (#1161) — the buttons
+        from the left, the spare stretching away, the
+        Workspaces tab's own row."""
         box = QtWidgets.QGroupBox(title, self)
         rows = QtWidgets.QVBoxLayout(box)
         rows.addWidget(table)
+        row = QtWidgets.QHBoxLayout()
+        for button in buttons:
+            row.addWidget(button)
+        row.addStretch(1)
+        rows.addLayout(row)
         return box
 
     def build_table(self, table: ListTable) -> None:
@@ -651,6 +682,7 @@ class ImagesTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         self.progress.show()
         center_on_parent(self.progress)
         self.import_timer.start()
+        self.sync_actions()  # the wait holds Import… back
         self.bridge.call(IMPORT_KEY, "import_image", model.url)
 
     def import_landed(self, result: object) -> None:
@@ -672,6 +704,7 @@ class ImagesTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         if dialog is not None:
             dialog.close()
             dialog.deleteLater()
+        self.sync_actions()
 
     @QtCore.Slot()
     def import_tick(self) -> None:
@@ -697,6 +730,7 @@ class ImagesTab(FeedPage, StatusFlash, QtWidgets.QWidget):
             return
         self.action_pending = True
         self.action_flight = model.ref
+        self.sync_actions()
         self.bridge.call(DEFAULT_KEY, "set_default_image", model.hash)
 
     def remove_row(self, model: CatalogRow) -> None:
@@ -709,6 +743,7 @@ class ImagesTab(FeedPage, StatusFlash, QtWidgets.QWidget):
             return
         self.action_pending = True
         self.action_flight = model.ref
+        self.sync_actions()
         self.bridge.call(REMOVE_KEY, "remove_image", model.hash)
 
     def confirm_remove(self, ref: str) -> bool:
@@ -719,10 +754,12 @@ class ImagesTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         return confirm(self, "Remove image", f"Remove {ref} from the catalog?")
 
     def action_landed(self) -> None:
-        """An action flight's end (#964): the gate opens and the
-        flight's target clears."""
+        """An action flight's end (#964): the gate opens, the
+        flight's target clears, and the catalog's button row
+        takes clicks again."""
         self.action_pending = False
         self.action_flight = None
+        self.sync_actions()
 
     @QtCore.Slot(QtCore.QPoint)
     def menu_requested(self, pos: QtCore.QPoint) -> None:
