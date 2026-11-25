@@ -137,9 +137,9 @@ async def test_holder_serves_one_connection() -> None:
     assert "-W" in spawn_argv[0]
     assert spawn_argv[0][spawn_argv[0].index("-W") + 1] == "127.0.0.1:8080"
     # The holder's own pin file is the one the channel pins under
-    # (#1158): the path hold() resolved reaches the argv.
-    options = " ".join(spawn_argv[0])
-    assert "UserKnownHostsFile=/kh" in options
+    # (#1158): the path the holder was given is the argv's value,
+    # whole and alone.
+    assert "UserKnownHostsFile=/kh" in spawn_argv[0]
     # Daemon bytes to the channel's stdin.
     await holder.feed(pack_frame(0, b"ping"))
     assert process.stdin.written == [b"ping"]
@@ -307,7 +307,7 @@ def test_run_hold_keys_the_host_cache_like_a_session(
 
     def fake_known_hosts(cache_ref, base=None, instance=None):
         name = f"{cache_ref}.{instance}" if instance else cache_ref
-        return f"/kh/{name}"
+        return f"/kh/{name}/known_hosts"
 
     monkeypatch.setattr(bridge, "known_hosts_path", fake_known_hosts)
     made = []
@@ -342,7 +342,9 @@ def test_run_hold_keys_the_host_cache_like_a_session(
     monkeypatch.setenv("MSKSC_URL", "https://d")
     monkeypatch.setenv("MSKSC_TOKEN", "t")
     assert bridge.run_hold("ws-id") == 0
-    assert [holder.known_hosts for holder in made] == [f"/kh/{directory}"]
+    assert [holder.known_hosts for holder in made] == [
+        f"/kh/{directory}/known_hosts"
+    ]
 
 
 def test_run_hold_names_a_refusal_close(monkeypatch) -> None:
