@@ -359,7 +359,11 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     terminals together, wherever the focus stands, and the
     desktop's color scheme paints the chrome's palette and
     the terminal grids together — light with light, dark with
-    dark, switched live when the desktop switches.
+    dark, switched live when the desktop switches. The window
+    owns the unlock flow (#1147) the same way: one flow over
+    the window's whole life, standing past the strip's swaps,
+    offering the unlock at every landing — the prompt is the
+    session's one, whichever tree asked it.
     """
     # allow-deferred-import — the bridge brings PySide6 with it
     # (module scope there); this module stays Qt-free at parse
@@ -454,6 +458,11 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     # tab, the strip the phase 4.6 pages join.
     from .tabs import IMAGES_LABEL, SECRETS_LABEL, MainTabs
 
+    # allow-deferred-import — the unlock flow (#1147) carries
+    # the screens' own contract: PySide6 at module scope, loaded
+    # only on the window path after the guards.
+    from .unlock import UnlockFlow
+
     # allow-deferred-import — the screen module brings PySide6
     # with it (module scope there, like the bridge); the window
     # path loads it after the guards — the same reachability
@@ -471,6 +480,10 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     # construction.
     connections = Connections(conf)
     tree: dict = {}
+    # The unlock flow (#1147): one per window, before the first
+    # tree lands — each landing retargets it at its own bridge,
+    # listing, and Secrets tab, and the offer stands from there.
+    unlock = UnlockFlow(window)
 
     def land() -> WorkspaceShell:
         bridge = Bridge(GuiData(), feed_factory=EventsFeed)
@@ -479,13 +492,19 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
         shell = WorkspaceShell(bridge, terminal_cmd=terminal_command(conf))
         tabs = MainTabs(shell)
         tabs.addTab(ImagesTab(bridge, channel_url(conf)), IMAGES_LABEL)
-        tabs.addTab(SecretsTab(bridge), SECRETS_LABEL)
+        secrets = SecretsTab(bridge)
+        tabs.addTab(secrets, SECRETS_LABEL)
         window.setCentralWidget(tabs)
         # The picker's menu hosts from the presenter's rows
         # (#1009): the fresh listing's own button, fed here so
         # the standing connection names itself on every build.
         shell.listing.host_presets(connections.presets())
         shell.listing.connection_picked.connect(reconnect)
+        # The unlock follows the fresh tree (#1147): its outcome
+        # flashes on the listing, the Secrets tab's button asks
+        # by hand, and the offer of the daemon's locked rows goes
+        # out at once.
+        unlock.retarget(bridge, shell.listing, secrets)
         tree["bridge"] = bridge
         tree["shell"] = shell
         return shell

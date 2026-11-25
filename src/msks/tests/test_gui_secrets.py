@@ -837,9 +837,9 @@ def test_the_page_carries_no_sentinel_pane(qt, monkeypatch) -> None:
 
 
 def test_the_action_buttons_sit_at_the_bottom(qt, monkeypatch) -> None:
-    """The page's action row (#1011, #1060): Mint alone on the
-    row at the bottom of the page — no Refresh button stands —
-    below the two groups and above the
+    """The page's action row (#1011, #1060, #1147): Mint and
+    Unlock on the row at the bottom of the page — no Refresh
+    button stands — below the two groups and above the
     standing counts, the flash line taking the row's rest."""
     tab, window, _bridge = make_tab(qt, monkeypatch)
     layout = tab.layout()
@@ -847,8 +847,25 @@ def test_the_action_buttons_sit_at_the_bottom(qt, monkeypatch) -> None:
     assert layout.itemAt(1).widget().title() == cells.AUDIT_GROUP
     bar = layout.itemAt(2)  # the page's bottom row
     assert bar.itemAt(0).widget() is tab.mint_button
-    assert bar.itemAt(1).widget() is tab.status
+    assert bar.itemAt(1).widget() is tab.unlock_button
+    assert bar.itemAt(2).widget() is tab.status
     assert layout.itemAt(3).widget() is tab.counts
+    window.close()
+
+
+def test_the_unlock_button_asks_the_windows_flow(qt, monkeypatch) -> None:
+    """The Unlock button (#1147): the tab holds no flow of its
+    own — the press emits the ask the window's flow connects
+    to, sends nothing over the bridge itself, and the listing
+    stands as it was."""
+    tab, window, bridge = make_tab(qt, monkeypatch)
+    asked: list[tuple] = []
+    tab.unlock_asked.connect(lambda: asked.append(()))
+    assert tab.unlock_button.text() == "Unlock…"
+    calls = list(bridge.calls)
+    tab.unlock_button.click()
+    assert asked == [()]
+    assert bridge.calls == calls
     window.close()
 
 
@@ -1233,10 +1250,11 @@ def test_the_mint_checks_match_the_tui_form() -> None:
 
 
 def test_the_bar_buttons_cross_by_arrows(qt, monkeypatch) -> None:
-    """The Mint button's arrow bridges (#962's rule, the tab's
-    own): Up and Down answer themselves — handing the keyboard
-    onward from where the operator stands — and leave every
-    other event to Qt's own handling."""
+    """The bar buttons' arrow bridges (#962's rule, the tab's
+    own — Unlock beside Mint, #1147): Up and Down answer
+    themselves — handing the keyboard onward from where the
+    operator stands — and leave every other event to Qt's own
+    handling."""
     tab, window, _bridge = make_tab(qt, monkeypatch)
     key = qt.QtCore.Qt.Key
     press = qt.QtCore.QEvent.Type.KeyPress
@@ -1244,9 +1262,10 @@ def test_the_bar_buttons_cross_by_arrows(qt, monkeypatch) -> None:
     down = qt.QtGui.QKeyEvent(press, key.Key_Down, mods)
     up = qt.QtGui.QKeyEvent(press, key.Key_Up, mods)
     other = qt.QtGui.QKeyEvent(press, key.Key_Left, mods)
-    assert tab.eventFilter(tab.mint_button, down) is True
-    assert tab.eventFilter(tab.mint_button, up) is True
-    assert tab.eventFilter(tab.mint_button, other) is False
+    for button in (tab.mint_button, tab.unlock_button):
+        assert tab.eventFilter(button, down) is True
+        assert tab.eventFilter(button, up) is True
+        assert tab.eventFilter(button, other) is False
     assert tab.eventFilter(tab.table, down) is False
     window.close()
 
@@ -1548,11 +1567,13 @@ def test_the_listing_keeps_the_daemons_order_until_a_click(
 
 
 def test_the_listing_edges_hand_the_page_order(qt, monkeypatch) -> None:
-    """The listing's Left/Right edges (#966, #997): Right on the
-    last column hands the keyboard down to the audit group —
+    """The listing's Left/Right edges (#966, #997, #1147): Right on
+    the last column hands the keyboard down to the audit group —
     the page's reading order, measured where the focus actually
     went — Left on the first hands it back up the page to the
-    bar, and the interior columns still walk cells."""
+    bar's last button (Unlock, the end of the reading order,
+    Mint before it), and the interior columns still walk
+    cells."""
     tab, window, _bridge = make_tab(qt, monkeypatch)
     key = qt.QtCore.Qt.Key
     press = qt.QtCore.QEvent.Type.KeyPress
@@ -1574,7 +1595,7 @@ def test_the_listing_edges_hand_the_page_order(qt, monkeypatch) -> None:
     table.setCurrentCell(0, 0)
     assert (
         pressed(table, qt.QtGui.QKeyEvent(press, key.Key_Left, mods))
-        is tab.mint_button
+        is tab.unlock_button
     )
     # An interior column's Right still walks the cells — the
     # base table's own move, handed back to Qt.

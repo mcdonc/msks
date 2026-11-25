@@ -380,6 +380,16 @@ Three surfaces run the flow:
   heals the moment it is seen. The page's STATE column
   (`locked` / `open`) and `msks secret ls`'s state column carry
   the lock state row by row.
+- **The GUI at start, and its Unlock button.** The window offers
+  the unlock when it opens and again after a connection pick,
+  against the daemon's locked rows. An encrypted key file opens
+  one passphrase dialog per window session, centered on the
+  window. The Secrets tab's Unlock button asks again by hand.
+  A daemon that answered nothing at the start arms one re-run,
+  and the events feed's next connection fires it. The outcome
+  shows on the status line of the screen the ask stood on: the
+  workspaces list for the start flow, the Secrets tab for the
+  button.
 - **`msks secret unlock`**, the scripting surface: fetch
   pending, decrypt, upload, and print one line per unlocked row
   plus the rows the key could not open. Rows whose ciphertext

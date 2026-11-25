@@ -311,6 +311,17 @@ reports the minted row, and the sentinel itself reads back
 through the CLI or the TUI. The [secrets chapter](secrets.md)
 explains placeholders and sentinels.
 
+**Unlock** runs the secrets unlock against the daemon's locked rows,
+the TUI's `u` action as a button. An encrypted key file opens a
+masked passphrase dialog centered on the window. The typed
+passphrase loads the key, and every row the key opens uploads.
+The outcome shows on the tab's status line, and the daemon's
+unlock frame re-reads the listing behind it. The window also
+offers the unlock on its own when it opens and after a connection
+pick. The prompt is the window's one per session, the outcome lands
+on the workspaces list's status line, and the button asks again by
+hand. See the [secrets chapter](secrets.md#the-clients-half).
+
 The **Audit** group beneath lists the daemon's recorded secret
 events, newest first: mint, revoke, expiry, and unlock rows. A
 renew changes a row's deadline without recording an audit row.

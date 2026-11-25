@@ -22,6 +22,7 @@ from msks.client.gui.forms import (  # noqa: E402
     confirm,
     confirm_box,
     pick_item,
+    prompt_password,
     prompt_text,
 )
 
@@ -199,3 +200,48 @@ def test_a_cancelled_text_prompt_decides_nothing(qt, monkeypatch) -> None:
     monkeypatch.setattr(qt.QtWidgets.QInputDialog, "exec", fake_exec)
     window = make_window(qt)
     assert prompt_text(window, "Clone workspace", "Clone alpha into:") is None
+
+
+def test_the_password_prompt_masks_and_keeps_its_spaces(
+    qt, monkeypatch
+) -> None:
+    """The passphrase prompt (#1147): one password-mode line over
+    the asker's window — the echo masked, the OK button carrying
+    the ask's own word — the frame centered before the loop, and
+    a submit answering the typed text as typed: a passphrase's
+    spaces are its own, so nothing is stripped."""
+    window = make_window(qt)
+    seen: list[object] = []
+
+    def fake_exec(self) -> int:
+        seen.append(self.geometry().center())
+        line = self.findChild(qt.QtWidgets.QLineEdit)
+        assert line is not None
+        assert line.echoMode() == qt.QtWidgets.QLineEdit.EchoMode.Password
+        assert self.okButtonText() == "Unlock"
+        line.setText("  pw with spaces  ")
+        return qt.QtWidgets.QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(qt.QtWidgets.QInputDialog, "exec", fake_exec)
+    assert prompt_password(
+        window,
+        "Unlock secrets",
+        "enc-key passphrase for secrets unlock",
+        accept="Unlock",
+    ) == ("  pw with spaces  ")
+    assert seen == [window.geometry().center()]
+
+
+def test_a_cancelled_password_prompt_decides_nothing(qt, monkeypatch) -> None:
+    """The dismissed passphrase prompt (#1147): a rejected loop
+    answers None — the rows stay locked, the caller's flow sends
+    nothing — and the OK button keeps Qt's own word when the ask
+    names none."""
+
+    def fake_exec(self) -> int:
+        assert self.okButtonText() == "OK"
+        return qt.QtWidgets.QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(qt.QtWidgets.QInputDialog, "exec", fake_exec)
+    window = make_window(qt)
+    assert prompt_password(window, "Unlock secrets", "passphrase:") is None

@@ -2,11 +2,11 @@
 read-only table and the save/cancel row the mounts and proxies
 surfaces build the same way — one definition, the screens' own
 rule against drift — beside the centered popups every screen
-opens (#1014): the yes/no question, the item picker, and the
-about box, built over their asking window so the placement
-holds across window managers. This module imports PySide6 at
-module scope, the screens' own contract: nothing imports it at
-CLI parse time.
+opens (#1014): the yes/no question, the item picker, the text
+prompt, the masked passphrase prompt (#1147), and the about box,
+built over their asking window so the placement holds across
+window managers. This module imports PySide6 at module scope, the
+screens' own contract: nothing imports it at CLI parse time.
 """
 
 from PySide6 import QtGui, QtWidgets
@@ -178,3 +178,26 @@ def prompt_text(parent, title: str, label: str) -> str | None:
     if prompt.exec() != QtWidgets.QDialog.DialogCode.Accepted:
         return None
     return prompt.textValue().strip()
+
+
+def prompt_password(
+    parent, title: str, label: str, accept: str = "OK"
+) -> str | None:
+    """The masked prompt asked centered (#1147, the unlock's
+    passphrase ask): one password-mode line of input over the
+    asking window — a cancelled prompt answers None, a submit the
+    typed text as typed (a passphrase's spaces are its own, so
+    nothing is stripped), and *accept* is the OK button's own
+    word. The static ``getText`` call leaves the placement to the
+    window manager; this build centers on the asking window
+    first, the picker's own rule."""
+    prompt = QtWidgets.QInputDialog(parent)
+    prompt.setWindowTitle(title)
+    prompt.setLabelText(label)
+    prompt.setInputMode(QtWidgets.QInputDialog.InputMode.TextInput)
+    prompt.setTextEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+    prompt.setOkButtonText(accept)
+    center_on_parent(prompt)
+    if prompt.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+        return None
+    return prompt.textValue()
