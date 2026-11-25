@@ -23,12 +23,17 @@ SIZE_FIELDS = frozenset({"mem_mib", "root_mib", "home_mib"})
 #: before a unit, and only when it resolves to a whole number
 #: of MiB (`0.5G` is 512; a bare `1.5` has no unit to resolve
 #: it, and refuses as the whole-number rule always refused it).
-#: The number needs its leading digit: `.5G` refuses with `1.G`
-#: and `8 G`. ASCII digits alone, the whole-number rule's own
-#: hazard: unicode digits a paste can carry refuse here too.
-#: `GB` and `MB` refuse on purpose: they name 10⁹ and 10⁶
-#: bytes, different sizes than the daemon's MiB count.
-SIZE_FORM = re.compile(r"^([0-9]+(?:\.[0-9]+)?)([GgMm](?:[Ii][Bb])?)?$")
+#: The number needs its leading digit: `.5G` refuses, as do
+#: `1.G` and `8 G`, and each part reads at most 18 digits —
+#: past the interpreter's own digit limit a longer one would
+#: raise rather than refuse, and no size wants it. ASCII digits
+#: alone, the whole-number rule's own hazard: unicode digits a
+#: paste can carry refuse here too. `GB` and `MB` refuse on
+#: purpose: they name 10⁹ and 10⁶ bytes, different sizes than
+#: the daemon's MiB count.
+SIZE_FORM = re.compile(
+    r"^([0-9]{1,18}(?:\.[0-9]{1,18})?)([GgMm](?:[Ii][Bb])?)?$"
+)
 
 #: The suffixes' multipliers on MiB, lowercased.
 SIZE_UNITS = {"g": 1024, "gib": 1024, "m": 1, "mib": 1}
@@ -51,7 +56,7 @@ def parse_size(value: str) -> int | None:
     G/GiB or M/MiB suffix, a decimal before the unit resolving
     to a whole number of MiB through integer arithmetic — a
     product with a fraction (`0.3G`, 307.2 MiB) refuses rather
-    than rounding the daemon's count, at any number of digits."""
+    than rounding the daemon's count."""
     match = SIZE_FORM.match(value)
     if match is None:
         return None
@@ -94,7 +99,9 @@ def exact_human(mib: int) -> str | None:
     MiB count (#1164) — `8G`, `1.5G`, `512M` — and None for a
     size the rendering's tenths round (`8193` renders `8G`, one
     MiB short): every spelling the dialogs show or seed a size
-    in goes through here, so no shown size hides a MiB."""
+    in goes through here — :func:`mib_text`, :func:`seed_size`,
+    and the placeholders' `default` text — so no shown size
+    hides a MiB."""
     text = human_bytes(mib * MIB)
     return text if parse_size(text) == mib else None
 

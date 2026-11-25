@@ -113,10 +113,10 @@ create.
 **Edit** opens a dialog seeded with the workspace's sizes and
 topology: VCPUs, memory, and the root and home volumes. The size
 fields take the same forms as the create dialog. Each one opens
-with the workspace's current size in the human unit. A workspace
-with 8192 MiB of memory opens the field as `8G`. Apply posts to
-the same endpoint `msks resize` uses, with the sizes as MiB
-counts.
+with the workspace's current size. `8G`, `1.5G`, and `1000M` are
+the usual spellings, and a size those spellings would round opens
+in plain MiB (`8193M`). Apply posts to the same endpoint
+`msks resize` uses, with the sizes as MiB counts.
 
 ## The workspace page
 

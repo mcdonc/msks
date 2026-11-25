@@ -164,6 +164,7 @@ def test_blank_fields_stay_the_daemons_defaults() -> None:
         ("1.5625G", 1600),
         ("1.0G", 1024),
         ("2.0GiB", 2048),
+        ("111111111111111111.5G", 111111111111111111 * 1024 + 512),
         ("0", 0),
     ],
 )
@@ -193,6 +194,8 @@ def test_the_size_forms_read(typed: str, mib: int) -> None:
         ".5G",
         "8 G",
         "8MB",
+        "1" * 19,
+        "1" * 19 + "G",
         "\u00b2",
         "\u0663",
         "4_096",
@@ -287,6 +290,12 @@ def test_the_size_placeholders_read_the_defaults() -> None:
     assert size_placeholders({"root_mib": 512, "home_mib": 1536}) == {
         "root_mib": "default 512M",
         "home_mib": "default 1.5G",
+    }
+    # A default the GiB spelling would round reads its MiB
+    # count, the same rule as the summary line beside it.
+    assert size_placeholders({"root_mib": 20000, "home_mib": 1075}) == {
+        "root_mib": "default 20000M",
+        "home_mib": "default 1075M",
     }
     assert size_placeholders({"root_mib": "4096"}) == {}
     assert size_placeholders({}) == {}
@@ -423,10 +432,11 @@ def test_the_summary_follows_every_keystroke(qt) -> None:
     ]:
         memory.setText(typed)
         assert dialog.summary.text().split(" · ")[1] == shown, typed
-    dialog.fields["cpus"].setText("many")
-    assert dialog.summary.text().startswith("many vCPU · ")
     # A late defaults answer fills the root and home blanks
     # around whatever the operator typed.
+    memory.setText("8G")
+    dialog.fields["cpus"].setText("many")
+    assert dialog.summary.text().startswith("many vCPU · ")
     dialog.fields["home_mib"].setText("2G")
     bridge.succeeded.emit(DEFAULTS_KEY, {"root_mib": 20480, "home_mib": 20480})
     assert dialog.summary.text() == (

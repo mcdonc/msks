@@ -61,10 +61,10 @@ tagged `vX.Y.Z`.
   (#1164).** `8G`, `8GiB`, and `8192M` all mean 8192 MiB,
   `0.5G` means 512 MiB, and a bare number is still MiB. The
   create dialog's fields read `Memory`, `Root disk`, and
-  `Home disk`, their placeholders show the defaults, and a line
-  under the fields restates the four sizes as you type. The edit
-  dialog opens with the workspace's sizes in the same spelling
-  (`8G`). See [docs/gui.md](gui.md#creating-a-workspace).
+  `Home disk`, with a line under them that restates the four
+  sizes as you type. The edit dialog opens with the workspace's
+  sizes in the same spelling (`8G`). See
+  [docs/gui.md](gui.md#creating-a-workspace).
 
 ### Fixed
 

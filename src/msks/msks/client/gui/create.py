@@ -22,7 +22,6 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ..create import invoking_user
 from ..data import RestFailure
 from ..images import ordered_image_rows
-from ..volumes import MIB, human_bytes
 from .dialogs import (
     SIZE_FIELDS,
     BridgeClose,
@@ -30,6 +29,7 @@ from .dialogs import (
     mib_text,
     parse_size,
     read_size,
+    seed_size,
     whole_number,
 )
 
@@ -94,10 +94,11 @@ DEFAULT_IMAGE_LABEL = "the daemon's default"
 def placeholder_text(field: str, default: int) -> str:
     """One field's placeholder (#1164): the default a blank
     field lands on — the count for the vcpus, the human
-    spelling for a size (`default 8G`)."""
+    spelling for a size (`default 8G`, `default 8193M` for a
+    size the GiB spelling would round)."""
     if field not in SIZE_FIELDS:
         return f"default {default}"
-    return f"default {human_bytes(default * MIB)}"
+    return f"default {seed_size(default)}"
 
 
 #: The static placeholders the TUI's own hints carry (#309): the
@@ -214,10 +215,11 @@ def summary_text(values: dict, defaults: dict) -> str:
     """The live summary line (#1164): the four sizes as they
     stand, each field's own value when it reads, the default
     filling a blank, a dash until the daemon's answer names
-    one — the vcpu count, a size in GiB (MiB under one GiB,
-    `0.5G` reading `512 MiB`). A value mid-typing that does not
-    read yet shows as typed, so the line follows every
-    keystroke."""
+    one — the vcpu count, a size in GiB and MiB as
+    :func:`mib_text` spells it (`0.5G` reading `512 MiB`, a
+    size the GiB spelling would round in its MiB count). A
+    value mid-typing that does not read yet shows as typed, so
+    the line follows every keystroke."""
     return SUMMARY_SEP.join(
         summary_part(field, role, values, defaults)
         for field, role in SUMMARY_PARTS
@@ -246,7 +248,7 @@ def typed_text(field: str, typed: str) -> str:
 def default_text(field: str, default: int | None) -> str:
     """A blank's default as the line shows it (#1164): a dash
     until the answer names one, the count for the vcpus, the
-    size in GiB."""
+    size as :func:`mib_text` spells it."""
     if default is None:
         return UNKNOWN
     if field in SIZE_FIELDS:
