@@ -39,6 +39,7 @@ from msks.client.gui.terminalonly import (  # noqa: E402
     STATUS_MAX_PX,
     TERMINAL_ONLY_TIP,
     TOGGLE_KEYS,
+    CornerLabel,
 )
 
 
@@ -484,6 +485,39 @@ def test_the_toggle_key_stays_quiet_on_the_listing(qt) -> None:
     assert qt.QtCore.Qt.Key.Key_M in [key for _kind, key, _spontaneous in keys]
 
 
+def test_a_repeated_toggle_key_flips_once(qt) -> None:
+    """A held toggle key does not flip the mode back and forth
+    with the keyboard's repeat (#1152): the shortcut answers the
+    first press alone, and Qt consumes a repeat the shortcut
+    declines — it neither flips the mode nor reaches the
+    terminal."""
+    page, _window, _bridge = make_page(qt)
+    mode = page.terminal_only
+    terminal = page.shells.currentWidget()
+    heard = asks(page)
+    log, keys = event_log(qt, (qt.QtCore.QEvent.Type.KeyPress,))
+    terminal.installEventFilter(log)
+    press_toggle_key(qt, terminal)
+    assert mode.on
+    assert heard == [True]
+    for _ in range(4):
+        repeat = qt.QtGui.QKeyEvent(
+            qt.QtCore.QEvent.Type.KeyPress,
+            qt.QtCore.Qt.Key.Key_M,
+            qt.QtCore.Qt.KeyboardModifier.ControlModifier
+            | qt.QtCore.Qt.KeyboardModifier.ShiftModifier,
+            "\x05",
+            True,
+        )
+        repeat.ignore()
+        qt.QtWidgets.QApplication.sendEvent(terminal, repeat)
+    assert mode.on
+    assert heard == [True]
+    assert qt.QtCore.Qt.Key.Key_M not in [
+        key for _kind, key, _spontaneous in keys
+    ]
+
+
 def test_the_status_line_takes_the_corner_seat(qt) -> None:
     """The flash keeps flashing in the mode (#1152): the
     standing text comes along to the corner's label, a flash or
@@ -495,6 +529,8 @@ def test_the_status_line_takes_the_corner_seat(qt) -> None:
     page.flash("before the mode")
     enter(page)
     assert page.status is mode.status
+    # The corner flows to the text on the loop's next pass
+    settle(qt)
     assert mode.status.text() == "before the mode"
     page.flash("in the mode")
     assert mode.status.text() == "in the mode"
@@ -560,6 +596,59 @@ def test_a_long_flash_elides_in_the_corner(qt) -> None:
     assert mode.chrome_status.text() == long_flash
 
 
+def test_the_corner_flows_with_its_text_under_the_strip(qt) -> None:
+    """Under the top-level strip the corner re-flows with its
+    text (#1152): the tab widget sizes its corner on its own
+    layout request alone, so a label asks for the row again
+    when its text changes. A flash keeps the workspace's name
+    its width, the status elides at the width it has with the
+    whole text in its tooltip, and a longer name landing in the
+    mode elides the same way — all without a window resize, and
+    the window's width stands."""
+    shell, tabs, window = make_strip(qt)
+    page = shell.detail
+    mode = page.terminal_only
+    window.resize(1280, 720)
+    shell.open_detail("ws-a")
+    settle(qt)
+    enter(page)
+    settle(qt)
+    width = window.width()
+    name_width = mode.name.width()
+    assert name_width > 0
+    corner_width = mode.corner.width()
+    flash = "the daemon refused the request: " + "x" * 70
+    page.flash(flash)
+    settle(qt)
+    assert mode.name.width() == name_width
+    assert "\u2026" in mode.status.text()
+    assert mode.status.toolTip() == flash
+    assert mode.status.width() >= STATUS_MAX_PX - 1
+    assert mode.corner.width() > corner_width
+    assert window.width() == width
+    # A longer name landing in the mode (#1152): elided at its
+    # cap, the whole name in the tooltip, the row asked again.
+    long_name = "n" * 80
+    page.on_succeeded(qt.page_mod.ROW_KEY, [daemon_row(long_name)])
+    settle(qt)
+    assert "\u2026" in mode.name.text()
+    assert mode.name.toolTip() == long_name
+    assert mode.name.width() > name_width
+    assert mode.status.text() != ""
+    mode.leave()
+
+
+def test_a_label_outside_a_corner_asks_no_strip(qt) -> None:
+    """A corner label with no strip above it (#1152) — the
+    construction order before the tab widget takes the corner
+    — paints its text and asks nothing: the re-flow question
+    goes to the strip alone."""
+    label = CornerLabel(qt.QtCore.Qt.TextElideMode.ElideRight, None)
+    qt.keep.append(label)
+    label.setText("free")
+    assert label.text() == "free"
+
+
 def test_the_corner_labels_re_elide_under_a_new_font(qt) -> None:
     """The corner's labels elide again when their font changes
     (#1152, the whole-client zoom #976): the cap is in pixels,
@@ -571,6 +660,7 @@ def test_the_corner_labels_re_elide_under_a_new_font(qt) -> None:
     advance = mode.name.fontMetrics().horizontalAdvance(name)
     assert advance < mode.name.maximumWidth()
     mode.set_name(name)
+    settle(qt)
     assert mode.name.text() == name
     assert mode.name.toolTip() == ""
     font = qt.QtGui.QFont(mode.name.font())

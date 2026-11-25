@@ -160,15 +160,16 @@ The workspace's name shows in gray at the tab row's right end,
 and the restore button follows it, where the terminal-only button
 stood: the pointer that clicked the one rests over the other.
 Above the tab row the window keeps a slim band, the row the
-top-level tabs held, so the restore button stays under the
+top-level tabs held. The band keeps the restore button under the
 pointer.
 
 The mode shows the Shells tab when another page tab was current.
 The shell tabs, the **+** tab, the rename, and the close buttons
 work as before. The consent panel keeps its place above the
 terminals while a hold waits. The status line moves to the tab
-row. A flash or an outage shows beside the workspace's name, and
-a long one is cut to fit, with the whole text in its tooltip.
+row. A flash or an outage shows beside the workspace's name. A
+long one elides at its width, and the whole text reads in its
+tooltip.
 
 The restore button and `Ctrl+Shift+M` bring every control back:
 the top-level strip, the page's top row, and the footer. The same

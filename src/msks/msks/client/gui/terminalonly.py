@@ -71,17 +71,35 @@ PALETTE_EVENTS = (
 
 class CornerLabel(QtWidgets.QLabel):
     """One of the corner's labels (#1152): its text elides at the
-    label's own width cap — in the middle for the name, at the
-    right for the status — with the whole text in the tooltip
-    only when the paint cut it. The label remembers the whole
-    text and elides again when its font changes (the whole-client
-    zoom, #976), so the cap holds whatever size the chrome
-    wears."""
+    width the row gives it, never past a cap — in the middle for
+    the name, at the right for the status — with the whole text
+    in the tooltip only when the paint cut it. The layout hears
+    of the whole text, bounded by the cap, and never of the
+    paint: a label squeezed narrow keeps asking for its whole
+    width, so a later flash does not shrink it for good. The
+    label elides again when its font or its width changes (the
+    whole-client zoom, #976), and a text change re-asks the
+    shell strip for the row — :class:`QTabWidget` sizes its
+    corner on its own layout request alone, so without the ask a
+    flash would paint into the width the corner froze at the
+    enter."""
 
     def __init__(self, mode: QtCore.Qt.TextElideMode, parent) -> None:
         super().__init__("", parent)
         self.mode = mode
         self.whole = ""
+
+    def sizeHint(self) -> QtCore.QSize:  # noqa: N802
+        """The whole text's width at the cap (#1152): what the
+        row should give the label, whatever it paints now."""
+        hint = super().sizeHint()
+        hint.setWidth(
+            min(
+                self.fontMetrics().horizontalAdvance(self.whole),
+                self.maximumWidth(),
+            )
+        )
+        return hint
 
     def minimumSizeHint(self) -> QtCore.QSize:  # noqa: N802
         """The label asks for its height alone (#1152): its
@@ -94,26 +112,48 @@ class CornerLabel(QtWidgets.QLabel):
         return hint
 
     def setText(self, text: str) -> None:  # noqa: N802
-        """Stand the whole text and paint its elision."""
+        """Stand the whole text, paint its elision, and ask the
+        shell strip for the row again (#1152): the corner's
+        width belongs to the strip's layout, and a longer text
+        is a wider corner."""
         self.whole = text
         self.paint_elided()
+        corner = self.parentWidget()
+        strip = corner.parentWidget() if corner is not None else None
+        if strip is not None:
+            QtWidgets.QApplication.postEvent(
+                strip, QtCore.QEvent(QtCore.QEvent.Type.LayoutRequest)
+            )
 
     def paint_elided(self) -> None:
-        """The whole text elided at the cap, and the tooltip for
-        the cut alone — a tooltip repeating the visible text is
-        noise."""
+        """The whole text elided at the width the label has —
+        its cap before a layout sized it, or while the corner
+        hides and no layout will — and the tooltip for the cut
+        alone: a tooltip repeating the visible text is noise."""
+        laid = self.isVisible() and self.width() > 0
+        room = self.width() if laid else self.maximumWidth()
         paint = self.fontMetrics().elidedText(
-            self.whole, self.mode, self.maximumWidth()
+            self.whole, self.mode, min(room, self.maximumWidth())
         )
         super().setText(paint)
         self.setToolTip(self.whole if paint != self.whole else "")
 
     def changeEvent(self, event) -> None:  # noqa: N802
-        """A font change re-elides: the cap is in pixels, and the
-        same text cuts at a different place under a bigger
-        font."""
+        """A font change re-elides (#1152): the cap is in pixels,
+        and the same text cuts at a different place under a
+        bigger font."""
         super().changeEvent(event)
         if event.type() == QtCore.QEvent.Type.FontChange and self.whole:
+            self.paint_elided()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        """A width is the paint's own bound (#1152): the row gave
+        the label a new width — the re-flow a text change asked
+        for, or a squeeze — and the paint cuts there. A resize
+        is Qt's own word for it; ``changeEvent`` never hears of
+        one."""
+        super().resizeEvent(event)
+        if self.whole and self.width() > 0:
             self.paint_elided()
 
 
@@ -137,7 +177,10 @@ def glyph_in_text(icon: QtGui.QIcon, palette: QtGui.QPalette) -> QtGui.QIcon:
         ),
     )
     out = QtGui.QIcon()
-    for size in icon.availableSizes():
+    sizes = icon.availableSizes() or [
+        QtCore.QSize(px, px) for px in (16, 24, 32, 48)
+    ]
+    for size in sizes:
         shape = (
             icon.pixmap(size)
             .toImage()
@@ -297,6 +340,9 @@ class TerminalOnly(QtCore.QObject):
         self.keys.setContext(
             QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut
         )
+        # A held key must not flip the mode back and forth with
+        # the keyboard's repeat (#1152): one press, one flip.
+        self.keys.setAutoRepeat(False)
         self.keys.activated.connect(self.flip)
         # The page's, the shell strip's, and the corner's moves
         # and resizes re-park the restore button (#1152) while
@@ -398,7 +444,12 @@ class TerminalOnly(QtCore.QObject):
         above the tab row, right for the frame the shell strip
         keeps inside the page. The padding always builds on the
         margins the page wore before the mode, so a re-park
-        never compounds."""
+        never compounds. The measurement assumes a window that
+        stands still through the settle: a window its own
+        minimum width grows under (a page alone with a very long
+        text in its chrome row) would move the page under the
+        measure, and the strip's composition never does — its
+        minimum ignores the page's."""
         if self.spot is None or self.margins is None:
             return
         page = self.page
