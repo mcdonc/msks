@@ -6,6 +6,8 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.10.1] - 2026-11-25
+
 ### Added
 
 - **The GUI unlocks secrets (#1147).** `msks gui` offers the secrets
