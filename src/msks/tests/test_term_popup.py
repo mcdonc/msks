@@ -8,6 +8,7 @@ retirement, never opening a window.
 """
 
 import asyncio
+import errno
 import fcntl
 import io
 import os
@@ -1051,6 +1052,18 @@ def test_the_log_refuses_to_wait_on_a_readerless_fifo(
     assert done == [True]
 
 
+#: spawn_pane's fork fires CPython's multi-threaded-fork
+#: DeprecationWarning under xdist (the worker's execnet threads make
+#: the process multi-threaded; a single-process run stays quiet):
+#: the child's post-fork work is the minimal setsid/ctty/dup/close/
+#: exec ladder, the same shape stdlib pty.fork runs, so the warning
+#: is noise here, not a deadlock the suite can hit (the GUI session
+#: modules filter the same one, #951).
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:This process.*multi-threaded.*fork:DeprecationWarning"
+)
+
+
 def spawn_pane(child: list[str]) -> tuple[int, int]:
     """The pane role on its own pty, the way tmux runs it (#1143
     review): a session leader whose controlling terminal is the
@@ -1076,16 +1089,42 @@ def spawn_pane(child: list[str]) -> tuple[int, int]:
     return master, pid
 
 
-def read_pane(master: int, want: bytes, deadline: float = 10.0) -> bytes:
-    """Read the pane's pty until the wanted bytes arrive."""
-    buf = b""
+def pane_read(master: int) -> bytes | None:
+    """One read off a master select called readable: the bytes, or
+    ``None`` at the pane's end. The two kernels end a pty differently
+    once the wrapper's exit hangs it up: Linux answers EIO, macOS the
+    empty read (the pair #951's ``read_once`` carries for the GUI
+    session). Neither is a harness failure — the pane is simply
+    over, and the callers fall through to their own answer."""
+    try:
+        data = os.read(master, 4096)
+    except OSError as exc:
+        if exc.errno != errno.EIO:
+            raise
+        return None
+    return data or None
+
+
+def read_pane(
+    master: int, want: bytes, deadline: float = 10.0, buf: bytes = b""
+) -> bytes:
+    """Read the pane's pty until the wanted bytes arrive, and
+    return everything seen. One chunk can carry the child's last
+    words and the wrapper's close prompt together (under a loaded
+    runner the first read lands after both wrote), so a later
+    ``read_pane`` on the same pane starts from ``buf``, the buffer
+    the previous one returned, instead of from empty."""
     end = time.monotonic() + deadline
-    while time.monotonic() < end:
+    while want not in buf and time.monotonic() < end:
         ready, _, _ = select.select([master], [], [], 0.1)
-        if ready:
-            buf += os.read(master, 4096)
-            if want in buf:
-                return buf
+        if not ready:
+            continue
+        data = pane_read(master)
+        if data is None:
+            break  # the pane ended first: the assertion below names it
+        buf += data
+    if want in buf:
+        return buf
     raise AssertionError(f"{want!r} never arrived; saw {buf!r}")
 
 
@@ -1101,12 +1140,14 @@ def wait_pane(master: int, pid: int, deadline: float = 10.0) -> int:
     child and then read its stdin finishes exit() only once the
     master is read (tmux's server polls its masters constantly,
     which is why the pane never sees this; a harness that stops
-    reading wedges the wrapper in exit, past SIGTERM)."""
+    reading wedges the wrapper in exit, past SIGTERM). The drain
+    stops at the pane's end (``pane_read``'s ``None``, whichever way
+    the kernel reports it) and the poll goes on to the reap."""
     end = time.monotonic() + deadline
+    pane_open = True
     while time.monotonic() < end:
-        ready, _, _ = select.select([master], [], [], 0.05)
-        if ready:
-            os.read(master, 4096)
+        if pane_open and select.select([master], [], [], 0.05)[0]:
+            pane_open = pane_read(master) is not None
         done, status = os.waitpid(pid, os.WNOHANG)
         if done != 0:
             return os.waitstatus_to_exitcode(status)
@@ -1119,8 +1160,8 @@ def test_the_hold_keeps_the_pane_until_enter() -> None:
     close the canonical tty's read, and Enter does."""
     master, pid = spawn_pane(["/bin/sh", "-c", "echo refused; exit 3"])
     try:
-        read_pane(master, b"refused")
-        read_pane(master, b"Press Enter to close this window.")
+        seen = read_pane(master, b"refused")
+        read_pane(master, b"Press Enter to close this window.", buf=seen)
         os.write(master, b"x")  # a plain key: the hold stands
         time.sleep(0.5)
         assert pane_alive(pid)
@@ -1159,10 +1200,10 @@ def test_the_interrupt_key_kills_the_child_and_not_the_hold() -> None:
         # pins the interrupted process to sleep itself: its
         # SIGINT disposition is the default on every shell, so
         # the death is a signal death everywhere the suite runs.
-        read_pane(master, b"started")
+        seen = read_pane(master, b"started")
         os.write(master, b"\x03")  # Ctrl-C: ISIG delivers SIGINT
         # The reason and the close prompt print as one line.
-        read_pane(master, b"exited on a signal. Press Enter")
+        read_pane(master, b"exited on a signal. Press Enter", buf=seen)
         assert pane_alive(pid)  # the wrapper stood through it
         os.write(master, b"\r")
         # 128 + SIGINT(2), the shell convention the pane answers.
