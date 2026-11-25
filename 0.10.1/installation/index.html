@@ -1,0 +1,1623 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Microvm workspaces for AI coding agents">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/msks/0.10.1/installation/">
+      
+      
+      
+        <link rel="prev" href="./..">
+      
+      
+        <link rel="next" href="../doctor/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.71">
+    
+    
+      
+        <title>Installation - msks</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.e442bf79.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.b60ce83d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="msks" class="md-header__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            msks
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Installation
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="msks" class="md-nav__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    msks
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-one-command-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The one-command install
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-setup-lands" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What the setup lands
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setup-on-a-debian-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Setup on a Debian host
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setup-on-a-fedora-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Setup on a Fedora host
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-same-install-by-hand" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The same install by hand
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#macos-on-apple-silicon-hosts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        macOS on Apple Silicon hosts
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="macOS on Apple Silicon hosts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sizing-the-msksd-lima-vm" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sizing the msksd Lima VM
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#linux-on-mac-hardware" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Linux on Mac Hardware
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#uninstalling-msks" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Uninstalling msks
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Uninstalling msks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-clean-cut-for-an-existing-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The clean cut for an existing install
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-host-doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The host doctor
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-alternative-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The alternative paths
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The host doctor
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  First run
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ssh-key/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Your ssh key
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The GUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Host Share Mounts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guest Networking
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Proxies
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../egress-consent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Consent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cloning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Cloning Workspaces
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The CLI Client
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent Reference Card
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Daemon Configuration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development environment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-one-command-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The one-command install
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-setup-lands" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What the setup lands
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setup-on-a-debian-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Setup on a Debian host
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setup-on-a-fedora-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Setup on a Fedora host
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-same-install-by-hand" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The same install by hand
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#macos-on-apple-silicon-hosts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        macOS on Apple Silicon hosts
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="macOS on Apple Silicon hosts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sizing-the-msksd-lima-vm" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sizing the msksd Lima VM
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#linux-on-mac-hardware" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Linux on Mac Hardware
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#uninstalling-msks" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Uninstalling msks
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Uninstalling msks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-clean-cut-for-an-existing-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The clean cut for an existing install
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-host-doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The host doctor
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-alternative-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The alternative paths
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+  
+
+
+<h1 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h1>
+<p>msks ships as a Python distribution with everything inside: the client
+(<code>msks</code>), the daemon (<code>msksd</code>), the consent-decider terminal
+(<code>msks-term-popup</code>), and the host setup tools this chapter describes
+(<code>msks-setup-debian-host</code>, <code>msks-setup-fedora-host</code>, and
+<code>msks-setup-macos-host</code>).</p>
+<p>The wheel needs Python 3.14 or newer. A stock Debian or Fedora host
+holds no 3.14, so the installer provisions its own interpreter (see
+below). The script needs <code>curl</code> and <code>tar</code> on the host. Beyond that,
+nothing needs installing first.</p>
+<h2 id="the-one-command-install">The one-command install<a class="headerlink" href="#the-one-command-install" title="Permanent link">&para;</a></h2>
+<p>Every release carries two bootstrap scripts, one per platform family.
+The script is the whole installer: it fetches the release's artifacts,
+verifies them, and runs the platform setup tool.</p>
+<p>Debian-derived hosts (Debian, Ubuntu 24.04 or newer, Linux Mint 22
+or newer):</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">curl -LsSf https://github.com/mcdonc/msks/releases/latest/download/msks-setup-debian.sh | sudo sh</span>
+</span></code></pre></div>
+<p>Fedora-derived hosts:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">curl -LsSf https://github.com/mcdonc/msks/releases/latest/download/msks-setup-fedora.sh | sudo sh</span>
+</span></code></pre></div>
+<p>Run the command as the user the daemon will serve. That account is the
+executing user throughout (the <code>SUDO_USER</code> under sudo): the <code>msks</code>
+group grant, the <code>kvm</code> membership, and the login PATH block all land
+on it.</p>
+<p>What the script does, in order:</p>
+<ol>
+<li>It downloads the release's checksum record (<code>SHASUMS</code>) and the
+   platform wheel. Every artifact it fetches is verified against the
+   record before use, and a checksum mismatch stops the install.</li>
+<li>It downloads Cloud Hypervisor's static release binary, verified the
+   same way, and installs it at <code>/usr/local/bin/cloud-hypervisor</code>. A
+   <code>cloud-hypervisor</code> already on PATH stays untouched.</li>
+<li>It provisions <code>uv</code> when the host holds none, then a uv-managed
+   Python 3.14 under <code>/opt/msks/python</code>.</li>
+<li>It builds a throwaway venv from the verified wheel and runs the
+   platform setup tool from it as root, passing the verified wheel
+   along. The throwaway venv is discarded when the tool exits. The
+   tool lands the real install, <code>/opt/msks/venv</code>, from those exact
+   bytes.</li>
+</ol>
+<p>The trust profile is unchanged: shipped code over TLS plus pinned
+checksums, and nothing stronger. The <a href="#the-same-install-by-hand">by-hand
+chapter</a> spells out every step.</p>
+<p>Flags after <code>-s --</code> reach the tool:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">curl -LsSf https://github.com/mcdonc/msks/releases/latest/download/msks-setup-debian.sh | sudo sh -s -- --no-service</span>
+</span></code></pre></div>
+<p><code>--wheel &lt;path&gt;</code> installs a wheel in hand: only the wheel fetch is
+skipped (the checksum record still downloads, for the VMM and uv
+pins). <code>--uninstall</code> reverses the install (see <a href="#uninstalling-msks">Uninstalling
+msks</a>).</p>
+<p>The three download bases answer to environment overrides for mirrors:
+<code>MSKS_RELEASE_URL</code>, <code>MSKS_VMM_URL</code>, and <code>MSKS_UV_URL</code>.</p>
+<p>The run is idempotent: re-run any time. Re-run after a util-linux
+upgrade too (the wrapper keeps a copy of <code>setpriv</code>; see below).</p>
+<p><img alt="A successful run of msks-setup-debian-host" src="../screens/msks-setup-debian-host.png" /></p>
+<p>You will need to log out and back in for <code>msksd doctor</code> to return
+clean after the run.</p>
+<h2 id="what-the-setup-lands">What the setup lands<a class="headerlink" href="#what-the-setup-lands" title="Permanent link">&para;</a></h2>
+<p>Each phase runs in order, and the first refusal stops the run with an
+error. On Apple Silicon, everything except the msks client is
+installed into a Lima virtual machine.</p>
+<p><strong>The shared venv.</strong> <code>/opt/msks/venv</code> holds the msks release matching
+the tool's own version, and every later phase resolves against it: the
+unit's <code>ExecStart</code>, the <code>/usr/local/bin</code> client links, and a second
+user's bare <code>msks</code> all reach the same install. The venv runs on a
+standalone CPython 3.14 provisioned by uv at <code>/opt/msks/python</code> (the
+host needs no Python of its own). The run installs the release from
+PyPI, or the wheel <code>--wheel</code> named. A wheel whose version disagrees
+with the tool's refuses. A re-run with the same release and no
+<code>--wheel</code> installs nothing, and a re-run with a newer tool refreshes
+the wheel: that re-run is the upgrade story. Every file lands
+world-readable, so the <code>msksd</code> account can traverse the whole chain.</p>
+<p><strong>Packages.</strong> The packages required by the server and the client.</p>
+<p><strong>The capability wrapper.</strong> <code>/usr/local/bin/msks-caps</code> is a
+root-owned copy of util-linux <code>setpriv</code> carrying file capabilities
+<code>cap_net_admin</code> and <code>cap_net_bind_service</code>. The daemon's per-VM taps
+and nftables chains need <code>net_admin</code>. The egress stack's DHCP (port 67) and DNS (port 53) need <code>net_bind_service</code>. The wrapper raises both
+caps ambient, so they flow to the daemon and every tool it execs. The
+systemd unit grants the daemon its caps natively, so the wrapper
+serves the dev daemon alone (see <a href="../development/">Development
+environment</a>). It lands root:<code>msks</code> mode 0750,
+executable by root and the <code>msks</code> group's members. After installing it
+the setup runs the wrapper and verifies the caps.</p>
+<p><strong>The routing kernel.</strong> <code>/etc/sysctl.d/msks-egress.conf</code> sets
+<code>net.ipv4.ip_forward=1</code> at boot, and the value applies immediately:
+route packets between the per-VM taps and the host uplink. The daemon
+reads the sysctl at startup and refuses every egress workspace, with
+the cause stated, while it reads 0. <code>/etc/modules-load.d/msks.conf</code>
+loads the netfilter and tun modules at boot: the nftables machinery,
+NAT, conntrack, the deny RST, and the interactive consent queue. A
+module the kernel tree lacks draws a warning that states the kernel
+package carrying it. Interactive egress consent needs its whole module
+set, and the run's summary reports the verdict.</p>
+<p><strong><code>/dev/kvm</code>.</strong> Access arrives through the <code>kvm</code> group. The daemon's
+system unit carries <code>SupplementaryGroups=msks kvm</code>, so the daemon
+account reaches the node through the unit itself. The setup also adds
+the executing user to the group when missing, for hand-run daemons
+(<code>msks-dev</code>, a bare <code>msksd</code>). The account picks the group up at the
+next login. An already-running session keeps the old groups until it
+starts anew.</p>
+<p><strong>The login PATH.</strong> The account that typed the command gains
+<code>/usr/sbin</code> and <code>/sbin</code> on its login PATH: the setup appends a guarded
+block to that account's <code>~/.profile</code>, idempotently, so a re-run never
+duplicates it. Debian keeps <code>nft</code>, <code>conntrack</code>, and the e2fsprogs trio
+in <code>/usr/sbin</code>, and a non-root login shell does not carry the
+directory. The block means the operator's next login can type the
+names the daemon execs. A daemon under the system unit finds the
+directories on its own PATH (the system manager's default carries
+them). A daemon started by hand inherits the session's PATH, so the
+same login carries the fix to both shapes.</p>
+<p><strong>The accounts and the shared socket.</strong> The setup creates the <code>msksd</code>
+system account: <code>nologin</code>, with <code>/var/lib/msksd</code> as its home. That
+directory is the daemon's state directory: the unit's
+<code>StateDirectory</code> creates it, and its <code>MSKSD_STATE_DIR</code> line points the
+daemon at it. The setup also creates the <code>msks</code> access group.
+Membership in <code>msks</code> is the deliberate grant that gates the shared
+socket: the daemon binds <code>/run/msks/msksd.sock</code> and hands it to the
+group, and a member connects with no token and no CA. The setup grants
+the executing user the membership, so the single-user workstation
+needs no further step. The membership applies at the next login.</p>
+<p><strong>The systemd system service.</strong> On a host systemd manages, the setup
+writes <code>/etc/systemd/system/msksd.service</code> and enables it. The unit
+runs the daemon under the <code>msksd</code> account with
+<code>SupplementaryGroups=msks kvm</code>, and its <code>ExecStart</code> is the venv's
+<code>msksd</code> (<code>/opt/msks/venv/bin/msksd</code>). <code>AmbientCapabilities</code> and
+<code>CapabilityBoundingSet</code> carry <code>cap_net_admin</code> and
+<code>cap_net_bind_service</code> natively, so no wrapper and no setuid path is
+involved. The unit points the daemon at the shared socket
+(<code>MSKSD_SOCKET=/run/msks/msksd.sock</code>, handed to the <code>msks</code> group) and
+runs with <code>MSKSD_EGRESS_ENABLED=true</code> and the uplink interface the
+setup detected. It restarts the daemon on failure, and it starts at
+boot with no login. Before the unit lands, the setup verifies the
+resolved <code>msksd</code> binary is readable and executable by the <code>msksd</code>
+account. A venv behind a permission the account cannot cross (a 0700
+home) refuses at install time with the cause stated.</p>
+<p><strong>Cloud Hypervisor's static release binary.</strong> So guest VMs can be
+started. The bootstrap script lands it verified. The tool performs
+its own download only when nothing carries the binary.</p>
+<p><strong>The client links.</strong> <code>/usr/local/bin/msks</code> and
+<code>/usr/local/bin/msks-term-popup</code> are symlinks into the venv's bin
+(<code>/opt/msks/venv/bin</code>). Every login shell carries <code>/usr/local/bin</code>,
+so a bare <code>msks</code> answers for every user on the host with no profile
+edits. A GUI-opened terminal window resolves the consent-terminal
+launcher on its own PATH. A regular file or a live link to another
+target at a path refuses by name: the run never clobbers what it did
+not land. A dangling link re-points, stale by definition. <code>--uninstall</code>
+removes both.</p>
+<p><strong>The owner-exec helper.</strong> The platform wheel bundles the
+<code>virtiofsd-as</code> binary inside the package, so the venv carries it. A
+cross-owner share execs its virtiofsd through the helper as the
+workspace's owner. The helper needs an install as root:msksd, mode
+4750, to serve that. The NixOS host performs the install through
+<code>security.wrappers</code>. The setup tools' install is
+part of #1080's remaining work. The <a href="../mounts/">mounts chapter</a>
+documents the helper's contract.</p>
+<p>The run ends with a summary: the venv, the wrapper and its caps, the
+account line, the sysctl, the modules file, the tools' paths,
+<code>/dev/kvm</code>, the login PATH block, the client links, the consent
+verdict, the detected uplink, and the service line.</p>
+<h2 id="setup-on-a-debian-host">Setup on a Debian host<a class="headerlink" href="#setup-on-a-debian-host" title="Permanent link">&para;</a></h2>
+<p>The platform gate accepts the <code>debian</code>, <code>ubuntu</code>, and <code>linuxmint</code>
+os-release IDs with those release floors. Older Ubuntu and Mint
+archives lack <code>virtiofsd</code>, which the setup requires.</p>
+<p>One version caveat: host mounts need virtiofsd 1.13.0 or newer, and
+Linux Mint 22's archive ships 1.10.0. <code>msksd doctor</code> gives the gap,
+and the workaround is a self-built virtiofsd pointed at with
+<code>MSKSD_VIRTIOFSD</code> (see <a href="../mounts/">mounts</a>).</p>
+<h2 id="setup-on-a-fedora-host">Setup on a Fedora host<a class="headerlink" href="#setup-on-a-fedora-host" title="Permanent link">&para;</a></h2>
+<p>The Fedora tool runs the same phases over its own package map and
+verbs. The run installs through dnf the packages a stock Fedora
+answers without: <code>conntrack-tools</code>, <code>qemu-img</code>, <code>tmux</code>, <code>virtiofsd</code>,
+and the consent stack's <code>libnetfilter_queue</code> when the linker cache
+lacks the soname. A stock install already carries the rest of the
+probed set (<code>setpriv</code>, <code>setcap</code>, <code>ip</code>, <code>nft</code>, <code>modprobe</code>, <code>sysctl</code>,
+the e2fsprogs trio, <code>mkisofs</code>, <code>ssh</code>, and <code>rsync</code>), so those probes
+read present and the run moves on. The CA probe runs Fedora's own
+command, <code>update-ca-trust</code> (the ca-certificates package), where the
+Debian map probes <code>update-ca-certificates</code>.</p>
+<p>The group commands run through <code>usermod -aG</code> and <code>gpasswd -d</code>, and
+the uninstall summary's removal line is dnf's.</p>
+<p>The same pieces land at the same paths for the same reasons the
+inventory above documents. <code>--uninstall</code> reverses the run the same
+way.</p>
+<h2 id="the-same-install-by-hand">The same install by hand<a class="headerlink" href="#the-same-install-by-hand" title="Permanent link">&para;</a></h2>
+<p>The bootstrap script is a release asset, and running it means running
+shipped code as root. An operator who prefers to read every step
+first can run the same steps in an interactive root shell. The steps
+below are the script's, spelled out. The platform tool at the end is
+the same shipped code the script runs.</p>
+<p>The example is Debian on x86-64. Fedora takes the Fedora tool's name
+(<code>msks-setup-fedora-host</code>). An aarch64 host takes the
+<code>manylinux_2_17_aarch64</code> wheel, the <code>-aarch64</code> VMM asset, and the
+<code>aarch64</code> uv tarball.</p>
+<p>Fetch the artifacts and verify them against the release's checksum
+record:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">base=https://github.com/mcdonc/msks/releases/latest/download</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">curl -LsSf -o SHASUMS "$base/SHASUMS"</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="go">grep -E 'msks-.*manylinux_2_17_x86_64\.whl$' SHASUMS</span>
+</span></code></pre></div>
+<p>The grep prints the wheel line (its filename carries the version).
+Take the wheel and the VMM binary beside the record, then verify
+them against it. The record pins the VMM release by checksum
+(v54.0 when this was written): take the asset from that release's
+own URL, not <code>latest</code>, or the bytes drift from the record the day
+upstream cuts a newer one:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">curl -LsSf -o msks-&lt;version&gt;-py3-none-manylinux_2_17_x86_64.whl \</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">  "$base/msks-&lt;version&gt;-py3-none-manylinux_2_17_x86_64.whl"</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">curl -LsSf -o cloud-hypervisor-static \</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="go">  https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/v54.0/cloud-hypervisor-static</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="go">sha256sum -c SHASUMS --ignore-missing</span>
+</span></code></pre></div>
+<p>A host without <code>ca-certificates</code> fails the TLS verification above
+(<code>apt install ca-certificates</code>). A checksum mismatch is a stop, not a
+warning.</p>
+<p>Install the VMM binary. The tool leaves a present binary alone, so
+this step keeps the tool's own unverified download from firing:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">install -m 0755 cloud-hypervisor-static /usr/local/bin/cloud-hypervisor</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="go">/usr/local/bin/cloud-hypervisor --version</span>
+</span></code></pre></div>
+<p>Provision uv (skip this block when the host holds a <code>uv</code> on PATH,
+and use <code>uv</code> in place of <code>/tmp/uv/uv</code> below). The checksum record
+pins the uv tarball the same way (0.9.7 when this was written):
+fetch that tarball, not the astral installer, which puts its uv
+outside the login PATH a root shell carries:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">curl -LsSf -o uv-x86_64-unknown-linux-gnu.tar.gz \</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">  https://github.com/astral-sh/uv/releases/download/0.9.7/uv-x86_64-unknown-linux-gnu.tar.gz</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="go">sha256sum -c SHASUMS --ignore-missing</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="go">mkdir -p /tmp/uv</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="go">tar -xzf uv-x86_64-unknown-linux-gnu.tar.gz -C /tmp/uv --strip-components=1</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="go">/tmp/uv/uv --version</span>
+</span></code></pre></div>
+<p>Then the interpreter and the throwaway venv for the tool. The
+interpreter parks under <code>/opt/msks/python</code>, the same directory the
+tool's venv phase provisions into: the throwaway and the real install
+share one interpreter and one download, and the interpreter survives
+the throwaway:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="go">export UV_PYTHON_INSTALL_DIR=/opt/msks/python</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="go">export UV_PYTHON_PREFERENCE=only-managed</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="go">mkdir -p /opt/msks</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="go">chmod 0755 /opt/msks</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="go">umask 022</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="go">/tmp/uv/uv venv --python 3.14 /tmp/msks-tool</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="go">/tmp/uv/uv pip install --python /tmp/msks-tool/bin/python \</span>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="go">  ./msks-&lt;version&gt;-py3-none-manylinux_2_17_x86_64.whl</span>
+</span></code></pre></div>
+<p>Run the tool from the throwaway, passing the wheel in hand so the
+install under <code>/opt/msks/venv</code> holds the exact bytes verified above:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="go">/tmp/msks-tool/bin/msks-setup-debian-host \</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="go">  --wheel ./msks-&lt;version&gt;-py3-none-manylinux_2_17_x86_64.whl</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="go">rm -rf /tmp/msks-tool</span>
+</span></code></pre></div>
+<p>The tool's own phases are the inventory above: the venv, the packages,
+the accounts, the wrapper, the kernel settings, the unit, the client
+links. What each phase lands stays in the <a href="#what-the-setup-lands">what the setup
+lands</a> section.</p>
+<h2 id="macos-on-apple-silicon-hosts">macOS on Apple Silicon hosts<a class="headerlink" href="#macos-on-apple-silicon-hosts" title="Permanent link">&para;</a></h2>
+<p>The macOS install keeps its user-run shape: the daemon already runs
+inside a Lima VM with vz as the host boundary, so it holds no host
+privilege to tighten. <code>msks-setup-macos-host</code> installs the Lima
+virtual machine system (via Brew), and runs msksd within a Lima VM.
+The msks client runs on the Mac itself. The installer is expected to
+work on M3 and newer Macs (it refuses older Apple Silicon hosts by
+name).</p>
+<p>Install <code>uv</code> (from Brew or <a href="https://docs.astral.sh/uv/">astral.sh</a>),
+then run the tool through it. The tool provisions its own Python 3.14:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="go">uvx --python 3.14 --from msks msks-setup-macos-host</span>
+</span></code></pre></div>
+<p>The tool creates <code>/opt/msks</code> through one sudo step (<code>/opt</code> is
+root-owned ground on macOS) and lands the shared host install there:
+<code>/opt/msks/venv</code> with the msks release matching the tool's version,
+and the uv-managed 3.14 beside it. The brew-prefix client links
+point into that venv, so every account's bare <code>msks</code> resolves the
+same shared install. <code>--wheel &lt;path&gt;</code> (a wheel in hand) and
+<code>--uninstall</code> carry the Linux tools' vocabulary.</p>
+<p>The msksd VM that <code>msks-setup-macos-host</code> creates from the shipped
+Lima template is the host that shares Mac folders into workspaces.
+The VM mounts them under its reserved prefix and forwards each
+attached share to the workspace that asked for it; see the <a href="../mounts/#shares-on-a-macos-host">mounts
+chapter's macOS section</a>.</p>
+<h3 id="sizing-the-msksd-lima-vm">Sizing the msksd Lima VM<a class="headerlink" href="#sizing-the-msksd-lima-vm" title="Permanent link">&para;</a></h3>
+<p>The VM starts at the template's sizing — 4 CPUs, 8 GiB of memory, a
+60 GiB disk — and the sizing flags change it at creation and on every
+re-run:</p>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>uvx<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.14<span class="w"> </span>--from<span class="w"> </span>msks<span class="w"> </span>msks-setup-macos-host<span class="w"> </span>--cpus<span class="w"> </span><span class="m">8</span><span class="w"> </span>--memory<span class="w"> </span><span class="m">16</span><span class="w"> </span>--disk<span class="w"> </span><span class="m">200</span>
+</span></code></pre></div>
+<p>A changed value stops the VM, edits its instance, and starts it again:
+running workspaces stop with the VM, and each starts again with
+<code>msks start</code>. Equal values change nothing, so the command is safe to
+re-run in scripts. The disk only grows: a smaller value refuses,
+stating both sizes. Reclaim space with <code>msks storage</code> instead. The
+disk is sparse, so it fills on demand up to the size you set. The
+floors are 2 CPUs, 4 GiB of memory, and 20 GiB of disk: the VM must
+hold the daemon and a workspace.</p>
+<p>When the VM's disk runs low, the daemon's storage warning and the 507
+refusal point at the same grow command. The fix is one re-run away.</p>
+<h2 id="linux-on-mac-hardware">Linux on Mac Hardware<a class="headerlink" href="#linux-on-mac-hardware" title="Permanent link">&para;</a></h2>
+<p>It doesn't work on Asahi. An Apple Silicon host whose kernel runs KVM
+in NV mode does not yet deliver guest interrupts
+(<a href="https://github.com/mcdonc/msks/issues/649">#649</a>): a workspace
+starts and its kernel boots deep into first boot, then stalls before
+ssh answers.</p>
+<h2 id="uninstalling-msks">Uninstalling msks<a class="headerlink" href="#uninstalling-msks" title="Permanent link">&para;</a></h2>
+<p>The bootstrap script reaches the tool's uninstall arm:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="go">curl -LsSf https://github.com/mcdonc/msks/releases/latest/download/msks-setup-debian.sh | sudo sh -s -- --uninstall</span>
+</span></code></pre></div>
+<p>The uninstall reverses the run. It stops and disables the <code>msksd</code>
+system service and removes its unit file and its enablement symlink.
+The stop lets the daemon finish its shutdown cycle, workspaces
+included. It removes the <code>msksd</code> account and the <code>msks</code> group (the
+executing user's grant leaves with them, and the summary prints the
+restore line: <code>adduser</code> on Debian, <code>usermod -aG</code> on Fedora). It
+removes the whole <code>/opt/msks</code>
+tree: the venv, the provisioned Python, the bootstrap uv, the bundled
+owner-exec helper, and the client links that pointed into it. It
+removes the two <code>/etc</code>
+files the run landed, and removes the capability wrapper. It takes
+the executing user out of the <code>kvm</code> group (the tool keeps no record
+of which run added a membership, so any member leaves). It strips the
+PATH block from <code>~/.profile</code> and removes the cloud-hypervisor binary.
+Kernel modules already loaded stay loaded until the next reboot.</p>
+<p><code>/var/lib/msksd</code> stays: the VM overlays, images, and secrets there
+survive the uninstall by design. The summary prints the kept
+directory and its size. Removing the directory itself stays a by-hand
+act:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="go">sudo rm -rf /var/lib/msksd</span>
+</span></code></pre></div>
+<p>A reinstall creates the <code>msksd</code> account again with the next free
+system uid. When that uid differs from the one that owned the kept
+tree, repair the ownership before the daemon starts
+(<code>chown -R msksd:msksd /var/lib/msksd</code>). The uninstall summary prints
+the same
+command.</p>
+<p>After the sysctl file leaves, <code>sysctl --system</code> re-applies every
+remaining sysctl.d file, the same set a boot applies. A second owner
+that wrote its own forwarding file keeps its setting. A live-only
+forwarder the tool never saw keeps its value too. On a host where no
+remaining file sets <code>net.ipv4.ip_forward</code>, the live value the setup
+run set stays on until the next reboot. The summary prints
+<code>sysctl -w net.ipv4.ip_forward=0</code> for the operator who wants it off
+immediately.</p>
+<p>The packages the run installed stay installed: they are shared
+packages, and other software on the host may use them. The uninstall
+summary prints the ones whose probes answer present, with a
+copy-paste <code>apt-get remove --purge ...</code> line. You can remove the ones
+nothing else needs yourself.</p>
+<p>The uninstall run is idempotent the same way: a piece already gone is
+a line in the summary, not an error. The first real refusal stops the
+run (the setup run's rule). <code>--no-service</code> holds its meaning: the
+unit is left alone, every other piece still leaves.</p>
+<h3 id="the-clean-cut-for-an-existing-install">The clean cut for an existing install<a class="headerlink" href="#the-clean-cut-for-an-existing-install" title="Permanent link">&para;</a></h3>
+<p>An install from the user-unit era holds its state under a user's home
+(<code>~/.local/state/msksd</code>). The system-unit install does not read that
+directory: it holds its state under <code>/var/lib/msksd</code>. Stop and remove
+the old unit, remove the old tool install, and run the one command.
+The home state directory stays behind. Remove it yourself when
+nothing needs it. The state directory does not move.</p>
+<h2 id="the-host-doctor">The host doctor<a class="headerlink" href="#the-host-doctor" title="Permanent link">&para;</a></h2>
+<p>The <a href="../doctor/">host doctor</a> chapter documents the <code>msksd doctor</code>
+command that can diagnose installation issues.</p>
+<h2 id="the-alternative-paths">The alternative paths<a class="headerlink" href="#the-alternative-paths" title="Permanent link">&para;</a></h2>
+<p><strong>A development host</strong> (this repository's checkout) runs the daemon
+through Nix and devenv. The <a href="../development/">Development environment</a>
+chapter owns that path. A Mac developing from a checkout has its own
+chapter: <a href="../development/#developing-on-a-macos-host">Developing on a macOS
+host</a>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"redirect":null,"search":"../assets/javascripts/workers/search.c47bb847.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a2388154.min.js"></script>
+      
+    
+  </body>
+</html>
