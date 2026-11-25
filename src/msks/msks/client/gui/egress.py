@@ -41,7 +41,7 @@ from .consent import (
     parse_rules,
 )
 from .dialogs import Centered
-from .egressaudit import AuditTrail
+from .egressaudit import BODY_ROW, FOOTER_ROW, HEADING_ROW, AuditTrail
 from .forms import ModePicker, confirm, muted_note, save_cancel_row
 
 #: The rules read's key stem (#1042): each flight carries its own
@@ -300,8 +300,6 @@ class EgressTab(QtWidgets.QWidget):
         verdict_buttons.addWidget(self.verdicts_empty)
         verdict_buttons.addStretch(1)
         verdict_buttons.addWidget(self.revoke_button)
-        self.audit = AuditTrail(bridge)
-        self.audit.allow_wanted.connect(self.allow_denied)
         # Two columns under the posture row (#1051): the posture
         # — the allowlist editor with the verdicts under it — on
         # the left, the audit trail on the right, the note line
@@ -309,17 +307,32 @@ class EgressTab(QtWidgets.QWidget):
         # and the sections are short: side by side they read in
         # one glance, and the tab's minimum stops holding the
         # window open under a page that cannot show whole.
+        #
+        # Both columns share one grid's rows (#1154): the heading
+        # row, the stretching row, the footer row. The left
+        # column's lists stack in the stretching row with the
+        # editor's buttons and the verdicts' heading between
+        # them; the trail places its own bands in the same rows
+        # beside them, and its table's edges are the lists' at
+        # every window height.
         posture = QtWidgets.QVBoxLayout()
-        posture.addWidget(self.heading)
         posture.addWidget(self.entries, stretch=1)
         posture.addWidget(self.empty)
         posture.addLayout(buttons)
         posture.addWidget(self.verdicts_heading)
         posture.addWidget(self.verdicts, stretch=1)
-        posture.addLayout(verdict_buttons)
-        columns = QtWidgets.QHBoxLayout()
-        columns.addLayout(posture, stretch=1)
-        columns.addWidget(self.audit, stretch=1)
+        columns = QtWidgets.QGridLayout()
+        columns.setColumnStretch(0, 1)
+        columns.setColumnStretch(1, 1)
+        # The gutter between the two framed panes: the trail's
+        # own margins gave it before the columns shared rows.
+        columns.setHorizontalSpacing(12)
+        columns.addWidget(self.heading, HEADING_ROW, 0)
+        columns.addLayout(posture, BODY_ROW, 0)
+        columns.addLayout(verdict_buttons, FOOTER_ROW, 0)
+        columns.setRowStretch(BODY_ROW, 1)
+        self.audit = AuditTrail(bridge, columns, column=1)
+        self.audit.allow_wanted.connect(self.allow_denied)
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.mode_line)
         layout.addLayout(row)

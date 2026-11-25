@@ -18,7 +18,7 @@ tab (itself lazily imported) owns the import.
 from PySide6 import QtCore, QtWidgets
 
 from ..ages import clock_label
-from .forms import ModePicker, muted_note, read_only_table
+from .forms import ElidedNote, ModePicker, muted_note, read_only_table
 
 #: The audit read's key stem (#1051): each flight carries its
 #: own key off it, the per-flight rule the tabs share.
@@ -59,6 +59,15 @@ AUDIT_COLUMNS = ("destination", "decision", "duration", "requested")
 #: the destination, which shares the pane's width.
 AUDIT_CONTENT = ("decision", "duration", "requested")
 
+#: The tab grid's rows, shared by both columns (#1154): the
+#: heading row on top, the stretching row in the middle, the
+#: footer row under it. The tab places the left column's bands
+#: in them and the trail its own, so one row is one height for
+#: both columns.
+HEADING_ROW = 0
+BODY_ROW = 1
+FOOTER_ROW = 2
+
 #: The deny-to-allowlist action's label (#1051).
 ALLOW_BUTTON = "Allowlist"
 
@@ -89,7 +98,7 @@ def row_text(row: dict) -> tuple[str, str, str, str]:
     )
 
 
-class AuditTrail(QtWidgets.QWidget):
+class AuditTrail(QtCore.QObject):
     """The tab's audit surface (#1051): the filter, the table of
     recorded consent rows newest first, and the deny-to-allowlist
     action on a selected denial row — the denied name crossing
@@ -97,11 +106,24 @@ class AuditTrail(QtWidgets.QWidget):
     owns. The read flies on the page's own cadence and on every
     pushed ``egress.resolved`` frame (the trail's newest row is
     a verdict), one flight at a time, a filter change cancelling
-    the standing read and reflying under the picked decision."""
+    the standing read and reflying under the picked decision.
+
+    The trail is no widget of its own (#1154): it places its
+    three bands — the heading row, the table, the footer — into
+    the tab's grid, in the column the tab names, beside the left
+    column's bands. One grid row is one height for both columns,
+    so the table's top edge is the allowlist list's and its
+    bottom edge the verdicts list's at every window height,
+    whatever height the style gives the filter's combo beside a
+    label. The footer is one row, the Revoke row's shape: the
+    empty state's stand-in, the refusal note, and the Allowlist
+    button beside one another."""
 
     allow_wanted = QtCore.Signal(str)
 
-    def __init__(self, bridge) -> None:
+    def __init__(
+        self, bridge, grid: QtWidgets.QGridLayout, column: int
+    ) -> None:
         super().__init__()
         self.bridge = bridge
         self.workspace_id = ""
@@ -110,20 +132,22 @@ class AuditTrail(QtWidgets.QWidget):
         self.key = ""
         self.flight = None
         self.seq = 0
-        self.heading = QtWidgets.QLabel(AUDIT_HEADING, self)
+        self.heading = QtWidgets.QLabel(AUDIT_HEADING)
         self.filter = ModePicker()
         self.filter.addItems([FILTER_ALL, *DECISIONS])
         # The filter's pick is the commit, the switcher's own
         # rule: ``activated`` is the operator's own choice, and a
         # programmatic index change decides nothing.
         self.filter.activated.connect(self.refly)
-        head = QtWidgets.QHBoxLayout()
+        self.heading_row = QtWidgets.QWidget()
+        head = QtWidgets.QHBoxLayout(self.heading_row)
+        head.setContentsMargins(0, 0, 0, 0)
         head.addWidget(self.heading)
         head.addStretch(1)
         head.addWidget(self.filter)
         self.table = read_only_table(AUDIT_COLUMNS, AUDIT_CONTENT)
         # The table carries no minimum of its own (#1051): the
-        # tab's right column stacks it under its own chrome, and
+        # grid's right column stacks it under its own chrome, and
         # the window's minimum reads the tallest column's — the
         # table shares what the pane gives instead of holding the
         # window open.
@@ -134,19 +158,22 @@ class AuditTrail(QtWidgets.QWidget):
         self.allow_button = QtWidgets.QPushButton(ALLOW_BUTTON)
         self.allow_button.clicked.connect(self.allow)
         self.allow_button.setEnabled(False)
-        buttons = QtWidgets.QHBoxLayout()
-        buttons.addWidget(self.allow_button)
-        buttons.addStretch(1)
-        self.note = QtWidgets.QLabel("", self)
+        # The note keeps its one line (#1154 review): a refusal's
+        # words are the route's own, and a line of them wider
+        # than the pane would hold the window open to its width.
+        self.note = ElidedNote()
         self.note.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
         )
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.addLayout(head)
-        layout.addWidget(self.table, stretch=1)
-        layout.addWidget(self.empty)
-        layout.addLayout(buttons)
-        layout.addWidget(self.note)
+        self.footer = QtWidgets.QWidget()
+        foot = QtWidgets.QHBoxLayout(self.footer)
+        foot.setContentsMargins(0, 0, 0, 0)
+        foot.addWidget(self.empty)
+        foot.addWidget(self.note)
+        foot.addWidget(self.allow_button)
+        grid.addWidget(self.heading_row, HEADING_ROW, column)
+        grid.addWidget(self.table, BODY_ROW, column)
+        grid.addWidget(self.footer, FOOTER_ROW, column)
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
 

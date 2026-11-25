@@ -9,7 +9,7 @@ window managers. This module imports PySide6 at module scope, the
 screens' own contract: nothing imports it at CLI parse time.
 """
 
-from PySide6 import QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from .dialogs import center_on_parent
 
@@ -36,6 +36,55 @@ def muted_note(text: str) -> QtWidgets.QLabel:
     shadow = label.palette().color(QtGui.QPalette.ColorRole.Shadow)
     label.setStyleSheet(f"color: {shadow.name()};")
     return label
+
+
+class ElidedNote(QtWidgets.QLabel):
+    """A note that keeps one line (#1154 review): the text elides
+    at the label's right edge, the whole text stays on ``text()``
+    and on the tooltip, and the layout reads no width from the
+    label — a refusal wider than the pane opens nothing and holds
+    no window to its width. The label is its row's flexible item:
+    it expands into the free room, so the row carries no stretch
+    beside it. The Egress trail's footer row carries its refusal
+    on one."""
+
+    def __init__(self, text: str = "") -> None:
+        super().__init__()
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+        self.full = ""
+        self.line = ""
+        self.setText(text)
+
+    def minimumSizeHint(self) -> QtCore.QSize:
+        """One line tall and no width: the row's minimum never
+        reads the note's words."""
+        return QtCore.QSize(0, super().minimumSizeHint().height())
+
+    def setText(self, text: str) -> None:
+        """The whole text stands on ``text()``; the label shows the
+        line that fits its width."""
+        self.full = text
+        self.elide()
+
+    def text(self) -> str:
+        return self.full
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self.elide()
+
+    def elide(self) -> None:
+        """The line for the label's width: the whole text when it
+        fits, an elided tail when it does not — the whole text
+        then on the tooltip."""
+        self.line = self.fontMetrics().elidedText(
+            self.full, QtCore.Qt.TextElideMode.ElideRight, self.width()
+        )
+        QtWidgets.QLabel.setText(self, self.line)
+        self.setToolTip("" if self.line == self.full else self.full)
 
 
 def fit_columns(

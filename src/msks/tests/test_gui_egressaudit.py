@@ -106,11 +106,22 @@ def qt(tmp_path):
     app.processEvents()
 
 
+def bare_trail(qt, bridge) -> audit_mod.AuditTrail:
+    """The trail in a scratch grid: the tab's own placement
+    (#1154) with no window behind it — the state the trail's own
+    tests read. The grid goes in the fixture's keep: a parentless
+    grid dies with its last Python reference, and the bands are
+    its items."""
+    grid = QtWidgets.QGridLayout()
+    qt.keep.append(grid)
+    return audit_mod.AuditTrail(bridge, grid, 0)
+
+
 def make_trail(qt) -> tuple:
     """The trail over the stub bridge, hosted on the workspace
     with its first read landed and the calls cleared."""
     bridge = StubBridge()
-    trail = audit_mod.AuditTrail(bridge)
+    trail = bare_trail(qt, bridge)
     qt.keep.append(trail)
     trail.host("ws-a")
     trail.poke()
@@ -184,10 +195,10 @@ def test_the_read_paints_the_rows_newest_first(qt) -> None:
             clock_label(1000.0),
         ],
     ]
-    assert not trail.empty.isVisibleTo(trail)
+    assert not trail.empty.isVisibleTo(trail.footer)
     bridge.succeeded.emit(trail.key, [])
     assert trail.table.rowCount() == 0
-    assert trail.empty.isVisibleTo(trail)
+    assert trail.empty.isVisibleTo(trail.footer)
     bridge.succeeded.emit(trail.key, "not a list")
     assert trail.table.rowCount() == 0
 
@@ -251,7 +262,7 @@ def test_a_poke_before_a_host_flies_nothing(qt) -> None:
     """The unhosted trail (#1051): no workspace stands, and the
     poke and the refly both guard."""
     bridge = StubBridge()
-    trail = audit_mod.AuditTrail(bridge)
+    trail = bare_trail(qt, bridge)
     qt.keep.append(trail)
     trail.poke()
     trail.refly()
@@ -384,7 +395,7 @@ def test_a_workspace_switch_cancels_and_blanks(qt) -> None:
     stale = trail.key
     trail.host("ws-b")
     assert trail.table.rowCount() == 0
-    assert trail.empty.isVisibleTo(trail)
+    assert trail.empty.isVisibleTo(trail.footer)
     bridge.succeeded.emit(stale, [ROW_NEW])
     assert trail.table.rowCount() == 0
     trail.poke()
@@ -412,17 +423,17 @@ def test_a_first_read_with_no_rows_shows_the_stand_in(qt) -> None:
     the trail advertises. The hosted trail with nothing read
     shows it too: the blanked table is the honest state."""
     bridge = StubBridge()
-    trail = audit_mod.AuditTrail(bridge)
+    trail = bare_trail(qt, bridge)
     qt.keep.append(trail)
     trail.host("ws-a")
-    assert trail.empty.isVisibleTo(trail)  # nothing read yet
+    assert trail.empty.isVisibleTo(trail.footer)  # nothing read yet
     trail.poke()
     bridge.succeeded.emit(trail.key, [ROW_NEW])
-    assert not trail.empty.isVisibleTo(trail)
+    assert not trail.empty.isVisibleTo(trail.footer)
     trail.poke()
     bridge.succeeded.emit(trail.key, [])  # the rows left
     assert trail.table.rowCount() == 0
-    assert trail.empty.isVisibleTo(trail)
+    assert trail.empty.isVisibleTo(trail.footer)
 
 
 def test_a_recovered_read_clears_the_refusal_note(qt) -> None:
@@ -435,6 +446,40 @@ def test_a_recovered_read_clears_the_refusal_note(qt) -> None:
     trail.poke()
     bridge.succeeded.emit(trail.key, [ROW_NEW])
     assert trail.note.text() == ""
+
+
+def test_a_wide_refusal_elides_in_the_footer_and_keeps_its_words(
+    qt,
+) -> None:
+    """The footer's one line (#1154 review): the refusal stands
+    whole on the note whatever the label's width, the label shows
+    the line that fits — the whole words on the tooltip once the
+    line elides — and the footer's minimum reads no width from
+    it: a refusal no space breaks, a URL's own shape, holds no
+    window open."""
+    trail, bridge = make_trail(qt)
+    trail.footer.show()  # the row's resizes reach the note
+    trail.poke()
+    refusal = "https://" + "a" * 180
+    bridge.failed.emit(trail.key, refusal)
+    note = trail.note
+    whole = f"refused: {refusal}"
+    assert note.text() == whole
+    assert trail.footer.minimumSizeHint().width() < 400
+
+    metrics = note.fontMetrics()
+    narrow = metrics.horizontalAdvance("refused: https://aaa")
+    note.resize(narrow, note.height())
+    elided = metrics.elidedText(
+        whole, QtCore.Qt.TextElideMode.ElideRight, narrow
+    )
+    assert note.line == elided
+    assert note.line != whole
+    assert note.toolTip() == whole
+
+    note.resize(metrics.horizontalAdvance(whole) + 10, note.height())
+    assert note.line == whole
+    assert note.toolTip() == ""
 
 
 def test_the_decisions_match_the_daemons_tokens() -> None:
