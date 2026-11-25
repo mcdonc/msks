@@ -6,6 +6,8 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.10.2] - 2026-11-25
+
 ### Added
 
 - **The GUI's terminal-only mode (#1152).** The workspace page's
