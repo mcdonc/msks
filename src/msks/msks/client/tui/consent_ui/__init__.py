@@ -90,6 +90,7 @@ from .screens import (
     FailurePanel,
     ModeScreen,
     PickerScreen,
+    guarded_power,
 )
 from .wire import (
     AUTH_CLOSE_CODE,
@@ -185,5 +186,6 @@ __all__ = [
     "HOLDS_HINT",
     "ModeScreen",
     "PickerScreen",
+    "guarded_power",
     "ConsentPage",
 ]

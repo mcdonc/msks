@@ -33,6 +33,7 @@ from ..consent_ui import (
     flash_safe,
     focus_attr,
     focused_attr,
+    guarded_power,
     switch_mode_path,
 )
 from ..detail import header_meta
@@ -675,9 +676,17 @@ class WorkspaceScreen(HelpKeys, PageWatches, Screen):
 
     async def power_workspace(self, verb: str) -> None:
         """Boot or power off this workspace; the header and the
-        page's consent line name the outcome."""
+        page's consent line name the outcome. A refused start opens
+        the failure panel over the page (#1139), the list's own
+        refused start its own surface; a refused stop flashes."""
         call = self.app.data.start if verb == "start" else self.app.data.stop
-        reply = await self.guarded_page_flash(verb, call(self.row["id"]))
+        reply = await guarded_power(
+            self.app,
+            verb,
+            workspace_label(self.row),
+            call(self.row["id"]),
+            self.flash,
+        )
         if reply is not None:
             self.row["status"] = reply["status"]
             self.paint_header()

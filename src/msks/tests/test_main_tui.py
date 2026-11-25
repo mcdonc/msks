@@ -107,6 +107,15 @@ from textual.widgets import (
 
 WS = "ws-a"
 
+#: The daemon's 503 for a VMM exit (#1139), the shape the local
+#: driver words it in: the hypervisor's exit before its socket
+#: served, the last log line at the end.
+VMM_REFUSAL = (
+    f"msks: 503: cloud-hypervisor exited with 1 before serving "
+    f"/var/lib/msksd/vms/{WS}/api.sock; last log line:"
+    "   2: no supported hypervisor"
+)
+
 
 def request_frame(rid: str, host: str = "api.example") -> str:
     """The shared request fixture, scoped to this suite's
@@ -5534,7 +5543,15 @@ async def test_the_form_walks_with_enter_and_the_buttons_finish(
         assert len(data.calls) == 1
 
 
-async def test_a_start_failure_and_a_remove_failure_flash(monkeypatch) -> None:
+async def test_a_refused_start_opens_the_panel_a_refused_remove_flashes(
+    monkeypatch,
+) -> None:
+    """#1139: a refused start lands on the failure panel with the
+    daemon's detail verbatim, held until dismissed — a flash
+    cleared after five seconds and the row read ``created``
+    again with no trace of the cause. A refusal that is no VMM
+    exit adds no doctor hint. A refused remove keeps the flash:
+    its one line is the outcome."""
     scripted_link(monkeypatch, [])
     data = FakeData([row()])
     data.fail.update({"start", "remove"})
@@ -5542,7 +5559,12 @@ async def test_a_start_failure_and_a_remove_failure_flash(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await wait_for(lambda: "alpha" in row_text(app, 0))
         await press_until(pilot, "s", lambda: ("start", WS) in data.calls)
-        await wait_for(lambda: "start failed" in status_text(app))
+        await wait_for(lambda: on_failure(app))
+        assert failure_title(app) == "start failed: alpha"
+        assert failure_detail(app) == "daemon away"
+        assert "start failed" not in status_text(app)
+        await pilot.press("escape")
+        await wait_for(lambda: on_main(app))
         await press_until(
             pilot, "D", lambda: type(app.screen).__name__ == "ConfirmScreen"
         )
@@ -5559,11 +5581,41 @@ async def test_a_start_failure_and_a_remove_failure_flash(monkeypatch) -> None:
         assert data.calls.count(("remove", WS)) == 1
 
 
+async def test_a_refused_start_naming_a_vmm_exit_adds_the_doctor_hint(
+    monkeypatch,
+) -> None:
+    """#1139: the daemon's 503 for a VMM exit carries the
+    hypervisor's last log line at its end — the first part a
+    one-row flash cut. The panel keeps the detail whole and adds
+    the ``msksd doctor`` paragraph after it, and Enter dismisses
+    the panel back onto the list."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row()])
+    data.fail.add("start")
+    data.refusal = VMM_REFUSAL
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "alpha" in row_text(app, 0))
+        await press_until(pilot, "s", lambda: ("start", WS) in data.calls)
+        await wait_for(lambda: on_failure(app))
+        assert failure_title(app) == "start failed: alpha"
+        detail = failure_detail(app)
+        assert detail.startswith(VMM_REFUSAL)
+        assert "msksd doctor" in detail
+        assert "no supported hypervisor" in detail
+        await pilot.press("enter")
+        await wait_for(lambda: on_main(app))
+        # The refused start left the row as it was.
+        assert "stopped" in row_text(app, 0)
+
+
 async def test_page_action_failures_flash(monkeypatch) -> None:
     """A refused page action names itself on the page's consent
     line — the app-level flash paints the list's status line,
     which the pushed page hides (#343), so the page's own actions
-    flash on the page."""
+    flash on the page. A refused start is the one that opens the
+    failure panel over the page instead (#1139), the list's own
+    refused start on its own surface."""
     scripted_link(monkeypatch, [rules_frame()])
     data = FakeData([row()])
     data.fail.update({"start", "stop"})
@@ -5573,15 +5625,16 @@ async def test_page_action_failures_flash(monkeypatch) -> None:
         await wait_for(lambda: action_children(app) == 8)
         await pilot.press("down", "down", "down", "down", "down", "down")
         await press_until(pilot, "enter", lambda: ("start", WS) in data.calls)
-        await wait_for(lambda: "start failed" in consent_text(app))
+        await wait_for(lambda: on_failure(app))
+        assert failure_detail(app) == "daemon away"
+        await pilot.press("escape")
+        await wait_for(lambda: on_page(app))
         # A start that lands (the daemon's own answer) flips the
         # row and the power pair's dimming; the stop half then runs
         # against a running workspace and names its own refusal.
         data.fail.remove("start")
         await press_until(
-            pilot,
-            "enter",
-            lambda: data.calls.count(("start", WS)) == 2,
+            pilot, "s", lambda: data.calls.count(("start", WS)) == 2
         )
         await wait_for(lambda: "workspace is running" in action_text(app, 6))
         await pilot.press("down")
@@ -7176,6 +7229,29 @@ def test_the_flash_note_leads_with_the_console_suggestion(
         note = follow_mod.run_ssh_flow("w1")
     assert note.startswith("ssh refused — try msks console (")
     assert long_line in caplog.text
+
+
+def test_the_ssh_flow_suggests_the_doctor_after_a_vmm_exit(
+    monkeypatch, caplog
+) -> None:
+    """#1139: a boot the daemon refused on a VMM exit leaves the
+    console no closer — it boots the workspace too — so the note's
+    suggestion is the host's doctor, the refusal's first line
+    still after it, and the log keeps the refusal whole."""
+
+    def refused_forward(workspace_id):
+        raise SystemExit(VMM_REFUSAL)
+
+    def never(workspace_id, passthrough, transport=None):
+        raise AssertionError("ssh must not run past the probe")
+
+    monkeypatch.setattr(follow_mod, "ensure_forward", refused_forward)
+    monkeypatch.setattr(follow_mod, "run_workspace_ssh", never)
+    with caplog.at_level("WARNING", logger="msks.client.tui.follow"):
+        note = follow_mod.run_ssh_flow("w1")
+    hint = "run msksd doctor on the daemon's host"
+    assert note == f"ssh refused — {hint} ({VMM_REFUSAL})"
+    assert VMM_REFUSAL in caplog.text
 
 
 def test_a_255_exit_reports_only_the_code(monkeypatch) -> None:

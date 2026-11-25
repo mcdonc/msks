@@ -35,6 +35,14 @@ Some actions ask first, in a dialog that shows `y / n` beside
 the question. `y` (or Enter) takes the action. `n`, `q`, or
 Escape leaves everything as it was.
 
+A refused create, or a refused start (`s` on the list), opens the
+**failure panel**: the daemon's whole refusal in a box over the
+screen, held until Enter, Escape, `q`, or the Close button dismisses
+it. When the refusal says the hypervisor exited before the workspace
+came up, the panel adds a paragraph pointing at `msksd doctor` on the
+daemon's host. A refused stop or remove flashes its reason on the
+status line for five seconds.
+
 The list follows the daemon over the events websocket. A
 workspace changed from another surface (the CLI, another
 operator) appears without a keypress: the daemon publishes every
@@ -258,9 +266,12 @@ with a name prompt. The daemon owns the stopped-source rule — a
 refusal names itself on the page's consent line. Every action
 row also has a quick key. `e` opens the egress consent page,
 `h` opens a shell, `m` the mounts editor, `p` the proxies page,
-`t` the edit dialog, and `c` the clone prompt. The footer shows
-each key with an abbreviated description, the same style the
-workspaces list uses, so the whole key set fits one 80-column
+`t` the edit dialog, and `c` the clone prompt. `s` and `S` are the
+Start and Stop rows' quick keys, the list's own letters. A refused
+start opens the failure panel over the page, the same panel the list's
+`s` opens; a refused stop shows its reason on the consent line. The
+footer shows each key with an abbreviated description, the same style
+the workspaces list uses, so the whole key set fits one 80-column
 line. The `?` overlay lists them all.
 
 ### The mounts page
@@ -429,7 +440,10 @@ longer path. The flow boots a stopped workspace first and probes the forward. A
 probe that reports a refusal opens no session: the tree's first flash leads
 with a suggestion to use `msks console` as a fallback and follows with the
 refusal's first line. The row ellipsizes at its end, so the suggestion stays
-visible. The full refusal text is logged before the tree restarts.
+visible. When the boot refused because the hypervisor exited, the
+suggestion is `msksd doctor` on the daemon's host instead: the console
+boots the workspace too. The full refusal text is logged before the tree
+restarts.
 
 A host that wants shells in windows beside the running tree configures a
 terminal launcher (`terminal_open_cmd` below). The action then spawns the

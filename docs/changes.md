@@ -8,6 +8,13 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **A refused start in the TUI opens the failure panel (#1139).** `s`
+  on the workspaces list and Start on the workspace page show the
+  daemon's whole refusal in a panel that stays until dismissed. When the
+  hypervisor exited before the workspace came up, the panel adds a
+  paragraph that points at `msksd doctor` on the daemon's host, and the
+  shell action's refusal flash suggests the doctor instead of
+  `msks console`. See [docs/tui.md](tui.md#the-workspace-tree).
 - **A click clears a GUI terminal selection when the pointer
   moves a few pixels during the click (#1138).** A click whose
   pointer moves a little inside the pressed cell now clears

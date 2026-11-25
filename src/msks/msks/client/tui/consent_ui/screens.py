@@ -1,7 +1,8 @@
 """The modal screens and the edge list.
 
 The duration picker both questions reuse, the mode picker, the
-confirm, the failure panel, and the focus-preserving ListView.
+confirm, the failure panel, the guard a power exchange runs
+through, and the focus-preserving ListView.
 """
 
 from __future__ import annotations
@@ -19,7 +20,8 @@ from ..consent import (
     DURATIONS,
     EGRESS_MODES,
 )
-from .flash import panel_safe
+from ..refusal import refusal_detail
+from .flash import flash_safe, panel_safe
 
 
 class PickerScreen(ModalScreen[str | None]):
@@ -175,6 +177,27 @@ class FailurePanel(ModalScreen):
         """Dismiss — the panel has no timeout; it leaves when the
         operator closes it."""
         self.dismiss()
+
+
+async def guarded_power(app, verb: str, label: str, work, flash):
+    """Await one power exchange — start or stop — and land its
+    refusal where the operator can act on it (#1139): a refused
+    start opens the failure panel with the daemon's detail (and
+    the ``msksd doctor`` hint after a VMM exit), held until
+    dismissed, where a flash dropped the cause after five
+    seconds; a refused stop keeps the flash — ``flash`` takes the
+    escaped one-line text. Answers the reply, or None for a
+    refusal."""
+    try:
+        return await work
+    except Exception as exc:
+        if verb == "start":
+            app.push_screen(
+                FailurePanel(verb, label, refusal_detail(str(exc)))
+            )
+        else:
+            flash(flash_safe(f"{verb} failed: {str(exc)}"))
+        return None
 
 
 class DurationScreen(PickerScreen):
