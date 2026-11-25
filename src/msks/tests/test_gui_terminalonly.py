@@ -791,8 +791,10 @@ def test_the_restore_button_takes_the_toggle_s_place(qt) -> None:
     the chrome row's and, under the top-level strip, the bar's
     own row — so the enter pads the page's margins by the
     distance and the restore button lands where the toggle
-    stood, to the pixel, alone in a window and under the strip
-    alike. A page moved or resized under the mode re-parks it,
+    stood, to the pixel, under the strip; alone in a window a
+    tab row that sits lower than the chrome row stops at the
+    margin's floor with the toggle's center still inside the
+    button. A page moved or resized under the mode re-parks it,
     so a layout the platform settles a pass late still lands
     there, and a wider window keeps the button at its distance
     from the right edge. The leave gives the margins back."""
@@ -802,26 +804,35 @@ def test_the_restore_button_takes_the_toggle_s_place(qt) -> None:
     spot = window_rect(mode.toggle)
     enter(page)
     settle(qt)
-    assert window_rect(mode.restore) == spot
+    parked = window_rect(mode.restore)
     assert page.layout().contentsMargins().top() < margins.top()
+    # Alone in a window the tab row may sit lower than the chrome
+    # row's toggle — the macOS style's does, three pixels — and
+    # a layout margin stops at zero: the button then rests at
+    # the floor, the toggle's center still inside it. Where the
+    # row can reach the spot, it lands there to the pixel.
+    assert parked == spot or (
+        page.layout().contentsMargins().top() == 0
+        and parked.contains(spot.center())
+    )
     # The page's own move or resize re-parks (#1152): the event
     # schedules the check for the loop's next pass, and the
-    # corner's own resize does the same.
+    # shell strip's and the corner's own do the same.
     move = qt.QtCore.QEvent(qt.QtCore.QEvent.Type.Move)
     mode.eventFilter(page, move)
     mode.eventFilter(page.shells, move)
     mode.eventFilter(mode.corner, move)
     settle(qt)
-    assert window_rect(mode.restore) == spot
+    assert window_rect(mode.restore) == parked
     # A layout that settles a pass late (#1152): the row shifted
-    # under the mode, as the macOS runner's did, and the
-    # corner's own resize brings the button back to the spot.
+    # under the mode, as the macOS runner's did, and the shell
+    # strip's own move brings the button back.
     shifted = qt.QtCore.QMargins(page.layout().contentsMargins())
     page.layout().setContentsMargins(
         shifted.left(), shifted.top() + 3, shifted.right(), shifted.bottom()
     )
     settle(qt)
-    assert window_rect(mode.restore) == spot
+    assert window_rect(mode.restore) == parked
     mode.leave()
     settle(qt)
     assert page.layout().contentsMargins() == margins
@@ -858,6 +869,38 @@ def test_the_restore_button_takes_the_toggle_s_place(qt) -> None:
     assert mode.spot is None
     landed = window_rect(mode.toggle)
     assert window.rect().right() - landed.right() == from_right
+
+
+def test_a_park_below_the_margin_floor_stops_at_zero(qt) -> None:
+    """The padding is a layout margin, and a margin stops at
+    zero (#1152): a tab row that would have to rise above the
+    page's top — the macOS style's, alone in a window — rests at
+    the floor with the toggle's center still inside the button,
+    and the re-park returns it there after a shift. The leave
+    gives the page its own margins back."""
+    page, _window, _bridge = make_page(qt)
+    mode = page.terminal_only
+    margins = page.layout().contentsMargins()
+    page.layout().setContentsMargins(
+        margins.left(), 0, margins.right(), margins.bottom()
+    )
+    settle(qt)
+    flat = qt.QtCore.QMargins(page.layout().contentsMargins())
+    spot = window_rect(mode.toggle)
+    enter(page)
+    settle(qt)
+    parked = window_rect(mode.restore)
+    assert page.layout().contentsMargins().top() == 0
+    assert parked.top() > spot.top()
+    assert parked.contains(spot.center())
+    shifted = qt.QtCore.QMargins(page.layout().contentsMargins())
+    page.layout().setContentsMargins(
+        shifted.left(), shifted.top() + 3, shifted.right(), shifted.bottom()
+    )
+    settle(qt)
+    assert window_rect(mode.restore) == parked
+    mode.leave()
+    assert page.layout().contentsMargins() == flat
 
 
 def test_the_name_follows_the_stand_in_and_the_row(qt) -> None:
