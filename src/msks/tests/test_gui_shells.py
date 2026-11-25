@@ -1,9 +1,11 @@
 """The shell-tab tests (#954, #974): the hub that owns a
 workspace's terminal sessions, the tab strip that hosts them
-inside the page's Shells tab, and the window shell's shell and
+inside the page's Shells tab, the window shell's shell and
 external-terminal actions — offscreen, over real sleeper
 children through the hub's injected argv factory (the widget
-suite's own pattern)."""
+suite's own pattern) — and the tab titles the program inside
+sets and the keys that drive the strip (#1163), pressed through
+Qt's own event path on a focused terminal."""
 
 import os
 import sys
@@ -931,3 +933,497 @@ def test_the_terminal_command_reads_the_config():
     assert terminal_command(Conf()) == ["theterm", "-e"]
     assert terminal_command(Empty()) is None
     assert terminal_command(None) is None
+
+
+# --- the program's title (#1163) ----------------------------------------
+
+
+def titles_heard(hub) -> list:
+    """Every ``shell_titled`` announce so far, as (workspace, number)."""
+    heard: list = []
+    hub.shell_titled.connect(lambda ws, no: heard.append((ws, no)))
+    return heard
+
+
+def test_a_program_title_titles_the_tab_until_cleared(hub):
+    """OSC 0/2 from the program inside (#1163): the record takes
+    the title and the label reads it; the empty title — the
+    program clearing it — reads the number again. Each change
+    announces itself to the hosting strip."""
+    session = hub.open_shell("ws-a")
+    heard = titles_heard(hub)
+    session.widget.title_changed.emit("build")
+    assert session.program_title == "build"
+    assert session.label == "build"
+    session.widget.title_changed.emit("")
+    assert session.program_title == ""
+    assert session.label == "1"
+    assert heard == [("ws-a", 1), ("ws-a", 1)]
+
+
+def test_a_rename_wins_over_the_program_title(hub):
+    """A renamed tab keeps its name for the session's life
+    (#1163): a program title landing after the rename changes
+    the record's text and not the label."""
+    session = hub.open_shell("ws-a")
+    hub.rename("ws-a", 1, "build")
+    session.widget.title_changed.emit("vim")
+    assert session.program_title == "vim"
+    assert session.label == "build"
+
+
+def test_a_title_for_a_closed_session_changes_nothing(hub):
+    """A late title from a widget whose session closed (#1163):
+    the record is gone, so the text lands nowhere and nothing
+    is announced."""
+    session = hub.open_shell("ws-a")
+    hub.close_shell("ws-a", 1)
+    heard = titles_heard(hub)
+    session.widget.title_changed.emit("late")
+    assert hub.shells("ws-a") == []
+    assert heard == []
+
+
+def test_the_tab_follows_the_programs_title(hub, tabs):
+    """A hosted tab follows the record (#1163): the program's
+    title while one stands, the number once the program clears
+    it, and the whole title under the pointer while one stands."""
+    session = hub.open_shell("ws-a")
+    tabs.host("ws-a")
+    assert tabs.tabText(0) == "1"
+    session.widget.title_changed.emit("build")
+    assert tabs.tabText(0) == "build"
+    assert tabs.tabToolTip(0) == "build"
+    session.widget.title_changed.emit("")
+    assert tabs.tabText(0) == "1"
+    assert tabs.tabToolTip(0) == ""
+
+
+def test_a_renamed_tab_keeps_its_name_over_a_program_title(hub, tabs):
+    """The rename wins on the tab too (#1163): a program title
+    after it changes neither the text nor the tooltip — the
+    name is the operator's own, and it reads whole on the tab."""
+    session = hub.open_shell("ws-a")
+    tabs.host("ws-a")
+    hub.rename("ws-a", 1, "build")
+    session.widget.title_changed.emit("vim")
+    assert tabs.tabText(0) == "build"
+    assert tabs.tabToolTip(0) == ""
+
+
+def test_a_hosted_tab_shows_the_title_set_while_unhosted(hub, tabs):
+    """A shell that retitled while its page was elsewhere shows
+    the title at the host (#1163): the tab takes the record as
+    it reads, the title and the tooltip both."""
+    session = hub.open_shell("ws-a")
+    session.widget.title_changed.emit("build")
+    tabs.host("ws-a")
+    assert tabs.tabText(0) == "build"
+    assert tabs.tabToolTip(0) == "build"
+
+
+def test_a_title_for_another_workspace_retitles_nothing(hub, tabs):
+    """The strip hosts one workspace (#954): a program title for
+    another workspace's shell retitles no tab here."""
+    hub.open_shell("ws-a")
+    tabs.host("ws-a")
+    other = hub.open_shell("ws-b")
+    other.widget.title_changed.emit("build")
+    assert bare_titles(tabs) == ["1", "+"]
+
+
+def bare_titles(tabs) -> list[str]:
+    """A bare strip's tab texts, in order."""
+    return [tabs.tabText(i) for i in range(tabs.count())]
+
+
+def test_a_long_title_stops_at_the_ceiling_and_reads_in_the_tooltip(
+    hub, tabs, qt
+):
+    """A program's title runs as long as a path (#1163): the
+    tab's hint stops at the ceiling and the bar elides the text
+    at paint, the tab's text and tooltip keep the whole title,
+    and the "+" keeps its natural width."""
+    session = hub.open_shell("ws-a")
+    tabs.host("ws-a")
+    bar = tabs.tabBar()
+    plus = bar.tabSizeHint(1).width()
+    long = "user@alpha: ~/projects/msks/docs/changes.md — vim"
+    session.widget.title_changed.emit(long)
+    assert bar.tabSizeHint(0).width() == bar.max_tab_px()
+    assert tabs.tabText(0) == long
+    assert tabs.tabToolTip(0) == long
+    assert bar.tabSizeHint(1).width() == plus
+    assert bar.elideMode() == qt.QtCore.Qt.TextElideMode.ElideRight
+    # A short title sits between the floor and the ceiling.
+    session.widget.title_changed.emit("vim")
+    assert bar.min_tab_px() <= bar.tabSizeHint(0).width() < bar.max_tab_px()
+
+
+# --- the strip's own actions (#1163) ------------------------------------
+
+
+def test_stepping_cycles_the_shell_tabs_and_skips_the_plus(hub, tabs):
+    """Next and previous move by one among the shell tabs,
+    wrapping at both ends; the "+" is never a stop — a current
+    standing on it starts from the first or the last shell."""
+    for _ in range(3):
+        hub.open_shell("ws-a")
+    tabs.host("ws-a")
+    assert tabs.currentIndex() == 2  # the newest shell
+    tabs.step_shell(1)
+    assert tabs.currentIndex() == 0
+    tabs.step_shell(1)
+    assert tabs.currentIndex() == 1
+    tabs.step_shell(-1)
+    assert tabs.currentIndex() == 0
+    tabs.setCurrentIndex(tabs.indexOf(tabs.plus_page))
+    tabs.step_shell(1)
+    assert tabs.currentIndex() == 0
+    tabs.setCurrentIndex(tabs.indexOf(tabs.plus_page))
+    tabs.step_shell(-1)
+    assert tabs.currentIndex() == 2
+
+
+def test_stepping_the_plus_alone_changes_nothing(tabs):
+    """Only the "+" standing — no shell — the step has no stop
+    to make: the current tab stays where it was."""
+    assert tabs.shell_count() == 0
+    tabs.step_shell(1)
+    assert tabs.currentIndex() == 0
+    tabs.step_shell(-1)
+    assert tabs.currentIndex() == 0
+
+
+def test_selecting_the_nth_shell(hub, tabs):
+    """The Nth shell, counting from one: its tab current; a
+    position under one or past the standing shells changes
+    nothing."""
+    for _ in range(3):
+        hub.open_shell("ws-a")
+    tabs.host("ws-a")
+    tabs.select_shell(1)
+    assert tabs.currentIndex() == 0
+    tabs.select_shell(4)
+    assert tabs.currentIndex() == 0
+    tabs.select_shell(0)
+    assert tabs.currentIndex() == 0
+    tabs.select_shell(3)
+    assert tabs.currentIndex() == 2
+
+
+def test_closing_the_current_shell_mirrors_the_button(hub, tabs):
+    """The current shell's close is the tab's own close button
+    (#954): the record goes down and the tab with it; the "+"
+    standing current closes nothing."""
+    for _ in range(2):
+        hub.open_shell("ws-a")
+    tabs.host("ws-a")
+    tabs.close_current()
+    assert bare_titles(tabs) == ["1", "+"]
+    assert [s.no for s in hub.shells("ws-a")] == [1]
+    tabs.setCurrentIndex(tabs.indexOf(tabs.plus_page))
+    tabs.close_current()
+    assert bare_titles(tabs) == ["1", "+"]
+
+
+# --- the shell keys (#1163) ---------------------------------------------
+
+MODS = {
+    "ctrl": "ControlModifier",
+    "shift": "ShiftModifier",
+    "alt": "AltModifier",
+}
+
+
+def press(qt, widget, key, *mods: str) -> None:
+    """One key pressed on the widget that holds the keyboard,
+    the named modifiers (``ctrl``, ``shift``, ``alt``) held —
+    through Qt's own event path, the delivery the platform
+    makes (#1152's shape)."""
+    from PySide6.QtTest import QTest
+
+    Modifier = qt.QtCore.Qt.KeyboardModifier
+    held = Modifier.NoModifier
+    for name in mods:
+        held |= getattr(Modifier, MODS[name])
+    QTest.keyClick(widget, getattr(qt.QtCore.Qt.Key, key), held)
+
+
+def pressed_keys(qt, widget) -> list:
+    """Every key the widget receives as a press from now on: a
+    filter before the widget's own handler. The shortcut map
+    runs before the widget, so a key a shortcut took never
+    lands here (#1152)."""
+    seen: list = []
+
+    class Log(qt.QtCore.QObject):
+        def eventFilter(self, _watched, event) -> bool:  # noqa: N802
+            if event.type() == qt.QtCore.QEvent.Type.KeyPress:
+                seen.append(event.key())
+            return False
+
+    widget.installEventFilter(Log(widget))
+    return seen
+
+
+def open_page(qt, shell, shells: int = 1):
+    """The page on ws-a with ``shells`` shells, the newest
+    current and its terminal holding the keyboard — the window
+    takes the focus on its event pass (#1152)."""
+    for _ in range(shells):
+        shell.open_shell("ws-a")
+    qt.app.processEvents()
+    page = shell.detail
+    assert qt.app.focusWidget() is page.shells.currentWidget()
+    return page
+
+
+@pytest.fixture()
+def strip_shell(qt):
+    """The window shell under the main strip in a real window,
+    an Images page beside it (#962's composition): the keys'
+    scope reads against the other pages."""
+    from msks.client.gui.tabs import MainTabs
+
+    hub = qt.shells.ShellHub(lambda ws: [sys.executable, "-c", SLEEPER])
+    shell = qt.shell_class(StubBridge(), None, hub)
+    tabs = MainTabs(shell)
+    images = qt.QtWidgets.QWidget()
+    tabs.addTab(images, "Images")
+    window = qt.QtWidgets.QMainWindow()
+    window.setCentralWidget(tabs)
+    window.show()
+    shell.listing.on_succeeded("workspaces-list", [daemon_row()])
+    qt.app.processEvents()
+    yield shell, tabs, hub, window
+    hub.shutdown()
+
+
+def test_the_shell_keys_stand_on_the_page_in_the_toggle_keys_scope(
+    qt, window_shell
+):
+    """One shortcut per action on the page (#1163), the scope
+    #1152's toggle key opened: the page and its children, so a
+    terminal answers and the listing does not. Each answers
+    once per press."""
+    shell, hub, _window = window_shell
+    keys = shell.detail.shell_keys
+    assert [
+        [k.toString() for k in shortcut.keys()] for shortcut in keys.shortcuts
+    ] == [
+        ["Ctrl+Shift+T"],
+        ["Ctrl+Shift+W"],
+        ["Ctrl+Tab"],
+        ["Ctrl+Shift+Tab", "Ctrl+Backtab"],
+        *[[f"Ctrl+{n}"] for n in range(1, 10)],
+        *[[f"Alt+{n}"] for n in range(1, 6)],
+    ]
+    for shortcut in keys.shortcuts:
+        assert shortcut.context() == (
+            qt.QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut
+        )
+        assert not shortcut.autoRepeat()
+        assert shortcut.parent() is shell.detail
+
+
+def test_the_new_shell_key_opens_a_shell_from_the_terminal(qt, window_shell):
+    """Ctrl+Shift+T with a terminal holding the keyboard
+    (#1163): one more shell opens beside the standing one, its
+    tab current and its terminal focused, and the program
+    inside reads nothing of T."""
+    shell, hub, _window = window_shell
+    page = open_page(qt, shell)
+    terminal = page.shells.currentWidget()
+    seen = pressed_keys(qt, terminal)
+    press(qt, terminal, "Key_T", "ctrl", "shift")
+    assert strip_titles(page) == ["1", "2", "+"]
+    assert page.shells.currentIndex() == 1
+    assert qt.app.focusWidget() is page.shells.currentWidget()
+    assert qt.QtCore.Qt.Key.Key_T not in seen
+
+
+def test_the_close_shell_key_closes_the_current_shell(qt, window_shell):
+    """Ctrl+Shift+W (#1163): the current shell's session ends —
+    the tab comes off, the shell before it takes the window and
+    the keyboard — and the program inside reads nothing of W."""
+    shell, hub, _window = window_shell
+    page = open_page(qt, shell, shells=2)
+    terminal = page.shells.currentWidget()
+    assert page.shells.currentIndex() == 1
+    seen = pressed_keys(qt, terminal)
+    press(qt, terminal, "Key_W", "ctrl", "shift")
+    assert strip_titles(page) == ["1", "+"]
+    assert page.shells.currentIndex() == 0
+    assert qt.app.focusWidget() is page.shells.currentWidget()
+    assert qt.QtCore.Qt.Key.Key_W not in seen
+
+
+def test_closing_the_last_shell_by_key_leaves_the_plus_alone(qt, window_shell):
+    """Ctrl+Shift+W on the only shell (#1163, #971): the strip
+    holds the "+" alone, current on it, and the closed terminal
+    hands the keyboard to the strip's bar — a hidden terminal
+    holds it no more, and the page's next open creates a shell."""
+    shell, hub, _window = window_shell
+    page = open_page(qt, shell)
+    terminal = page.shells.currentWidget()
+    press(qt, terminal, "Key_W", "ctrl", "shift")
+    assert strip_titles(page) == ["+"]
+    assert page.shells.currentIndex() == 0
+    assert hub.shells("ws-a") == []
+    assert qt.app.focusWidget() is page.shells.tabBar()
+
+
+def test_the_next_and_previous_keys_cycle_the_shells(qt, window_shell):
+    """Ctrl+Tab and Ctrl+Shift+Tab (#1163): the next and the
+    previous shell, wrapping at both ends, each chosen shell's
+    terminal taking the keyboard. Both spellings of the
+    previous key answer — Backtab, and the shifted Tab — and
+    neither reaches the program inside."""
+    shell, hub, _window = window_shell
+    page = open_page(qt, shell, shells=3)
+    last = page.shells.currentWidget()
+    seen = pressed_keys(qt, last)
+    press(qt, last, "Key_Tab", "ctrl")
+    assert page.shells.currentIndex() == 0  # the wrap
+    first = page.shells.currentWidget()
+    assert qt.app.focusWidget() is first
+    seen_first = pressed_keys(qt, first)
+    press(qt, first, "Key_Tab", "ctrl")
+    assert page.shells.currentIndex() == 1
+    second = page.shells.currentWidget()
+    seen_second = pressed_keys(qt, second)
+    press(qt, second, "Key_Backtab", "ctrl", "shift")
+    assert page.shells.currentIndex() == 0
+    press(qt, page.shells.currentWidget(), "Key_Tab", "ctrl", "shift")
+    assert page.shells.currentIndex() == 2
+    assert qt.app.focusWidget() is last
+    for log in (seen, seen_first, seen_second):
+        assert qt.QtCore.Qt.Key.Key_Tab not in log
+        assert qt.QtCore.Qt.Key.Key_Backtab not in log
+
+
+def test_the_number_keys_jump_to_the_nth_shell(qt, window_shell):
+    """Ctrl+1 through Ctrl+9 (#1163): the Nth shell current and
+    focused; a number past the standing shells changes nothing,
+    and the digit never reaches the program inside."""
+    shell, hub, _window = window_shell
+    page = open_page(qt, shell, shells=3)
+    terminal = page.shells.currentWidget()
+    seen = pressed_keys(qt, terminal)
+    press(qt, terminal, "Key_1", "ctrl")
+    assert page.shells.currentIndex() == 0
+    assert qt.app.focusWidget() is page.shells.currentWidget()
+    press(qt, page.shells.currentWidget(), "Key_3", "ctrl")
+    assert page.shells.currentIndex() == 2
+    press(qt, page.shells.currentWidget(), "Key_9", "ctrl")
+    assert page.shells.currentIndex() == 2
+    assert qt.QtCore.Qt.Key.Key_1 not in seen
+
+
+def test_the_alt_keys_jump_to_the_page_tabs(qt, window_shell):
+    """Alt+1 through Alt+5 (#1163): the page's Nth tab current.
+    Shells anchors the keyboard on the current shell (#974);
+    another tab hands the keyboard from the hidden terminal to
+    the new tab's first stop, so no hidden terminal holds it.
+    The digit never reaches the program inside."""
+    shell, hub, _window = window_shell
+    page = open_page(qt, shell)
+    terminal = page.shells.currentWidget()
+    seen = pressed_keys(qt, terminal)
+    press(qt, terminal, "Key_2", "alt")
+    assert page.bar.currentIndex() == 1
+    assert page.stack.currentWidget() is page.mounts_tab
+    assert qt.app.focusWidget() is not terminal
+    assert page.mounts_tab.isAncestorOf(qt.app.focusWidget())
+    press(qt, qt.app.focusWidget(), "Key_5", "alt")
+    assert page.bar.currentIndex() == 4
+    assert page.stack.currentWidget() is page.events_tab
+    press(qt, qt.app.focusWidget(), "Key_1", "alt")
+    assert page.bar.currentIndex() == 0
+    assert qt.app.focusWidget() is terminal
+    press(qt, terminal, "Key_6", "alt")
+    assert page.bar.currentIndex() == 0
+    assert qt.QtCore.Qt.Key.Key_2 not in seen
+
+
+def test_the_shell_keys_stay_quiet_on_the_listing(qt, window_shell):
+    """The keys are the page's own (#1163): the listing holding
+    the keyboard opens no shell and closes none — the press
+    reaches the table as an ordinary key."""
+    shell, hub, _window = window_shell
+    page = open_page(qt, shell, shells=2)
+    page.go_back()
+    shell.listing.table.setFocus()
+    qt.app.processEvents()
+    assert qt.app.focusWidget() is shell.listing.table
+    seen = pressed_keys(qt, shell.listing.table)
+    press(qt, shell.listing.table, "Key_T", "ctrl", "shift")
+    press(qt, shell.listing.table, "Key_W", "ctrl", "shift")
+    assert len(hub.shells("ws-a")) == 2
+    assert qt.QtCore.Qt.Key.Key_T in seen
+    assert qt.QtCore.Qt.Key.Key_W in seen
+
+
+def test_the_shell_keys_stay_quiet_on_the_other_pages(qt, strip_shell):
+    """The Images page beside the workspaces under the main
+    strip (#1163): with its widget holding the keyboard, the
+    new-shell key opens nothing and reaches it as an ordinary
+    key."""
+    shell, tabs, hub, _window = strip_shell
+    open_page(qt, shell)
+    tabs.setCurrentIndex(1)
+    page = tabs.widget(1)
+    edit = qt.QtWidgets.QLineEdit(page)
+    edit.show()
+    edit.setFocus()
+    qt.app.processEvents()
+    assert qt.app.focusWidget() is edit
+    seen = pressed_keys(qt, edit)
+    press(qt, edit, "Key_T", "ctrl", "shift")
+    assert len(hub.shells("ws-a")) == 1
+    assert qt.QtCore.Qt.Key.Key_T in seen
+
+
+def test_a_held_new_shell_key_opens_one_shell(qt, window_shell):
+    """A held Ctrl+Shift+T opens one shell (#1163): the
+    shortcut declines the keyboard's repeat, and Qt consumes a
+    repeat the shortcut declines — no second shell, and nothing
+    reaches the terminal (#1152's rule)."""
+    shell, hub, _window = window_shell
+    page = open_page(qt, shell)
+    terminal = page.shells.currentWidget()
+    seen = pressed_keys(qt, terminal)
+    press(qt, terminal, "Key_T", "ctrl", "shift")
+    assert strip_titles(page) == ["1", "2", "+"]
+    fresh = page.shells.currentWidget()
+    seen_fresh = pressed_keys(qt, fresh)
+    Modifier = qt.QtCore.Qt.KeyboardModifier
+    for _ in range(4):
+        repeat = qt.QtGui.QKeyEvent(
+            qt.QtCore.QEvent.Type.KeyPress,
+            qt.QtCore.Qt.Key.Key_T,
+            Modifier.ControlModifier | Modifier.ShiftModifier,
+            "\x14",
+            True,
+        )
+        repeat.ignore()
+        qt.QtWidgets.QApplication.sendEvent(fresh, repeat)
+    assert strip_titles(page) == ["1", "2", "+"]
+    assert qt.QtCore.Qt.Key.Key_T not in seen
+    assert qt.QtCore.Qt.Key.Key_T not in seen_fresh
+
+
+def test_the_shell_keys_answer_in_the_terminal_only_mode(qt, window_shell):
+    """The mode hides the chrome and keeps the page (#1152):
+    its terminal still answers the new-shell key, and the new
+    shell's tab shows under the strip."""
+    shell, hub, _window = window_shell
+    page = open_page(qt, shell)
+    page.terminal_only.enter()
+    terminal = page.shells.currentWidget()
+    assert page.terminal_only.on
+    press(qt, terminal, "Key_T", "ctrl", "shift")
+    assert page.terminal_only.on
+    assert strip_titles(page) == ["1", "2", "+"]
+    assert qt.app.focusWidget() is page.shells.currentWidget()

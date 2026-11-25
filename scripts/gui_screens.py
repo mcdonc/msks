@@ -50,9 +50,13 @@ def utc_stamp(offset: timedelta) -> str:
 
 #: The terminal child the shells screenshot runs: a prompt and
 #: a command's output, then a wait — the #1001 capture's own
-#: shape, no ssh and no network behind it.
+#: shape, no ssh and no network behind it. The child sets the
+#: terminal's title first (OSC 2), as a prompt's PS1 does, so the
+#: first shell's tab shows a program's title (#1163) beside the
+#: renamed second one.
 PROMPT_CHILD = (
     "import sys, time\n"
+    "sys.stdout.write('\\x1b]2;user@alpha: ~\\x07')\n"
     "sys.stdout.write('user@alpha:~$ uname -a\\n"
     "Linux alpha 6.12.4-msks #1 SMP x86_64 GNU/Linux\\n"
     "user@alpha:~$ ')\n"

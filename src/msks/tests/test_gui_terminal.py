@@ -1786,16 +1786,42 @@ def test_an_osc_title_emits_the_signal(screen, qt):
     assert titles == ["my title"]
 
 
-def test_a_titleless_child_answers_nothing(screen, qt):
-    """The title effect on a terminal with no title set is
-    the library's no-value answer — no signal."""
+def test_a_cleared_title_reaches_the_signal_empty(screen, qt):
+    """The title the library holds relays whole (#1163): the
+    empty title is the program clearing it (OSC 2 with no text),
+    and the signal carries it so the tab reads the number
+    again — nothing is dropped for the tab layer to guess."""
     titles = []
     screen.title_changed.connect(titles.append)
     from msks.client.gui.terminal import callbacks
 
     callbacks.title_changed(None, id(screen))
     qt.app.processEvents()
-    assert titles == []
+    assert titles == [""]
+    vt(screen, b"\x1b]2;named\x07\x1b]2;\x07")
+    qt.app.processEvents()
+    assert titles == ["", "named", ""]
+
+
+def test_a_refused_title_read_emits_nothing(qt):
+    """A title read the library refuses has nothing to relay
+    (#1163): no signal, and no crash on the absent value."""
+    from types import SimpleNamespace
+
+    from msks.client.gui.terminal import callbacks
+
+    heard: list = []
+    fake = SimpleNamespace(
+        lib=SimpleNamespace(get=lambda *_: (False, None), terminal_get=None),
+        terminal=None,
+        title_changed=SimpleNamespace(emit=heard.append),
+    )
+    callbacks.register(fake)
+    try:
+        assert callbacks.title_changed(None, id(fake)) is None
+    finally:
+        callbacks.unregister(fake)
+    assert heard == []
 
 
 def test_read_master_parses_the_childs_answer(screen, qt):
@@ -2037,6 +2063,37 @@ def test_close_tears_the_session_and_the_handles(qt):
         time.sleep(0.02)
     assert session.exit_status is not None  # HUP or escalated kill
     shutdown(widget)  # a second one tears nothing twice
+
+
+def test_a_key_after_close_encodes_nothing(qt):
+    """The key handlers' closed guard (#1034's contract, for
+    #1163): a shortcut that closes the shell takes its key on
+    the press, and the release that follows can reach the widget
+    before its deleteLater runs. A press or a release on a closed
+    terminal encodes nothing — unguarded, the encoder reads the
+    terminal the library already freed, and the read is the
+    crash that took the suite down."""
+    from msks.client.gui.terminal import TerminalWidget
+
+    widget = TerminalWidget([sys.executable, "-c", SLEEPER])
+    shutdown(widget)
+    assert widget._closed
+    written: list = []
+    widget.write = written.append
+    for kind in (
+        qt.QtCore.QEvent.Type.KeyPress,
+        qt.QtCore.QEvent.Type.KeyRelease,
+    ):
+        qt.app.sendEvent(
+            widget,
+            qt.QtGui.QKeyEvent(
+                kind,
+                qt.QtCore.Qt.Key.Key_A,
+                qt.QtCore.Qt.KeyboardModifier.NoModifier,
+                "a",
+            ),
+        )
+    assert written == []
 
 
 def test_the_package_presents_the_widget_lazily():

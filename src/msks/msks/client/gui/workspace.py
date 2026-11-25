@@ -42,6 +42,7 @@ from .rows import (
     workspace_costs,
     workspace_row,
 )
+from .shellkeys import ShellKeys
 from .shells import ShellHub, ShellsTab
 from .statusflash import StatusFlash
 from .tabstyle import mark_active
@@ -252,6 +253,9 @@ class WorkspaceDetail(StatusFlash, QtWidgets.QWidget):
         # the page forwards the mode's ask to the strip.
         self.terminal_only = TerminalOnly(self)
         self.terminal_only.chrome_hidden.connect(self.chrome_hidden)
+        # The shell keys (#1163): the page's own shortcuts over
+        # the strip and the tab row, built after both stand.
+        self.shell_keys = ShellKeys(self)
 
     def build_chrome(self) -> None:
         """The page's controls at the window's top (#945, #971,

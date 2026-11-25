@@ -573,6 +573,14 @@ class TerminalWidget(QWidget):
         return super().event(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+        # The guard is the teardown contract (#1034): a shortcut
+        # that closes the shell takes its key on the press
+        # (#1163's Ctrl+Shift+W), and the release that follows
+        # can reach this widget before its deleteLater runs —
+        # the encoder would read a terminal the library already
+        # freed.
+        if self._closed:
+            return
         if self.handle_shortcut(event):
             return
         action = input.key_action(event.isAutoRepeat())
@@ -653,6 +661,9 @@ class TerminalWidget(QWidget):
         # A held key's platform repeats arrive as press events
         # only; the repeat's release is noise.
         if event.isAutoRepeat():
+            return
+        # The closed guard, the press's own (#1034).
+        if self._closed:
             return
         input.encode_key(self, event, gt.ACTION_RELEASE)
 
