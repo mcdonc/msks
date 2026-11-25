@@ -4531,13 +4531,13 @@ async def test_a_long_flash_keeps_the_status_bar_one_line(
     scripted_link(monkeypatch, [])
     data = FakeData([row()])
     app, _ = make_app(data)
-    refusal = "start failed: " + "daemon refused: " * 10 + "no room"
+    refusal = "remove failed: " + "daemon refused: " * 10 + "no room"
     assert len(refusal) > 150  # wider than the 80-column terminal
     async with app.run_test(size=(80, 24)) as pilot:
         await wait_for(lambda: list_children(app) == 1)
         listing_y = app.query_one("#listing").region.y
         app.flash(refusal)
-        await wait_for(lambda: "start failed" in status_text(app))
+        await wait_for(lambda: "remove failed" in status_text(app))
         # Lay the flashed bar out before measuring — the wait sees
         # the content land, not the reflow it causes.
         await pilot.pause()
@@ -4547,19 +4547,19 @@ async def test_a_long_flash_keeps_the_status_bar_one_line(
         assert app.query_one("#listing").region.y == listing_y
         line = "".join(s.text for s in status.render_line(0))
         assert cell_len(line) <= 80
-        assert line.lstrip().startswith("start failed: daemon refused")
+        assert line.lstrip().startswith("remove failed: daemon refused")
         assert line.rstrip().endswith("…")  # the cut, marked
         # A refusal that spans lines crops the same way: flash_safe
         # collapses it to one line, so the cut stays marked.
         assert "\n" not in main_app.flash_safe("one\ntwo[/x")
         app.flash(
-            main_app.flash_safe("start failed: " + "daemon refused:\n" * 10)
+            main_app.flash_safe("remove failed: " + "daemon refused:\n" * 10)
         )
-        await wait_for(lambda: "start failed" in status_text(app))
+        await wait_for(lambda: "remove failed" in status_text(app))
         await pilot.pause()  # lay the flashed bar out
         assert status.region.height == 1
         line = "".join(s.text for s in status.render_line(0))
-        assert line.lstrip().startswith("start failed: daemon refused")
+        assert line.lstrip().startswith("remove failed: daemon refused")
         assert line.rstrip().endswith("…")  # the cut, marked
 
 
@@ -4597,7 +4597,7 @@ async def test_the_pages_consent_line_keeps_one_row(
     scripted_link(monkeypatch, [long_grants])
     data = FakeData([row()])
     app, _ = make_app(data)
-    refusal = "start failed: " + "daemon refused: " * 10 + "no room"
+    refusal = "remove failed: " + "daemon refused: " * 10 + "no room"
     async with app.run_test(size=(80, 24)) as pilot:
         page = await open_page(pilot, app)
         await wait_for(lambda: "5 grants" in consent_text(app))
@@ -4612,12 +4612,12 @@ async def test_the_pages_consent_line_keeps_one_row(
         assert cell_len(line) <= 80
         actions_y = app.screen.query_one("#page").region.y
         page.flash(refusal)
-        await wait_for(lambda: "start failed" in consent_text(app))
+        await wait_for(lambda: "remove failed" in consent_text(app))
         await pilot.pause()  # lay the flashed line out
         assert consent.region.height == 1
         assert app.screen.query_one("#page").region.y == actions_y
         line = "".join(s.text for s in consent.render_line(0))
-        assert line.lstrip().startswith("start failed: daemon refused")
+        assert line.lstrip().startswith("remove failed: daemon refused")
         assert line.rstrip().endswith("…")  # the cut, marked
 
 
@@ -5609,7 +5609,24 @@ async def test_a_refused_start_naming_a_vmm_exit_adds_the_doctor_hint(
         assert "stopped" in row_text(app, 0)
 
 
-async def test_page_action_failures_flash(monkeypatch) -> None:
+async def test_a_refused_stop_on_the_list_flashes(monkeypatch) -> None:
+    """#1139 scopes the failure panel to the start: a refused stop
+    on the list keeps its one-row flash, the outcome a power-off
+    refusal names, and opens no panel."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row(status="running")])
+    data.fail.add("stop")
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "alpha" in row_text(app, 0))
+        await press_until(pilot, "S", lambda: ("stop", WS) in data.calls)
+        await wait_for(lambda: "stop failed" in status_text(app))
+        assert not on_failure(app)
+
+
+async def test_page_refusals_flash_and_a_refused_start_opens_the_panel(
+    monkeypatch,
+) -> None:
     """A refused page action names itself on the page's consent
     line — the app-level flash paints the list's status line,
     which the pushed page hides (#343), so the page's own actions
@@ -7237,10 +7254,14 @@ def test_the_ssh_flow_suggests_the_doctor_after_a_vmm_exit(
     """#1139: a boot the daemon refused on a VMM exit leaves the
     console no closer — it boots the workspace too — so the note's
     suggestion is the host's doctor, the refusal's first line
-    still after it, and the log keeps the refusal whole."""
+    still after it, and the log keeps the refusal whole. The real
+    seam's message is two lines (the 503, then the row's status):
+    the hint keys on the whole text, the note shows the first
+    line only."""
+    refused = VMM_REFUSAL + "\nmsks: w1 is created"
 
     def refused_forward(workspace_id):
-        raise SystemExit(VMM_REFUSAL)
+        raise SystemExit(refused)
 
     def never(workspace_id, passthrough, transport=None):
         raise AssertionError("ssh must not run past the probe")
@@ -7251,7 +7272,7 @@ def test_the_ssh_flow_suggests_the_doctor_after_a_vmm_exit(
         note = follow_mod.run_ssh_flow("w1")
     hint = "run msksd doctor on the daemon's host"
     assert note == f"ssh refused — {hint} ({VMM_REFUSAL})"
-    assert VMM_REFUSAL in caplog.text
+    assert refused in caplog.text
 
 
 def test_a_255_exit_reports_only_the_code(monkeypatch) -> None:

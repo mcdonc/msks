@@ -17,7 +17,7 @@ from __future__ import annotations
 
 #: The paragraph a VMM exit adds after the daemon's detail in the
 #: failure panel.
-DOCTOR_HINT = (
+DOCTOR_PARAGRAPH = (
     "The VMM exited before the workspace came up. Run `msksd doctor` "
     "on the daemon's host: its /dev/kvm row tells whether the host "
     "can boot workspaces at all."
@@ -27,28 +27,31 @@ DOCTOR_HINT = (
 #: (#748, #1139): the console fallback, and the host's doctor
 #: after a VMM exit.
 CONSOLE_HINT = "try msks console"
-DOCTOR_HINT_LINE = "run msksd doctor on the daemon's host"
+DOCTOR_HINT = "run msksd doctor on the daemon's host"
 
-#: The local driver's words for a VMM exit, the two halves the
-#: predicate looks for.
-EXITED_WITH = "cloud-hypervisor exited with"
-BEFORE_SERVING = "before serving"
+#: The local driver's words for a VMM that died at spawn
+#: (:func:`msks.microvm.local.driver.LocalCloudHypervisor._wait_ready`
+#: composes ``cloud-hypervisor exited with <code> before serving
+#: <socket>``). The client cannot import the daemon's package, so
+#: the phrase is copied here; the driver's suite pins the daemon's
+#: wording against it (``test_launch_binary_exits_early_maps_to_error``).
+VMM_EXITED = "cloud-hypervisor exited with"
 
 
 def vmm_exit(detail: str) -> bool:
     """Whether a start refusal's detail carries the VMM's exit:
-    the daemon words it ``cloud-hypervisor exited with <code>
-    before serving <socket>`` (the local driver's message, the
-    last log line after it), and the fix is the host's to make."""
-    return EXITED_WITH in detail and BEFORE_SERVING in detail
+    the daemon's ``cloud-hypervisor exited with <code> before
+    serving <socket>`` (:data:`VMM_EXITED`), the last log line
+    after it, and the fix is the host's to make."""
+    return VMM_EXITED in detail
 
 
 def refusal_detail(detail: str) -> str:
     """The text a refused start's panel shows: the daemon's
-    detail verbatim, then the ``msksd doctor`` hint as its own
-    paragraph when the detail carries a VMM exit."""
+    detail verbatim, then the ``msksd doctor`` paragraph as its
+    own when the detail carries a VMM exit."""
     if vmm_exit(detail):
-        return f"{detail}\n\n{DOCTOR_HINT}"
+        return f"{detail}\n\n{DOCTOR_PARAGRAPH}"
     return detail
 
 
@@ -58,5 +61,5 @@ def ssh_hint(detail: str) -> str:
     The console boots the workspace too, so after a VMM exit the
     step that goes somewhere is the host's doctor."""
     if vmm_exit(detail):
-        return DOCTOR_HINT_LINE
+        return DOCTOR_HINT
     return CONSOLE_HINT

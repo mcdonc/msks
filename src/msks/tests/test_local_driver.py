@@ -498,7 +498,11 @@ async def test_launch_binary_exits_early_maps_to_error(
 ) -> None:
     app, _, _ = env
     app.state.settings.vmm.cloud_hypervisor = "false"
-    with pytest.raises(MicrovmError, match="exited with"):
+    # The whole phrase is pinned (#1139): the client's TUI copies
+    # it (msks.client.tui.refusal.VMM_EXITED) to key its
+    # msksd doctor hint on a boot the VMM refused at spawn.
+    phrase = r"cloud-hypervisor exited with -?\d+ before serving"
+    with pytest.raises(MicrovmError, match=phrase):
         await app.state.microvm.launch(spec(tmp_path))
 
 

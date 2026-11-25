@@ -36,11 +36,11 @@ the question. `y` (or Enter) takes the action. `n`, `q`, or
 Escape leaves everything as it was.
 
 A refused create, or a refused start (`s` on the list), opens the
-**failure panel**: the daemon's whole refusal in a box over the
-screen, held until Enter, Escape, `q`, or the Close button dismisses
-it. When the refusal says the hypervisor exited before the workspace
-came up, the panel adds a paragraph pointing at `msksd doctor` on the
-daemon's host. A refused stop or remove flashes its reason on the
+**failure panel**. The panel shows the daemon's whole refusal in a box
+over the screen. It stays until Enter, Escape, `q`, or the Close button
+dismisses it. When the refusal says the hypervisor exited before the
+workspace came up, the panel adds a paragraph pointing at `msksd doctor`
+on the daemon's host. A refused stop or remove flashes its reason on the
 status line for five seconds.
 
 The list follows the daemon over the events websocket. A
@@ -262,16 +262,16 @@ power. The configure group holds the egress consent screen, the
 sizes-and-topology edit dialog, the mounts editor, the proxies page,
 and **Clone**:
 the full-fork copy of [the cloning chapter](cloning.md), taken
-with a name prompt. The daemon owns the stopped-source rule — a
-refusal names itself on the page's consent line. Every action
+with a name prompt. The daemon owns the stopped-source rule. A refused
+clone shows its reason on the page's consent line. Every action
 row also has a quick key. `e` opens the egress consent page,
 `h` opens a shell, `m` the mounts editor, `p` the proxies page,
 `t` the edit dialog, and `c` the clone prompt. `s` and `S` are the
 Start and Stop rows' quick keys, the list's own letters. A refused
-start opens the failure panel over the page, the same panel the list's
-`s` opens; a refused stop shows its reason on the consent line. The
-footer shows each key with an abbreviated description, the same style
-the workspaces list uses, so the whole key set fits one 80-column
+start opens the failure panel over the page. It is the same panel the
+list's `s` opens. A refused stop shows its reason on the consent line.
+The footer shows each key with an abbreviated description, the same
+style the workspaces list uses, so the whole key set fits one 80-column
 line. The `?` overlay lists them all.
 
 ### The mounts page
