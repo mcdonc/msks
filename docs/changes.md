@@ -54,8 +54,7 @@ tagged `vX.Y.Z`.
   right-click menu stays. The EXPIRES cell reads `2h · 14:20`, the
   countdown then the deadline's local clock, with the full date
   and time as its tooltip. The audit table shows TIME, KIND,
-  PLACEHOLDER, and DEST. The `!` column never held a value (the
-  daemon records no sighting rows) and is gone. See
+  PLACEHOLDER, and DEST, and the `!` column is gone. See
   [docs/gui.md](gui.md#the-secrets-tab).
 
 ### Fixed

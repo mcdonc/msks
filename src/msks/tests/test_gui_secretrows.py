@@ -291,6 +291,19 @@ def test_the_coverage_label_reads_the_row() -> None:
     assert gui_secrets.COVERAGE_SCOPED == "scoped"
 
 
+def test_the_coverage_words_read_in_a_sentence() -> None:
+    """The coverage as a question or a flash reads it (#1165):
+    the listing's ``scoped:`` prefix drops off and the ids join
+    straight onto the name; the daemon-wide word stands as it
+    is — the ``*`` never shows in the GUI's sentences."""
+    scoped = gui_secrets.coverage_text(placeholder(workspaces=["b", "a"]))
+    assert scoped == "scoped: a,b"
+    assert gui_secrets.coverage_words(scoped) == "a,b"
+    wide = gui_secrets.coverage_text(placeholder())
+    assert gui_secrets.coverage_words(wide) == "daemon-wide"
+    assert gui_secrets.coverage_words("scoped") == "scoped"
+
+
 def test_the_dests_and_state_cells_read_their_floors() -> None:
     """The destinations and state cells (#965): the destinations
     joined with commas — a dash for a row that holds none — and
@@ -477,10 +490,11 @@ def test_the_placeholder_helpers_match_the_tui_page() -> None:
     destinations cells, renew defaults, and choice vocabulary —
     a formatting change on one side must fail here rather than
     drift the two pages apart. The GUI's two cells carry a
-    deliberate addition each (#1165), pinned here: the coverage
+    deliberate addition each (#1165), stated here: the coverage
     cell spells the TUI's ``*`` as the mint form's ``daemon-wide``
     and prefixes the scoped set, and the EXPIRES cell appends the
-    deadline's local clock to the TUI's countdown."""
+    deadline's local clock to the TUI's countdown — so a drift on
+    the TUI's side still fails the pin."""
     rows = [
         placeholder(),
         placeholder(

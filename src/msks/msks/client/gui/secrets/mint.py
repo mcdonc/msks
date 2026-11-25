@@ -21,7 +21,7 @@ from PySide6 import QtCore, QtWidgets
 
 from ...data import RestFailure
 from ..dialogs import Centered
-from ..secretrows import MINT_TTLS
+from ..secretrows import COVERAGE_SCOPED, MINT_TTLS
 from . import cells
 
 #: The mint call's key (#966): the dialog owns its flight, the
@@ -170,7 +170,7 @@ class MintDialog(Centered, QtWidgets.QDialog):
         """The coverage pick drives the picker row (#966): the
         daemon-wide row needs no workspaces, so the picker
         stands empty and disabled; a scoped pick fills it."""
-        scoped = self.coverage.currentData() == cells.COVERAGE_SCOPED
+        scoped = self.coverage.currentData() == COVERAGE_SCOPED
         self.workspaces.setEnabled(scoped)
 
     @QtCore.Slot(str, object)

@@ -23,6 +23,7 @@ from ..secretrows import (
     MINT_TTLS,
     SecretRow,
     coverage_text,
+    coverage_words,
     ttl_seconds,
     ttl_text,
 )
@@ -246,8 +247,8 @@ def revoke_question(model: SecretRow) -> str:
     names the row — its coverage and name — and what a yes does:
     the row retires everywhere at once."""
     return (
-        f"revoke {model.coverage}/{model.name}? the row retires "
-        "everywhere at once"
+        f"revoke {coverage_words(model.coverage)}/{model.name}? "
+        "the row retires everywhere at once"
     )
 
 
@@ -258,20 +259,23 @@ def renewed_text(model: SecretRow, reply: dict) -> str:
     text, the countdown then the deadline's clock, not the
     CLI's absolute stamp, and the label is the lifetime the
     daemon actually wrote."""
-    return f"renewed {model.coverage}/{model.name} · expires {ttl_text(reply)}"
+    return (
+        f"renewed {coverage_words(model.coverage)}/{model.name}"
+        f" · expires {ttl_text(reply)}"
+    )
 
 
 def minted_text(row: dict) -> str:
     """The mint's landing flash (#966, #997): the reply row's
     label in the page's own vocabulary — the page carries no
     sentinel display, the CLI's own read owns the token."""
-    return f"minted {coverage_text(row)}/{row['name']}"
+    return f"minted {coverage_words(coverage_text(row))}/{row['name']}"
 
 
 def revoked_text(model: SecretRow) -> str:
     """The revoke's landing flash (#966): the retired row's
     label."""
-    return f"revoked {model.coverage}/{model.name}"
+    return f"revoked {coverage_words(model.coverage)}/{model.name}"
 
 
 def read_only_item(

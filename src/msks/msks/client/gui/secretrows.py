@@ -139,6 +139,15 @@ def coverage_text(row: dict) -> str:
     return f"{COVERAGE_SCOPED}: {','.join(workspaces)}"
 
 
+def coverage_words(coverage: str) -> str:
+    """The coverage cell's text as a sentence reads it (#1165):
+    the ``scoped:`` prefix is the listing's own label, so a
+    question or a flash joins the ids straight onto the name —
+    ``renew ws-a,ws-b/deploy_key for`` — and the daemon-wide word
+    stands as it is."""
+    return coverage.removeprefix(f"{COVERAGE_SCOPED}: ")
+
+
 def ttl_text(row: dict, now: datetime | None = None) -> str:
     """The EXPIRES cell over a daemon row (#965, over #390,
     #1165): the countdown then the deadline's local clock. An

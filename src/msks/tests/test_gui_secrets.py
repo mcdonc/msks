@@ -310,7 +310,8 @@ def test_the_audit_rows_carry_their_dates_and_no_marker_column(
     clock — and the table carries TIME, KIND, PLACEHOLDER, and
     DEST alone. The daemon records the four lifecycle kinds, so
     the sighting marker's column stood blank on every render and
-    is gone; nothing in the secrets package names it."""
+    is gone; nothing in the secrets package names the column or
+    its tip, the issue's own criterion."""
     pinned = NOW + timedelta(days=3)
     tab, window, _bridge = make_tab(qt, monkeypatch)
     pin_clock(monkeypatch, pinned)
@@ -346,7 +347,9 @@ def test_the_audit_rows_carry_their_dates_and_no_marker_column(
     ]
     # Nothing in the package names the marker column or its tip.
     for module in sorted(Path(cells.__file__).parent.glob("*.py")):
-        assert "MARKER_" not in module.read_text(), module
+        text = module.read_text()
+        assert "MARKER_COLUMN" not in text, module
+        assert "MARKER_TIP" not in text, module
     window.close()
 
 
@@ -923,7 +926,7 @@ def test_renew_picks_the_ttl_and_posts_it(qt, monkeypatch) -> None:
         {"id": 2, "expires_at": (NOW + timedelta(hours=6)).isoformat()},
     )
     assert tab.status.text() == (
-        "renewed scoped: ws1,ws2/deploy_key · expires "
+        "renewed ws1,ws2/deploy_key · expires "
         f"6h · {clock((NOW + timedelta(hours=6)).timestamp())}"
     )
     assert bridge.calls[-1] == (secrets_mod.PAGE_KEY, "secrets_page", ())
@@ -931,20 +934,24 @@ def test_renew_picks_the_ttl_and_posts_it(qt, monkeypatch) -> None:
 
 
 def test_the_renew_picker_reads_the_default(qt, monkeypatch) -> None:
-    """The renew picker's opening choice (#966): the
+    """The renew picker's opening choice (#966, #1165): the
     presenter's nearest choice over the row's raw deadline — a
-    cancelled picker decides nothing."""
+    cancelled picker decides nothing. The question joins the
+    row's ids straight onto its name, the cell's ``scoped:``
+    prefix left for the listing."""
     tab, window, bridge = make_tab(qt, monkeypatch)
     model = next(m for m in tab.secret_models if m.id == 2)
     picked: dict = {}
 
     def fake_pick(parent, title, label, choices, current):
+        picked["label"] = label
         picked["choices"] = choices
         picked["current"] = current
         return None
 
     monkeypatch.setattr(secrets_mod, "pick_item", fake_pick)
     assert tab.pick_ttl(model) is None
+    assert picked["label"] == "renew ws1,ws2/deploy_key for"
     assert picked["choices"] == list(secretrows_mod.SECRET_TTLS)
     assert picked["current"] == "1h"
     window.close()
@@ -1267,8 +1274,8 @@ def test_the_mint_checks_match_the_tui_form() -> None:
 
     assert cells.MINT_NAME.pattern == tui_cells.MINT_NAME.pattern
     assert cells.DEST_ENTRY.pattern == tui_cells.DEST_ENTRY.pattern
-    assert cells.COVERAGE_WIDE == tui_cells.COVERAGE_WIDE
-    assert cells.COVERAGE_SCOPED == tui_cells.COVERAGE_SCOPED
+    assert secretrows_mod.COVERAGE_WIDE == tui_cells.COVERAGE_WIDE
+    assert secretrows_mod.COVERAGE_SCOPED == tui_cells.COVERAGE_SCOPED
     for field in ("a, b , , c", " x ", ",", "single"):
         assert cells.split_entries(field) == tui_cells.split_entries(field)
     for entry in (
@@ -1407,7 +1414,7 @@ def test_the_revoke_question_names_the_row(qt, monkeypatch) -> None:
     tab, window, _bridge = make_tab(qt, monkeypatch)
     model = next(m for m in tab.secret_models if m.id == 2)
     assert cells.revoke_question(model) == (
-        "revoke scoped: ws1,ws2/deploy_key? the row retires everywhere at once"
+        "revoke ws1,ws2/deploy_key? the row retires everywhere at once"
     )
     window.close()
 
@@ -1766,8 +1773,8 @@ def test_the_coverage_header_carries_the_mint_forms_words(
     header = tab.table.horizontalHeaderItem(cells.COVERAGE_COLUMN)
     assert header.text() == "COVERAGE"
     assert header.toolTip() == cells.COVERAGE_TIP
-    assert cells.COVERAGE_WIDE in cells.COVERAGE_TIP
-    assert cells.COVERAGE_SCOPED in cells.COVERAGE_TIP
+    assert secretrows_mod.COVERAGE_WIDE in cells.COVERAGE_TIP
+    assert secretrows_mod.COVERAGE_SCOPED in cells.COVERAGE_TIP
     assert rows_texts(tab.table)[0][cells.COVERAGE_COLUMN] == "daemon-wide"
     assert rows_texts(tab.table)[1][cells.COVERAGE_COLUMN] == "scoped: ws1,ws2"
     bare = qt.QtWidgets.QTableWidget(0, len(cells.LIST_COLUMNS))
@@ -1779,10 +1786,11 @@ def test_the_coverage_header_carries_the_mint_forms_words(
 def test_renew_and_revoke_follow_the_held_row(qt, monkeypatch) -> None:
     """The bar's row buttons (#1165): dark on a page that holds
     no rows, lit once the first fill holds its first row, dark
-    again when the rebuild drops the held row — the menu's
-    entries reading the same state — and lit at the next pick. A
-    flight out darkens both until its landing, the one-flight
-    gate seen on the bar."""
+    again when the rebuild drops the held row — through the
+    selection signals alone, the fill itself calling nothing —
+    the menu's entries reading the same state, and lit at the
+    next pick. A flight out darkens both until its landing, the
+    one-flight gate seen on the bar."""
     pin_clock(monkeypatch, NOW)
     bridge = StubBridge()
     tab = secrets_mod.SecretsTab(bridge)
@@ -1854,6 +1862,52 @@ def test_the_row_buttons_run_the_held_rows_flight(qt, monkeypatch) -> None:
     tab.revoke_selected()  # and the slots' own guards
     tab.renew_selected()
     assert bridge.calls == calls
+    window.close()
+
+
+def test_a_press_on_a_row_takes_the_hold_and_lights_the_menu(
+    qt, monkeypatch
+) -> None:
+    """The right-click's own hold (#1165, the Mounts tab's rule
+    #1098): the clicked row takes the selection before its menu
+    is built, so the entries — which read the bar's state — are
+    lit for a valid row even from an empty hold, where a menu
+    built off the bar's dark state alone would refuse it."""
+    tab, window, _bridge = make_tab(qt, monkeypatch)
+    tab.table.clearSelection()
+    tab.table.selectionModel().clearCurrentIndex()
+    assert not tab.renew_button.isEnabled()
+    built = []
+    real = tab.row_menu
+
+    def spy(row):
+        menu = real(row)
+        built.append(menu)
+        return menu
+
+    monkeypatch.setattr(tab, "row_menu", spy)
+    row = row_of_id(tab, 2)
+    pos = tab.table.visualRect(tab.table.model().index(row, 1)).center()
+    tab.menu_requested(pos)
+    qt.app.processEvents()
+    assert tab.table.currentRow() == row
+    assert tab.renew_button.isEnabled()
+    assert tab.revoke_button.isEnabled()
+    assert [action.isEnabled() for action in built[0].actions()] == [
+        True,
+        True,
+    ]
+    built[0].hide()
+    # A press below the rows opens nothing.
+    tab.menu_requested(qt.QtCore.QPoint(0, tab.table.viewport().height() - 1))
+    assert len(built) == 1
+    # A row the table counts but holds no cells for opens nothing
+    # either: the menu's own None.
+    tab.table.setRowCount(tab.table.rowCount() + 1)
+    empty = tab.table.rowCount() - 1
+    pos = tab.table.visualRect(tab.table.model().index(empty, 1)).center()
+    tab.menu_requested(pos)
+    assert built[1:] == [None]
     window.close()
 
 

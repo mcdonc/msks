@@ -54,6 +54,7 @@ from ..listtable import (
 from ..secretrows import (
     SECRET_TTL_SECONDS,
     SECRET_TTLS,
+    coverage_words,
     deadline_stamp,
     expires_text,
     expiry_kind,
@@ -192,7 +193,9 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         # The held row drives the bar's Renew and Revoke (#1165):
         # a selection change — a pick, a rebuild's carry, a
         # vanished row — re-reads the hold, and the current
-        # row moving on its own (the restore's clear) too.
+        # row moving on its own (the restore's clear) too. The
+        # two signals are the one source for the hold; the gate
+        # re-reads it by hand at its own turns.
         self.table.itemSelectionChanged.connect(self.sync_buttons)
         self.table.selectionModel().currentChanged.connect(
             lambda *_: self.sync_buttons()
@@ -424,11 +427,12 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
     def fill_list(self, models: list) -> None:
         """The listing's rows (#966, #1165): one per model, the
         selection carried by the row's id across the rebuild,
-        the empty state named beside an empty table, the
-        columns filling the pane's whole width (#997) — a bounded
-        row's EXPIRES cell carrying its deadline's full date and
-        time as the tooltip, and the bar's Renew and Revoke
-        answering the hold the rebuild leaves."""
+        the empty state named beside an empty table, the columns
+        filling the pane's whole width (#997) — a bounded row's
+        EXPIRES cell carrying its deadline's full date and time
+        as the tooltip. The bar's Renew and Revoke answer the
+        hold the rebuild leaves through the selection signals
+        alone."""
         held = self.held_first(self.table)
         was_empty = self.table.rowCount() == 0
         self.table.setSortingEnabled(False)
@@ -451,7 +455,6 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         self.list_empty.setVisible(not models)
         self.table.setSortingEnabled(True)
         self.settle_hold(self.table, held, was_empty)
-        self.sync_buttons()
         fill_columns(self.table)
 
     def fill_audit(self, models: list) -> None:
@@ -650,7 +653,7 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         return pick_item(
             self,
             "Renew",
-            f"renew {model.coverage}/{model.name} for",
+            f"renew {coverage_words(model.coverage)}/{model.name} for",
             list(SECRET_TTLS),
             default,
         )
@@ -712,9 +715,17 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
     @QtCore.Slot(QtCore.QPoint)
     def menu_requested(self, pos: QtCore.QPoint) -> None:
         """A right-click on a placeholder row opens its menu
-        (#966): the renew and the revoke behind its
-        confirmation. A press on no row opens nothing."""
-        menu = self.row_menu(self.table.rowAt(pos.y()))
+        (#966, #1165): the clicked row takes the selection first
+        — the Mounts tab's own rule (#1098) — so the entries,
+        which read the bar's state, answer the row under the
+        pointer even from an empty hold, and the renew and the
+        revoke behind its confirmation follow. A press on no row
+        opens nothing."""
+        row = self.table.rowAt(pos.y())
+        if row < 0:
+            return
+        self.table.selectRow(row)
+        menu = self.row_menu(row)
         if menu is None:
             return
         menu.popup(self.table.viewport().mapToGlobal(pos))
