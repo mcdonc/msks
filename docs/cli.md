@@ -1310,7 +1310,8 @@ msks key my-workspace                    # the public authorized_keys line
 
 The command is public-only: the private half is the operator's own key, and
 it never crossed the API to begin with. It lives wherever `identity_file`
-points, or in the agent that holds it.
+points, or in the agent that holds it. The line is fixed at create (#41).
+[Your ssh key](ssh-key.md) covers a key change.
 
 ## `msks ssh`
 

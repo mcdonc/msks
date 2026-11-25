@@ -410,8 +410,11 @@ carried sentinel with a named locked error: HTTP 423, `msks:
 locked: no operator session within the unlock window`. The
 request never reaches the origin, and the sentinel never passes
 through as a value. An unlock also re-encrypts the row's blobs
-to its current recipient set, so a coverage edit or a workspace
-key rotation heals at the next operator session.
+to its current recipient set, so a coverage edit heals at the next
+operator session. A workspace's stored key is fixed at create
+(#41), and the refresh does not change it. [Your
+ssh key](ssh-key.md#step-3-secrets-after-the-key-change) covers what
+a key change means for the store.
 
 ## Where the real secret lives
 
@@ -430,7 +433,11 @@ The per-recipient blobs are the store. The workspace identity
 keys decide who can read: back up the client machine's identity
 files alongside the daemon's database. A database copy alone
 carries ciphertext nobody can open, and a lost identity file
-means re-minting the values.
+means re-minting the values. A re-mint wraps to the workspace's
+stored key again. The values are reachable again under a workspace
+created with a key you hold. [Your ssh
+key](ssh-key.md#step-3-secrets-after-the-key-change) has the
+procedure.
 
 ### msksd.yaml examples
 

@@ -107,6 +107,10 @@ runs it.
 
 `msks console` will work to access a workspace if you've lost your key.
 
+When the key changes later (a rotation, a lost key, a new client machine),
+[your ssh key](ssh-key.md) walks through the change: the config edit, the
+workspaces created with the old key, and the secrets.
+
 ### Where the private half lives at runtime
 
 An agent-held key stays in the agent: msks asks it to sign, and the file on

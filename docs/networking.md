@@ -224,6 +224,10 @@ public half travels with the create request, and the first
 boot plants that line into `authorized_keys` for root and the
 workspace's login user.
 
+The stored line is fixed at create (#41). [Your ssh key](ssh-key.md)
+covers a key change: the config edit, what it means for the workspaces
+created with the old key, and the secrets.
+
 The daemon stores and seeds the public ssh key only. Its database never holds a
 private half and its key fetch carries no private field at all. The public half
 persists across daemon restarts and workspace stop/start: it lives on the
