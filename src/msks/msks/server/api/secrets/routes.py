@@ -512,7 +512,9 @@ def router(app, hub) -> APIRouter:
         enter the timeout-scoped cache — this POST is the operator
         session the timer resets on — and each row re-encrypts
         fresh blobs to its current recipient set at the same time,
-        so coverage edits and key rotations heal here. A row whose
+        so a coverage edit heals here. A workspace's stored key is
+        fixed at create (#41), so no key rotation reaches this
+        refresh. A row whose
         ciphertext the pending list did not serve under the live
         window is refused by name: the operator fetches pending
         first.

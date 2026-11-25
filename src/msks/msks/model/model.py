@@ -559,9 +559,9 @@ class Model(SecretOpsMixin):
                 # The seed's epoch (#803): a monotonic counter,
                 # one bump per seed bake or renewal. A renewal
                 # re-provisions the guest and the stock cloud-init
-                # ssh module regenerates its host keys, so the
-                # client rotates its host-key cache on a change
-                # here too.
+                # ssh module regenerates its host keys (Debian,
+                # Fedora; NixOS omits the module), so the client
+                # rotates its host-key cache on a change here too.
                 "seed_epoch": row.seed_epoch,
             }
 

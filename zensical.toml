@@ -22,6 +22,7 @@ nav = [
   { "Installation" = "installation.md" },
   { "The host doctor" = "doctor.md" },
   { "First run" = "first-run.md" },
+  { "Your ssh key" = "ssh-key.md" },
   { "The TUI" = "tui.md" },
   { "The GUI" = "gui.md" },
   { "Host Share Mounts" = "mounts.md" },

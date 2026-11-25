@@ -218,11 +218,15 @@ worked examples for both surfaces.
 ### The workspace ssh identity
 
 A workspace created through the client carries the operator's
-key as its ssh identity (issues). `identity_file` (or
+key as its ssh identity (#111). `identity_file` (or
 `MSKSC_IDENTITY_FILE`) is queried for your private key. Its derived
 public half travels with the create request, and the first
 boot plants that line into `authorized_keys` for root and the
 workspace's login user.
+
+The stored line is fixed at create (#41). [Your ssh key](ssh-key.md)
+covers a key change: the config edit, what it means for the workspaces
+created with the old key, and the secrets.
 
 The daemon stores and seeds the public ssh key only. Its database never holds a
 private half and its key fetch carries no private field at all. The public half
@@ -318,7 +322,7 @@ onto the same socket without the alias block.
 
 ### An operator-supplied key for one workspace
 
-`msks create --pubkey FILE` (issue) builds the workspace around a public key
+`msks create --pubkey FILE` (#132) builds the workspace around a public key
 chosen for that one create (the key that `~/.ssh/id_ed25519.pub` gives, a
 hardware token's key, any well-formed OpenSSH line) instead of the
 configured key. The supplied line travels to the daemon at its own key type

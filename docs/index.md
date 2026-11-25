@@ -22,39 +22,42 @@ _msks_ runs on:
    checks the host for every tool the daemon and client executes,
    and suggests a fix for each problem found.
 3. [**First run**](first-run.md): configuring identity and importing an image.
-4. [**The TUI**](tui.md): the full-screen workspace tree: the
+4. [**Your ssh key**](ssh-key.md): what to do when the key
+   changes: the config edit, the workspaces created with the old
+   key, and the secrets.
+5. [**The TUI**](tui.md): the full-screen workspace tree: the
    workspace, secrets, and image pages, the consent decider, and
    terminal windows.
-5. [**The GUI**](gui.md): the desktop window: the
+6. [**The GUI**](gui.md): the desktop window: the
    workspaces, secrets, and images pages, the consent decider, and
    terminal windows.
-6. [**Host share mounts**](mounts.md): the host trees a
+7. [**Host share mounts**](mounts.md): the host trees a
    workspace mounts into its guest.
-7. [**Guest networking**](networking.md): details about VM guest networking.
-8. [**Workspace proxies**](proxies.md): the TCP ports a
+8. [**Guest networking**](networking.md): details about VM guest networking.
+9. [**Workspace proxies**](proxies.md): the TCP ports a
    workspace bridges in either direction, and how to manage them.
-9. [**Egress consent**](egress-consent.md): the consent
-   postures, verdicts and durations, switching modes live.
-10. [**LLM Proxy**](llm.md): how to make use of msksd's built-in
+10. [**Egress consent**](egress-consent.md): the consent
+    postures, verdicts and durations, switching modes live.
+11. [**LLM Proxy**](llm.md): how to make use of msksd's built-in
     LLM proxy.
-11. [**Secrets**](secrets.md): creating secret placeholders, and how
+12. [**Secrets**](secrets.md): creating secret placeholders, and how
     the swap of placeholders for secret values happens on the wire.
-12. [**Cloning workspaces**](cloning.md): cloning workspaces --
+13. [**Cloning workspaces**](cloning.md): cloning workspaces --
     what a clone carries, what stays behind.
-13. [**The CLI client**](cli.md): every command line option: `msks` against
+14. [**The CLI client**](cli.md): every command line option: `msks` against
     the daemon's HTTP API, ssh and rsync over a forward.
-14. [**The agent reference card**](agents.md): the command
+15. [**The agent reference card**](agents.md): the command
     reference a coding harness needs to operate msks from the host.
-15. [**Daemon Configuration**](config.md): the msksd daemon's settings: every
+16. [**Daemon Configuration**](config.md): the msksd daemon's settings: every
     key, its environment variable, and its default.
-16. [**Workspace images**](images.md): the image contract, the
+17. [**Workspace images**](images.md): the image contract, the
     shipped builder, and the published channel: import from a
     manifest URL.
-17. [**Storage**](storage.md): reports about the per-workspace
+18. [**Storage**](storage.md): reports about the per-workspace
     volumes (e.g. capacity).
-18. [**The HTTP API**](api.md): msksd HTTP API surface --
+19. [**The HTTP API**](api.md): msksd HTTP API surface --
     the endpoints the commands wrap and the authentication model.
-19. [**Development environment**](development.md): The Nix/devenv development
+20. [**Development environment**](development.md): The Nix/devenv development
     environment.
-20. [**Changelog**](changes.md): what changed, release by
+21. [**Changelog**](changes.md): what changed, release by
     release.

@@ -308,8 +308,9 @@ def router(app) -> APIRouter:
         ``seed_epoch`` (#803) is a monotonic counter, one bump per
         seed bake or renewal — 0 from create. A renewal
         re-provisions the guest and the stock cloud-init ssh
-        module regenerates its host keys, so the client rotates
-        its host-key cache on a change here.
+        module regenerates its host keys (Debian, Fedora; NixOS
+        omits the module), so the client rotates its host-key
+        cache on a change here.
         """
         # Resolve through the 404/ambiguity seam first (#1082): a
         # foreign row answers 404 like an absent one, and a name

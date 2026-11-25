@@ -85,9 +85,11 @@ async def validated_unlock_row(app, item, caller: int) -> tuple[dict, str]:
 
 async def refresh_blobs_for(app, row: dict, value: str) -> dict:
     """Re-encrypt one unlocked row's value to its **current**
-    recipient set (#514's lazy rule): coverage edits and key
-    rotations heal at the unlock, because the fresh blobs replace
-    the whole set. Recipients whose keys cannot hold a blob are
+    recipient set (#514's lazy rule): a coverage edit heals at the
+    unlock, because the fresh blobs replace the whole set. A
+    workspace's stored key is fixed at create (#41), so a key
+    rotation for the same workspace never reaches this refresh.
+    Recipients whose keys cannot hold a blob are
     skipped — they read back from staleness, and one incapable
     key never blocks a row's others. A row whose eligible set is
     EMPTY keeps its existing blobs untouched: they are the only

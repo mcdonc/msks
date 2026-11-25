@@ -1310,7 +1310,8 @@ msks key my-workspace                    # the public authorized_keys line
 
 The command is public-only: the private half is the operator's own key, and
 it never crossed the API to begin with. It lives wherever `identity_file`
-points, or in the agent that holds it.
+points, or in the agent that holds it. The line is fixed at create (#41).
+[Your ssh key](ssh-key.md) covers a key change.
 
 ## `msks ssh`
 
@@ -1379,7 +1380,10 @@ rotates with it, and the next connection pins the fresh keys with a notice
 marking the recreation instead of refusing. A renewed seed rotates the same
 cache the same way. A changed mount set or a rotated interception CA renews
 the seed. The renewal's new cloud-init instance-id re-provisions the guest,
-and the stock cloud-init ssh module regenerates the guest's host keys. The
+and the stock cloud-init ssh module regenerates the guest's host keys on
+the Debian and Fedora images. The NixOS image runs no cloud-init ssh
+module and keeps its host keys. The client rotates the cache on every
+renewal either way. The
 workspace's seed epoch counts every bake and renewal, and the cache directory
 rotates with the count: `<id>.r1/`, and `<id>.e1.r2/` beside a disk rotation.
 The next connection re-pins instead of refusing. A rotation leaves the previous

@@ -193,8 +193,8 @@ def agent_held(served: list[str]) -> str | None:
 
 def operator_match(served: list[str]) -> str | None:
     """The operator identity's PEM when its public half matches the
-    row's served line — the rung that keeps ``msks ssh``, ``msks
-    rsync``, and the console's pubkey auth working on a workspace
+    row's served line — the rung that keeps ``msks ssh`` and
+    ``msks rsync`` working on a workspace
     planted with the operator's key (#336), including one
     re-created under the same name (a new id, the same key)."""
     resolved = operator_identity(ENCRYPTED_SESSION_RECOVERY)
@@ -216,9 +216,9 @@ def resolve_private(key: dict, workspace_id: str) -> str:
     its access: a new id, the same key). A workspace planted with
     a key this client holds nowhere fails as one named line, not
     ssh's opaque ``Permission denied (publickey)`` — losing the
-    half loses ssh and the console alike (a seeded guest
-    challenges the console with the same key), so the line names
-    the ways back in.
+    half loses ``msks ssh``, while the console keeps working (the
+    #481 root autologin asks for no key), and the line says both
+    and names the ways back in.
     """
     served = key["public_key"].split()[:2]
     operator = operator_match(served)
@@ -304,7 +304,8 @@ def cache_key(key: dict, ref: str) -> tuple[str, str | None]:
     fresh instead of refusing. A seed epoch (#803) joins the
     same way: a bake or renewal re-provisions the guest under a
     new instance-id and the stock cloud-init ssh module
-    regenerates its host keys, so the counter rotates the
+    regenerates its host keys (Debian, Fedora; NixOS omits the
+    module), so the counter rotates the
     directory; both markers compose (a reset workspace that then
     renews carries both suffixes).
     """
@@ -346,7 +347,7 @@ def repin_notice(key: dict, pin: str, hosts: str) -> None:
     one session that re-pins and every later session keeps
     quiet. The cause names itself: a renewed seed re-provisions
     the guest and the stock cloud-init ssh module regenerates its
-    host keys there."""
+    host keys there (Debian, Fedora; NixOS omits the module)."""
     if not (key.get("disk_epoch") or key.get("seed_epoch")):
         return
     if Path(hosts).is_file():
