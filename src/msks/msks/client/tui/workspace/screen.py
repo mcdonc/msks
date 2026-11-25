@@ -33,6 +33,7 @@ from ..consent_ui import (
     flash_safe,
     focus_attr,
     focused_attr,
+    guarded_power,
     switch_mode_path,
 )
 from ..detail import header_meta
@@ -583,13 +584,15 @@ class WorkspaceScreen(HelpKeys, PageWatches, Screen):
         tree restarts when the session hands the terminal back; a
         forward the flow's probe names unreachable — or an ssh
         that fails to connect — opens nothing in the session's
-        place (#748): the restart's flash leads with the
-        ``msks console`` suggestion and follows with the refusal's
-        first line, and the full refusal is logged. A configured terminal
-        launcher (``terminal_open_cmd``) opens windows beside the
-        running tree instead: the launcher runs the ssh invocation
-        as its child, which inherits the tree's materialized
-        connection, so it reaches the same daemon. A launcher that
+        place (#748): the restart's flash leads with a
+        suggestion and follows with the refusal's first line
+        (``msks console``, or the host's ``msksd doctor`` after
+        a VMM exit, #1139), and the full refusal is logged. A
+        configured terminal launcher (``terminal_open_cmd``) opens
+        windows beside the running tree instead: the launcher runs
+        the ssh invocation as its child, which inherits the tree's
+        materialized connection, so it reaches the same daemon. A
+        launcher that
         cannot start — a missing binary, one without the execute
         bit, a word the exec itself refuses — seeds the restart's
         flash with its reason and takes the same-terminal shell
@@ -675,9 +678,17 @@ class WorkspaceScreen(HelpKeys, PageWatches, Screen):
 
     async def power_workspace(self, verb: str) -> None:
         """Boot or power off this workspace; the header and the
-        page's consent line name the outcome."""
+        page's consent line name the outcome. A refused start opens
+        the failure panel over the page (#1139), the list's own
+        refused start its own surface; a refused stop flashes."""
         call = self.app.data.start if verb == "start" else self.app.data.stop
-        reply = await self.guarded_page_flash(verb, call(self.row["id"]))
+        reply = await guarded_power(
+            self.app,
+            verb,
+            workspace_label(self.row),
+            call(self.row["id"]),
+            self.flash,
+        )
         if reply is not None:
             self.row["status"] = reply["status"]
             self.paint_header()

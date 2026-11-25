@@ -1,7 +1,8 @@
 """The modal screens and the edge list.
 
 The duration picker both questions reuse, the mode picker, the
-confirm, the failure panel, and the focus-preserving ListView.
+confirm, the failure panel, the guard a power exchange runs
+through, and the focus-preserving ListView.
 """
 
 from __future__ import annotations
@@ -19,7 +20,8 @@ from ..consent import (
     DURATIONS,
     EGRESS_MODES,
 )
-from .flash import panel_safe
+from ..refusal import refusal_detail
+from .flash import flash_safe, panel_safe
 
 
 class PickerScreen(ModalScreen[str | None]):
@@ -122,13 +124,15 @@ class ConfirmScreen(ModalScreen[bool]):
 
 
 class FailurePanel(ModalScreen):
-    """A failed create or mint (#426): the daemon's refusal in a
-    panel that waits for dismissal — Enter, Escape, ``q``, or the
-    Close button — where a flash would drop the detail after
-    five seconds and a form note would squeeze it into one line.
-    The title names the verb and the identity the form submitted;
-    the body carries the daemon's detail verbatim, wrapping at
-    the panel's edge."""
+    """A refused action (#426, #1139): a create, a mint, a
+    workspace start, an image page's import, delete, or default.
+    The daemon's refusal waits in a panel for dismissal — Enter,
+    Escape, ``q``, or the Close button — where a flash would drop
+    the detail after five seconds and a form note would squeeze it
+    into one line. The title carries the verb and the identity the
+    action named (the form's submission, the workspace a start
+    boots); the body carries the daemon's detail verbatim, wrapping
+    at the panel's edge."""
 
     BINDINGS = [
         Binding("enter", "close", "Close", show=False),
@@ -144,7 +148,7 @@ class FailurePanel(ModalScreen):
 
     def heading(self) -> str:
         """The panel's title line: the verb that failed and the
-        identity the form submitted (a store check names no
+        identity the action named (a store check names no
         identity — its refusal belongs to no one body), escaped
         for the markup parse the way the body is — a name
         carrying a truncated closing tag renders literally, not
@@ -175,6 +179,29 @@ class FailurePanel(ModalScreen):
         """Dismiss — the panel has no timeout; it leaves when the
         operator closes it."""
         self.dismiss()
+
+
+async def guarded_power(app, verb: str, workspace: str, work, flash):
+    """Await one power exchange — start or stop — and land its
+    refusal where the operator can act on it (#1139): a refused
+    start opens the failure panel with the daemon's detail (and
+    the ``msksd doctor`` paragraph after a VMM exit), held until
+    dismissed, where a flash dropped the cause after five
+    seconds; a refused stop keeps the flash — ``flash`` takes the
+    escaped one-line text. ``workspace`` is the panel's identity.
+    The raw catch is the sibling guards' design: whatever the
+    start path raises, the tree stands and the refusal shows.
+    Answers the reply, or None for a refusal."""
+    try:
+        return await work
+    except Exception as exc:
+        if verb == "start":
+            app.push_screen(
+                FailurePanel(verb, workspace, refusal_detail(str(exc)))
+            )
+        else:
+            flash(flash_safe(f"{verb} failed: {str(exc)}"))
+        return None
 
 
 class DurationScreen(PickerScreen):

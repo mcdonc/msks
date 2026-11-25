@@ -17,6 +17,7 @@ from ..env import env_token, env_url, is_unix, ssl_context
 from ..rest import ensure_running
 from ..ssh import SSH_PORT, run_workspace_ssh
 from ..wintitle import TITLE_MARKER
+from .refusal import ssh_hint
 
 #: The full-terminal flows a page can record (#309): the
 #: same-terminal ssh session the shell action takes by default
@@ -95,10 +96,12 @@ def run_ssh_flow(workspace_id: str) -> str | None:
     run raises itself (ssh missing from PATH, an identity
     setting that points nowhere) — opens nothing in the
     session's place (#748): the full refusal is logged, and the
-    note the restarted tree flashes puts the ``msks console``
-    suggestion first and the refusal's first line after it (the
-    flash's one row ellipsizes at its end, and the suggestion is
-    the part the operator acts on). An ssh that ran reports only
+    note the restarted tree flashes puts a suggestion first and
+    the refusal's first line after it (the flash's one row
+    ellipsizes at its end, and the suggestion is the part the
+    operator acts on). The suggestion is ``msks console``, unless
+    the boot refused on a VMM exit — then it is the host's
+    ``msksd doctor`` (#1139). An ssh that ran reports only
     its exit code — 255 included, since ssh hands a session's
     own exit through unchanged."""
     try:
@@ -113,7 +116,7 @@ def run_ssh_flow(workspace_id: str) -> str | None:
             workspace_id,
             str(exc).strip() or "refused",
         )
-        return f"ssh refused — try msks console ({first_line(str(exc))})"
+        return f"ssh refused — {ssh_hint(str(exc))} ({first_line(str(exc))})"
 
 
 def ssh_child_argv(workspace_id: str) -> list[str]:

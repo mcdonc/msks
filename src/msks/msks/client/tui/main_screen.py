@@ -43,6 +43,7 @@ from .consent_ui import (
     flash_safe,
     focus_attr,
     focused_attr,
+    guarded_power,
 )
 from .detail import (
     DAEMON_DOWN_MARKER,
@@ -885,7 +886,8 @@ class MainScreen(HelpKeys, Screen):
         status makes pointless names the same client-side note the
         workspace page's dimmed row carries (#470 L5) — the
         refusal costs no round-trip and reads identically on both
-        screens."""
+        screens. A refused start opens the failure panel (#1139);
+        a refused stop flashes."""
         row = self.focused_row()
         if row is None:
             self.app.flash("no workspace focused")
@@ -895,7 +897,13 @@ class MainScreen(HelpKeys, Screen):
             self.app.flash(f"{action_label(verb)} skipped: {note}")
             return
         call = self.app.data.start if verb == "start" else self.app.data.stop
-        reply = await guarded_flash(self.app, verb, call(row["id"]))
+        reply = await guarded_power(
+            self.app,
+            verb,
+            workspace_label(row),
+            call(row["id"]),
+            self.app.flash,
+        )
         if reply is not None:
             self.app.flash(f"{escape(workspace_label(row))} {reply['status']}")
             self.refresh_rows()
