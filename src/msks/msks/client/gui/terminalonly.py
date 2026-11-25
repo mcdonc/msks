@@ -225,6 +225,12 @@ class TerminalOnly(QtCore.QObject):
         #: The page's layout margins before the mode padded them
         #: (#1152), put back at the leave.
         self.margins: QtCore.QMargins | None = None
+        #: Where the toggle stood in its window when the mode
+        #: entered (#1152): its center's height and its right
+        #: edge's distance from the window's right edge — the
+        #: two numbers a resize of the window leaves true. None
+        #: while the mode is off, or entered on a hidden page.
+        self.spot: tuple[int, int] | None = None
         #: The chrome row's status label, the one the flash
         #: writes while the mode is off: :attr:`status` stands
         #: in its place while the mode is on.
@@ -292,6 +298,27 @@ class TerminalOnly(QtCore.QObject):
             QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut
         )
         self.keys.activated.connect(self.flip)
+        # The page's, the shell strip's, and the corner's moves
+        # and resizes re-park the restore button (#1152) while
+        # the mode stands: the strip hides move the page, a
+        # relayout of the page moves the shell strip, and a
+        # late layout of the tab row moves the corner.
+        for watched in (page, page.shells, self.corner):
+            watched.installEventFilter(self)
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        """The page, the shell strip, or the corner moved or
+        resized under the mode (#1152): the strip's bar hide
+        lands as both on the page, and a platform may deliver
+        either a pass after the click — so the parked spot is
+        checked again on the loop's next pass, from outside the
+        event that moved the widget."""
+        if self.on and event.type() in (
+            QtCore.QEvent.Type.Move,
+            QtCore.QEvent.Type.Resize,
+        ):
+            QtCore.QTimer.singleShot(0, self, self.park_restore)
+        return False
 
     def set_name(self, name: str) -> None:
         """The workspace's name on the corner's label (#1152):
@@ -323,7 +350,9 @@ class TerminalOnly(QtCore.QObject):
             return
         self.on = True
         page = self.page
-        spot = self.toggle_spot()
+        self.spot = self.toggle_spot()
+        if self.spot is not None:
+            self.margins = QtCore.QMargins(page.layout().contentsMargins())
         page.shells.cancel_rename()
         page.bar.setCurrentIndex(page.stack.indexOf(page.shells_tab))
         for widget in self.row:
@@ -339,18 +368,25 @@ class TerminalOnly(QtCore.QObject):
         self.corner.show()
         page.shells_tab.focus_shell()
         self.chrome_hidden.emit(True)
-        self.park_restore(spot)
+        self.park_restore()
+        QtCore.QTimer.singleShot(0, self, self.park_restore)
 
-    def toggle_spot(self) -> QtCore.QRect | None:
-        """The toggle's rect on the screen before its row hides
-        (#1152), or None while the page does not show: a hidden
-        page's geometry says nothing about the pointer."""
+    def toggle_spot(self) -> tuple[int, int] | None:
+        """Where the toggle stands in its window before its row
+        hides (#1152): its center's height and its right edge's
+        distance from the window's right edge, or None while the
+        page does not show — a hidden page's geometry says
+        nothing about the pointer."""
         if not self.toggle.isVisible():
             return None
-        corner = self.toggle.mapToGlobal(QtCore.QPoint(0, 0))
-        return QtCore.QRect(corner, self.toggle.size())
+        window = self.toggle.window()
+        rect = QtCore.QRect(
+            self.toggle.mapTo(window, QtCore.QPoint(0, 0)), self.toggle.size()
+        )
+        return rect.center().y(), window.rect().right() - rect.right()
 
-    def park_restore(self, spot: QtCore.QRect | None) -> None:
+    @QtCore.Slot()
+    def park_restore(self) -> None:
         """Pad the page's margins so the restore button takes the
         toggle's place (#1152): the pointer that clicked the one
         rests over the other, and the second click needs no
@@ -360,24 +396,48 @@ class TerminalOnly(QtCore.QObject):
         distance between where the toggle stood and where the
         restore button landed: down for the rows that left
         above the tab row, right for the frame the shell strip
-        keeps inside the page."""
-        if spot is None:
+        keeps inside the page. The padding always builds on the
+        margins the page wore before the mode, so a re-park
+        never compounds."""
+        if self.spot is None or self.margins is None:
             return
         page = self.page
-        self.margins = page.layout().contentsMargins()
+        window = page.window()
         QtWidgets.QApplication.sendPostedEvents(
             None, QtCore.QEvent.Type.LayoutRequest
         )
-        landed = self.restore.mapToGlobal(QtCore.QPoint(0, 0))
-        down = spot.center().y() - landed.y() - self.restore.height() // 2
-        right = spot.right() - landed.x() - self.restore.width() + 1
+        landed = QtCore.QRect(
+            self.restore.mapTo(window, QtCore.QPoint(0, 0)),
+            self.restore.size(),
+        )
+        center_y, from_right = self.spot
+        # The padding stands already on a re-park: the distance
+        # measured is the correction to it, added to what the
+        # page wears now.
+        current = page.layout().contentsMargins()
+        down = (
+            center_y
+            - landed.center().y()
+            + (current.top() - self.margins.top())
+        )
+        right = (
+            window.rect().right()
+            - from_right
+            - landed.right()
+            + (self.margins.right() - current.right())
+        )
         margins = self.margins
-        page.layout().setContentsMargins(
+        target = QtCore.QMargins(
             max(0, margins.left()),
             max(0, margins.top() + down),
             max(0, margins.right() - right),
             max(0, margins.bottom()),
         )
+        # A page already parked writes nothing: an unchanged
+        # margin would relayout the row for no move, and the
+        # corner's own resize would ask for the check again.
+        if target != current:
+            page.layout().setContentsMargins(target)
 
     @QtCore.Slot()
     def leave(self) -> None:
@@ -400,7 +460,8 @@ class TerminalOnly(QtCore.QObject):
         page.status = self.chrome_status
         if self.margins is not None:
             page.layout().setContentsMargins(self.margins)
-            self.margins = None
+        self.margins = None
+        self.spot = None
         self.corner.hide()
         for widget in self.row:
             widget.show()

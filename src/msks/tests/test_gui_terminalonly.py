@@ -768,6 +768,23 @@ def test_the_strip_hides_its_bar_and_the_page_fills(qt) -> None:
     assert shell.geometry() == before
 
 
+def settle(qt, rounds: int = 4) -> None:
+    """Let the layouts and the re-park's own timer land: a few
+    event passes, the shape the running window gives them."""
+    for _ in range(rounds):
+        qt.app.processEvents()
+
+
+def window_rect(widget) -> object:
+    """A widget's rect in its window's coordinates — the frame a
+    window's move on the screen leaves alone."""
+    from PySide6 import QtCore
+
+    return QtCore.QRect(
+        widget.mapTo(widget.window(), QtCore.QPoint(0, 0)), widget.size()
+    )
+
+
 def test_the_restore_button_takes_the_toggle_s_place(qt) -> None:
     """The pointer that clicked the toggle rests over the restore
     button (#1152): the hides moved the shell strip's row up —
@@ -775,46 +792,72 @@ def test_the_restore_button_takes_the_toggle_s_place(qt) -> None:
     own row — so the enter pads the page's margins by the
     distance and the restore button lands where the toggle
     stood, to the pixel, alone in a window and under the strip
-    alike. The leave gives the margins back."""
-    page, _window, _bridge = make_page(qt)
+    alike. A page moved or resized under the mode re-parks it,
+    so a layout the platform settles a pass late still lands
+    there, and a wider window keeps the button at its distance
+    from the right edge. The leave gives the margins back."""
+    page, window, _bridge = make_page(qt)
     mode = page.terminal_only
     margins = qt.QtCore.QMargins(page.layout().contentsMargins())
-    spot = screen_rect(mode.toggle)
+    spot = window_rect(mode.toggle)
     enter(page)
-    qt.app.processEvents()
-    assert screen_rect(mode.restore) == spot
+    settle(qt)
+    assert window_rect(mode.restore) == spot
     assert page.layout().contentsMargins().top() < margins.top()
+    # The page's own move or resize re-parks (#1152): the event
+    # schedules the check for the loop's next pass, and the
+    # corner's own resize does the same.
+    move = qt.QtCore.QEvent(qt.QtCore.QEvent.Type.Move)
+    mode.eventFilter(page, move)
+    mode.eventFilter(page.shells, move)
+    mode.eventFilter(mode.corner, move)
+    settle(qt)
+    assert window_rect(mode.restore) == spot
+    # A layout that settles a pass late (#1152): the row shifted
+    # under the mode, as the macOS runner's did, and the
+    # corner's own resize brings the button back to the spot.
+    shifted = qt.QtCore.QMargins(page.layout().contentsMargins())
+    page.layout().setContentsMargins(
+        shifted.left(), shifted.top() + 3, shifted.right(), shifted.bottom()
+    )
+    settle(qt)
+    assert window_rect(mode.restore) == spot
     mode.leave()
+    settle(qt)
     assert page.layout().contentsMargins() == margins
+    assert window_rect(mode.toggle) == spot
 
     shell, tabs, window = make_strip(qt)
     page = shell.detail
     mode = page.terminal_only
     window.resize(1280, 720)
     shell.open_detail("ws-a")
-    qt.app.processEvents()
+    settle(qt)
     margins = qt.QtCore.QMargins(page.layout().contentsMargins())
-    spot = screen_rect(mode.toggle)
+    spot = window_rect(mode.toggle)
     enter(page)
-    qt.app.processEvents()
-    assert screen_rect(mode.restore) == spot
+    settle(qt)
+    assert window_rect(mode.restore) == spot
     # The band the strip's bar held (#1152): the padding keeps
     # the tab row under the pointer, so the row stays as the
     # page's own top margin while the mode stands.
     band = page.layout().contentsMargins().top() - margins.top()
     assert band > 0
     assert page.stack.mapToGlobal(qt.QtCore.QPoint(0, 0)).y() > 0
+    # A wider window (#1152): the button keeps its height and
+    # its distance from the right edge the toggle kept.
+    from_right = window.rect().right() - spot.right()
+    window.resize(window.width() + 240, window.height())
+    settle(qt)
+    landed = window_rect(mode.restore)
+    assert landed.center().y() == spot.center().y()
+    assert window.rect().right() - landed.right() == from_right
     mode.restore.click()
-    qt.app.processEvents()
+    settle(qt)
     assert page.layout().contentsMargins() == margins
-    assert screen_rect(mode.toggle) == spot
-
-
-def screen_rect(widget) -> object:
-    """A widget's rect on the screen."""
-    from PySide6 import QtCore
-
-    return QtCore.QRect(widget.mapToGlobal(QtCore.QPoint(0, 0)), widget.size())
+    assert mode.spot is None
+    landed = window_rect(mode.toggle)
+    assert window.rect().right() - landed.right() == from_right
 
 
 def test_the_name_follows_the_stand_in_and_the_row(qt) -> None:
