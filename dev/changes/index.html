@@ -330,6 +330,32 @@
   
   
     <li class="md-nav__item">
+      <a href="../ssh-key/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Your ssh key
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../tui/" class="md-nav__link">
         
   
@@ -2252,6 +2278,15 @@ tagged <code>vX.Y.Z</code>.</p>
   until the setting is on. On x86_64 the daemon warns at startup
   and <code>msksd doctor</code> names the module option when the host's KVM
   does not nest. See <a href="../config/">docs/config.md</a>.</li>
+<li><strong>The ssh key chapter (<code>docs/ssh-key.md</code>) (#1149).</strong> The docs
+  explain how to supply a key at first run, and now also what to do
+  when it changes: a rotation, a lost key, or a new client machine.
+  The chapter covers the config edit, the workspaces created with
+  the old key (the stored line is fixed at create, #41), the secrets
+  after the change, and retiring the old key. A seed renewal
+  regenerates the guest's ssh host keys on the Debian and Fedora
+  images, and the NixOS image keeps them. See
+  <a href="../ssh-key/">docs/ssh-key.md</a>.</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>

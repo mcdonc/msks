@@ -19,7 +19,7 @@
         <link rel="prev" href="../doctor/">
       
       
-        <link rel="next" href="../tui/">
+        <link rel="next" href="../ssh-key/">
       
       
         
@@ -440,6 +440,32 @@
   
 </nav>
       
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ssh-key/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Your ssh key
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1097,6 +1123,10 @@ the form for a key you keep encrypted on disk: the public half sits in the
 key. The secrets unlock still needs <code>identity_file</code> on the client that
 runs it.</p>
 <p><code>msks console</code> will work to access a workspace if you've lost your key.</p>
+<p>When the key changes later (a rotation, a lost key, a new client
+machine), <a href="../ssh-key/">your ssh key</a> walks through the change. It
+covers the config edit, the workspaces created with the old key, and
+the secrets.</p>
 <h3 id="where-the-private-half-lives-at-runtime">Where the private half lives at runtime<a class="headerlink" href="#where-the-private-half-lives-at-runtime" title="Permanent link">&para;</a></h3>
 <p>An agent-held key stays in the agent: msks asks it to sign, and the file on
 disk is never opened. A key msks stages itself runs in a transient in-process

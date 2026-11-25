@@ -332,6 +332,32 @@
   
   
     <li class="md-nav__item">
+      <a href="../ssh-key/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Your ssh key
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../tui/" class="md-nav__link">
         
   
@@ -1345,11 +1371,14 @@ daemon's own. <a href="../proxies/">The proxies chapter</a> owns the concept and
 worked examples for both surfaces.</p>
 <h3 id="the-workspace-ssh-identity">The workspace ssh identity<a class="headerlink" href="#the-workspace-ssh-identity" title="Permanent link">&para;</a></h3>
 <p>A workspace created through the client carries the operator's
-key as its ssh identity (issues). <code>identity_file</code> (or
+key as its ssh identity (#111). <code>identity_file</code> (or
 <code>MSKSC_IDENTITY_FILE</code>) is queried for your private key. Its derived
 public half travels with the create request, and the first
 boot plants that line into <code>authorized_keys</code> for root and the
 workspace's login user.</p>
+<p>The stored line is fixed at create (#41). <a href="../ssh-key/">Your ssh key</a>
+covers a key change: the config edit, what it means for the workspaces
+created with the old key, and the secrets.</p>
 <p>The daemon stores and seeds the public ssh key only. Its database never holds a
 private half and its key fetch carries no private field at all. The public half
 persists across daemon restarts and workspace stop/start: it lives on the
@@ -1429,7 +1458,7 @@ msks-devbox</code> is the recovery login. <code>-A</code> forwards the operator'
 into the workspace, and so does <code>msks ssh -- -A</code>, which rewrites the request
 onto the same socket without the alias block.</p>
 <h3 id="an-operator-supplied-key-for-one-workspace">An operator-supplied key for one workspace<a class="headerlink" href="#an-operator-supplied-key-for-one-workspace" title="Permanent link">&para;</a></h3>
-<p><code>msks create --pubkey FILE</code> (issue) builds the workspace around a public key
+<p><code>msks create --pubkey FILE</code> (#132) builds the workspace around a public key
 chosen for that one create (the key that <code>~/.ssh/id_ed25519.pub</code> gives, a
 hardware token's key, any well-formed OpenSSH line) instead of the
 configured key. The supplied line travels to the daemon at its own key type
