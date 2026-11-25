@@ -45,6 +45,7 @@ from .rows import (
 from .shells import ShellHub, ShellsTab
 from .statusflash import StatusFlash
 from .tabstyle import mark_active
+from .terminalonly import TerminalOnly
 from .termsession import shell_argv
 from .workspaces import WorkspaceList
 
@@ -135,18 +136,31 @@ class WorkspaceDetail(StatusFlash, QtWidgets.QWidget):
     a listing that can no longer see the workspace emits
     ``removed`` — the TUI page's own close (#309's
     close_removed shape) — and the back action returns to the
-    list, closing no shell (#954)."""
+    list, closing no shell (#954). The terminal-only mode
+    (#1152, :mod:`.terminalonly`) hides the page's own row and
+    footer on the toggle's click and asks the window's strip to
+    hide its bar through :attr:`chrome_hidden`; every hide of
+    the page ends it, so no other screen shows under a hidden
+    strip."""
 
     back = QtCore.Signal()
     removed = QtCore.Signal(str)
     shell_wanted = QtCore.Signal(str)
     external_wanted = QtCore.Signal(str)
+    #: The terminal-only mode's ask (#1152): True while the page
+    #: hides the window's chrome — the window's composition
+    #: wires it to the top-level strip's bar.
+    chrome_hidden = QtCore.Signal(bool)
 
     def __init__(self, bridge: Bridge, hub: ShellHub) -> None:
         super().__init__()
         self.bridge = bridge
         self.hub = hub
         self.workspace_id = ""
+        #: The workspace's label (#1152): the list's stand-in at
+        #: the open, the row's own name once its answer lands —
+        #: the terminal-only mode's corner reads it.
+        self.label = ""
         # The consent presenter (#1000): built at every open,
         # the decider's state and verdict seam — the panel the
         # phase's next work docks renders its rows. Set before
@@ -225,10 +239,19 @@ class WorkspaceDetail(StatusFlash, QtWidgets.QWidget):
         layout.addWidget(self.stack, stretch=1)
         layout.addWidget(self.footer)
         self.setLayout(layout)
-        escape = QtGui.QShortcut(
+        # The Back shortcut stands as the mode's own handle
+        # (#1152): the terminal-only mode disarms it while the
+        # back arrow hides — the page leaves through the
+        # restore button first.
+        self.escape = QtGui.QShortcut(
             QtGui.QKeySequence(QtCore.Qt.Key.Key_Escape), self
         )
-        escape.activated.connect(self.go_back)
+        self.escape.activated.connect(self.go_back)
+        # The terminal-only mode (#1152): the toggle joins the
+        # chrome row, the corner joins the shell tabs' row, and
+        # the page forwards the mode's ask to the strip.
+        self.terminal_only = TerminalOnly(self)
+        self.terminal_only.chrome_hidden.connect(self.chrome_hidden)
 
     def build_chrome(self) -> None:
         """The page's controls at the window's top (#945, #971,
@@ -289,20 +312,25 @@ class WorkspaceDetail(StatusFlash, QtWidgets.QWidget):
         if self.workspace_id:
             self.external_wanted.emit(self.workspace_id)
 
-    def open(self, workspace_id: str) -> None:
+    def open(self, workspace_id: str, label: str = "") -> None:
         """The page takes a workspace (#945, #954, #971): the
         state resets — fresh row, footer, and tabs — the
         shell tabs re-host for this workspace, and the first
         refresh goes out. The page carries no header of its
         own; the window's title names the workspace, the
         shell's list label standing in until the row's own
-        answer lands.
+        answer lands. The same stand-in (``label``, the id
+        when the list holds none) names the workspace on the
+        terminal-only corner (#1152) until the row refines
+        it.
 
         The open takes a first shell when none stands (#974):
         the Shells tab opens with a terminal to type in, and
         its subtab takes the focus."""
         self.workspace_id = workspace_id
         self.row = None
+        self.label = label or workspace_id
+        self.terminal_only.set_name(self.label)
         self.footer.setText("")
         # The row resets with every open (#974): Shells is the
         # page's default tab, and a prior visit's tab must not
@@ -459,6 +487,9 @@ class WorkspaceDetail(StatusFlash, QtWidgets.QWidget):
             return
         model = workspace_row(self.row)
         self.render_footer(model)
+        # The corner's name reads it too (#1152).
+        self.label = model.label
+        self.terminal_only.set_name(self.label)
         # The window's title reads every answer too (#971), but
         # only while the page owns the window: the shell feeds
         # the hidden page deliberately (frames keep landing after
@@ -570,7 +601,17 @@ class WorkspaceDetail(StatusFlash, QtWidgets.QWidget):
         the bridge's cancel closes the link's socket, the
         daemon's own retire. The stack's own addWidget hides a
         page that never opened — no claim stands to retire —
-        so the retire asks only while a workspace does."""
+        so the retire asks only while a workspace does.
+        The terminal-only mode ends with the hide (#1152):
+        whatever hid the page — Back, a removed workspace, a
+        tab switch — the listing and the other tabs show under
+        the window's own strip, so the strip comes back here
+        and not one path later. A spontaneous hide (the window
+        minimized) keeps the mode: the page still stands in
+        the window the operator restores."""
+        mode = getattr(self, "terminal_only", None)
+        if mode is not None and not event.spontaneous():
+            mode.leave()
         if self.workspace_id:
             self.bridge.stop_decider()
         super().hideEvent(event)
@@ -694,7 +735,7 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         the page carries no header of its own."""
         model = self.listing.rows_by_id.get(workspace_id)
         label = model.label if model else workspace_id
-        self.detail.open(workspace_id)
+        self.detail.open(workspace_id, label)
         self.name_window(label)  # the row's own answer refines it
         self.setCurrentWidget(self.detail)
 

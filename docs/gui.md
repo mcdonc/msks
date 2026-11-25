@@ -118,7 +118,8 @@ alpha` while the page shows: the title bar is where the page's
 header lives.
 
 The page's top row holds the back arrow, the tab strip, a status
-line, and the external-terminal button at the right end. The tab
+line, the terminal-only button, and the external-terminal button
+at the right end. The tab
 strip holds **Shells** (the default), **Mounts**, **Proxies**,
 **Egress**, and **Events**. The footer strip at the bottom repeats
 the list's quick-facts line for this workspace.
@@ -145,6 +146,30 @@ button ends its session.
 The sessions outlive the page. Back to the list closes nothing,
 and a return visit finds them running the whole time. Closing
 the window closes every open shell.
+
+### Terminal-only mode
+
+![The workspace page in terminal-only mode: the shell tabs, the workspace's name and the restore button at the right end, the terminal](screens/gui-terminal-only.png)
+
+The terminal-only button hides the page's controls and the
+window's top-level tab strip. The window then shows the shell
+tabs and the terminal alone, in the layout of a tabbed terminal
+app: the tab row on top, the terminal filling the rest. The
+workspace's name shows in gray at the tab row's right end, and
+the restore button follows it.
+
+The mode shows the Shells tab when another page tab was current.
+The shell tabs, the **+** tab, the rename, and the close buttons
+work as before. The consent panel keeps its place above the
+terminals while a hold waits. The status line moves to the tab
+row, so a flash or an outage shows beside the workspace's name.
+
+The restore button brings every control back: the top-level
+strip, the page's top row, and the footer. The same tabs stay
+current, and no shell closes. The mode also ends when the page
+closes, so the list never shows under a hidden strip. In the mode
+the back arrow is hidden and Escape does not leave the page. The
+restore button comes first.
 
 ### The consent panel
 

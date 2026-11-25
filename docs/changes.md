@@ -6,6 +6,18 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Added
+
+- **The GUI's terminal-only mode (#1152).** The workspace page's
+  new button, beside the external-terminal button, hides the
+  window's tab strip, the page's top row, and the footer. The
+  window then shows the shell tabs and the terminal in the
+  layout of a tabbed terminal app, with the workspace's name in
+  gray at the tab row's right end beside the button that brings
+  the controls back. Shell sessions stay open across the switch,
+  and the mode ends when the page closes. See
+  [docs/gui.md](gui.md#terminal-only-mode).
+
 ## \[v0.10.1] - 2026-11-25
 
 ### Added

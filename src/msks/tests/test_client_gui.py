@@ -749,6 +749,25 @@ def test_open_window_reuses_an_existing_app(
             self.terminal_cmd = terminal_cmd
             self.hub = FakeShellHub()  # the zoom's handoff (#976)
             self.listing = FakeListing()  # the picker's row (#1009)
+            self.detail = FakeDetail()  # the page's mode ask (#1152)
+
+    bars_hidden: list[bool] = []
+
+    class HiddenSignal:
+        """The page's terminal-only ask's stub (#1152): the
+        window path wires it to the strip's own hide."""
+
+        def __init__(self) -> None:
+            self.slots: list[object] = []
+
+        def connect(self, slot: object) -> None:
+            self.slots.append(slot)
+
+    class FakeDetail:
+        """The detail page's stub (#1152): the terminal-only
+        mode's ask, the one signal the window path reads."""
+
+        chrome_hidden = HiddenSignal()
 
     monkeypatch.setattr(workspace_mod, "WorkspaceShell", FakeScreen)
 
@@ -810,6 +829,11 @@ def test_open_window_reuses_an_existing_app(
 
         def addTab(self, page: object, label: str) -> None:
             self.pages.append((page, label))
+
+        def set_bar_hidden(self, hidden: bool) -> None:
+            """The strip's own hide (#1152): recorded for the
+            wiring pin."""
+            bars_hidden.append(hidden)
 
     monkeypatch.setattr(tabs_mod, "MainTabs", FakeTabs)
 
@@ -1026,6 +1050,14 @@ def test_open_window_reuses_an_existing_app(
     # the terminals it steps are the shell's, the keys sit on
     # the window.
     assert zooms == [(screens[0].hub, windows[0])]
+    # The page's terminal-only mode reaches the strip (#1152):
+    # the page's ask is wired to the strip's own hide, once per
+    # landed tree, and the ask carries its answer through.
+    assert bars_hidden == []
+    screens[0].detail.chrome_hidden.slots[0](True)
+    assert bars_hidden == [True]
+    screens[1].detail.chrome_hidden.slots[0](False)
+    assert bars_hidden == [True, False]
     # The macOS menu bar's install was asked over the window
     # (#1007), once per open — the reconnect lands a fresh
     # content tree on the same window, not a fresh window.
@@ -1119,6 +1151,10 @@ def test_open_window_keeps_a_user_style_choice(
         def addTab(self, page: object, label: str) -> None:
             pass
 
+        def set_bar_hidden(self, hidden: bool) -> None:
+            """The strip's own hide (#1152): a name the window
+            path wires, never read here."""
+
     class FakeImagesTab:
         """The Images tab stub (#964): built, never read."""
 
@@ -1162,12 +1198,19 @@ def test_open_window_keeps_a_user_style_choice(
         def host_presets(self, presets: object) -> None:
             pass
 
+    class FakeDetail:
+        """The detail page's stub (#1152): the terminal-only
+        mode's ask, the one signal the window path wires."""
+
+        chrome_hidden = FakeSignal()
+
     class FakeScreen:
         def __init__(
             self, bridge: object, terminal_cmd: object = None
         ) -> None:
             self.hub = object()  # the zoom's handoff (#976)
             self.listing = FakeListing()  # the picker's row (#1009)
+            self.detail = FakeDetail()  # the mode's ask (#1152)
 
     class FakeZoom:
         """The zoom's stub: built, never read — the style test
