@@ -2181,19 +2181,24 @@ def test_a_click_without_a_drag_clears_the_selection(screen, qt):
     assert select.text(screen) == ""
 
 
-def left_click(screen, qt, pos, tremble=False):
-    """A left press and release on one cell. With ``tremble``,
-    the pointer moves a few pixels inside the cell between
-    them — what a hand or a touchpad does on most clicks. The
-    motion flags a drag on the screen; the library decides
-    whether it was one."""
+def left_click(screen, qt, cell, tremble=False):
+    """A left press and release on one cell, given as
+    (column, row). With ``tremble``, the pointer moves a few
+    pixels inside the cell between them and stays short of
+    the library's in-cell drag threshold — what a hand or a
+    touchpad can do on a click. The motion flags a drag on
+    the screen; the library decides whether it was one."""
     Qt = qt.QtCore.Qt
     T = qt.QtGui.QMouseEvent.Type
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    col, row = cell
+    pressed = (col * cw + cw // 4, row * ch + ch // 2)
+    moved = (col * cw + cw // 2, pressed[1] + 1)
     screen.mousePressEvent(
         mouse_event(
             qt,
             T.MouseButtonPress,
-            pos,
+            pressed,
             Qt.MouseButton.LeftButton,
             Qt.MouseButton.LeftButton,
         )
@@ -2203,7 +2208,7 @@ def left_click(screen, qt, pos, tremble=False):
             mouse_event(
                 qt,
                 T.MouseMove,
-                (pos[0] + 2, pos[1] + 1),
+                moved,
                 Qt.MouseButton.NoButton,
                 Qt.MouseButton.LeftButton,
             )
@@ -2213,7 +2218,7 @@ def left_click(screen, qt, pos, tremble=False):
         mouse_event(
             qt,
             T.MouseButtonRelease,
-            pos,
+            pressed,
             Qt.MouseButton.LeftButton,
             Qt.MouseButton.NoButton,
         )
@@ -2260,7 +2265,7 @@ def test_a_click_that_trembles_inside_its_cell_clears_the_selection(
         )
     )
     assert select.text(screen) == "hello"
-    left_click(screen, qt, (cw * 8 + 4, 10), tremble=True)
+    left_click(screen, qt, (8, 0), tremble=True)
     assert select.text(screen) == ""
 
 
@@ -2313,7 +2318,9 @@ def test_a_click_clears_a_selection_dragged_through_the_window_edge(
     )
     assert bottom - scrollbar(screen)[2] > screen.rows
     assert len(select.text(screen)) > screen.rows * len("line 000\n")
-    left_click(screen, qt, (30 * cw + 4, ch * 12 + 4), tremble=tremble)
+    scrolled = scrollbar(screen)[2]
+    left_click(screen, qt, (30, 12), tremble=tremble)
+    assert scrollbar(screen)[2] == scrolled  # the click scrolled nothing
     assert select.text(screen) == ""
 
 

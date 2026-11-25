@@ -10,10 +10,12 @@ tagged `vX.Y.Z`.
 
 - **A click clears a GUI terminal selection when the pointer
   moves a few pixels during the click (#1138).** A click whose
-  pointer trembles inside the pressed cell now clears the
-  selection, including one dragged through the window edge
-  into the scrollback. Before, the click counted as a drag and
-  the highlight stayed until the next still click.
+  pointer moves a little inside the pressed cell now clears
+  the selection, including one dragged through the window
+  edge into the scrollback. A pointer that crosses most of
+  the cell still selects it, as the terminal's own drag rule
+  decides. Before, any motion during the click kept the
+  highlight until the next still click.
 
 ## \[v0.10.0] - 2026-11-24
 
