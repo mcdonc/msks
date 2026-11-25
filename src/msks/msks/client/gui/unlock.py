@@ -13,8 +13,8 @@ the outcome line
 (:meth:`msks.client.gui.data.GuiData.unlock_finish`). Every
 flight's key carries its landing's generation: the stopped bridge
 of a re-dial runs out the calls it had out, and their answers
-land on no one. The prompt
-is the window's one per session, whichever surface asks: the
+land on no one. The prompt is the window's one per session,
+whichever surface asks: the
 Secrets tab's Unlock button asks by hand, the automatic flow
 never asks twice, and a start against a daemon that answered
 nothing arms one re-run on the feed's next serve (#920) — the
@@ -112,12 +112,13 @@ class UnlockFlow(QtCore.QObject):
             # (Qt deleteLater()s the previous one) once the loop
             # turns; this unhook covers it while it still stands,
             # which is every landing — the swap and this call
-            # share one turn — and a tab Qt already destroyed took
-            # its connection with it.
+            # share one turn. A signal Qt already destroyed
+            # raises here; its connection went with it, and a slot
+            # never connected answers False instead.
             try:
                 self.secrets.unlock_asked.disconnect(self.by_hand)
             except RuntimeError:
-                pass  # the retired tab is gone; Qt severed it
+                pass  # Qt severed the destroyed tab's connection
         self.bridge, self.listing, self.secrets = bridge, listing, secrets
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)

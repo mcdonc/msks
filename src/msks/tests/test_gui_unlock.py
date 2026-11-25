@@ -361,9 +361,12 @@ def test_a_re_dial_lets_the_old_tree_go(flow) -> None:
     old_bridge, old_secrets = flow.bridge, flow.secrets
     redial(flow)
     calls = list(flow.bridge.calls)
-    old_bridge.succeeded.emit(flow.flow.prepare_key, offering())
+    # The retired bridge's own answer, under its retired key:
+    # the unhooked stub already dropped the slot, and the next
+    # test drives the slot the way Qt's queued delivery would.
+    old_bridge.succeeded.emit("unlock-prepare#1", offering())
     old_bridge.failed.emit(
-        flow.flow.prepare_key, RestFailure("msks: cannot reach", reach=True)
+        "unlock-prepare#1", RestFailure("msks: cannot reach", reach=True)
     )
     old_secrets.unlock_asked.emit()
     assert len(flow.prompts) == 1
@@ -401,11 +404,12 @@ def test_a_retired_landings_answer_lands_on_no_one(flow) -> None:
     assert flow.listing.refusals == []
 
 
-def test_a_tab_qt_already_destroyed_takes_its_hook_with_it(flow) -> None:
-    """The retired tab Qt already destroyed (#1147): its signal's
-    disconnect raises the binding's deleted-object error, the
-    landing goes on, and the fresh tree's offer stands as before
-    — Qt severs a destroyed sender's connections itself."""
+def test_a_retired_tab_whose_signal_refuses_the_unhook(flow) -> None:
+    """The retired tab's signal raising on disconnect (#1147) —
+    what a destroyed sender's signal does: the landing goes on,
+    and the fresh tree's offer stands as before. Qt severs a
+    destroyed sender's connections itself; this pins the flow's
+    tolerance of it."""
 
     class DestroyedSignal(FakeSignal):
         def disconnect(self, slot) -> None:
