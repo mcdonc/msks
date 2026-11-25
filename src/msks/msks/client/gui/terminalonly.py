@@ -157,6 +157,36 @@ class CornerLabel(QtWidgets.QLabel):
             self.paint_elided()
 
 
+class Corner(QtWidgets.QWidget):
+    """The corner over the shell tabs (#1152): its size hint is
+    its row's own — the labels' whole texts and the restore
+    button — capped at what the strip's row has to give beside
+    the tab bar's own minimum. The tab widget hands the corner
+    its whole hint before the bar gets the rest of the row, so
+    an uncapped corner in a narrow window would squeeze the
+    tabs; capped, a long flash or a long name narrows the
+    labels — they elide at the width they get — and never the
+    tabs. The cap follows the strip's width at every layout,
+    which the strip runs on its own resizes. The corner is born
+    inside its strip and reads it back from the reference, not
+    the parent chain: its parent is the strip for its whole
+    life."""
+
+    def __init__(self, strip: QtWidgets.QTabWidget) -> None:
+        super().__init__(strip)
+        self.strip = strip
+
+    def sizeHint(self) -> QtCore.QSize:  # noqa: N802
+        """The row's hint, bounded by the row's room beside the
+        bar's minimum."""
+        hint = super().sizeHint()
+        room = (
+            self.strip.width() - self.strip.tabBar().minimumSizeHint().width()
+        )
+        hint.setWidth(max(0, min(hint.width(), room)))
+        return hint
+
+
 def glyph_in_text(icon: QtGui.QIcon, palette: QtGui.QPalette) -> QtGui.QIcon:
     """The glyph's own shape in the palette's button text
     (#1152): the style ships its maximize and restore glyphs as
@@ -278,7 +308,7 @@ class TerminalOnly(QtCore.QObject):
         #: writes while the mode is off: :attr:`status` stands
         #: in its place while the mode is on.
         self.chrome_status = page.status
-        self.corner = QtWidgets.QWidget(page.shells)
+        self.corner = Corner(page.shells)
         self.name = CornerLabel(
             QtCore.Qt.TextElideMode.ElideMiddle, self.corner
         )
@@ -302,7 +332,11 @@ class TerminalOnly(QtCore.QObject):
         corner_row = QtWidgets.QHBoxLayout(self.corner)
         corner_row.setContentsMargins(0, 0, 0, 0)
         corner_row.addWidget(self.name)
-        corner_row.addWidget(self.status)
+        # The status takes the row's slack and its squeeze alike
+        # (#1152): a stretch of one hands it the spare width
+        # first and takes the deficit first, so the name keeps
+        # its width while the row has any for it.
+        corner_row.addWidget(self.status, 1)
         corner_row.addWidget(self.restore)
         # The corner takes the tab row's right end (#1152) —
         # where a tabbed terminal app keeps its own controls —
@@ -344,12 +378,14 @@ class TerminalOnly(QtCore.QObject):
         # the keyboard's repeat (#1152): one press, one flip.
         self.keys.setAutoRepeat(False)
         self.keys.activated.connect(self.flip)
-        # The page's, the shell strip's, and the corner's moves
-        # and resizes re-park the restore button (#1152) while
-        # the mode stands: the strip hides move the page, a
-        # relayout of the page moves the shell strip, and a
-        # late layout of the tab row moves the corner.
-        for watched in (page, page.shells, self.corner):
+        # The page's, the shell strip's, the corner's, and the
+        # restore button's own moves and resizes re-park it
+        # (#1152) while the mode stands: the strip hides move
+        # the page, a relayout of the page moves the shell
+        # strip, a late layout of the tab row moves the corner,
+        # and the corner's own row settling moves the button
+        # inside a corner that stood still.
+        for watched in (page, page.shells, self.corner, self.restore):
             watched.installEventFilter(self)
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
