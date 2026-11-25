@@ -2130,7 +2130,12 @@ def test_the_client_sibling_reads_the_tool_s_bin(
 ) -> None:
     """The sibling is the command's console script beside the
     tool's own; a bin dir without one answers None, per command
-    (#734)."""
+    (#734). The shared install's rung (#1118) is neutralized
+    first: a host that ran the setup tool really has
+    ``/opt/msks/venv/bin/msks``, and that rung would answer before
+    the sibling were reached (#1145). The shared-first order is
+    ``test_the_client_links_resolve_the_shared_install``'s."""
+    patch_phase(monkeypatch, "VENV_BIN", str(tmp_path / "no-shared" / "bin"))
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "msks").write_text("#!/bin/sh\n")
