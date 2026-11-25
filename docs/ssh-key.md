@@ -45,9 +45,13 @@ first. It reads `identity_file` only when `pubkey_file` is unset. A
 `pubkey_file` still on the old key plants the old key in every new
 workspace.
 
+A hardware token's key reaches a workspace through `pubkey_file`
+or `--pubkey`, with the token in your agent. msks reads no private
+key file a token holds from `identity_file`.
+
 Load the new key into your ssh agent as well. `msks create` reads
-the files above. The agent is what `msks ssh` and `msks rsync` sign
-through:
+the files above. `msks ssh` and `msks rsync` sign through the agent
+when it holds the workspace's key, and read `identity_file` otherwise:
 
 ```bash
 ssh-add ~/.ssh/id_ed25519_2026
@@ -65,8 +69,9 @@ attach with: msks console my-workspace
 ```
 
 A create with `pubkey_file` unset prints the `identity_file` path
-instead. A new client machine needs the same two settings and the
-same `ssh-add`. The environment forms are `MSKSC_IDENTITY_FILE` and
+instead. A new client machine needs the same two settings, and the
+same `ssh-add` for the agent. The environment forms are
+`MSKSC_IDENTITY_FILE` and
 `MSKSC_PUBKEY_FILE` ([the CLI chapter's environment
 table](cli.md#client-environment)).
 
@@ -180,8 +185,11 @@ ecdsa key and a hardware token's `sk-ssh-ed25519@openssh.com` key
 are outside the set. An owner-wide mint skips such a workspace, and
 a scoped mint refuses with the workspace named ([the mint
 flow](secrets.md#the-mint-flow)). A key change to one of those types
-keeps every login step above. It leaves the new workspaces without
-secrets.
+keeps every login step above. The new workspaces get no blob: they
+cannot unlock a row, and a scoped mint for one refuses. An
+owner-wide row still swaps in them while another covered workspace
+keeps it warm. An owner-wide mint whose every acceptor is such a
+workspace refuses too.
 
 The options depend on whether you still hold the old private half.
 
@@ -196,8 +204,9 @@ The options depend on whether you still hold the old private half.
   The TUI and the GUI run the same unlock with the configured
   `identity_file` alone. Start either one with `MSKSC_IDENTITY_FILE`
   set to the old key for that run. With the config on the new key,
-  both report the old rows as
-  `stay ciphertext (no stanza matches this key)` and leave them locked.
+  both leave the old rows locked. The status line reads
+  `stay ciphertext (no stanza matches this key)` beside a row that
+  opened, and `stay locked — the key opens none of them` otherwise.
 
   The unlock POST has a second effect. The daemon re-encrypts each
   unlocked row to the row's current recipient set. Owner-wide rows
@@ -205,8 +214,8 @@ The options depend on whether you still hold the old private half.
   the new-key ones included. `msks create --secret-coverage scoped`
   opts a workspace out. One unlock with the old key gives those rows
   a blob for each new workspace in the set, when its key type is a
-  capable one, and a client configured with the new key opens them
-  from then on. Scoped rows (`--workspace`) keep the coverage they
+  capable one. A client configured with the new key opens them from
+  then on. Scoped rows (`--workspace`) keep the coverage they
   were minted with. A recreated workspace has a new id, and no
   scoped row covers it. Mint its scoped placeholders again.
 
