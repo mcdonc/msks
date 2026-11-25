@@ -13,9 +13,13 @@ contract (close before ``deleteLater``).
 
 The strip (:class:`ShellTabs`) is the Shells tab's own tab
 widget (#974): one tab per session, titled with the session's
-number until an in-place rename stands, and the "+" as the
+number until an in-place rename stands or the program inside
+sets its title (#1163), and the "+" as the
 last tab — directly right of the rightmost shell tab — opening
-one more shell (#969, #971). Hosting is per workspace —
+one more shell (#969, #971). The strip carries the actions the
+shell keys drive (#1163, :mod:`.shellkeys`): closing the current
+shell, stepping to the next or the previous one, and selecting
+the Nth. Hosting is per workspace —
 opening another workspace's page unhooks this one's widgets
 (they keep running hidden) and hooks the new workspace's.
 
@@ -23,6 +27,8 @@ The module imports PySide6 at module scope, the same contract
 as the screen modules (:mod:`msks.client.gui.workspace`):
 nothing imports it at CLI parse time.
 """
+
+from functools import partial
 
 from PySide6 import QtCore, QtWidgets
 
@@ -37,31 +43,47 @@ from .termsession import shell_argv
 #: the tab's close button.
 MIN_TAB_CHARS = 3
 
+#: A shell tab's maximum text width, characters (#1163): a
+#: program's title runs as long as a path or a command line,
+#: and an uncapped tab would push the other shells and the "+"
+#: off the strip. A title past the ceiling elides at the tab's
+#: right edge, and the tab's tooltip carries it whole.
+MAX_TAB_CHARS = 24
+
 
 class ShellSession:
     """One active ssh connection's record (#954): the session's
-    number per workspace, its custom title once renamed, and the
-    terminal widget running it. The number never repeats inside
+    number per workspace, its custom title once renamed, the
+    title the program inside set last (#1163), and the terminal
+    widget running it. The number never repeats inside
     a workspace — a closed session's number is not reused — so
     a title names one session for its whole life."""
 
     def __init__(self, no: int, widget) -> None:
         self.no = no
         self.title: str | None = None
+        #: The program's own title (#1163): what the program
+        #: inside set last through OSC 0/2 — the empty string
+        #: until it sets one, and again once it clears it.
+        self.program_title = ""
         self.widget = widget
 
     @property
     def label(self) -> str:
-        """The tab's title text (#954): the custom name once one
-        stands, the session's number until then."""
-        return self.title if self.title is not None else str(self.no)
+        """The tab's title text (#954, #1163): the custom name
+        once one stands, else the program's own title while one
+        stands, else the session's number."""
+        if self.title is not None:
+            return self.title
+        return self.program_title or str(self.no)
 
 
 class ShellBar(QtWidgets.QTabBar):
-    """The strip's own bar (#969): a shell tab never shrinks
-    under three characters of text beside its close button —
-    the default hint squeezes a one-digit title into a sliver
-    the pointer cannot grab."""
+    """The strip's own bar (#969, #1163): a shell tab never
+    shrinks under three characters of text beside its close
+    button — the default hint squeezes a one-digit title into a
+    sliver the pointer cannot grab — and never grows past the
+    title ceiling."""
 
     #: The strip's "+" tab's index (#971): the one tab that is
     #: not a shell and takes its natural width. The strip
@@ -70,17 +92,20 @@ class ShellBar(QtWidgets.QTabBar):
     plus_index = -1
 
     def tabSizeHint(self, index):  # noqa: N802
-        """The platform's own hint, floored for the shell tabs —
-        every tab but the "+" itself."""
+        """The platform's own hint, floored and ceiled for the
+        shell tabs — every tab but the "+" itself."""
         size = super().tabSizeHint(index)
         if index != self.plus_index:
-            size.setWidth(max(size.width(), self.min_tab_px()))
+            size.setWidth(
+                min(max(size.width(), self.min_tab_px()), self.max_tab_px())
+            )
         return size
 
-    def min_tab_px(self) -> int:
-        """The floor: three digits of the bar's font beside the
-        tab's close button, both sides' padding included."""
-        digits = self.fontMetrics().horizontalAdvance("0" * MIN_TAB_CHARS)
+    def tab_px(self, chars: int) -> int:
+        """A tab's width for ``chars`` digits of the bar's font
+        beside the tab's close button, both sides' padding
+        included."""
+        digits = self.fontMetrics().horizontalAdvance("0" * chars)
         button = self.style().pixelMetric(
             QtWidgets.QStyle.PixelMetric.PM_SmallIconSize, None, self
         )
@@ -88,6 +113,17 @@ class ShellBar(QtWidgets.QTabBar):
             QtWidgets.QStyle.PixelMetric.PM_TabBarTabHSpace, None, self
         )
         return digits + button + padding
+
+    def min_tab_px(self) -> int:
+        """The floor (#969): three digits of the bar's font beside
+        the tab's close button, both sides' padding included."""
+        return self.tab_px(MIN_TAB_CHARS)
+
+    def max_tab_px(self) -> int:
+        """The ceiling (#1163): the floor's own measure at
+        :data:`MAX_TAB_CHARS` — the bar elides a title past it
+        at paint."""
+        return self.tab_px(MAX_TAB_CHARS)
 
 
 class ShellHub(QtCore.QObject):
@@ -101,6 +137,10 @@ class ShellHub(QtCore.QObject):
     shell_opened = QtCore.Signal(str, int)
     shell_closed = QtCore.Signal(str, int)
     shell_renamed = QtCore.Signal(str, int)
+    #: The program inside set or cleared its shell's title
+    #: (#1163): the record took the text, an emptied one
+    #: included.
+    shell_titled = QtCore.Signal(str, int)
 
     def __init__(self, argv_factory=shell_argv) -> None:
         super().__init__()
@@ -118,8 +158,23 @@ class ShellHub(QtCore.QObject):
         self.counters[workspace_id] = no + 1
         session = ShellSession(no, widget)
         self.sessions.setdefault(workspace_id, []).append(session)
+        widget.title_changed.connect(
+            partial(self.program_titled, workspace_id, no)
+        )
         self.shell_opened.emit(workspace_id, no)
         return session
+
+    def program_titled(self, workspace_id: str, no: int, text: str) -> None:
+        """The program inside set or cleared its title (#1163):
+        the record keeps the latest text — the empty string is
+        the clear, and the tab reads the number again — and the
+        hosting strip hears. A session that already closed
+        hears nothing: the lookup finds no record."""
+        session = self.find(workspace_id, no)
+        if session is None:
+            return
+        session.program_title = text
+        self.shell_titled.emit(workspace_id, no)
 
     def shells(self, workspace_id: str) -> list[ShellSession]:
         """This workspace's sessions in open order (#954)."""
@@ -192,6 +247,10 @@ class ShellTabs(QtWidgets.QTabWidget):
         # The bar first (#969): the strip's own floor-width hint
         # has to stand before the first tab sizes against it.
         self.setTabBar(ShellBar(self))
+        # A title past the ceiling elides (#1163): the bar's hint
+        # caps the shell tabs, and the elide mode paints a capped
+        # tab's text with an ellipsis instead of clipping it.
+        self.tabBar().setElideMode(QtCore.Qt.TextElideMode.ElideRight)
         # The "+" (#969, #971): a tab of its own, always the
         # last — directly right of the rightmost shell tab, and
         # the strip's whole content when no shell stands. A
@@ -213,6 +272,7 @@ class ShellTabs(QtWidgets.QTabWidget):
         hub.shell_opened.connect(self.on_opened)
         hub.shell_closed.connect(self.on_closed)
         hub.shell_renamed.connect(self.on_renamed)
+        hub.shell_titled.connect(self.on_titled)
         self.editor: QtWidgets.QLineEdit | None = None
 
     # --- hosting ------------------------------------------------------
@@ -257,6 +317,7 @@ class ShellTabs(QtWidgets.QTabWidget):
         index = self.insertTab(self.count() - 1, session.widget, session.label)
         self.sync_plus_index()
         self.tab_widgets[session.no] = session.widget
+        self.title_tab(index, session)
         button = QtWidgets.QToolButton(self.tabBar())
         button.setIcon(
             self.style().standardIcon(
@@ -347,14 +408,124 @@ class ShellTabs(QtWidgets.QTabWidget):
 
     @QtCore.Slot(str, int)
     def on_renamed(self, workspace_id: str, no: int) -> None:
-        """A rename stood (#954): the tab's text takes it."""
+        """A rename stood (#954): the tab's text takes it, over
+        whatever the program inside set (#1163)."""
         if workspace_id != self.hosted:
             return
+        self.retitle(no)
+
+    @QtCore.Slot(str, int)
+    def on_titled(self, workspace_id: str, no: int) -> None:
+        """The program inside set or cleared its title (#1163):
+        the tab follows the record."""
+        if workspace_id != self.hosted:
+            return
+        self.retitle(no)
+
+    def retitle(self, no: int) -> None:
+        """One session's tab back to its record (#954, #1163): the
+        label the record reads — the rename winning over the
+        program's title, the number once the program clears
+        its own."""
         for index in range(self.count()):
             session = self.session_at(index)
             if session is not None and session.no == no:
-                self.setTabText(index, session.label)
+                self.title_tab(index, session)
                 return
+
+    def title_tab(self, index: int, session: ShellSession) -> None:
+        """One shell tab's text and tooltip from its record
+        (#1163): the label, and the program's whole title under
+        the pointer while one stands and no rename does — a
+        title past the ceiling elides on the tab, and the
+        tooltip is where it reads whole."""
+        self.setTabText(index, session.label)
+        program = session.program_title if session.title is None else ""
+        self.setTabToolTip(index, program)
+
+    # --- the strip's own actions (#1163) --------------------------------
+    # The shell keys (:mod:`.shellkeys`) drive these, the same
+    # steps the pointer takes through the tab and the close
+    # button.
+
+    def shell_count(self) -> int:
+        """The shell tabs standing: the "+" sits directly after
+        the last one (#971), so its index is the count — and 0
+        before any host, where the index is -1."""
+        return max(0, self.indexOf(self.plus_page))
+
+    def current_session(self) -> ShellSession | None:
+        """The session whose tab is current (#1163): None when
+        the "+" or no tab stands there."""
+        return self.session_at(self.currentIndex())
+
+    def close_current(self) -> None:
+        """The close button's action on the current shell
+        (#1163): the hub's record goes down and the tab with it,
+        exactly as the tab's own button does — and a terminal that
+        held the keyboard hands it to the shell the strip lands
+        on, as every terminal app's close does. The pointer's
+        own close leaves the focus where it stood (#969's
+        rule). Nothing standing current — the "+" alone —
+        closes nothing."""
+        session = self.current_session()
+        if session is None:
+            return
+        held = self.keyboard_in(session)
+        self.hub.close_shell(self.hosted, session.no)
+        if held:
+            self.focus_landed()
+
+    def keyboard_in(self, session: ShellSession) -> bool:
+        """Whether the session's terminal, or a child of it
+        holding the keyboard in its stead (the find bar's edit),
+        has the focus (#1163): a close ends that shell all the
+        same, and the keyboard follows as from the terminal
+        itself. Without the hand-off Qt leaves no focus widget
+        standing there, and every page-scoped key goes dead
+        until a click."""
+        focus = QtWidgets.QApplication.focusWidget()
+        return focus is not None and (
+            focus is session.widget or session.widget.isAncestorOf(focus)
+        )
+
+    def focus_landed(self) -> None:
+        """The keyboard onto the shell the strip landed on
+        (#1163): a removed tab hides its page without Qt's own
+        focus move (a stack's page switch makes one; a removal
+        does not), so the closed terminal would hold the
+        keyboard until its deleteLater — the landed shell's
+        terminal takes it, or the bar when the "+" lands."""
+        landed = self.currentWidget()
+        target = self.tabBar() if landed is self.plus_page else landed
+        target.setFocus()
+
+    def step_shell(self, delta: int) -> None:
+        """The next or the previous shell (#1163): the current
+        tab moves by one among the shell tabs, wrapping at both
+        ends — the "+" is never a stop, and a current standing
+        on it (a close can land it there, #971) starts from the
+        first or the last shell. The chosen shell's terminal
+        takes the keyboard."""
+        count = self.shell_count()
+        if count == 0:
+            return
+        current = self.currentIndex()
+        if current >= count:
+            target = 0 if delta > 0 else count - 1
+        else:
+            target = (current + delta) % count
+        self.setCurrentIndex(target)
+        self.widget(target).setFocus()
+
+    def select_shell(self, position: int) -> None:
+        """The Nth shell (#1163), counting from one: its tab
+        current and its terminal focused; a position past the
+        standing shells changes nothing."""
+        index = position - 1
+        if 0 <= index < self.shell_count():
+            self.setCurrentIndex(index)
+            self.widget(index).setFocus()
 
     def session_at(self, index: int) -> ShellSession | None:
         """The session a shell tab hosts, by widget identity —

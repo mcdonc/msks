@@ -83,7 +83,8 @@ def device_attributes(_terminal, _userdata, out) -> bool:
 
 @gt.TITLE_CHANGED_FN
 def title_changed(_terminal, userdata) -> None:
-    """OSC 0/2: the program inside retitled the tab."""
+    """OSC 0/2: the program inside set or cleared its title —
+    an emptied one reaches the screen as the empty string."""
     screen = screen_for(userdata)
     if screen is None:
         return
@@ -93,9 +94,12 @@ def title_changed(_terminal, userdata) -> None:
         gt.DATA_TITLE,
         gt.GhosttyString(),
     )
-    # The library answers a title even when none was set (the
-    # empty default); a tab retitles only on real text.
-    if ok and title.text():
+    # The library calls back on every change and answers the
+    # title it holds; the callback relays it whole (#1163): the
+    # empty title is the program clearing it (OSC 2 with no
+    # text), and the tab reads the number again. A refused read
+    # alone says nothing.
+    if ok:
         screen.title_changed.emit(title.text())
 
 

@@ -6,6 +6,26 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Added
+
+- **Keys for the GUI's shell tabs (#1163).** On the workspace
+  page, with a terminal focused or anywhere else on the page,
+  `Ctrl+Shift+T` opens a shell, `Ctrl+Shift+W` closes the current
+  one, `Ctrl+Tab` and `Ctrl+Shift+Tab` move to the next and the
+  previous shell, `Ctrl+1` through `Ctrl+9` jump to the Nth shell,
+  and `Alt+1` through `Alt+5` jump to the page's tabs. The key
+  itself never reaches the program inside the terminal, a shell
+  action brings the Shells tab forward from any page tab, and the
+  Workspaces list and the Images and Secrets pages do not answer
+  them. See [docs/gui.md](gui.md#the-shells-tab).
+
+- **A shell tab's title follows the program inside (#1163).** A
+  program that sets the terminal's title (vim, less, ssh, or a
+  prompt with an OSC title in its `PS1`) sets its tab's title too.
+  A long title ends in an ellipsis and reads whole in the tab's
+  tooltip, a cleared title shows the session's number again, and
+  a renamed tab keeps its name.
+
 ## \[v0.10.2] - 2026-11-25
 
 ### Added

@@ -110,7 +110,7 @@ posts to the same endpoint `msks resize` uses.
 
 ## The workspace page
 
-![The workspace page: the back arrow, the tab strip, the consent panel, the terminal](screens/gui-shells.png)
+![The workspace page: the back arrow, the tab strip with one shell tab titled by its program and one renamed, the consent panel, the terminal](screens/gui-shells.png)
 
 Enter on a row opens the workspace's page. The back arrow (or
 Escape) returns to the list. The window's title reads `msks —
@@ -143,6 +143,36 @@ double-click on a shell tab renames it in place: Return stands
 the name, and Escape or an empty edit cancels. Each tab's close
 button ends its session.
 
+The same actions have keys, the set Konsole and GNOME Terminal
+use. They answer with a terminal focused, and the key itself never
+reaches the program inside the terminal. They answer from the
+page's other tabs too, and a shell action first brings the Shells
+tab forward.
+
+| Key                          | Action                                                  |
+| ---------------------------- | ------------------------------------------------------- |
+| `Ctrl+Shift+T`               | open a shell                                            |
+| `Ctrl+Shift+W`               | close the current shell                                 |
+| `Ctrl+Tab`, `Ctrl+Shift+Tab` | the next shell, the previous shell                      |
+| `Ctrl+1` to `Ctrl+9`         | the Nth shell                                           |
+| `Alt+1` to `Alt+5`           | the page's tab: Shells, Mounts, Proxies, Egress, Events |
+
+The keys belong to the workspace page. The Workspaces list and
+the Images and Secrets pages do not answer them.
+
+The keys take precedence over the same keys inside the shell. A
+program that binds `Ctrl+Tab` or `Alt+1` to `Alt+5`, such as tmux
+or WeeChat, does not receive them from the GUI. Bind such a program
+to other keys.
+
+A tab shows the title the program inside sets. A program that
+sets the terminal's title (vim, less, ssh, or a prompt with an
+OSC title in its `PS1`) sets its tab's title too. A long title
+ends in an ellipsis, and the tab's tooltip shows the whole
+title. When the program clears the title, the tab shows the
+number again. A renamed tab keeps its name for the session's
+life, whatever the program inside sets.
+
 The sessions outlive the page. Back to the list closes nothing,
 and a return visit finds them running the whole time. Closing
 the window closes every open shell.
@@ -164,9 +194,9 @@ top-level tabs held. The band keeps the restore button under the
 pointer.
 
 The mode shows the Shells tab when another page tab was current.
-The shell tabs, the **+** tab, the rename, and the close buttons
-work as before. The consent panel keeps its place above the
-terminals while a hold waits. The status line moves to the tab
+The shell tabs, the **+** tab, the rename, the close buttons, and
+their keys work as before. The consent panel keeps its place above
+the terminals while a hold waits. The status line moves to the tab
 row. A flash or an outage shows beside the workspace's name. A
 long one elides at its width, and the whole text reads in its
 tooltip.
