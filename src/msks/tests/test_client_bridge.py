@@ -136,6 +136,10 @@ async def test_holder_serves_one_connection() -> None:
     await holder.open(0, 8080, "/agent.sock", "/identity.pub")
     assert "-W" in spawn_argv[0]
     assert spawn_argv[0][spawn_argv[0].index("-W") + 1] == "127.0.0.1:8080"
+    # The holder's own pin file is the one the channel pins under
+    # (#1158): the path hold() resolved reaches the argv.
+    options = " ".join(spawn_argv[0])
+    assert "UserKnownHostsFile=/kh" in options
     # Daemon bytes to the channel's stdin.
     await holder.feed(pack_frame(0, b"ping"))
     assert process.stdin.written == [b"ping"]
