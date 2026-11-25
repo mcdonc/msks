@@ -561,13 +561,27 @@ class WorkspaceDetail(StatusFlash, QtWidgets.QWidget):
         current shell's terminal when the Shells tab shows one,
         the Back button otherwise — the Escape anchor the
         page's own shortcut needs. The strip's own focus paths
-        (a new shell, a rename) take their own anchors."""
+        (a new shell, a rename) take their own anchors. The
+        terminal-only mode anchors on the shell strip alone
+        (#1152): its back arrow is hidden, and a page left with
+        no shell lands the keyboard on the tab bar, not on a
+        control nobody sees."""
+        if self.mode_stands():
+            self.shells_tab.focus_shell()
+            return
         if self.stack.currentWidget() is self.shells_tab:
             widget = self.shells.currentWidget()
             if widget is not None and widget is not self.shells.plus_page:
                 widget.setFocus()
                 return
         self.back_button.setFocus()
+
+    def mode_stands(self) -> bool:
+        """Whether the terminal-only mode stands on this page
+        (#1152), read through the guard the half-built wrappers
+        of #959 leave: no mode built, no mode standing."""
+        mode = getattr(self, "terminal_only", None)
+        return mode is not None and mode.on
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         """The page's first refresh at open (#945, #1019: the
