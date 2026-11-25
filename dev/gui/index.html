@@ -633,6 +633,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Light and dark palettes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#state-colors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        State colors
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1286,6 +1303,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Light and dark palettes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#state-colors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        State colors
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1717,6 +1751,25 @@ switch mid-session repaints the window live, with no restart.</p>
 terminal that sets its own colors keeps winning over the theme.
 A desktop that states no scheme keeps the palette the platform
 handed the window.</p>
+<h3 id="state-colors">State colors<a class="headerlink" href="#state-colors" title="Permanent link">&para;</a></h3>
+<p>A state word wears one of three colors beside its text, in both
+palettes. Green means the state is as it should be: a running
+workspace, a mount the last start attached, a listening proxy
+the guest can reach, an open secret. Amber means the state is in
+flight or wants a look: a workspace that is starting, stopping,
+or paused, a row with unresolved mounts or changes that wait for
+the next start, a skipped mount, a proxy that listens but whose
+guest cannot reach it, a locked secret, and a secret that
+expires within fifteen minutes. Red means something failed or
+cannot be placed: an absent or unknown workspace, a failed
+proxy, a refused call or an outage on a status line, and a
+consent request in its last fifteen seconds.</p>
+<p>The word stays in the cell, so a color-blind reader and a
+grayscale screenshot keep the same information. A selected row
+keeps the highlight's own text color, and a disabled row keeps
+its dimmed text. Each color meets a 4.5:1 contrast ratio against
+every background it paints on, and a scheme switch repaints the
+colors with the rest of the window.</p>
 <h2 id="environment-icons-and-scaling">Environment, icons and scaling<a class="headerlink" href="#environment-icons-and-scaling" title="Permanent link">&para;</a></h2>
 <p>The window needs a display. A Linux session provides one through
 <code>DISPLAY</code> or <code>WAYLAND_DISPLAY</code>, and <code>QT_QPA_PLATFORM=offscreen</code>
