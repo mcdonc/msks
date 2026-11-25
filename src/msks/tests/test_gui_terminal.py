@@ -2181,6 +2181,142 @@ def test_a_click_without_a_drag_clears_the_selection(screen, qt):
     assert select.text(screen) == ""
 
 
+def left_click(screen, qt, pos, tremble=False):
+    """A left press and release on one cell. With ``tremble``,
+    the pointer moves a few pixels inside the cell between
+    them — what a hand or a touchpad does on most clicks. The
+    motion flags a drag on the screen; the library decides
+    whether it was one."""
+    Qt = qt.QtCore.Qt
+    T = qt.QtGui.QMouseEvent.Type
+    screen.mousePressEvent(
+        mouse_event(
+            qt,
+            T.MouseButtonPress,
+            pos,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    if tremble:
+        screen.mouseMoveEvent(
+            mouse_event(
+                qt,
+                T.MouseMove,
+                (pos[0] + 2, pos[1] + 1),
+                Qt.MouseButton.NoButton,
+                Qt.MouseButton.LeftButton,
+            )
+        )
+    assert screen.sel_dragged is tremble
+    screen.mouseReleaseEvent(
+        mouse_event(
+            qt,
+            T.MouseButtonRelease,
+            pos,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+        )
+    )
+
+
+def test_a_click_that_trembles_inside_its_cell_clears_the_selection(
+    screen, qt
+):
+    """A click whose pointer moves a few pixels inside the
+    pressed cell is a click, not a drag: it drops the selection
+    the way a still click does (#1138)."""
+    from msks.client.gui.terminal import select
+
+    Qt = qt.QtCore.Qt
+    T = qt.QtGui.QMouseEvent.Type
+    vt(screen, b"\x1b[2J\x1b[Hhello world")
+    cw = screen.metrics.cell_width
+    screen.mousePressEvent(
+        mouse_event(
+            qt,
+            T.MouseButtonPress,
+            (2, 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    screen.mouseMoveEvent(
+        mouse_event(
+            qt,
+            T.MouseMove,
+            (5 * cw, 2),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    screen.mouseReleaseEvent(
+        mouse_event(
+            qt,
+            T.MouseButtonRelease,
+            (5 * cw, 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+        )
+    )
+    assert select.text(screen) == "hello"
+    left_click(screen, qt, (cw * 8 + 4, 10), tremble=True)
+    assert select.text(screen) == ""
+
+
+@pytest.mark.parametrize("tremble", [False, True], ids=["still", "trembling"])
+def test_a_click_clears_a_selection_dragged_through_the_window_edge(
+    screen, qt, tremble
+):
+    """The selection a drag makes through the top edge, while
+    autoscrolling through more than a screenful of scrollback,
+    clears on the next click, still or trembling (#1138). The
+    viewport stays scrolled when the click lands."""
+    from msks.client.gui.terminal import select
+
+    Qt = qt.QtCore.Qt
+    T = qt.QtGui.QMouseEvent.Type
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    vt(
+        screen,
+        b"\x1b[2J\x1b[H" + b"".join(b"line %03d\r\n" % i for i in range(300)),
+    )
+    bottom = scrollbar(screen)[2]
+    screen.mousePressEvent(
+        mouse_event(
+            qt,
+            T.MouseButtonPress,
+            (2 * cw, ch * 12 + 4),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    screen.mouseMoveEvent(
+        mouse_event(
+            qt,
+            T.MouseMove,
+            (4 * cw, 2),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    for _ in range(screen.rows * 2):  # past one screenful
+        select.autoscroll_tick(screen)
+    screen.mouseReleaseEvent(
+        mouse_event(
+            qt,
+            T.MouseButtonRelease,
+            (4 * cw, 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+        )
+    )
+    assert bottom - scrollbar(screen)[2] > screen.rows
+    assert len(select.text(screen)) > screen.rows * len("line 000\n")
+    left_click(screen, qt, (30 * cw + 4, ch * 12 + 4), tremble=tremble)
+    assert select.text(screen) == ""
+
+
 def test_a_double_click_selects_a_word(screen, qt):
     """Two presses on one cell inside the multi-click window
     select the word under them."""

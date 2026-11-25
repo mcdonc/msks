@@ -6,6 +6,15 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Fixed
+
+- **A click clears a GUI terminal selection when the pointer
+  moves a few pixels during the click (#1138).** A click whose
+  pointer trembles inside the pressed cell now clears the
+  selection, including one dragged through the window edge
+  into the scrollback. Before, the click counted as a drag and
+  the highlight stayed until the next still click.
+
 ## \[v0.10.0] - 2026-11-24
 
 ### Added
