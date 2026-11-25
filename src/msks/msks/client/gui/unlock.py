@@ -10,7 +10,10 @@ that asks for a passphrase opens the window's own prompt
 (:func:`msks.client.gui.forms.prompt_password`) before the second
 flight loads the key, uploads the rows it opens, and answers with
 the outcome line
-(:meth:`msks.client.gui.data.GuiData.unlock_finish`). The prompt
+(:meth:`msks.client.gui.data.GuiData.unlock_finish`). Every
+flight's key carries its landing's generation: the stopped bridge
+of a re-dial runs out the calls it had out, and their answers
+land on no one. The prompt
 is the window's one per session, whichever surface asks: the
 Secrets tab's Unlock button asks by hand, the automatic flow
 never asks twice, and a start against a daemon that answered
@@ -34,8 +37,10 @@ from PySide6 import QtCore
 from ..unlock import SPENT_PROMPT_LINE, prompt_refusal
 from .forms import prompt_password
 
-#: The two flights' keys (#1147): the bridge answers each by its
-#: own, and another key's answer is not the flow's to take.
+#: The two flights' key stems (#1147): each landing's flights
+#: carry the landing's generation after the stem, the bridge
+#: answers each by its own, and another key's answer is not the
+#: flow's to take.
 PREPARE_KEY = "unlock-prepare"
 FINISH_KEY = "unlock-finish"
 
@@ -73,25 +78,52 @@ class UnlockFlow(QtCore.QObject):
         self.busy = False
         self.passphrase_asked = False
         self.retry = False
+        #: The landing's generation (#1147): every ask's flight key
+        #: carries it, so an answer the retired bridge already
+        #: queued for the old tree lands on no one — the stopped
+        #: loop runs out its in-flight calls, and Qt may deliver
+        #: what it queued before the unhook.
+        self.generation = 0
+
+    @property
+    def prepare_key(self) -> str:
+        """The standing landing's fetch key (#1147)."""
+        return f"{PREPARE_KEY}#{self.generation}"
+
+    @property
+    def finish_key(self) -> str:
+        """The standing landing's second-flight key (#1147)."""
+        return f"{FINISH_KEY}#{self.generation}"
 
     def retarget(self, bridge, listing, secrets) -> None:
         """A landed tree (#1009, #1147): the flow follows the
         fresh bridge, the listing its start outcome flashes on,
         and the Secrets tab whose button asks by hand — the
-        stopped tree's hooks let go first, and a flight of its
-        bridge never lands. The offer stands at every landing:
-        the daemon behind the fresh tree is asked for its locked
-        rows at once, the TUI's own start rule (#515)."""
+        stopped tree's hooks let go first, and its flight, keyed
+        to the generation it left, lands on no one. The offer
+        stands at every landing: the daemon behind the fresh tree
+        is asked for its locked rows at once, the TUI's own start
+        rule (#515)."""
         if self.bridge is not None:
             self.bridge.succeeded.disconnect(self.on_succeeded)
             self.bridge.failed.disconnect(self.on_failed)
             self.bridge.feed_served.disconnect(self.served)
-            self.secrets.unlock_asked.disconnect(self.by_hand)
+            # The retired tab goes with the central-widget swap
+            # (Qt deleteLater()s the previous one) once the loop
+            # turns; this unhook covers it while it still stands,
+            # which is every landing — the swap and this call
+            # share one turn — and a tab Qt already destroyed took
+            # its connection with it.
+            try:
+                self.secrets.unlock_asked.disconnect(self.by_hand)
+            except RuntimeError:
+                pass  # the retired tab is gone; Qt severed it
         self.bridge, self.listing, self.secrets = bridge, listing, secrets
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
         bridge.feed_served.connect(self.served)
         secrets.unlock_asked.connect(self.by_hand)
+        self.generation += 1
         self.busy = False
         self.target = None
         self.retry = False
@@ -119,21 +151,22 @@ class UnlockFlow(QtCore.QObject):
 
     def begin(self, target, explicit: bool) -> None:
         """One ask's start: the screen its outcome lands on and
-        its kind remembered, the fetch out over the bridge."""
+        its kind remembered, the fetch out over the bridge under
+        the landing's key."""
         self.busy = True
         self.target = target
         self.explicit = explicit
-        self.bridge.call(PREPARE_KEY, "unlock_prepare", explicit)
+        self.bridge.call(self.prepare_key, "unlock_prepare", explicit)
 
     @QtCore.Slot(str, object)
     def on_succeeded(self, key: str, result: object) -> None:
         """One answered flight (#1147): the fetch's landing
         decides the prompt, the second flight's answers the
-        outcome. Another key's answer is not the flow's to
-        take."""
-        if key == PREPARE_KEY:
+        outcome. Another key's answer is not the flow's to take —
+        another landing's keys included."""
+        if key == self.prepare_key:
             self.offered(result)
-        elif key == FINISH_KEY:
+        elif key == self.finish_key:
             self.answer(outcome_line(result))
 
     def offered(self, result: object) -> None:
@@ -157,7 +190,7 @@ class UnlockFlow(QtCore.QObject):
             if refusal is not None:
                 self.answer(refusal)
                 return
-        self.bridge.call(FINISH_KEY, "unlock_finish", rows, path, answer)
+        self.bridge.call(self.finish_key, "unlock_finish", rows, path, answer)
 
     def ask_passphrase(self, path) -> tuple[str, str | None]:
         """The window's passphrase ask for an encrypted key file
@@ -189,10 +222,12 @@ class UnlockFlow(QtCore.QObject):
         ask the daemon answered nothing arms the one re-run the
         feed's next serve fires (#920): a refusal, a by-hand ask,
         and a spent prompt arm nothing. Another key's failure is
-        not the flow's to show."""
-        if key not in (PREPARE_KEY, FINISH_KEY):
+        not the flow's to show. The failure rides opaquely here
+        (``msks.client.data`` sits at the import fan-in ceiling):
+        every delivered failure carries ``reach``."""
+        if key not in (self.prepare_key, self.finish_key):
             return
-        reach = bool(getattr(failure, "reach", False))
+        reach = bool(failure.reach)
         if reach and not self.explicit and not self.passphrase_asked:
             self.retry = True
         self.answer(f"unlock failed: {failure}", reach=reach)

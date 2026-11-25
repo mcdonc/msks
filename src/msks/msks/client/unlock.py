@@ -202,16 +202,28 @@ def load_key(key_pem: bytes, answer: str) -> tuple[object | None, str | None]:
         return None, f"unlock refused: {exc}"
 
 
+def needs_passphrase(key_pem: bytes) -> tuple[bool, str | None]:
+    """Whether the key file's bytes ask for a passphrase (#515,
+    #1147): the encrypted flag, or the crypto's named refusal in
+    its place — a file that is no key refuses here, at the
+    encrypted check, the way it refuses at the load (#515
+    review), so the flow ends on one line either way."""
+    try:
+        return key_is_encrypted(key_pem), None
+    except AgeCryptoError as exc:
+        return False, f"unlock refused: {exc}"
+
+
 def key_file_state(path: Path) -> tuple[bool, str | None]:
     """Whether the key file asks for a passphrase (#1147): the
     encrypted flag the GUI's prompt decision reads, and the
-    unreadable file's refusal in its place — the fetch precedes
-    the load (#515 review), so a warm store never reaches this
-    read."""
+    refusal in its place — a file that cannot be read, or one the
+    crypto refuses. The fetch precedes the load (#515 review), so
+    a warm store never reaches this read."""
     key_pem, refused = read_key_file(path)
     if refused is not None:
         return False, refused
-    return key_is_encrypted(key_pem), None
+    return needs_passphrase(key_pem)
 
 
 def open_key_file(path: Path, answer: str) -> tuple[object | None, str | None]:
@@ -324,18 +336,23 @@ async def session_identity(path, ask_passphrase, spent_line=None):
     pair of the unwrap-ready identity and the outcome line that
     ends the flow early — the loaded identity, or the named
     refusal (a cancelled prompt, an unreadable file, a key the
-    crypto refuses). The file is read once: the prompt decision
-    and the load share the bytes. *ask_passphrase* owns the
-    encrypted-key prompt: the modal in the tree, a constant in
-    tests. *spent_line* re-answers an empty answer the caller
-    knows was a spent prompt rather than a cancel (#920): the
+    crypto refuses). The TUI's flow reads the file once: the
+    prompt decision and the load share the bytes (the GUI's two
+    flights read it once each, :func:`key_file_state` and
+    :func:`open_key_file`). *ask_passphrase* owns the encrypted-
+    key prompt: the modal in the tree, a constant in tests.
+    *spent_line* re-answers an empty answer the caller knows
+    was a spent prompt rather than a cancel (#920): the
     automatic re-run passes it; the cancel line stays the
     default."""
     key_pem, refused = read_key_file(path)
     if refused is not None:
         return None, refused
+    encrypted, refused = needs_passphrase(key_pem)
+    if refused is not None:
+        return None, refused
     answer = ""
-    if key_is_encrypted(key_pem):
+    if encrypted:
         answer = await ask_passphrase(path)
         if not answer:
             return None, prompt_refusal(path, spent_line)

@@ -662,6 +662,27 @@ async def test_the_unlock_prepare_gathers_the_rows_and_the_key_state(
     assert offering["encrypted"] is False
     assert "cannot read the identity file" in offering["line"]
 
+    # A file that is no key: the crypto's refusal ends the flow
+    # on the worker, the line carried — never an escaped error.
+    junk = tmp_path / "junk"
+    junk.write_text("not a key at all")
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(junk))
+    data = data_mod.GuiData(
+        transport=scripted(
+            [
+                (
+                    "GET",
+                    "/api/v1/secrets/pending",
+                    httpx.Response(200, json=[row]),
+                )
+            ],
+            seen,
+        )
+    )
+    offering = await data.unlock_prepare(False)
+    assert offering["rows"] is None
+    assert offering["line"] == "unlock refused: not a private key file"
+
 
 async def test_the_unlock_finish_loads_and_uploads(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path

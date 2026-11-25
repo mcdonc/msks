@@ -403,6 +403,22 @@ def test_unlock_names_a_key_the_crypto_refuses(
     assert "not a private key file" in err
 
 
+async def test_the_flow_names_a_file_that_is_no_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The shared flow ends on the crypto's named refusal for a
+    file that is no key (#515 review, #1147): the encrypted check
+    refuses it the way the load would, one line, prompting
+    nothing, uploading nothing."""
+    junk = tmp_path / "junk"
+    junk.write_text("not a key at all")
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(junk))
+    data = FlowData([pending_row(1, "a", [("h", b"x")])])
+    line = await unlock_flow(data, never_ask)
+    assert line == "unlock refused: not a private key file"
+    assert data.uploads == []
+
+
 def test_unlock_names_a_wrong_passphrase(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
 ) -> None:
@@ -751,6 +767,12 @@ def test_the_key_file_state_reads_the_passphrase_need(tmp_path: Path) -> None:
     flag, line = key_file_state(missing)
     assert flag is False
     assert "cannot read the identity file" in line
+    junk = tmp_path / "junk"
+    junk.write_text("not a key at all")
+    assert key_file_state(junk) == (
+        False,
+        "unlock refused: not a private key file",
+    )
 
 
 def test_the_key_file_opens_under_the_answer(tmp_path: Path) -> None:

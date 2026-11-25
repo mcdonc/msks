@@ -318,7 +318,7 @@ passphrase loads the key, and every row the key opens uploads.
 The outcome shows on the tab's status line, and the daemon's
 unlock frame re-reads the listing behind it. The window also
 offers the unlock on its own when it opens and after a connection
-pick. The prompt is the window's one per session, the outcome lands
+pick. The prompt is the window's one per session. The outcome lands
 on the workspaces list's status line, and the button asks again by
 hand. See the [secrets chapter](secrets.md#the-clients-half).
 
