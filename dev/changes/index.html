@@ -2235,6 +2235,14 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>The GUI unlocks secrets (#1147).</strong> <code>msks gui</code> offers the secrets
+  unlock when the window opens and after a connection pick, and the
+  Secrets tab's new <strong>Unlock…</strong> button asks for it by hand. A
+  passphrase-encrypted <code>identity_file</code> opens one masked passphrase
+  dialog per window session, the same rule the TUI keeps: the
+  automatic flow asks once, the button asks again. The outcome shows
+  on the status line of the screen the ask stood on. See
+  <a href="../secrets/#the-clients-half">docs/secrets.md</a>.</li>
 <li><strong><code>nested</code> / <code>MSKSD_NESTED</code> (#1140).</strong> A daemon setting, off by
   default, that lets workspaces run VMs of their own: every
   workspace start passes cloud-hypervisor's <code>nested</code> flag, so the
