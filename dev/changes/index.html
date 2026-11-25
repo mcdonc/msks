@@ -2383,12 +2383,22 @@ tagged <code>vX.Y.Z</code>.</p>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>The GUI Egress tab's audit trail edges (#1154).</strong> The audit
+<li>
+<p><strong>Local proxies serve a renewed workspace (#1158).</strong> After a
+  seed renewal or a disk reset regenerated the guest's ssh host
+  keys, every local proxy's connection closed with an empty reply
+  while <code>msks ssh</code> kept working. The bridge holder now pins the
+  guest's host key in the same per-workspace cache <code>msks ssh</code>
+  pins in, so the two agree after a re-key.</p>
+</li>
+<li>
+<p><strong>The GUI Egress tab's audit trail edges (#1154).</strong> The audit
   table's top edge is level with the static allowlist list, and
   its bottom edge is level with the in-effect verdicts list, at
   every window height. The Allowlist button sits at the right end
   of the row under the table, and the trail's refusal note shows
-  beside it on the same row.</li>
+  beside it on the same row.</p>
+</li>
 </ul>
 <h2 id="v0101-2026-11-25">[v0.10.1] - 2026-11-25<a class="headerlink" href="#v0101-2026-11-25" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
