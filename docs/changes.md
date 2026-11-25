@@ -30,6 +30,13 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **Local proxies serve a renewed workspace (#1158).** After a
+  seed renewal or a disk reset regenerated the guest's ssh host
+  keys, every local proxy's connection closed with an empty reply
+  while `msks ssh` kept working. The bridge holder now pins the
+  guest's host key in the same per-workspace cache `msks ssh`
+  pins in, so the two agree after a re-key.
+
 - **The GUI Egress tab's audit trail edges (#1154).** The audit
   table's top edge is level with the static allowlist list, and
   its bottom edge is level with the in-effect verdicts list, at
