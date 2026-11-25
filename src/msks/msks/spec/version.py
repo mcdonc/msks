@@ -13,7 +13,7 @@ released wheel silently installs a daemon that predates the
 config the tool writes.
 """
 
-__version__ = "0.10.0"
+__version__ = "0.10.1"
 
 
 def ordering(word: str) -> tuple:
