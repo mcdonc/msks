@@ -17,8 +17,17 @@ from ..settings import Settings
 from ..spec.version import __version__
 from . import doctor, localsocket
 from .api import build_api
+from .doctor.kvm import (
+    NESTED_FIX,
+    NESTED_OFF,
+    NESTED_ON,
+    host_nested_support,
+    linux_x86_64,
+)
 from .reload import arm_reload_watcher
 from .tls import load_or_generate
+
+LOG = logging.getLogger(__name__)
 
 
 def ssl_paths(app) -> tuple[str | None, str | None]:
@@ -317,6 +326,46 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def nested_notice(settings: Settings) -> None:
+    """The startup lines for ``MSKSD_NESTED`` (#1140): the setting
+    on, and the host's answer where the kernel publishes one. A
+    host whose KVM does not nest earns a warning, because the
+    daemon keeps booting workspaces there, each without the
+    feature the setting asked for and with nothing else said
+    (cloud-hypervisor only clears the guest's VMX/SVM bit when the
+    config says not to). A setting left off prints nothing."""
+    if not settings.vmm.nested:
+        return
+    support = host_nested_support()
+    if support == NESTED_OFF:
+        LOG.warning(
+            "MSKSD_NESTED is on, but this host's KVM does not nest; "
+            "workspaces will boot without VMX/SVM. Fix: %s",
+            NESTED_FIX,
+        )
+        return
+    LOG.info("%s", nested_on_line(support))
+
+
+def nested_on_line(support: str) -> str:
+    """The info line for the setting on, given the host's answer:
+    the plain fact on a nesting host, and otherwise why the
+    answer could not be read — the x86_64 switch is published
+    but unreadable, or the machine publishes no switch at all."""
+    if support == NESTED_ON:
+        return "nested virtualization on: workspaces may run VMs of their own"
+    if linux_x86_64():
+        return (
+            "nested virtualization on; no kvm_intel or kvm_amd nested "
+            "parameter is readable under /sys/module, so msksd doctor "
+            "cannot verify the setting here"
+        )
+    return (
+        "nested virtualization on; this host publishes no KVM nested "
+        "switch, so msksd doctor cannot verify the setting here"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     """Console-script entry: parse args, run the server or doctor."""
     logging.basicConfig(
@@ -333,6 +382,7 @@ def main(argv: list[str] | None = None) -> int:
         return doctor.doctor_main(args.config, getattr(args, "json", False))
     try:
         settings = load_settings(args.config)
+        nested_notice(settings)
         app = build_app(settings)
         install_sighup_reload(app, args.config)
         arm_tls(app, args.no_tls)

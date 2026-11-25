@@ -6,6 +6,17 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Added
+
+- **`nested` / `MSKSD_NESTED` (#1140).** A daemon setting, off by
+  default, that lets workspaces run VMs of their own: every
+  workspace start passes cloud-hypervisor's `nested` flag, so the
+  guest sees VMX (Intel) or SVM (AMD). Cloud Hypervisor v54 passes
+  the feature through only when the config asks. On a v54 host a
+  VM run inside a workspace fails with `no supported hypervisor`
+  until the setting is on. On x86_64 the daemon warns at startup
+  and `msksd doctor` names the module option when the host's KVM
+  does not nest. See [docs/config.md](config.md).
 ### Fixed
 
 - **A refused start in the TUI opens the failure panel (#1139).** `s`

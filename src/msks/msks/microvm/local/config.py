@@ -36,6 +36,7 @@ def vm_config(
     console_socket: Path | None = None,
     net: dict | None = None,
     fs: list[dict] | None = None,
+    nested: bool = False,
 ) -> dict:
     """The ``PUT /api/v1/vm.create`` body for one spec (v52 schema).
 
@@ -61,6 +62,12 @@ def vm_config(
     per attached share, ``tag`` naming the virtiofs tag the guest
     mounts by — the daemons behind the sockets are already
     serving when the VMM opens them.
+
+    ``nested`` (#1140) adds the ``cpus.nested`` flag, so the guest
+    can run VMs of its own: cloud-hypervisor v54 stopped passing
+    VMX/SVM through unless the config asks, and the key is sent
+    only when the daemon's ``nested`` setting is on, so the default
+    payload stays the pre-setting shape.
     """
     payload: dict = {
         "kernel": str(spec.kernel),
@@ -69,7 +76,7 @@ def vm_config(
     if spec.initrd is not None:
         payload["initramfs"] = str(spec.initrd)
     vm: dict = {
-        "cpus": {"boot_vcpus": spec.cpus, "max_vcpus": spec.cpus},
+        "cpus": vm_cpus(spec, nested),
         "memory": vm_memory(spec, fs),
         "payload": payload,
         "disks": disks,
@@ -85,6 +92,15 @@ def vm_config(
     if fs:
         vm["fs"] = fs
     return vm
+
+
+def vm_cpus(spec: VmSpec, nested: bool = False) -> dict:
+    """The v52 cpus block: the vCPU counts, and the nested flag
+    when the daemon's ``nested`` setting is on (#1140)."""
+    cpus: dict = {"boot_vcpus": spec.cpus, "max_vcpus": spec.cpus}
+    if nested:
+        cpus["nested"] = True
+    return cpus
 
 
 def vm_memory(spec: VmSpec, fs: list[dict] | None) -> dict:

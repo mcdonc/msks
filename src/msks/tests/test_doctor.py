@@ -12,6 +12,9 @@ import msks.server.hostsetup as hostsetup_mod
 import msks.server.main as main_mod
 import pytest
 from msks.server.doctor import (
+    NESTED_OFF,
+    NESTED_ON,
+    NESTED_UNKNOWN,
     CheckResult,
     DoctorReport,
     apk_qemu_system_package,
@@ -27,11 +30,13 @@ from msks.server.doctor import (
     doctor_main,
     format_report,
     group_add_hint,
+    host_nested_support,
     install_hint,
     kvm_access_result,
     library_probe_result,
     msks_group_result,
     msks_unit_result,
+    nested_result,
     parse_tmux_version,
     result_marker,
     run,
@@ -1177,6 +1182,131 @@ def test_the_apple_kvm_row_stays_off_x86_hosts(
     """x86_64 machines earn no row before the MIDR is ever read."""
     apple_seam(monkeypatch, tmp_path, "0x00000000612f0430", machine="x86_64")
     assert apple_silicon_kvm_result() is None
+
+
+def nested_seam(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    *,
+    machine: str = "x86_64",
+    platform: str = "linux",
+    intel: str | None = None,
+    amd: str | None = None,
+) -> None:
+    """The nested switch's seam (#1140): the platform, the machine,
+    and the two vendor modules' ``nested`` parameters as sysfs
+    publishes them (``Y`` or ``N``; None leaves the file absent,
+    the shape of an unloaded module)."""
+    monkeypatch.setattr(doctor_mod.sys, "platform", platform)
+    monkeypatch.setattr(
+        doctor_mod.os, "uname", lambda: SimpleNamespace(machine=machine)
+    )
+    params = []
+    for name, text in (("kvm_intel", intel), ("kvm_amd", amd)):
+        path = tmp_path / name
+        if text is not None:
+            path.write_text(text)
+        else:
+            # Absent, not stale: a test re-seams the same tmp_path.
+            path.unlink(missing_ok=True)
+        params.append(path)
+    monkeypatch.setattr(doctor_mod.kvm, "KVM_NESTED_PARAMS", tuple(params))
+
+
+def test_host_nested_support_reads_the_vendor_module_switch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """#1140: x86_64 publishes the switch as the vendor module's
+    ``nested`` parameter. ``Y`` on either vendor is on, ``N`` is
+    off, and no readable file, or a value that is not a boolean,
+    is unknown (never a false "does not nest")."""
+    nested_seam(monkeypatch, tmp_path, intel="Y\n")
+    assert host_nested_support() == NESTED_ON
+    nested_seam(monkeypatch, tmp_path, intel="N\n", amd=None)
+    assert host_nested_support() == NESTED_OFF
+    nested_seam(monkeypatch, tmp_path, amd="y\n")
+    assert host_nested_support() == NESTED_ON
+    nested_seam(monkeypatch, tmp_path)
+    assert host_nested_support() == NESTED_UNKNOWN
+    nested_seam(monkeypatch, tmp_path, intel="1\n")
+    assert host_nested_support() == NESTED_UNKNOWN
+    nested_seam(monkeypatch, tmp_path, intel="\n")
+    assert host_nested_support() == NESTED_UNKNOWN
+
+
+def test_host_nested_support_is_unknown_off_x86_64(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """aarch64 publishes no switch of its own, and neither does
+    another platform: the answer stays unknown rather than a
+    guess, whatever files the seam would otherwise read."""
+    nested_seam(monkeypatch, tmp_path, machine="aarch64", intel="Y\n")
+    assert host_nested_support() == NESTED_UNKNOWN
+    nested_seam(monkeypatch, tmp_path, platform="darwin", intel="Y\n")
+    assert host_nested_support() == NESTED_UNKNOWN
+
+
+def test_the_nested_row_stays_off_while_the_setting_is_off() -> None:
+    """Nothing to verify while ``MSKSD_NESTED`` is off: no row,
+    and no read of the host."""
+    assert nested_result(False) is None
+
+
+def test_the_nested_row_is_green_when_the_host_nests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    nested_seam(monkeypatch, tmp_path, intel="Y\n")
+    result = nested_result(True)
+    assert result is not None and result.ok
+    assert result.name == "MSKSD_NESTED"
+
+
+def test_the_nested_row_warns_when_the_host_cannot_nest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """The silent no-op (#1140): a host whose KVM does not nest
+    still boots every workspace, without VMX/SVM, so the row
+    warns and names the module option that turns nesting on."""
+    nested_seam(monkeypatch, tmp_path, intel="N\n")
+    result = nested_result(True)
+    assert result is not None and not result.ok
+    assert result.is_warning
+    assert "nested=1" in result.hint
+
+
+def test_the_nested_row_asks_for_a_readable_switch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """An x86_64 host whose switch no read answers for (the
+    module is not loaded, /sys is masked) cannot say: the row
+    says so and asks for the module and a visible /sys. Another
+    machine publishes no switch to read, so it earns no row."""
+    nested_seam(monkeypatch, tmp_path)
+    result = nested_result(True)
+    assert result is not None and not result.ok
+    assert result.is_warning
+    assert "kvm_intel" in result.message
+    assert "/sys/module" in result.hint
+    nested_seam(monkeypatch, tmp_path, machine="aarch64")
+    assert nested_result(True) is None
+
+
+def test_run_doctor_carries_the_nested_row_only_while_the_setting_is_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """The composition: the default report carries no MSKSD_NESTED
+    row; ``VmmSettings(nested=True)`` adds it, graded by the
+    host's answer."""
+    nested_seam(monkeypatch, tmp_path, intel="N\n")
+    names = [result.name for result in run_doctor(Settings()).results]
+    assert "MSKSD_NESTED" not in names
+    settings = Settings(vmm=VmmSettings(nested=True))
+    rows = [
+        result
+        for result in run_doctor(settings).results
+        if result.name == "MSKSD_NESTED"
+    ]
+    assert len(rows) == 1 and rows[0].is_warning
 
 
 def test_the_kvm_row_passes_for_a_member(

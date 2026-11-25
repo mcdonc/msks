@@ -535,6 +535,17 @@ def test_vmm_from_env_routes_virtiofsd_through_the_resolver(
     assert seen == ["virtiofsd", "/opt/mine"]
 
 
+def test_nested_flag_reads_the_env() -> None:
+    """#1140: ``MSKSD_NESTED`` is a boolean flag. ``true`` (any
+    case) turns it on; every other spelling, and unset, keep the
+    default off."""
+    assert VmmSettings.from_env({}).nested is False
+    assert VmmSettings.from_env({"MSKSD_NESTED": "true"}).nested is True
+    assert VmmSettings.from_env({"MSKSD_NESTED": "TRUE"}).nested is True
+    assert VmmSettings.from_env({"MSKSD_NESTED": "false"}).nested is False
+    assert VmmSettings.from_env({"MSKSD_NESTED": ""}).nested is False
+
+
 def test_disk_grow_hint_follows_the_host_mode() -> None:
     """#721: the prefix mode (the Lima/macOS host) carries the
     Mac's grow command for the low-disk messages; the bare-Linux
