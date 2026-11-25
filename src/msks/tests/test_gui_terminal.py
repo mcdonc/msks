@@ -2218,7 +2218,7 @@ def left_click(screen, qt, cell, tremble=False):
         mouse_event(
             qt,
             T.MouseButtonRelease,
-            pressed,
+            moved if tremble else pressed,
             Qt.MouseButton.LeftButton,
             Qt.MouseButton.NoButton,
         )
@@ -2265,7 +2265,7 @@ def test_a_click_that_trembles_inside_its_cell_clears_the_selection(
         )
     )
     assert select.text(screen) == "hello"
-    left_click(screen, qt, (8, 0), tremble=True)
+    left_click(screen, qt, (8, screen.rows // 2), tremble=True)
     assert select.text(screen) == ""
 
 
