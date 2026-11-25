@@ -13,10 +13,11 @@ tagged `vX.Y.Z`.
   `Ctrl+Shift+T` opens a shell, `Ctrl+Shift+W` closes the current
   one, `Ctrl+Tab` and `Ctrl+Shift+Tab` move to the next and the
   previous shell, `Ctrl+1` through `Ctrl+9` jump to the Nth shell,
-  and `Alt+1` through `Alt+5` jump to the page's tabs. The program
-  inside the terminal reads nothing of them, and the Workspaces
-  list and the Images and Secrets pages do not answer them. See
-  [docs/gui.md](gui.md#the-shells-tab).
+  and `Alt+1` through `Alt+5` jump to the page's tabs. The key
+  itself never reaches the program inside the terminal, a shell
+  action brings the Shells tab forward from any page tab, and the
+  Workspaces list and the Images and Secrets pages do not answer
+  them. See [docs/gui.md](gui.md#the-shells-tab).
 
 - **A shell tab's title follows the program inside (#1163).** A
   program that sets the terminal's title (vim, less, ssh, or a

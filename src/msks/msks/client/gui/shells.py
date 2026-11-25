@@ -471,17 +471,34 @@ class ShellTabs(QtWidgets.QTabWidget):
         session = self.current_session()
         if session is None:
             return
-        held = session.widget.hasFocus()
+        held = self.keyboard_in(session)
         self.hub.close_shell(self.hosted, session.no)
         if held:
-            # A removed tab hides its page without Qt's own focus
-            # move (a stack's page switch makes one; a removal
-            # does not), so the closed terminal would hold the
-            # keyboard until its deleteLater — the shell that
-            # lands takes it, or the bar when the "+" lands.
-            landed = self.currentWidget()
-            target = self.tabBar() if landed is self.plus_page else landed
-            target.setFocus()
+            self.focus_landed()
+
+    def keyboard_in(self, session: ShellSession) -> bool:
+        """Whether the session's terminal, or a child of it
+        holding the keyboard in its stead (the find bar's edit),
+        has the focus (#1163): a close ends that shell all the
+        same, and the keyboard follows as from the terminal
+        itself. Without the hand-off Qt leaves no focus widget
+        standing there, and every page-scoped key goes dead
+        until a click."""
+        focus = QtWidgets.QApplication.focusWidget()
+        return focus is not None and (
+            focus is session.widget or session.widget.isAncestorOf(focus)
+        )
+
+    def focus_landed(self) -> None:
+        """The keyboard onto the shell the strip landed on
+        (#1163): a removed tab hides its page without Qt's own
+        focus move (a stack's page switch makes one; a removal
+        does not), so the closed terminal would hold the
+        keyboard until its deleteLater — the landed shell's
+        terminal takes it, or the bar when the "+" lands."""
+        landed = self.currentWidget()
+        target = self.tabBar() if landed is self.plus_page else landed
+        target.setFocus()
 
     def step_shell(self, delta: int) -> None:
         """The next or the previous shell (#1163): the current

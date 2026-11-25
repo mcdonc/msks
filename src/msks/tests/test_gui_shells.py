@@ -1274,6 +1274,130 @@ def test_closing_the_last_shell_by_key_leaves_the_plus_alone(qt, window_shell):
     assert qt.app.focusWidget() is page.shells.tabBar()
 
 
+def test_the_shell_keys_bring_the_shells_tab_forward(qt, window_shell):
+    """From the Mounts tab (#1163): Ctrl+Shift+W shows the Shells
+    tab, closes the current shell, and lands the keyboard on the
+    shell that remains — a shell never closes behind another tab.
+    Ctrl+Shift+T shows the tab with the new shell focused, and
+    Ctrl+1 and Ctrl+Tab show it with the chosen shell focused."""
+    shell, hub, _window = window_shell
+    page = open_page(qt, shell, shells=3)
+    press(qt, page.shells.currentWidget(), "Key_2", "alt")
+    assert page.bar.currentIndex() == 1
+    assert page.mounts_tab.isAncestorOf(qt.app.focusWidget())
+    press(qt, qt.app.focusWidget(), "Key_W", "ctrl", "shift")
+    assert page.bar.currentIndex() == 0
+    assert strip_titles(page) == ["1", "2", "+"]
+    assert page.shells.currentIndex() == 1
+    assert qt.app.focusWidget() is page.shells.currentWidget()
+    page.bar.setCurrentIndex(1)
+    qt.app.processEvents()
+    assert page.mounts_tab.isAncestorOf(qt.app.focusWidget())
+    press(qt, qt.app.focusWidget(), "Key_T", "ctrl", "shift")
+    assert page.bar.currentIndex() == 0
+    # The closed 3's number stays its own (#954): the new shell
+    # takes the next one.
+    assert strip_titles(page) == ["1", "2", "4", "+"]
+    assert qt.app.focusWidget() is page.shells.currentWidget()
+    page.bar.setCurrentIndex(1)
+    qt.app.processEvents()
+    press(qt, qt.app.focusWidget(), "Key_1", "ctrl")
+    assert page.bar.currentIndex() == 0
+    assert page.shells.currentIndex() == 0
+    assert qt.app.focusWidget() is page.shells.currentWidget()
+    page.bar.setCurrentIndex(1)
+    qt.app.processEvents()
+    press(qt, qt.app.focusWidget(), "Key_Tab", "ctrl")
+    assert page.bar.currentIndex() == 0
+    assert page.shells.currentIndex() == 1
+    assert qt.app.focusWidget() is page.shells.currentWidget()
+
+
+def test_closing_from_the_find_bar_lands_the_keyboard_on_a_shell(
+    qt, window_shell
+):
+    """The terminal's find bar holding the keyboard (#1163): its
+    edit is the closed shell's own child, the close ends that
+    shell all the same, and the keyboard lands on the shell that
+    remains — no focus widget left standing, no key gone dead
+    until a click. Driven on the strip's own action; the key's
+    path focuses the terminal first, as the test above shows."""
+    shell, hub, _window = window_shell
+    page = open_page(qt, shell, shells=2)
+    terminal = page.shells.currentWidget()
+    press(qt, terminal, "Key_F", "ctrl", "shift")  # the find bar opens
+    assert qt.app.focusWidget() is terminal.find_edit
+    assert not terminal.hasFocus()
+    page.shells.close_current()
+    assert strip_titles(page) == ["1", "+"]
+    assert qt.app.focusWidget() is page.shells.currentWidget()
+
+
+def test_the_shell_keys_send_no_byte_to_the_program(
+    qt, window_shell, monkeypatch
+):
+    """The acceptance criterion's stand-in for `cat` showing
+    nothing (#1163): each key, pressed whole with its modifiers on
+    the focused terminal, acts and writes no byte to the child.
+    The event is composed whole — no modifier press precedes it —
+    so the captured ``write`` sees the key's own encoding alone."""
+    shell, hub, _window = window_shell
+    written: list = []
+    monkeypatch.setattr(
+        qt.shells.terminal.TerminalWidget,
+        "write",
+        lambda self, data: written.append(data),
+    )
+    page = open_page(qt, shell, shells=2)
+    Modifier = qt.QtCore.Qt.KeyboardModifier
+
+    def send(key: str, *mods: str) -> None:
+        held = Modifier.NoModifier
+        for name in mods:
+            held |= getattr(Modifier, MODS[name])
+        terminal = page.shells.currentWidget()
+        assert qt.app.focusWidget() is terminal
+        qt.QtWidgets.QApplication.sendEvent(
+            terminal,
+            qt.QtGui.QKeyEvent(
+                qt.QtCore.QEvent.Type.KeyPress,
+                getattr(qt.QtCore.Qt.Key, key),
+                held,
+            ),
+        )
+        assert written == []
+
+    send("Key_T", "ctrl", "shift")
+    assert strip_titles(page) == ["1", "2", "3", "+"]
+    send("Key_1", "ctrl")
+    assert page.shells.currentIndex() == 0
+    send("Key_Tab", "ctrl")
+    assert page.shells.currentIndex() == 1
+    send("Key_Backtab", "ctrl", "shift")
+    assert page.shells.currentIndex() == 0
+    send("Key_W", "ctrl", "shift")
+    assert strip_titles(page) == ["2", "3", "+"]
+    assert qt.app.focusWidget() is page.shells.currentWidget()
+    send("Key_2", "alt")
+    assert page.bar.currentIndex() == 1
+
+
+def test_a_long_title_keeps_the_shown_tab_within_the_ceiling(qt, window_shell):
+    """A long program title on a shown strip (#1163): the tab's
+    rect stops at the ceiling, the numbered tab beside it stays
+    under it, and the tab's text holds the whole title for the
+    bar to elide at paint."""
+    shell, hub, _window = window_shell
+    page = open_page(qt, shell, shells=2)
+    long = "user@alpha: ~/projects/msks/docs/changes.md — vim"
+    hub.shells("ws-a")[0].widget.title_changed.emit(long)
+    qt.app.processEvents()
+    bar = page.shells.tabBar()
+    assert bar.min_tab_px() <= bar.tabRect(0).width() <= bar.max_tab_px()
+    assert bar.tabRect(1).width() < bar.max_tab_px()
+    assert bar.tabText(0) == long
+
+
 def test_the_next_and_previous_keys_cycle_the_shells(qt, window_shell):
     """Ctrl+Tab and Ctrl+Shift+Tab (#1163): the next and the
     previous shell, wrapping at both ends, each chosen shell's

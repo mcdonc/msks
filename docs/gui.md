@@ -144,8 +144,10 @@ the name, and Escape or an empty edit cancels. Each tab's close
 button ends its session.
 
 The same actions have keys, the set Konsole and GNOME Terminal
-use. They answer with a terminal focused, and the program inside
-the terminal reads nothing of them.
+use. They answer with a terminal focused, and the key itself never
+reaches the program inside the terminal. They answer from the
+page's other tabs too, and a shell action first brings the Shells
+tab forward.
 
 | Key                          | Action                                                  |
 | ---------------------------- | ------------------------------------------------------- |
@@ -157,6 +159,11 @@ the terminal reads nothing of them.
 
 The keys belong to the workspace page. The Workspaces list and
 the Images and Secrets pages do not answer them.
+
+The keys take precedence over the same keys inside the shell. A
+program that binds `Ctrl+Tab` or `Alt+1` to `Alt+5`, such as tmux
+or WeeChat, does not receive them from the GUI. Bind such a program
+to other keys.
 
 A tab shows the title the program inside sets. A program that
 sets the terminal's title (vim, less, ssh, or a prompt with an
@@ -188,8 +195,8 @@ pointer.
 
 The mode shows the Shells tab when another page tab was current.
 The shell tabs, the **+** tab, the rename, the close buttons, and
-their keys work as before. The consent panel keeps its place above the
-terminals while a hold waits. The status line moves to the tab
+their keys work as before. The consent panel keeps its place above
+the terminals while a hold waits. The status line moves to the tab
 row. A flash or an outage shows beside the workspace's name. A
 long one elides at its width, and the whole text reads in its
 tooltip.
