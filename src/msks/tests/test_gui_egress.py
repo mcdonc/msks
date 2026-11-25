@@ -1218,6 +1218,52 @@ def test_the_tabs_minimum_fits_the_windows_smallest_save(qt) -> None:
     assert tab.minimumSizeHint().height() <= 620
 
 
+def test_the_trails_table_shares_the_lists_edges(qt) -> None:
+    """The two columns' edges (#1154): the audit table starts
+    where the allowlist list starts and ends where the verdicts
+    list ends — the grid rows both columns share — with rows in
+    every list, with every list empty and a refusal standing on
+    the trail's note, and after the window grows. The trail's
+    footer is one row: the Allowlist button keeps the Revoke
+    row's own edges beside it."""
+    tab, bridge = make_tab(qt)
+
+    def edges(widget) -> tuple[int, int]:
+        top = widget.mapTo(tab, QtCore.QPoint()).y()
+        return top, top + widget.height()
+
+    def aligned(tag: str) -> None:
+        top, bottom = edges(tab.audit.table)
+        assert top == edges(tab.entries)[0], tag
+        assert bottom == edges(tab.verdicts)[1], tag
+        assert edges(tab.audit.allow_button) == edges(tab.revoke_button), tag
+
+    rows = [{**rules_frame()["allowed"][0], "requested_at": 1.0}]
+    land_audit(tab, bridge, rows)  # a row in every list
+    assert tab.audit.table.rowCount() == 1
+    aligned("rows")
+
+    bridge.succeeded.emit(  # every list empty, the trail refused
+        tab.list_key,
+        rules_frame(allowed=(), allow_list=()),
+    )
+    tab.poke()
+    land_audit(tab, bridge, [])
+    tab.poke()
+    bridge.failed.emit(tab.audit.key, "the daemon is gone")
+    assert tab.empty.isVisibleTo(tab)
+    assert tab.verdicts_empty.isVisibleTo(tab)
+    assert tab.audit.empty.isVisibleTo(tab.audit.footer)
+    assert tab.audit.note.text() == "refused: the daemon is gone"
+    aligned("empty")
+
+    window = tab.window()
+    window.resize(1280, 980)
+    qt.app.processEvents()
+    assert (window.width(), window.height()) == (1280, 980)
+    aligned("grown")
+
+
 def test_the_revoke_button_follows_the_flight(qt, monkeypatch) -> None:
     """The Revoke button's affordance (#1051 review): the button
     grays while the revoke flies — the editor buttons' own rule

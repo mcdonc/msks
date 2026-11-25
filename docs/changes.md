@@ -19,6 +19,15 @@ tagged `vX.Y.Z`.
   switch, and the mode ends when the page closes. See
   [docs/gui.md](gui.md#terminal-only-mode).
 
+### Fixed
+
+- **The GUI Egress tab's audit trail edges (#1154).** The audit
+  table's top edge is level with the static allowlist list, and
+  its bottom edge is level with the in-effect verdicts list, at
+  every window height. The Allowlist button sits at the right end
+  of the row under the table, and the trail's refusal note shows
+  beside it on the same row.
+
 ## \[v0.10.1] - 2026-11-25
 
 ### Added
