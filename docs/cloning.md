@@ -19,6 +19,10 @@ workspace page offers the same action (`Clone`) with a name prompt.
   topology, the egress mode, the host-share mounts, the login user, and the
   `user_data` payload all copy. The clone's own factory reset re-provisions
   from the payload, exactly like the source's would.
+- **The ssh identity.** The clone's stored line is the source's, so
+  `msks ssh` on the clone signs with the same key as on the source. A
+  clone does not take a new key. [Your ssh key](ssh-key.md) covers a
+  key change.
 
 ## What stays behind
 

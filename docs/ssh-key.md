@@ -45,7 +45,9 @@ first. It reads `identity_file` only when `pubkey_file` is unset. A
 `pubkey_file` still on the old key plants the old key in every new
 workspace.
 
-Load the new key into your ssh agent:
+Load the new key into your ssh agent as well. `msks create` reads
+the files above. The agent is what `msks ssh` and `msks rsync` sign
+through:
 
 ```bash
 ssh-add ~/.ssh/id_ed25519_2026
@@ -58,12 +60,13 @@ confirmation prints the file it used:
 ```text
 $ msks create my-workspace --image debian:13 --start
 created my-workspace (id 9f2c41ab77)
-identity: /home/you/.ssh/id_ed25519_2026
+identity: /home/you/.ssh/id_ed25519_2026.pub (public half)
 attach with: msks console my-workspace
 ```
 
-A new client machine needs the same two settings and the same
-`ssh-add`. The environment forms are `MSKSC_IDENTITY_FILE` and
+A create with `pubkey_file` unset prints the `identity_file` path
+instead. A new client machine needs the same two settings and the
+same `ssh-add`. The environment forms are `MSKSC_IDENTITY_FILE` and
 `MSKSC_PUBKEY_FILE` ([the CLI chapter's environment
 table](cli.md#client-environment)).
 
@@ -78,9 +81,13 @@ in, and you can mix them.
 `msks ssh` and `msks rsync` look for the private half of the stored
 line in two places. Your agent comes first. The match is on key
 material, so the agent may hold the old key under any file name. The
-file `identity_file` points at comes second. With the old key in your
-agent, both commands keep working on the old workspaces while
-`identity_file` already points at the new key.
+file `identity_file` points at comes second, and that rung reads
+unencrypted files only. An encrypted file there exits with a line
+that says `msks never types a passphrase` and lists the ways back
+in. With the old key in your agent, both commands keep working on
+the old workspaces while `identity_file` already points at the new
+key. An old key you keep encrypted on disk stays in the agent for
+them.
 
 ### Add the new line by hand
 
@@ -117,8 +124,8 @@ second `IdentityFile` line to it for the transition.
 `msks ssh` and `msks rsync` keep signing with the stored line, the old
 key. Both commands read that line from the daemon at session time and
 never read the guest's `authorized_keys`. When neither your agent nor
-`identity_file` holds the old key, both commands exit with `this
-client holds no private half for <workspace>`. Use plain `ssh`
+`identity_file` holds the old key, both commands exit with
+`this client holds no private half for <workspace>`. Use plain `ssh`
 through the forward for that workspace.
 
 ### What a re-provision does to a hand-added line
@@ -133,17 +140,21 @@ Two events re-provision a workspace:
   image. `/root/.ssh/authorized_keys` is on the overlay, and it comes
   back with the stored line alone. The login user's file is on the
   persistent `/home` volume. It keeps the hand-added line, and the
-  seed adds the stored line beside it.
+  stored line stays beside it.
 - **A seed renewal.** A changed mount set or a rotated interception
   CA bakes a new seed with a new instance-id. The overlay stays, and
   both files keep their hand-added lines. cloud-init's own ssh module
   runs on the new instance-id. It keeps the lines a file already
   holds.
 
-Both events regenerate the guest's ssh host keys. The next `msks ssh`
-re-pins the host key with a notice that says what caused it. That
-notice is about the guest's host key ([what does not
-change](#what-does-not-change)).
+A factory reset and an overlay heal rebuild the root filesystem, and
+the guest generates new ssh host keys on every image. A seed renewal
+makes the guest generate new host keys on the Debian and Fedora
+images. The NixOS image runs no cloud-init ssh module and keeps its
+host keys. The client rotates its host-key cache with each event's
+counter, and the next `msks ssh` re-pins with a notice that says
+what caused it. That notice is about the guest's host key ([what
+does not change](#what-does-not-change)).
 
 ### Or recreate the workspace
 
@@ -163,6 +174,15 @@ line on that workspace's row. The unlock reads the private half from
 workspace wrap to the old key, and only the old private half opens
 them.
 
+The store wraps to two key types only: `ssh-ed25519` and `ssh-rsa`.
+A workspace whose stored line is another type receives no blob. An
+ecdsa key and a hardware token's `sk-ssh-ed25519@openssh.com` key
+are outside the set. An owner-wide mint skips such a workspace, and
+a scoped mint refuses with the workspace named ([the mint
+flow](secrets.md#the-mint-flow)). A key change to one of those types
+keeps every login step above. It leaves the new workspaces without
+secrets.
+
 The options depend on whether you still hold the old private half.
 
 - **You keep the old private half.** The old workspaces' placeholders
@@ -173,11 +193,19 @@ The options depend on whether you still hold the old private half.
   MSKSC_IDENTITY_FILE=~/.ssh/id_ed25519 msks secret unlock
   ```
 
+  The TUI and the GUI run the same unlock with the configured
+  `identity_file` alone. Start either one with `MSKSC_IDENTITY_FILE`
+  set to the old key for that run. With the config on the new key,
+  both report the old rows as
+  `stay ciphertext (no stanza matches this key)` and leave them locked.
+
   The unlock POST has a second effect. The daemon re-encrypts each
   unlocked row to the row's current recipient set. Owner-wide rows
-  cover every workspace you own, the new-key ones included. One
-  unlock with the old key gives those rows a blob for each new
-  workspace, and a client configured with the new key opens them
+  cover every workspace you own that accepts owner-wide coverage,
+  the new-key ones included. `msks create --secret-coverage scoped`
+  opts a workspace out. One unlock with the old key gives those rows
+  a blob for each new workspace in the set, when its key type is a
+  capable one, and a client configured with the new key opens them
   from then on. Scoped rows (`--workspace`) keep the coverage they
   were minted with. A recreated workspace has a new id, and no
   scoped row covers it. Mint its scoped placeholders again.
@@ -185,13 +213,15 @@ The options depend on whether you still hold the old private half.
 - **You lost the old private half.** The blobs wrapped to the old
   key cannot be opened. An owner-wide row still has a way forward:
   revoke it and mint it again under the same name. The fresh mint
-  wraps to every workspace's stored line, and a client configured
-  with the new key unlocks it from then on. The swap then serves
-  every covered workspace, the old ones included. The daemon swaps
-  from the row's cached plaintext, not from a per-workspace blob.
-  A scoped placeholder for an old workspace has no way forward. A
-  re-mint wraps to the same lost key, and the row locks for good at
-  the end of its window. Recreate the workspace under the new key
+  wraps to every workspace's stored line of a capable type, and a
+  client configured with the new key unlocks it from then on. The
+  swap then serves every covered workspace, the old ones included.
+  The daemon swaps from the row's cached plaintext, not from a
+  per-workspace blob. A scoped placeholder for an old workspace has
+  no way forward. A re-mint wraps to the same lost key. Each
+  re-mint warms the row for one unlock window. After that nobody
+  can unlock it again, because its only blob is wrapped to the lost
+  key. Recreate the workspace under the new key
   when it needs that credential.
 
 ## Two keys during the transition
@@ -206,24 +236,39 @@ The options depend on whether you still hold the old private half.
   workspaces' blobs with the new key. Run `msks secret unlock` with
   `MSKSC_IDENTITY_FILE` set to the old key for the old rows, and
   leave the config on the new key for everything else.
-- **`--pubkey` for one create.** `msks create ws --pubkey
-~/.ssh/id_ed25519.pub` plants that one line, whatever the config
-  says. During the transition it creates a workspace around either
-  key from one client. The confirmation's `identity:` line shows
-  which.
-- **When the old key can be retired.** List the stored line of every
-  workspace and compare it with the old `.pub`:
+- **`--pubkey` for one create.** This form plants that one line,
+  whatever the config says:
 
   ```bash
-  msks ls --json | jq -r '.[] | [.name, (.ssh_pubkey // "none")] | @tsv'
+  msks create ws --pubkey ~/.ssh/id_ed25519.pub
   ```
 
-  When no workspace holds the old line, drop the key from the agent
-  (`ssh-add -d ~/.ssh/id_ed25519`) and archive or delete the file.
-  The old workspaces keep the old line after that. For them, `msks
-ssh` stops working, plain `ssh` works only through a hand-added
-  line, and their placeholders stay locked. Recreate or delete them
-  first if you need any of the three.
+  During the transition it creates a workspace around either key
+  from one client. The confirmation prints no identity line for a
+  `--pubkey` create. `msks key ws` shows the stored line.
+
+- **When the old key can be retired.** List the workspaces that
+  still hold the old line. Compare the first two fields of each
+  stored line with the old `.pub`, because the daemon appends its
+  own comment to the stored line:
+
+  ```bash
+  old=$(cut -d' ' -f1,2 ~/.ssh/id_ed25519.pub)
+  msks ls --json | jq -r --arg old "$old" \
+    '.[] | select(((.ssh_pubkey // "") | split(" ")[0:2] | join(" ")) == $old) | .name'
+  ```
+
+  An empty list means no workspace holds the old key. Drop it from
+  the agent (`ssh-add -d ~/.ssh/id_ed25519`) and archive or delete
+  the file. Nothing changes for any workspace.
+
+  A list with names means those workspaces still need the old key
+  for `msks ssh` and for their scoped placeholders. Keep the key
+  until you recreate or delete them. If you drop it anyway, `msks ssh`
+  fails on them, plain `ssh` works only through a hand-added
+  line, and their scoped placeholders cannot be unlocked again.
+  Their owner-wide placeholders keep swapping while another
+  workspace on the row unlocks it.
 
 ## What does not change
 
@@ -232,8 +277,8 @@ ssh` stops working, plain `ssh` works only through a hand-added
   is the client's login credential. The two are unrelated, and a key
   change causes no pin notice. A factory reset or a healed overlay
   loss regenerates the host keys. The next `msks ssh` then re-pins
-  with a notice that says what caused it ([the CLI chapter's `msks
-ssh` section](cli.md#msks-ssh)).
+  with a notice that says what caused it. The CLI chapter's
+  [`msks ssh` section](cli.md#msks-ssh) has the details.
 - **`msks console`.** The console never needed the key. It works
   through every step above.
 
@@ -242,5 +287,6 @@ ssh` section](cli.md#msks-ssh)).
 Its stored line is the supplied key, whatever the client config said
 at the time. Everything above applies to it, with the supplied key as
 the workspace's key. `msks ssh` signs with it when the agent holds it
-or `identity_file` points at it. Secrets wrap to it. A different key
-needs the by-hand line or a recreate.
+or `identity_file` points at it. Secrets wrap to it when its type is
+`ssh-ed25519` or `ssh-rsa`. A different key needs the by-hand line
+or a recreate.

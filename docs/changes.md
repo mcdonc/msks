@@ -30,9 +30,9 @@ tagged `vX.Y.Z`.
   when it changes: a rotation, a lost key, or a new client machine.
   The chapter covers the config edit, the workspaces created with
   the old key (the stored line is fixed at create, #41), the secrets
-  after the change, and retiring the old key. First run, Guest
-  networking, Secrets, and the CLI chapter's `msks key` section link
-  to it. See [docs/ssh-key.md](ssh-key.md).
+  after the change, and retiring the old key. The CLI chapter's `msks
+ssh` passage now also says that the NixOS image keeps its host keys
+  across a seed renewal. See [docs/ssh-key.md](ssh-key.md).
 
 ### Fixed
 

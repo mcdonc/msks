@@ -218,7 +218,7 @@ worked examples for both surfaces.
 ### The workspace ssh identity
 
 A workspace created through the client carries the operator's
-key as its ssh identity (issues). `identity_file` (or
+key as its ssh identity (#111). `identity_file` (or
 `MSKSC_IDENTITY_FILE`) is queried for your private key. Its derived
 public half travels with the create request, and the first
 boot plants that line into `authorized_keys` for root and the
@@ -322,7 +322,7 @@ onto the same socket without the alias block.
 
 ### An operator-supplied key for one workspace
 
-`msks create --pubkey FILE` (issue) builds the workspace around a public key
+`msks create --pubkey FILE` (#132) builds the workspace around a public key
 chosen for that one create (the key that `~/.ssh/id_ed25519.pub` gives, a
 hardware token's key, any well-formed OpenSSH line) instead of the
 configured key. The supplied line travels to the daemon at its own key type

@@ -216,9 +216,9 @@ def resolve_private(key: dict, workspace_id: str) -> str:
     its access: a new id, the same key). A workspace planted with
     a key this client holds nowhere fails as one named line, not
     ssh's opaque ``Permission denied (publickey)`` — losing the
-    half loses ssh and the console alike (a seeded guest
-    challenges the console with the same key), so the line names
-    the ways back in.
+    half loses ``msks ssh``, while the console keeps working (the
+    #481 root autologin asks for no key), and the line says both
+    and names the ways back in.
     """
     served = key["public_key"].split()[:2]
     operator = operator_match(served)
