@@ -198,7 +198,12 @@ class FakePresenter:
 
 def daemon_rows() -> list[dict]:
     """The listing the workspaces screenshot reads: three
-    workspaces, one carrying both markers, newest first."""
+    workspaces, newest first — the first with an unresolved
+    mount, the second with changes waiting for its next start,
+    the third running unmarked, so the list shows the healthy
+    row's green beside the marked rows' amber (#1160, #1172):
+    the first row is the one the list holds selected, and a
+    selected row keeps the highlight's own text color."""
     return [
         {
             "id": "ws-a",
@@ -237,9 +242,14 @@ def daemon_rows() -> list[dict]:
         {
             "id": "ws-c",
             "name": "gamma",
-            "status": "created",
+            "status": "running",
             "image_ref": "msks/debian:13",
             "created_at": utc_stamp(timedelta(days=-1, hours=-6)),
+            "cpus": 2,
+            "mem_mib": 2048,
+            "egress_mode": "static",
+            "mounts_pending": False,
+            "sizes_pending": False,
         },
     ]
 
@@ -278,6 +288,18 @@ def shot(widget, name: str) -> None:
     path = OUT / name
     widget.grab().save(str(path))
     print(f"captured {path.relative_to(ROOT)}")
+
+
+def unselect(*tables) -> None:
+    """Clear each table's selection and current cell (#1172): a
+    fresh page holds its first rows selected, and a selected
+    row keeps the highlight's own text color (#1160) — cleared,
+    the Secrets page's STATE column shows the open row's green
+    beside the locked row's amber. A click on the empty area
+    below the rows is the operator's own gesture."""
+    for table in tables:
+        table.clearSelection()
+        table.selectionModel().clearCurrentIndex()
 
 
 def preset_rows():
@@ -631,6 +653,8 @@ def capture() -> None:
             ],
         },
     )
+    settle(app, rounds=4)
+    unselect(secrets.table, secrets.audit_table)
     settle(app, rounds=4)
     shot(secrets_window, "gui-secrets.png")
     secrets_window.close()
