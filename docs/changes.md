@@ -40,9 +40,8 @@ tagged `vX.Y.Z`.
   carries a button row under its table: **In the catalog** has
   Details…, Set as the default, and Remove…, and **Published**
   has Import…. The buttons act on the selected row and stand
-  disabled until one is selected. The right-click menus stay,
-  and Enter on a catalog row opens the image's record. See
-  [docs/gui.md](gui.md#the-images-tab).
+  disabled until one is selected. The right-click menus stay
+  beside them. See [docs/gui.md](gui.md#the-images-tab).
 
 ## \[v0.10.2] - 2026-11-25
 

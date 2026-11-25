@@ -61,8 +61,8 @@ class ButtonRows:
     def held_model(self, table: ListTable, models: list) -> object | None:
         """The model a group's held row carries (#1161): read
         through its first cell's index, or None with nothing
-        held — a row whose first cell is gone or carries no
-        index, mid-fill or after, holds nothing."""
+        held — a row whose first cell is gone, or carries no
+        index, holds nothing."""
         item = table.item(self.held_row(table), 0)
         if item is None:
             return None

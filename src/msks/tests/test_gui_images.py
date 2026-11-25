@@ -180,6 +180,16 @@ def make_tab(qt) -> tuple:
     return tab, window, bridge
 
 
+def cap_published_pane(tab, width: int) -> None:
+    """Hold the published pane at the width a test names
+    (#1161's fakes): the button rows hold the window wider than
+    a tight pane — the catalog's three need some 490px under
+    the offscreen fonts — so the pane's own box takes the
+    width, not the window. A pane the window already gives
+    more is left alone."""
+    tab.published_table.parentWidget().setMaximumWidth(width)
+
+
 def rows_texts(table) -> list[list[str]]:
     """A group table's rows as their cell texts (#964's fakes
     read): every cell of every row, in table order."""
@@ -758,7 +768,7 @@ def test_the_flash_clears_after_its_span(qt) -> None:
     window.close()
 
 
-def test_the_tab_carries_no_refresh_button(qt) -> None:
+def test_the_action_rows_are_the_pages_only_push_buttons(qt) -> None:
     """#1060: the page holds no Refresh button — the pushed
     frames and the show re-read the page. The push buttons it
     carries (#1161) are the two groups' action rows, and no
@@ -1134,6 +1144,7 @@ def test_the_published_pane_never_scrolls_horizontally(qt) -> None:
         == "a" * 12
     )  # the hash held its whole prefix
     window.resize(420, 700)
+    cap_published_pane(tab, 420)  # the window cannot go this narrow
     qt.app.processEvents()
     assert table.horizontalScrollBar().maximum() == 0
     # The description gave ground first — the elide itself is
@@ -1164,6 +1175,7 @@ def test_the_hash_ellipsizes_only_after_the_description_floor(
     window.setCentralWidget(tab)
     window.show()
     tab.on_succeeded(images_mod.PAGE_KEY, page_answer([], narrow))
+    cap_published_pane(tab, 360)
     table = tab.published_table
     window.resize(360, 700)
     qt.app.processEvents()
@@ -1581,10 +1593,8 @@ def channel_rows() -> list[dict]:
 
 def make_channel_tab(qt, width: int) -> tuple:
     """The tab over the screenshot-shaped channel, at the width
-    the pane reads (#964's fakes). The published pane's own box
-    takes that width: the button rows under the groups (#1161)
-    hold the window wider than a tight pane, and the fakes read
-    the pane, not the window."""
+    the pane reads (#964's fakes) — the pane's own box, which
+    the button rows (#1161) hold narrower than the window."""
     bridge = StubBridge()
     tab = images_mod.ImagesTab(bridge, CHANNEL)
     window = qt.QtWidgets.QMainWindow()
@@ -1594,7 +1604,7 @@ def make_channel_tab(qt, width: int) -> tuple:
     tab.on_succeeded(
         images_mod.PAGE_KEY, page_answer(catalog_raw(), channel_rows())
     )
-    tab.published_table.parentWidget().setMaximumWidth(width)
+    cap_published_pane(tab, width)
     qt.app.processEvents()
     return tab, window
 
@@ -1951,19 +1961,26 @@ def test_the_button_rows_follow_the_flights(qt, monkeypatch) -> None:
 
 def test_enter_on_a_held_row_takes_the_groups_action(qt, monkeypatch) -> None:
     """Enter on a held row (#1161): a catalog row opens its detail
-    and a published row starts its import — the lists' own
-    activations, with the button rows on the page taking no
-    Enter from the list that holds the focus."""
+    and a published row starts its import. A focused list keeps
+    the focus its row selection leaves — the button rows take
+    none of it — so the key reaches the list, as a real keypress
+    would."""
     opened: list[dict] = []
     fake_detail(monkeypatch, opened)
     tab, window, bridge = make_tab(qt)
     bridge.calls.clear()
     enter = qt.QtCore.Qt.Key.Key_Return
+    tab.catalog_table.setFocus()
+    qt.app.processEvents()
+    assert qt.app.focusWidget() is tab.catalog_table
     tab.catalog_table.selectRow(catalog_row_of(tab, "ubuntu:24.04"))
-    qt.QtTest.QTest.keyClick(tab.catalog_table, enter)
+    qt.QtTest.QTest.keyClick(qt.app.focusWidget(), enter)
     assert opened == [catalog_raw()[1]]
+    tab.published_table.setFocus()
     tab.published_table.selectRow(row_of(tab, "alpine:3.21"))
-    qt.QtTest.QTest.keyClick(tab.published_table, enter)
+    qt.app.processEvents()
+    assert qt.app.focusWidget() is tab.published_table
+    qt.QtTest.QTest.keyClick(qt.app.focusWidget(), enter)
     assert bridge.calls == [
         (
             images_mod.IMPORT_KEY,

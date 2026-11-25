@@ -197,7 +197,7 @@ class ImagesTab(FeedPage, StatusFlash, ButtonRows, QtWidgets.QWidget):
         # catalog moves re-read the page while it owns the
         # window, the serve poke re-reads it whole, and a drop
         # flashes — the pushed frames are the page's freshness
-        # now that no button stands.
+        # now that no Refresh button stands.
         bridge.landed.connect(self.frame_landed)
         bridge.feed_served.connect(self.feed_served)
         bridge.feed_dropped.connect(self.feed_dropped)
