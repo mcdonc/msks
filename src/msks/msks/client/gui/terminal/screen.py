@@ -185,6 +185,9 @@ class TerminalWidget(QWidget):
         self.press_count = 0
         self.last_press_ms = 0
         self.last_press_cell: tuple[int, int] | None = None
+        # Set by any motion with the button held and by a word or
+        # line select: it gates autoscroll. The library's gesture
+        # judges click against drag.
         self.sel_dragged = False
         self.drag_position = QPointF(0, 0)
         self.autoscroll = QTimer(self)

@@ -6,6 +6,17 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Fixed
+
+- **A click clears a GUI terminal selection when the pointer
+  moves a few pixels during the click (#1138).** A click whose
+  pointer moves a little inside the pressed cell now clears
+  the selection, also one a drag made through the window edge
+  into the scrollback. A pointer that crosses most of the cell
+  still selects it. A click held in the top or bottom row still
+  autoscrolls, because a held pointer there scrolls the
+  viewport.
+
 ## \[v0.10.0] - 2026-11-24
 
 ### Added

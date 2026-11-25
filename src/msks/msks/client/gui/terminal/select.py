@@ -202,10 +202,15 @@ def gesture_event(screen, kind: int, position, ref):
 def release(screen) -> None:
     """A finished press: publish a dragged selection to the
     PRIMARY selection; clear the selection when the press
-    never dragged (unless a word or line select bypassed the
-    gesture — its dragged flag knows nothing of those, so a
-    multi-click press always publishes)."""
-    if screen.press_count >= 2 or screen.sel_dragged:
+    never dragged. The verdict is the library's own: its
+    gesture flags a drag once the pointer leaves the pressed
+    cell or crosses the cell's own selection threshold, so
+    a click whose pointer trembles a few pixels inside that
+    cell still clears, however many move events the tremble
+    produced. A word or line select bypasses the gesture,
+    whose dragged flag knows nothing of those, so a
+    multi-click press always publishes."""
+    if screen.press_count >= 2:
         publish_primary(screen)
         return
     dragged = ctypes.c_bool()
@@ -215,12 +220,14 @@ def release(screen) -> None:
         gt.SEL_DATA_DRAGGED,
         ctypes.byref(dragged),
     )
-    if ok == gt.SUCCESS and not dragged.value:
-        clear(screen)
-    else:
+    if ok != gt.SUCCESS:
         # The dragged read fails only on a torn-down gesture
         # state (probed SUCCESS on every live one).
         publish_primary(screen)  # pragma: no cover
+    elif dragged.value:
+        publish_primary(screen)
+    else:
+        clear(screen)
 
 
 def autoscroll_tick(screen) -> None:
