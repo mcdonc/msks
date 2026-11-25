@@ -1,8 +1,9 @@
 """The listing's table widget (#962): the row set the list
-screen's models fill, carrying the one key bridge the table
-owns — the Up on the top row handing the keyboard upward —
-and the column sizing every group table takes against its
-pane's width (#997).
+screen's models fill, carrying the key bridges the table owns
+— the Up on the top row handing the keyboard upward, and
+Return activating the held row on every host (#1161) — and
+the column sizing every group table takes against its pane's
+width (#997).
 """
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -15,6 +16,10 @@ from .tints import SemanticDelegate
 #: not follow the application font on its own.
 BOLD_SEAT = "msks-bold-header"
 
+#: The keys that activate a held row (#1161): Return and the
+#: keypad's Enter, the keys Qt's own views answer elsewhere.
+RETURN_KEYS = frozenset((QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter))
+
 
 class ListTable(QtWidgets.QTableWidget):
     """The listing's own table (#962): the row set the
@@ -22,25 +27,43 @@ class ListTable(QtWidgets.QTableWidget):
     table's Up — hands the keyboard to whatever stands above
     the list in the focus chain (the window's tab strip): the
     arrows read top-to-bottom without a Tab, both directions,
-    the spatial-navigation rule. Every state cell paints
-    through the semantic delegate (#1160): a cell tagged with a
-    kind wears that kind's color, read off the palette at paint
-    time."""
+    the spatial-navigation rule. Return on a held row emits
+    ``activated`` on every host (#1161): Qt's own views emit
+    nothing for the key on macOS, where it is the platform's
+    rename, and the lists open their row on it everywhere, the
+    docs' own rule. Every state cell paints through the
+    semantic delegate (#1160): a cell tagged with a kind wears
+    that kind's color, read off the palette at paint time."""
 
     def __init__(self, *args) -> None:
         super().__init__(*args)
         self.setItemDelegate(SemanticDelegate(self))
 
     def keyPressEvent(self, event) -> None:
-        if event.key() == QtCore.Qt.Key.Key_Up and self.currentRow() <= 0:
+        if self.leaves_upward(event):
             # The base walk, not the view's own: the view's
             # override answers Shift-Tab's shape without moving
             # the focus, and the arrow needs the move. The
             # chain's own order carries the keyboard to the
             # strip above the list.
             QtWidgets.QWidget.focusNextPrevChild(self, False)
-            return
-        super().keyPressEvent(event)
+        elif self.activates(event):
+            self.activated.emit(self.currentIndex())
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def leaves_upward(self, event) -> bool:
+        """The top row's Up, or an empty table's (#962): the key
+        that hands the keyboard to whatever stands above the
+        list in the focus chain."""
+        return event.key() == QtCore.Qt.Key.Key_Up and self.currentRow() <= 0
+
+    def activates(self, event) -> bool:
+        """Return on a held row (#1161): the key the table answers
+        itself, Qt's own views emitting for it on Linux and
+        Windows only."""
+        return event.key() in RETURN_KEYS and self.currentIndex().isValid()
 
 
 def bold_header(table: QtWidgets.QTableWidget) -> None:

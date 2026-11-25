@@ -1964,11 +1964,11 @@ def test_enter_on_a_held_row_takes_the_groups_action(qt, monkeypatch) -> None:
     """Enter on a held row (#1161): a catalog row opens its detail
     and a published row starts its import. The catalog table
     takes the page's focus at the show, a row selection moves
-    no focus, and the button rows take none of it; the list's
-    own Enter handling then activates the row, the handler
-    keyed directly as the secrets tab's edge tests key it:
-    ``QTest.keyClick`` reached it on the Linux host and not on
-    the macOS runner."""
+    no focus, and the button rows take none of it; the table's
+    own Return bridge (:mod:`msks.client.gui.listtable`, the
+    one Qt's views leave out on macOS) then activates the row.
+    The handler is keyed directly, the secrets tab's edge
+    tests' shape."""
     opened: list[dict] = []
     fake_detail(monkeypatch, opened)
     tab, window, bridge = make_tab(qt)
