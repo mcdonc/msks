@@ -2213,6 +2213,13 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>A refused start in the TUI opens the failure panel (#1139).</strong> <code>s</code>
+  on the workspaces list and Start on the workspace page show the
+  daemon's whole refusal in a panel that stays until dismissed. When the
+  hypervisor exited before the workspace came up, the panel adds a
+  paragraph that points at <code>msksd doctor</code> on the daemon's host, and the
+  shell action's refusal flash suggests the doctor instead of
+  <code>msks console</code>. See <a href="../tui/#the-workspace-tree">docs/tui.md</a>.</li>
 <li><strong>A click clears a GUI terminal selection when the pointer
   moves a few pixels during the click (#1138).</strong> A click whose
   pointer moves a little inside the pressed cell now clears
