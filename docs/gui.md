@@ -118,10 +118,11 @@ alpha` while the page shows: the title bar is where the page's
 header lives.
 
 The page's top row holds the back arrow, the tab strip, a status
-line, and the external-terminal button at the right end. The tab
-strip holds **Shells** (the default), **Mounts**, **Proxies**,
-**Egress**, and **Events**. The footer strip at the bottom repeats
-the list's quick-facts line for this workspace.
+line, the external-terminal button, and the terminal-only button
+at the right end. The tab strip holds **Shells** (the default),
+**Mounts**, **Proxies**, **Egress**, and **Events**. The footer strip
+at the bottom repeats the list's quick-facts line for this
+workspace.
 
 The page re-reads the daemon at its open, when the events
 connection serves, and on every move the events feed pushes.
@@ -145,6 +146,37 @@ button ends its session.
 The sessions outlive the page. Back to the list closes nothing,
 and a return visit finds them running the whole time. Closing
 the window closes every open shell.
+
+### Terminal-only mode
+
+![The workspace page in terminal-only mode: the shell tabs, the workspace's name and the restore button at the right end, the terminal](screens/gui-terminal-only.png)
+
+The terminal-only button hides the page's controls and the
+window's top-level tab strip. `Ctrl+Shift+M` does the same from
+the keyboard, from a terminal too. The window then shows the
+shell tabs and the terminal alone, in the layout of a tabbed
+terminal app: the tab row on top, the terminal filling the rest.
+The workspace's name shows in gray at the tab row's right end,
+and the restore button follows it, where the terminal-only button
+stood: the pointer that clicked the one rests over the other.
+Above the tab row the window keeps a slim band, the row the
+top-level tabs held. The band keeps the restore button under the
+pointer.
+
+The mode shows the Shells tab when another page tab was current.
+The shell tabs, the **+** tab, the rename, and the close buttons
+work as before. The consent panel keeps its place above the
+terminals while a hold waits. The status line moves to the tab
+row. A flash or an outage shows beside the workspace's name. A
+long one elides at its width, and the whole text reads in its
+tooltip.
+
+The restore button and `Ctrl+Shift+M` bring every control back:
+the top-level strip, the page's top row, and the footer. The same
+tabs stay current, and no shell closes. The mode also ends when
+the page closes, and the top-level strip comes back with it. In
+the mode the back arrow is hidden and Escape does not leave the
+page. Leave the mode first to leave the page.
 
 ### The consent panel
 

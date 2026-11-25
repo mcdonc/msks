@@ -368,6 +368,18 @@ def capture() -> None:
     settle(app, rounds=20)
     shot(detail_window, "gui-shells.png")
 
+    # The terminal-only mode (#1152): the chrome hidden, the
+    # shell tabs and the terminal alone, the workspace's name
+    # and the restore button at the tab row's right end. The
+    # consent panel is empty for this capture — its rows show
+    # in the shells shot above.
+    detail.shells_tab.consent_panel.host(FakePresenter([]))
+    detail.shells_tab.consent_panel.refresh()
+    detail.terminal_only.toggle.click()
+    settle(app, rounds=20)
+    shot(detail_window, "gui-terminal-only.png")
+    detail.terminal_only.restore.click()
+
     detail.bar.setCurrentIndex(1)
     settle(app, rounds=4)
     shot(detail_window, "gui-mounts.png")

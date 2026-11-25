@@ -500,6 +500,12 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
         # the standing connection names itself on every build.
         shell.listing.host_presets(connections.presets())
         shell.listing.connection_picked.connect(reconnect)
+        # The page's terminal-only mode (#1152): the page hides
+        # its own controls and asks the strip to hide its bar
+        # through this wire; the page's own hide ends the mode,
+        # so the listing and the other tabs never show under a
+        # hidden strip.
+        shell.detail.chrome_hidden.connect(tabs.set_bar_hidden)
         # The unlock follows the fresh tree (#1147): its outcome
         # flashes on the listing, the Secrets tab's button asks
         # by hand, and the offer of the daemon's locked rows goes

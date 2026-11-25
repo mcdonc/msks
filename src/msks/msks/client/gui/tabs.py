@@ -12,7 +12,10 @@ for the page below, and the bar never holds the keyboard without
 a way out (no focus trap). The strip itself stays plain (#1011):
 the Workspaces tab carried a plus badge for the create action
 until the action moved to the page's own button row, and no tab
-carries an embedded button now.
+carries an embedded button now. The workspace page's
+terminal-only mode (#1152) hides the whole bar through
+:meth:`MainTabs.set_bar_hidden`, and the pages fill the strip
+while it stands.
 """
 
 from PySide6 import QtCore, QtWidgets
@@ -56,6 +59,14 @@ class MainTabs(QtWidgets.QTabWidget):
         # levels read the same way.
         mark_active(self.tabBar())
         self.tabBar().installEventFilter(self)
+
+    def set_bar_hidden(self, hidden: bool) -> None:
+        """Hide the strip's own bar (#1152): the workspace page's
+        terminal-only mode asks for it — the pages fill the
+        strip while it stands, the current tab keeps its place,
+        and a hidden bar takes no key and no focus. The page's
+        hide brings the bar back through the same ask."""
+        self.tabBar().setVisible(not hidden)
 
     def eventFilter(self, obj, event) -> bool:
         """Down leaves the bar (#962): the page below takes the
