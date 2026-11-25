@@ -1,12 +1,41 @@
 """The GUI dialogs' shared seams (#962, #986, #1014): the
 pieces the create and edit dialogs hold in common — the
-whole-number rule their fields check locally, the close path
-that cancels a standing flight and unhooks the bridge, and
-the placement rule that holds every popup on the main
-window's center. Plain Python, no Qt in it: the mixins ride
-whatever ``QDialog`` subclass takes them, and the rules read
-as plain calls for the coverage gate.
+whole-number rule their fields check locally, the size forms
+the dialog's size fields read (#1164), the close path that
+cancels a standing flight and unhooks the bridge, and the
+placement rule that holds every popup on the main window's
+center. Plain Python, no Qt in it: the mixins ride whatever
+``QDialog`` subclass takes them, and the rules read as plain
+calls for the coverage gate.
 """
+
+import re
+from decimal import Decimal
+
+from ..volumes import MIB, human_bytes
+
+#: The size fields the dialogs read in the human forms (#1164):
+#: memory and the two volumes, the body's MiB counts.
+SIZE_FIELDS = frozenset({"mem_mib", "root_mib", "home_mib"})
+
+#: The forms a size field accepts (#1164): a whole number of MiB
+#: as the TUI's own form reads it, or the number with a unit —
+#: G/GiB (×1024 MiB) and M/MiB (×1) — a decimal allowed only
+#: before a unit, and only when it resolves to a whole number
+#: of MiB (`0.5G` is 512; a bare `1.5` has no unit to resolve
+#: it, and refuses as the whole-number rule always refused it).
+#: ASCII digits alone, the whole-number rule's own hazard:
+#: unicode digits a paste can carry refuse here too. `GB`
+#: refuses on purpose: it names 10⁹ bytes, a different size
+#: than the daemon's MiB count.
+SIZE_FORM = re.compile(r"^([0-9]+(?:\.[0-9]+)?)([GgMm](?:[Ii][Bb])?)?$")
+
+#: The suffixes' multipliers on MiB, lowercased.
+SIZE_UNITS = {"g": 1024, "gib": 1024, "m": 1, "mib": 1}
+
+#: The note a refused size answers with (#1164): the accepted
+#: forms, in the words the operator types them.
+SIZE_NOTE = "sizes read as MiB, or with a G or M suffix: 8G, 512M"
 
 
 def whole_number(value: str) -> bool:
@@ -14,6 +43,56 @@ def whole_number(value: str) -> bool:
     ASCII digits only — ``int()`` refuses some unicode digits
     ``isdigit()`` accepts, and a paste can carry them."""
     return value.isascii() and value.isdigit()
+
+
+def parse_size(value: str) -> int | None:
+    """A size field's value in MiB (#1164), or None when the
+    form refuses: a whole number of MiB, or a number with a
+    G/GiB or M/MiB suffix, a decimal before the unit resolving
+    to a whole number of MiB through exact decimal arithmetic
+    — a product with a fraction (`0.3G`, 307.2 MiB) refuses
+    rather than rounding the daemon's count."""
+    match = SIZE_FORM.match(value)
+    if match is None:
+        return None
+    unit = (match[2] or "").lower()
+    if "." in match[1] and not unit:
+        return None
+    return whole_mib(Decimal(match[1]) * SIZE_UNITS.get(unit, 1))
+
+
+def whole_mib(mib: Decimal) -> int | None:
+    """A size product as a whole number of MiB (#1164), None
+    when it carries a fraction — the daemon's count is whole,
+    and a form that cannot name it exactly refuses."""
+    if mib != mib.to_integral_value():
+        return None
+    return int(mib)
+
+
+def size_error(field: str) -> str:
+    """The note a refused size field answers with (#1164): the
+    field's name and the accepted forms."""
+    return f"{field}: {SIZE_NOTE}"
+
+
+def mib_text(mib: int) -> str:
+    """A size in MiB as the create dialog's summary line spells
+    it (#1164): the client's one human rendering — 8G, 1.5G,
+    512M — with the binary unit written out: 8 GiB, 1.5 GiB,
+    512 MiB."""
+    text = human_bytes(mib * MIB)
+    return f"{text[:-1]} {text[-1]}iB"
+
+
+def seed_size(mib: int) -> str:
+    """A row's size as its field's seed text (#1164): the human
+    spelling when it reads back to the same number of MiB —
+    8G, 1.5G, 1000M — and the plain MiB count otherwise (a size
+    the human rendering's tenths round, 8193M), so the editor's
+    same-size check and the root's floor read the row exactly."""
+    text = human_bytes(mib * MIB)
+    return text if parse_size(text) == mib else f"{mib}M"
 
 
 def center_on_parent(dialog) -> None:

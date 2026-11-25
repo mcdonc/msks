@@ -6,7 +6,9 @@ out. The changed fields send as one resize body through the
 route ``msks resize`` drives; a landed resize closes the
 dialog and the list behind it refreshes, a refusal keeps it
 standing with the failure on its note line — the edit itself
-never lost.
+never lost. The size fields read the create dialog's human
+forms (#1164) and seed in them: a workspace created with
+8192 MiB of memory opens the field as `8G`.
 
 The name field follows the daemon: a workspace's row is
 immutable after create today (``PATCH``/``PUT`` answer 405,
@@ -25,7 +27,15 @@ import re
 
 from PySide6 import QtCore, QtWidgets
 
-from .dialogs import BridgeClose, Centered, whole_number
+from .dialogs import (
+    SIZE_FIELDS,
+    BridgeClose,
+    Centered,
+    parse_size,
+    seed_size,
+    size_error,
+    whole_number,
+)
 
 #: The resize call's key (#986): the one flight an open editor
 #: owns — the dialog unhooks on close, so a late answer
@@ -37,9 +47,9 @@ EDIT_KEY = "workspace-edit"
 #: body carries and the label the row shows, in walk order.
 EDIT_FIELDS = (
     ("cpus", "VCPUs"),
-    ("mem_mib", "Memory MiB"),
-    ("root_mib", "Root MiB"),
-    ("home_mib", "Home MiB"),
+    ("mem_mib", "Memory"),
+    ("root_mib", "Root disk"),
+    ("home_mib", "Home disk"),
 )
 
 #: The name field's key and label (#986): the row the rename
@@ -80,14 +90,21 @@ def editor_fields(
 
 
 def edit_seeds(row: dict) -> dict[str, str]:
-    """The fields' seeded values (#986, the TUI edit's own
-    arithmetic): every field's current value read off the
-    workspace's row as the field's own text — the sizes and
-    topology as their numbers, the name as its row fact."""
+    """The fields' seeded values (#986, #1164, the TUI edit's
+    own arithmetic): every field's current value read off the
+    workspace's row as the field's own text — the sizes in the
+    human unit the field reads (`8G`, a size the spelling
+    rounds in plain MiB), the vcpu count as its number, the
+    name as its row fact."""
     seeds: dict[str, str] = {}
     for field, _label in EDIT_FIELDS:
         value = row.get(field)
-        seeds[field] = "" if value is None else str(value)
+        if value is None:
+            seeds[field] = ""
+        elif field in SIZE_FIELDS:
+            seeds[field] = seed_size(int(value))
+        else:
+            seeds[field] = str(value)
     name = row.get("name")
     seeds[NAME_FIELD] = "" if name is None else str(name)
     return seeds
@@ -151,52 +168,72 @@ def sized_body(values: dict, seeds: dict) -> tuple[dict | None, str | None]:
 
 def land_field(field: str, value: str, seeds: dict, body: dict) -> str | None:
     """One field into the body (#986): a blank field rides
-    nothing, a whole value lands unless it states the seed's
-    own number — the same size in a different spelling rides
-    nothing either, so the daemon sees no no-op it must catch
-    up. The note on a local refusal, ``None`` when the field
-    landed or rode nothing."""
+    nothing, a sound value lands unless it states the seed's
+    own number — the same size in a different spelling (`8G`
+    for a seed of `8192M`) rides nothing either, so the daemon
+    sees no no-op it must catch up. The note on a local
+    refusal, ``None`` when the field landed or rode nothing."""
     if not value:
         return None
-    error = field_error(field, value, seeds)
+    number, error = read_field(field, value, seeds)
     if error is not None:
         return error
-    if int(value) == seeded_number(seeds, field):
-        return None
-    body[field] = int(value)
+    if number != seeded_number(seeds, field):
+        body[field] = number
+    return None
+
+
+def read_field(
+    field: str, value: str, seeds: dict
+) -> tuple[int | None, str | None]:
+    """One field's value read (#986, #1164): its number when
+    sound, or the note that refuses it — the field's own forms
+    first, then the root's grow-only rule the root field adds.
+    A blank value never reaches here."""
+    number, error = read_number(field, value)
+    if error is not None or field != "root_mib":
+        return number, error
+    return number, root_error(number, seeds)
+
+
+def read_number(field: str, value: str) -> tuple[int | None, str | None]:
+    """A field value's number (#1164), or its note: the size
+    forms a size field reads — the MiB count — and the
+    whole-number rule the vcpu count checks."""
+    if field in SIZE_FIELDS:
+        mib = parse_size(value)
+        return mib, None if mib is not None else size_error(field)
+    if whole_number(value):
+        return int(value), None
+    return None, f"{field}: a whole number"
+
+
+def root_error(asked: int, seeds: dict) -> str | None:
+    """The root's grow-only rule (#986, the daemon's own #187
+    said locally): the overlay's partition table and filesystem
+    belong to the guest, so a smaller root is refused before
+    the daemon ever sees it, the current size in the unit the
+    field reads (#1164). A row without a root fact — the seed
+    reads blank — has no local floor; the daemon owns that
+    one."""
+    floor = seeded_number(seeds, "root_mib")
+    if floor is not None and asked < floor:
+        return f"the root only grows — it is {seeds['root_mib']}"
     return None
 
 
 def seeded_number(seeds: dict, field: str) -> int | None:
-    """The seed's own number (#986): a row that predates the
-    fact seeds blank and reads as no number, so any whole
-    value the operator gives it lands."""
+    """The seed's own number (#986): the seed text read back
+    through its field's forms (#1164 — a size seed spells its
+    count exactly, so the read returns the row's number), None
+    for a row that predates the fact and seeds blank, so any
+    sound value the operator gives it lands."""
     seed = seeds.get(field)
-    return None if not seed else int(seed)
-
-
-def field_error(field: str, value: str, seeds: dict) -> str | None:
-    """The moved field's own note (#986): the whole-number
-    rule every field checks, then the root's grow-only rule
-    the root field adds — ``None`` when the value is sound."""
-    if not whole_number(value):
-        return f"{field}: a whole number"
-    if field != "root_mib":
+    if not seed:
         return None
-    return root_error(value, seeds)
-
-
-def root_error(asked: str, seeds: dict) -> str | None:
-    """The root's grow-only rule (#986, the daemon's own #187
-    said locally): the overlay's partition table and filesystem
-    belong to the guest, so a smaller root is refused before
-    the daemon ever sees it. A row without a root fact — the
-    seed reads blank — has no local floor; the daemon owns that
-    one."""
-    seeded = seeded_number(seeds, "root_mib")
-    if seeded is None or int(asked) >= seeded:
-        return None
-    return f"the root only grows — it is {seeded} MiB"
+    if field in SIZE_FIELDS:
+        return parse_size(seed)
+    return int(seed)
 
 
 class EditDialog(BridgeClose, Centered, QtWidgets.QDialog):

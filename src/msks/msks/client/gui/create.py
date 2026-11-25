@@ -1,11 +1,14 @@
 """The create-workspace dialog (#962): the GUI counterpart of
 the TUI's create form (#309) — one labeled field per row, blank
-fields left to the daemon's defaults, whole numbers checked
-locally with the daemon's validation the authority. The hints
-(the image catalog, the create defaults) load through the
-bridge; a refusal keeps the dialog standing with the failure on
-its note line; a landed create closes the dialog and the list
-behind it refreshes.
+fields left to the daemon's defaults, sizes read in the human
+units the rest of the client speaks (#1164), whole numbers
+checked locally with the daemon's validation the authority.
+The hints (the image catalog, the create defaults) load
+through the bridge; a refusal keeps the dialog standing with
+the failure on its note line; a landed create closes the
+dialog and the list behind it refreshes. A summary line under
+the fields restates the four sizes as they are typed, the
+defaults filling the blanks.
 
 This module imports PySide6 at module scope — the same contract
 as the screens' modules: nothing imports it at CLI parse time,
@@ -14,12 +17,21 @@ and the shell imports it beside the screens.
 
 import contextlib
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..create import invoking_user
 from ..data import RestFailure
 from ..images import ordered_image_rows
-from .dialogs import BridgeClose, Centered, whole_number
+from ..volumes import MIB, human_bytes
+from .dialogs import (
+    SIZE_FIELDS,
+    BridgeClose,
+    Centered,
+    mib_text,
+    parse_size,
+    size_error,
+    whole_number,
+)
 
 #: The create call's key (#962): every open dialog shares it —
 #: an answer lands on the dialog whose flight is open, the
@@ -32,26 +44,45 @@ IMAGES_KEY = "create-images"
 DEFAULTS_KEY = "create-defaults"
 
 #: The form's fields (#309's own set): the key the body carries
-#: and the label the row shows, in walk order.
+#: and the label the row shows, in walk order — the sizes under
+#: the names people think in (#1164), the unit in the
+#: placeholder.
 FORM_FIELDS = (
     ("name", "Name"),
     ("image", "Image ref"),
     ("cpus", "VCPUs"),
-    ("mem_mib", "Memory MiB"),
-    ("root_mib", "Root MiB"),
-    ("home_mib", "Home MiB"),
+    ("mem_mib", "Memory"),
+    ("root_mib", "Root disk"),
+    ("home_mib", "Home disk"),
     ("user", "User"),
 )
 
-#: The fields whose values must be whole numbers (#309).
-INT_FIELDS = frozenset({"cpus", "mem_mib", "root_mib", "home_mib"})
+#: The defaults a blank field lands on that the client knows
+#: before the daemon answers (#309's own hints): the vcpu count
+#: and the memory. The root and home join when the create
+#: defaults answer lands (#1164).
+STATIC_DEFAULTS = {"cpus": 4, "mem_mib": 8192}
 
-#: The static placeholders the TUI's own hints carry (#309): the
-#: sizes' unit and default, the vcpus count.
-STATIC_PLACEHOLDERS = {
-    "cpus": "default 4",
-    "mem_mib": "MiB — 8192",
-}
+#: The summary line's parts (#1164), in the form's order: the
+#: field and the role its value reads beside.
+SUMMARY_PARTS = (
+    ("cpus", "vCPU"),
+    ("mem_mib", "RAM"),
+    ("root_mib", "root"),
+    ("home_mib", "home"),
+)
+
+#: The fields the summary reads (#1164): the line's own parts'
+#: fields, the ones whose edits restate it.
+SUMMARY_FIELDS = frozenset(field for field, _role in SUMMARY_PARTS)
+
+#: The summary line's separator (#1164): the quick-facts
+#: strip's own middle dot.
+SUMMARY_SEP = " · "
+
+#: The summary's stand-in for a default the daemon has not
+#: named yet (#1164): the footer strip's own honest dash.
+UNKNOWN = "—"
 
 #: The image picker's stand-in entry (#962): an untouched picker
 #: stays on it, and its value is nothing — the create body
@@ -60,17 +91,50 @@ STATIC_PLACEHOLDERS = {
 DEFAULT_IMAGE_LABEL = "the daemon's default"
 
 
+def placeholder_text(field: str, default: int) -> str:
+    """One field's placeholder (#1164): the default a blank
+    field lands on — the count for the vcpus, the human
+    spelling for a size (`default 8G`)."""
+    if field not in SIZE_FIELDS:
+        return f"default {default}"
+    return f"default {human_bytes(default * MIB)}"
+
+
+#: The static placeholders the TUI's own hints carry (#309): the
+#: defaults a blank field lands on, in the unit the field reads.
+STATIC_PLACEHOLDERS = {
+    field: placeholder_text(field, default)
+    for field, default in STATIC_DEFAULTS.items()
+}
+
+
 def land_value(field: str, value: str, body: dict) -> str | None:
-    """One filled value into the body (#962, #309's own rule):
-    blank stays unset — the daemon's default — a whole number
-    lands as an integer, a bad one answers its note and lands
-    nothing."""
+    """One filled value into the body (#962, #309's own rule,
+    #1164's size forms): blank stays unset — the daemon's
+    default — a value lands as :func:`read_value` reads it, a
+    bad one answers its note and lands nothing."""
     if not value:
         return None
-    if field in INT_FIELDS and not whole_number(value):
-        return f"{field}: a whole number, or leave it blank"
-    body[field] = int(value) if field in INT_FIELDS else value
+    landed, error = read_value(field, value)
+    if error is not None:
+        return error
+    body[field] = landed
     return None
+
+
+def read_value(field: str, value: str) -> tuple[object, str | None]:
+    """One filled field's value for the body and its refusal
+    note (#1164): a size as its MiB count, the vcpu count as a
+    whole number, any other field as its text — the note in
+    place of the value when the form refuses."""
+    if field in SIZE_FIELDS:
+        mib = parse_size(value)
+        return mib, None if mib is not None else size_error(field)
+    if field != "cpus":
+        return value, None
+    if whole_number(value):
+        return int(value), None
+    return None, f"{field}: a whole number, or leave it blank"
 
 
 def create_body(values: dict) -> tuple[dict | None, str]:
@@ -125,14 +189,70 @@ def image_options(rows: object) -> list[tuple[str, str]]:
 
 
 def size_placeholders(defaults: object) -> dict[str, str]:
-    """The size fields' placeholders (#962): the MiB unit beside
-    the default a blank field lands on — the TUI's own hint
-    shape over the daemon's answer."""
+    """The size fields' placeholders (#962, #1164): the default
+    a blank field lands on, in the unit the field reads —
+    `default 4G` — over the daemon's answer. A field the answer
+    leaves out keeps whatever placeholder it had."""
     return {
-        field: f"MiB — {defaults[field]}"
-        for field in ("root_mib", "home_mib")
-        if isinstance(defaults, dict) and field in defaults
+        field: placeholder_text(field, mib)
+        for field, mib in size_defaults(defaults).items()
     }
+
+
+def size_defaults(defaults: object) -> dict[str, int]:
+    """The sizes the create defaults answer names (#1164), as
+    the summary line reads them: the root and home MiB counts
+    under their fields; an answer without a whole number for a
+    field names nothing for it."""
+    return {
+        field: defaults[field]
+        for field in ("root_mib", "home_mib")
+        if isinstance(defaults, dict) and isinstance(defaults.get(field), int)
+    }
+
+
+def summary_text(values: dict, defaults: dict) -> str:
+    """The live summary line (#1164): the four sizes as they
+    stand, each field's own value when it reads, the default
+    filling a blank, a dash until the daemon's answer names
+    one — the vcpu count, a size in GiB (MiB under one GiB,
+    `0.5G` reading `512 MiB`). A value mid-typing that does not
+    read yet shows as typed, so the line follows every
+    keystroke."""
+    return SUMMARY_SEP.join(
+        summary_part(field, role, values, defaults)
+        for field, role in SUMMARY_PARTS
+    )
+
+
+def summary_part(field: str, role: str, values: dict, defaults: dict) -> str:
+    """One field's slot on the summary line (#1164): the typed
+    value, or the default filling a blank, beside the role."""
+    typed = (values.get(field) or "").strip()
+    if typed:
+        return f"{typed_text(field, typed)} {role}"
+    return f"{default_text(field, defaults.get(field))} {role}"
+
+
+def typed_text(field: str, typed: str) -> str:
+    """A typed value as the line shows it (#1164): the vcpu
+    count as typed, a size in its resolved MiB when its form
+    reads and as typed while it does not."""
+    if field not in SIZE_FIELDS:
+        return typed
+    mib = parse_size(typed)
+    return typed if mib is None else mib_text(mib)
+
+
+def default_text(field: str, default: int | None) -> str:
+    """A blank's default as the line shows it (#1164): a dash
+    until the answer names one, the count for the vcpus, the
+    size in GiB."""
+    if default is None:
+        return UNKNOWN
+    if field in SIZE_FIELDS:
+        return mib_text(default)
+    return str(default)
 
 
 def user_placeholder() -> str:
@@ -146,6 +266,34 @@ def user_placeholder() -> str:
     with contextlib.suppress(SystemExit):
         return invoking_user()
     return ""
+
+
+def placeholder_for(field: str) -> str:
+    """A field's standing placeholder (#962, #1164): the static
+    default where the client knows one, the operator's own
+    account name for the user, nothing for a size field whose
+    default the daemon's answer names."""
+    if field in STATIC_PLACEHOLDERS:
+        return STATIC_PLACEHOLDERS[field]
+    if field == "user":
+        return user_placeholder()
+    return ""
+
+
+def field_widget(field: str, on_edit) -> QtWidgets.QWidget:
+    """One form field's widget (#962, #1164): the image picker
+    for the image, a line edit for the rest — its standing
+    placeholder, and the summary restated on every edit of a
+    field the line reads."""
+    if field == "image":
+        picker = QtWidgets.QComboBox()
+        picker.addItem(DEFAULT_IMAGE_LABEL, None)
+        return picker
+    edit = QtWidgets.QLineEdit()
+    edit.setPlaceholderText(placeholder_for(field))
+    if field in SUMMARY_FIELDS:
+        edit.textChanged.connect(on_edit)
+    return edit
 
 
 class CreateDialog(BridgeClose, Centered, QtWidgets.QDialog):
@@ -164,23 +312,24 @@ class CreateDialog(BridgeClose, Centered, QtWidgets.QDialog):
         self.bridge = bridge
         self.hints_loaded = False
         self.flight = None
+        # The defaults the summary fills blanks with (#1164): the
+        # client's own until the daemon's answer lands.
+        self.defaults: dict[str, int] = dict(STATIC_DEFAULTS)
         self.setWindowTitle("Create a workspace")
         self.note = QtWidgets.QLabel("Create a workspace")
         form = QtWidgets.QFormLayout()
         self.fields: dict[str, QtWidgets.QWidget] = {}
         for field, label in FORM_FIELDS:
-            if field == "image":
-                picker = QtWidgets.QComboBox()
-                picker.addItem(DEFAULT_IMAGE_LABEL, None)
-                self.fields[field] = picker
-            else:
-                edit = QtWidgets.QLineEdit()
-                if field in STATIC_PLACEHOLDERS:
-                    edit.setPlaceholderText(STATIC_PLACEHOLDERS[field])
-                elif field == "user":
-                    edit.setPlaceholderText(user_placeholder())
-                self.fields[field] = edit
+            self.fields[field] = field_widget(field, self.restate)
             form.addRow(label, self.fields[field])
+        # The summary line (#1164): under the fields, always
+        # present, in the placeholder's muted gray — the note
+        # line above keeps its own job, the refusals and the
+        # failures.
+        self.summary = QtWidgets.QLabel(summary_text({}, self.defaults), self)
+        self.summary.setForegroundRole(
+            QtGui.QPalette.ColorRole.PlaceholderText
+        )
         self.create_button = QtWidgets.QPushButton("Create")
         self.create_button.setDefault(True)
         self.create_button.clicked.connect(self.submit)
@@ -192,8 +341,28 @@ class CreateDialog(BridgeClose, Centered, QtWidgets.QDialog):
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.note)
         layout.addLayout(form)
+        layout.addWidget(self.summary)
         layout.addLayout(buttons)
         self.hook_bridge(bridge)
+
+    def values(self) -> dict:
+        """The form's values by field: the picker's data value,
+        every other field's text."""
+        return {
+            field: (
+                self.fields[field].currentData()
+                if isinstance(self.fields[field], QtWidgets.QComboBox)
+                else self.fields[field].text()
+            )
+            for field, _label in FORM_FIELDS
+        }
+
+    @QtCore.Slot()
+    def restate(self) -> None:
+        """The summary line reads the fields again (#1164): every
+        edit of a size field lands here, and so does the
+        defaults answer."""
+        self.summary.setText(summary_text(self.values(), self.defaults))
 
     def showEvent(self, event) -> None:
         """The hints load on the first show (#962): the image
@@ -217,9 +386,9 @@ class CreateDialog(BridgeClose, Centered, QtWidgets.QDialog):
             self.hint_landed(key, result)
 
     def hint_landed(self, key: str, result: object) -> None:
-        """One answered hint (#962): the catalog fills the image
-        picker after its default stand-in, the defaults the size
-        placeholders."""
+        """One answered hint (#962, #1164): the catalog fills the
+        image picker after its default stand-in, the defaults the
+        size placeholders and the summary's blanks."""
         if key == IMAGES_KEY:
             picker = self.fields["image"]
             for value, label in image_options(result):
@@ -227,6 +396,8 @@ class CreateDialog(BridgeClose, Centered, QtWidgets.QDialog):
         else:
             for field, hint in size_placeholders(result).items():
                 self.fields[field].setPlaceholderText(hint)
+            self.defaults.update(size_defaults(result))
+            self.restate()
 
     @QtCore.Slot(str, object)
     def on_failed(self, key: str, failure: RestFailure) -> None:
@@ -248,14 +419,7 @@ class CreateDialog(BridgeClose, Centered, QtWidgets.QDialog):
         refusal notes itself and sends nothing; a whole body
         posts through the bridge with the create button held
         until the answer."""
-        values = {
-            field: (
-                self.fields[field].currentData()
-                if isinstance(self.fields[field], QtWidgets.QComboBox)
-                else self.fields[field].text()
-            )
-            for field, _label in FORM_FIELDS
-        }
+        values = self.values()
         body, error = create_body(values)
         if body is None:
             self.note.setText(error)

@@ -23,10 +23,13 @@ from msks.client.gui.create import (  # noqa: E402
     DEFAULTS_KEY,
     FORM_FIELDS,
     IMAGES_KEY,
+    STATIC_DEFAULTS,
     CreateDialog,
     create_body,
     image_options,
+    size_defaults,
     size_placeholders,
+    summary_text,
 )
 
 
@@ -137,8 +140,71 @@ def test_blank_fields_stay_the_daemons_defaults() -> None:
     assert error == "a workspace name is required"
     body, error = create_body({"name": "a", "root_mib": "half"})
     assert body is None
-    assert error == "root_mib: a whole number, or leave it blank"
+    assert (
+        error
+        == "root_mib: sizes read as MiB, or with a G or M suffix: 8G, 512M"
+    )
     assert create_body({}) == (None, "a workspace name is required")
+
+
+@pytest.mark.parametrize(
+    "typed, mib",
+    [
+        ("8192", 8192),
+        ("08192", 8192),
+        ("8G", 8192),
+        ("8GiB", 8192),
+        ("8g", 8192),
+        ("8gib", 8192),
+        ("8192M", 8192),
+        ("8192MiB", 8192),
+        ("0.5G", 512),
+        ("1.5G", 1536),
+        ("0.25GiB", 256),
+        ("0", 0),
+    ],
+)
+def test_the_size_forms_read(typed: str, mib: int) -> None:
+    """The size forms (#1164): a whole number of MiB as the
+    TUI's form reads it, the number with a G/GiB or M/MiB
+    suffix in either case, and a decimal before the unit that
+    resolves to a whole number of MiB — all landing as the
+    body's MiB count, with the surrounding whitespace the
+    field's text may carry."""
+    body, error = create_body({"name": "a", "mem_mib": f" {typed} "})
+    assert (body, error) == ({"name": "a", "mem_mib": mib}, "")
+
+
+@pytest.mark.parametrize(
+    "typed",
+    [
+        "8GB",
+        "8GiBx",
+        "eight",
+        "-1",
+        "+8192",
+        "3.0",
+        "1.5",
+        "0.3G",
+        "8 G",
+        "\u00b2",
+        "\u0663",
+        "4_096",
+    ],
+)
+def test_the_size_forms_refuse(typed: str) -> None:
+    """The refused size forms (#1164): `GB` names 10⁹ bytes,
+    not the daemon's MiB count; a decimal needs its unit, and
+    one whose product is not a whole number of MiB refuses
+    rather than rounding; and every hazard the whole-number
+    rule already refused refuses here too — unicode digits, a
+    sign, an inner space."""
+    body, error = create_body({"name": "a", "mem_mib": typed})
+    assert body is None, typed
+    assert (
+        error
+        == "mem_mib: sizes read as MiB, or with a G or M suffix: 8G, 512M"
+    )
 
 
 def test_only_ascii_digits_are_whole_numbers() -> None:
@@ -207,20 +273,62 @@ def test_a_name_the_charset_refuses_leaves_the_placeholder_empty(
 
 
 def test_the_size_placeholders_read_the_defaults() -> None:
-    """The placeholders (#962): the MiB unit beside the default
-    a blank field lands on; a defaults answer without the field
-    leaves the field its static hint."""
-    assert size_placeholders({"root_mib": 8192}) == {"root_mib": "MiB — 8192"}
+    """The placeholders (#962, #1164): the default a blank
+    field lands on, in the unit the field reads (`default 4G`);
+    a defaults answer without the field, or without a whole
+    number for it, leaves the field its standing hint."""
+    assert size_placeholders({"root_mib": 4096}) == {"root_mib": "default 4G"}
+    assert size_placeholders({"root_mib": 512, "home_mib": 1536}) == {
+        "root_mib": "default 512M",
+        "home_mib": "default 1.5G",
+    }
+    assert size_placeholders({"root_mib": "4096"}) == {}
     assert size_placeholders({}) == {}
+    assert size_placeholders(None) == {}
+    assert size_defaults({"root_mib": 4096, "cpus": 2}) == {"root_mib": 4096}
+    assert size_defaults({"root_mib": 4096.0}) == {}
+
+
+def test_the_summary_restates_the_sizes() -> None:
+    """The summary line (#1164): the four sizes in the form's
+    order, a size in GiB (MiB under one GiB), the defaults
+    filling the blanks and a dash standing until the daemon's
+    answer names a default. A typed value reads as it lands
+    (`0.5G` is `512 MiB`), and a value mid-typing that does not
+    read yet shows as typed, so the line follows the keys."""
+    static = dict(STATIC_DEFAULTS)
+    assert summary_text({}, static) == ("4 vCPU · 8 GiB RAM · — root · — home")
+    answered = {**static, "root_mib": 4096, "home_mib": 8192}
+    assert summary_text({}, answered) == (
+        "4 vCPU · 8 GiB RAM · 4 GiB root · 8 GiB home"
+    )
+    assert (
+        summary_text(
+            {
+                "cpus": " 2 ",
+                "mem_mib": "0.5G",
+                "root_mib": "1536M",
+                "home_mib": "8192",
+            },
+            answered,
+        )
+        == "2 vCPU · 512 MiB RAM · 1.5 GiB root · 8 GiB home"
+    )
+    assert summary_text({"cpus": "many", "root_mib": "0."}, answered) == (
+        "many vCPU · 8 GiB RAM · 0. root · 8 GiB home"
+    )
+    assert summary_text({"mem_mib": "0"}, answered).split(" · ")[1] == (
+        "0 KiB RAM"
+    )
 
 
 def test_the_dialog_loads_its_hints_on_show(qt) -> None:
-    """The hint reads (#962): the first show asks for the image
-    catalog and the create defaults; the catalog fills the
+    """The hint reads (#962, #1164): the first show asks for the
+    image catalog and the create defaults; the catalog fills the
     picker behind its default stand-in, the defaults the size
-    placeholders. An untouched picker stays on the stand-in —
-    the create body carries no image, and the daemon answers
-    its designated default."""
+    placeholders and the summary's blanks. An untouched picker
+    stays on the stand-in — the create body carries no image,
+    and the daemon answers its designated default."""
     dialog, bridge = make_dialog(qt)
     assert bridge.calls == [
         (IMAGES_KEY, "images", ()),
@@ -238,8 +346,15 @@ def test_the_dialog_loads_its_hints_on_show(qt) -> None:
     assert picker.count() == 2
     assert picker.itemText(1) == "msks:41 *"
     assert picker.currentIndex() == 0
+    # Before the defaults answer: the static defaults fill what
+    # they name, and the root and home wait on the answer.
+    assert dialog.fields["cpus"].placeholderText() == "default 4"
+    assert dialog.fields["mem_mib"].placeholderText() == "default 8G"
+    assert dialog.fields["root_mib"].placeholderText() == ""
+    assert dialog.summary.text() == "4 vCPU · 8 GiB RAM · — root · — home"
     bridge.succeeded.emit(DEFAULTS_KEY, {"root_mib": 4096})
-    assert dialog.fields["root_mib"].placeholderText() == "MiB — 4096"
+    assert dialog.fields["root_mib"].placeholderText() == "default 4G"
+    assert dialog.summary.text() == "4 vCPU · 8 GiB RAM · 4 GiB root · — home"
     # A second show loads the hints once only: the reads the
     # first show issued stand.
     reads = list(bridge.calls)
@@ -257,19 +372,73 @@ def test_the_dialog_loads_its_hints_on_show(qt) -> None:
     )
 
 
+def test_the_summary_follows_every_keystroke(qt) -> None:
+    """The live summary (#1164): the fields carry the names
+    people think in, the line under them restates each edit as
+    it lands — a decimal entry in its resolved size — and a
+    defaults answer landing late fills the blanks that waited.
+    The line reads in the placeholder's muted gray, apart from
+    the note line's own job."""
+    dialog, bridge = make_dialog(qt)
+    assert [label for _field, label in FORM_FIELDS][3:6] == [
+        "Memory",
+        "Root disk",
+        "Home disk",
+    ]
+    from PySide6 import QtGui
+
+    assert (
+        dialog.summary.foregroundRole()
+        == QtGui.QPalette.ColorRole.PlaceholderText
+    )
+    memory = dialog.fields["mem_mib"]
+    for typed, shown in [
+        ("", "8 GiB RAM"),
+        ("0", "0 KiB RAM"),
+        ("0.", "0. RAM"),
+        ("0.5", "0.5 RAM"),
+        ("0.5G", "512 MiB RAM"),
+        ("0.5Gi", "0.5Gi RAM"),
+        ("0.5GiB", "512 MiB RAM"),
+        ("8GB", "8GB RAM"),
+        ("8G", "8 GiB RAM"),
+    ]:
+        memory.setText(typed)
+        assert dialog.summary.text().split(" · ")[1] == shown, typed
+    dialog.fields["cpus"].setText("many")
+    assert dialog.summary.text().startswith("many vCPU · ")
+    # A late defaults answer fills the root and home blanks
+    # around whatever the operator typed.
+    dialog.fields["home_mib"].setText("2G")
+    bridge.succeeded.emit(DEFAULTS_KEY, {"root_mib": 20480, "home_mib": 20480})
+    assert dialog.summary.text() == (
+        "many vCPU · 8 GiB RAM · 20 GiB root · 2 GiB home"
+    )
+    # A refused defaults read leaves the dashes standing and
+    # the note carries the failure.
+    second, _bridge2 = make_dialog(qt)
+    _bridge2.failed.emit(DEFAULTS_KEY, failure("no defaults"))
+    assert "defaults failed" in second.note.text()
+    assert second.summary.text().endswith("— root · — home")
+
+
 def test_a_submit_posts_the_body_and_a_landed_create_closes(
     qt,
 ) -> None:
-    """The submit path (#962): a whole body posts through the
-    bridge with the create button held; the daemon's answer
-    closes the dialog."""
+    """The submit path (#962, #1164): a whole body posts through
+    the bridge — a size in any of its forms as its MiB count —
+    with the create button held; the daemon's answer closes the
+    dialog."""
     dialog, bridge = make_dialog(qt)
-    fill(dialog, {"name": "alpha", "mem_mib": "4096"})
+    fill(
+        dialog,
+        {"name": "alpha", "mem_mib": "4G", "root_mib": "0.5G"},
+    )
     dialog.submit()
     assert bridge.calls[-1] == (
         CREATE_KEY,
         "create",
-        ({"name": "alpha", "mem_mib": 4096},),
+        ({"name": "alpha", "mem_mib": 4096, "root_mib": 512},),
     )
     assert not dialog.create_button.isEnabled()
     closed: list[bool] = []
@@ -279,15 +448,25 @@ def test_a_submit_posts_the_body_and_a_landed_create_closes(
 
 
 def test_a_local_refusal_sends_nothing(qt) -> None:
-    """A local refusal (#962): the note carries it and the
+    """A local refusal (#962, #1164): the note carries it and the
     bridge hears no call — the daemon's validation stays the
-    authority, but its surface sees only whole bodies."""
+    authority, but its surface sees only whole bodies. A vcpu
+    count keeps the whole-number note; a size names its forms."""
     dialog, bridge = make_dialog(qt)
     bridge.calls.clear()
     fill(dialog, {"name": "alpha", "cpus": "many"})
     dialog.submit()
     assert dialog.note.text() == "cpus: a whole number, or leave it blank"
     assert bridge.calls == []
+    fill(dialog, {"cpus": "", "mem_mib": "8GB"})
+    dialog.submit()
+    assert dialog.note.text() == (
+        "mem_mib: sizes read as MiB, or with a G or M suffix: 8G, 512M"
+    )
+    assert bridge.calls == []
+    # The summary line stays the typed text; the refusal is the
+    # note line's to carry.
+    assert dialog.summary.text().split(" · ")[1] == "8GB RAM"
 
 
 def test_another_keys_answer_is_not_the_dialogs_to_take(qt) -> None:
