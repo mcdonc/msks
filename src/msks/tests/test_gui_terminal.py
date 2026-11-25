@@ -1434,6 +1434,25 @@ def test_the_wheel_pages_the_buffer(screen, qt):
     assert offset == total - length
 
 
+def test_the_wheel_moves_twelve_rows_per_notch(screen, qt):
+    """One notch scrolls twelve rows (#1156): the offset moves by
+    WHEEL_ROWS_PER_NOTCH per notch, and the rate is the doubled
+    one the issue asked for."""
+    from msks.client.gui.terminal import screen as screen_mod
+
+    assert screen_mod.WHEEL_ROWS_PER_NOTCH == 12
+    for index in range(60):
+        vt(screen, f"line {index}\r\n".encode())
+    total, length, offset = scrollbar(screen)
+    assert offset == total - length  # at the bottom
+    screen.wheelEvent(wheel_event(qt, 120))  # one notch up
+    qt.app.processEvents()
+    assert scrollbar(screen)[2] == offset - 12
+    screen.wheelEvent(wheel_event(qt, 120))  # the next notch
+    qt.app.processEvents()
+    assert scrollbar(screen)[2] == offset - 24
+
+
 def test_the_wheel_feeds_a_tracking_child(screen, qt):
     """A child that enables mouse reporting owns the wheel:
     button four arrives as a press/release pair."""

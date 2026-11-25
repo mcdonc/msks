@@ -55,9 +55,11 @@ def is_paging(modifiers, key) -> bool:
     )
 
 
-# Wheel rows per notch — six felt right next to Konsole's
-# default three on the hardware at hand.
-WHEEL_ROWS_PER_NOTCH = 6
+# Wheel rows per notch (#1156): one notch moves twelve rows, so
+# a 24-row pane passes one screen every two notches. A
+# touchpad's pixel deltas skip this rate: wheel_steps scales
+# them by the cell height instead.
+WHEEL_ROWS_PER_NOTCH = 12
 
 #: How long the exit report waits for a child the kernel has not
 #: made waitable yet (#1099 follow-up): the slave's fds close

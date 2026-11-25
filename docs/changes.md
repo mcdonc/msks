@@ -19,6 +19,13 @@ tagged `vX.Y.Z`.
   switch, and the mode ends when the page closes. See
   [docs/gui.md](gui.md#terminal-only-mode).
 
+### Changed
+
+- **The GUI terminal's mouse wheel scrolls twelve rows per notch
+  (#1156).** The rate doubles from six rows, so a screen of
+  output passes in half the notches. Touchpad scrolling is
+  unchanged.
+
 ### Fixed
 
 - **The GUI Egress tab's audit trail edges (#1154).** The audit
