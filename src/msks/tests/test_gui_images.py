@@ -185,8 +185,8 @@ def cap_published_pane(tab, width: int) -> None:
     (#1161's fakes): the button rows hold the window wider than
     a tight pane — the catalog's three need some 490px under
     the offscreen fonts — so the pane's own box takes the
-    width, not the window. A pane the window already gives
-    more is left alone."""
+    width, not the window. A box the window already leaves
+    under the width stands as it is."""
     tab.published_table.parentWidget().setMaximumWidth(width)
 
 
@@ -1593,8 +1593,9 @@ def channel_rows() -> list[dict]:
 
 def make_channel_tab(qt, width: int) -> tuple:
     """The tab over the screenshot-shaped channel, at the width
-    the pane reads (#964's fakes) — the pane's own box, which
-    the button rows (#1161) hold narrower than the window."""
+    the pane reads (#964's fakes): the published pane's own box
+    takes the width, the button rows (#1161) holding the window
+    wider than a tight pane."""
     bridge = StubBridge()
     tab = images_mod.ImagesTab(bridge, CHANNEL)
     window = qt.QtWidgets.QMainWindow()
@@ -1961,18 +1962,18 @@ def test_the_button_rows_follow_the_flights(qt, monkeypatch) -> None:
 
 def test_enter_on_a_held_row_takes_the_groups_action(qt, monkeypatch) -> None:
     """Enter on a held row (#1161): a catalog row opens its detail
-    and a published row starts its import. A focused list keeps
-    the focus its row selection leaves — the button rows take
-    none of it — so the key reaches the list, as a real keypress
-    would."""
+    and a published row starts its import. The catalog table
+    takes the page's focus at the show — the button rows take
+    none of it — and a focused list keeps the focus its row
+    selection leaves, so the key reaches the list, as a real
+    keypress would."""
     opened: list[dict] = []
     fake_detail(monkeypatch, opened)
     tab, window, bridge = make_tab(qt)
     bridge.calls.clear()
     enter = qt.QtCore.Qt.Key.Key_Return
-    tab.catalog_table.setFocus()
-    qt.app.processEvents()
-    assert qt.app.focusWidget() is tab.catalog_table
+    qt.app.processEvents()  # the show's activation lands
+    assert qt.app.focusWidget() is tab.catalog_table  # the show's focus
     tab.catalog_table.selectRow(catalog_row_of(tab, "ubuntu:24.04"))
     qt.QtTest.QTest.keyClick(qt.app.focusWidget(), enter)
     assert opened == [catalog_raw()[1]]
