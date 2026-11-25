@@ -21,10 +21,12 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
-- **The GUI terminal's mouse wheel scrolls twelve rows per notch
+- **The GUI terminal's wheel scrolls twelve rows per notch
   (#1156).** The rate doubles from six rows, so a screen of
-  output passes in half the notches. Touchpad scrolling is
-  unchanged.
+  scrollback passes in half the notches. Touchpad travel doubles
+  with it: one cell height of travel counts as one notch. A
+  program that enables mouse reporting, such as `less`, keeps
+  its own scroll amount.
 
 ### Fixed
 
