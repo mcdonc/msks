@@ -48,6 +48,7 @@ from .statusflash import StatusFlash
 from .tabstyle import mark_active
 from .terminalonly import TerminalOnly
 from .termsession import shell_argv
+from .tints import TintedLabel
 from .workspaces import WorkspaceList
 
 #: The row read's key (#945): the page answers only its own
@@ -279,7 +280,7 @@ class WorkspaceDetail(StatusFlash, QtWidgets.QWidget):
         back_button.setAccessibleName("Back")
         back_button.clicked.connect(self.go_back)
         self.back_button = back_button
-        self.status = QtWidgets.QLabel("", self)
+        self.status = TintedLabel("", self)
         # The external-terminal action's home on the page (#972,
         # #954): the same shell the tab strip runs, opened in
         # the configured launcher outside the window.

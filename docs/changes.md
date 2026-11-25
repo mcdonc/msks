@@ -26,6 +26,16 @@ tagged `vX.Y.Z`.
   tooltip, a cleared title shows the session's number again, and
   a renamed tab keeps its name.
 
+- **The GUI paints state words in three colors (#1160).** A
+  state word wears green when it is as it should be, amber when
+  it is in flight or wants a look, and red when it failed or
+  cannot be placed, across the workspaces list, the Mounts,
+  Proxies, and Secrets tabs, the consent panel's last seconds,
+  and a status line's refusal or outage. The word stays in the
+  cell, a selected row keeps the highlight's text color, and a
+  scheme switch repaints the colors with the window. See
+  [docs/gui.md](gui.md#state-colors).
+
 ## \[v0.10.2] - 2026-11-25
 
 ### Added

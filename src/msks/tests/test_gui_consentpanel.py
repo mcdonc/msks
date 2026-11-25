@@ -211,6 +211,7 @@ def test_failed_verdict_flashes_and_retires_key(qt, panel):
     )
     assert held.decide_keys == set()
     assert panel.widget.note.text() == "decide failed: <refused>"
+    assert panel.widget.note.kind == "error"  # the error tint (#1160)
     assert panel.widget.note.textFormat() == qt.QtCore.Qt.TextFormat.PlainText
     assert not panel.widget.isHidden()
 
@@ -344,3 +345,27 @@ def test_large_queue_scrolls_without_consuming_terminal_area(qt, panel):
     scroll.ensureWidgetVisible(button(qt, panel, rid="4"))
     qt.app.processEvents()
     assert scroll.verticalScrollBar().value() > 0
+
+
+def test_the_countdown_turns_error_under_the_last_seconds(qt, panel):
+    """The countdown's tint (#1160): the chrome's own text above
+    the last seconds, the error tint under them, following each
+    refresh without replacing the label."""
+    from msks.client.gui import consentpanel
+
+    countdown = label(qt, panel, "countdown")
+    assert countdown.kind is None  # 58 seconds stand
+    last = consentpanel.LAST_SECONDS
+    panel.presenter.models[0] = panel.Row(
+        "req-1", "api.github.com:443", last, f"{last}s"
+    )
+    panel.widget.refresh()
+    assert label(qt, panel, "countdown") is countdown
+    assert countdown.kind == "error"
+    panel.presenter.models[0] = panel.Row(
+        "req-1", "api.github.com:443", last + 1, f"{last + 1}s"
+    )
+    panel.widget.refresh()
+    assert countdown.kind is None
+    assert consentpanel.countdown_kind(last) == "error"
+    assert consentpanel.countdown_kind(last + 1) is None

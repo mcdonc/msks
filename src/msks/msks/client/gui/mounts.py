@@ -21,6 +21,7 @@ from PySide6 import QtCore, QtWidgets
 from .detail import mount_entries
 from .dialogs import Centered
 from .forms import read_only_table, save_cancel_row
+from .kinds import ERROR, OK, WARN
 from .mountrows import (
     MODE_CHOICES,
     added_mount,
@@ -33,6 +34,7 @@ from .mountrows import (
     resolved_index,
     saved_note,
 )
+from .tints import SEMANTIC_ROLE, TintedLabel
 
 #: The save call's key stem (#987): each flight carries its
 #: own key off it — ``workspace-mounts-N``, one counter per tab
@@ -49,6 +51,20 @@ MOUNTS_KEY = "workspace-mounts"
 #: columns the page's own read-only table carried before the
 #: table left with the Info pane (#1017).
 MOUNT_COLUMNS = ("HOST", "GUEST", "MODE", "STATE", "REASON")
+STATE_COLUMN = MOUNT_COLUMNS.index("STATE")
+
+
+def state_kind(state: str) -> str | None:
+    """The state cell's tint (#1160): a mount the last start
+    attached reads ok; one it skipped reads warn, with its
+    reason in the next cell. Any other word wears the chrome's
+    own text."""
+    if state == "healthy":
+        return OK
+    if state == "skipped":
+        return WARN
+    return None
+
 
 #: The columns that hug their text (#1025): the mode and the
 #: state stay at their content width; the host, the guest, and
@@ -155,7 +171,7 @@ class MountsTab(QtWidgets.QWidget):
         buttons.addStretch(1)
         self.pending_label = QtWidgets.QLabel("", self)
         self.pending_label.setVisible(False)
-        self.note = QtWidgets.QLabel("", self)
+        self.note = TintedLabel("", self)
         self.note.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
         )
@@ -191,7 +207,7 @@ class MountsTab(QtWidgets.QWidget):
             # A fresh workspace's note starts blank (#987): the
             # prior one's refusal must not name itself on a page
             # that never asked.
-            self.note.setText("")
+            self.note.say("")
         self.pending_row = row
         if not self.pending:
             self.take_row(row)
@@ -226,11 +242,14 @@ class MountsTab(QtWidgets.QWidget):
                 entry.state,
                 entry.reason or "-",
             )
+            kinds: list = [None] * len(MOUNT_COLUMNS)
+            kinds[STATE_COLUMN] = state_kind(entry.state)
             for column, value in enumerate(values):
                 item = QtWidgets.QTableWidgetItem(value)
                 item.setFlags(
                     item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable
                 )
+                item.setData(SEMANTIC_ROLE, kinds[column])
                 self.table.setItem(index, column, item)
         words = pending_words(row)
         self.pending_label.setVisible(words is not None)
@@ -361,7 +380,7 @@ class MountsTab(QtWidgets.QWidget):
         self.before = None
         self.flight = None
         self.take_row(fresh)
-        self.note.setText(saved_note(fresh))
+        self.note.say(saved_note(fresh))
         self.row_updated.emit(fresh)
 
     @QtCore.Slot(str, object)
@@ -382,4 +401,4 @@ class MountsTab(QtWidgets.QWidget):
             self.working = self.before
             self.before = None
         self.repaint_table(self.pending_row or {})
-        self.note.setText(f"refused: {failure}")
+        self.note.say(f"refused: {failure}", ERROR)

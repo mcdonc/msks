@@ -1664,3 +1664,48 @@ def test_a_failed_page_flight_releases_the_carried_ask(
     tab.on_succeeded(secrets_mod.PAGE_KEY, page_answer())
     assert bridge.calls == [(secrets_mod.PAGE_KEY, "secrets_page", ())]
     window.close()
+
+
+def test_the_rows_carry_their_kinds_under_the_tick(qt, monkeypatch) -> None:
+    """The listing's tints (#1160): the open row's state reads ok
+    and the locked row's warn; the locked row's expiry cell turns
+    warn under the renew floor as the tick counts down, and the
+    unbounded row's stays in the chrome's own text."""
+    from msks.client.gui.tints import SEMANTIC_ROLE
+
+    tab, _window, _bridge = make_tab(qt, monkeypatch)
+    state, expires = cells.STATE_COLUMN, cells.EXPIRES_COLUMN
+    assert tab.table.item(row_of_id(tab, 1), state).data(SEMANTIC_ROLE) == "ok"
+    assert (
+        tab.table.item(row_of_id(tab, 2), state).data(SEMANTIC_ROLE) == "warn"
+    )
+    assert (
+        tab.table.item(row_of_id(tab, 1), expires).data(SEMANTIC_ROLE) is None
+    )
+    assert (
+        tab.table.item(row_of_id(tab, 2), expires).data(SEMANTIC_ROLE) is None
+    )
+    pin_clock(monkeypatch, NOW + timedelta(hours=1, minutes=50))
+    tab.on_tick()
+    assert (
+        tab.table.item(row_of_id(tab, 2), expires).data(SEMANTIC_ROLE)
+        == "warn"
+    )
+    assert (
+        tab.table.item(row_of_id(tab, 1), expires).data(SEMANTIC_ROLE) is None
+    )
+    # A half-filled row tints nothing: the walk skips its cells.
+    model = tab.secret_models[0]
+    tab.table.setRowCount(0)
+    tab.tint_row(0, model)
+
+
+def test_a_fetch_line_wears_the_chromes_own_text(qt, monkeypatch) -> None:
+    """The status line's tint (#1160): a refusal's error tint does
+    not survive into the next refresh's fetch line."""
+    tab, _window, _bridge = make_tab(qt, monkeypatch)
+    tab.refuse("nope", reach=False)
+    assert tab.status.kind == "error"
+    tab.refresh()
+    assert tab.status.text().startswith("fetching")
+    assert tab.status.kind is None

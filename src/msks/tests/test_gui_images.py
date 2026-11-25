@@ -1720,3 +1720,15 @@ def test_a_right_click_opens_the_published_menu(qt) -> None:
     assert [action.text() for action in menus[0].actions()] == ["Import…"]
     menus[0].close()
     window.close()
+
+
+def test_a_fetch_line_wears_the_chromes_own_text(qt) -> None:
+    """The status line's tint (#1160): a refusal's error tint does
+    not survive into the next refresh's fetch line."""
+    tab, window, _bridge = make_tab(qt)
+    tab.refuse("nope", reach=False)
+    assert tab.status.kind == "error"
+    tab.refresh()
+    assert tab.status.text().startswith("fetching")
+    assert tab.status.kind is None
+    window.close()

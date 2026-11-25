@@ -20,6 +20,8 @@ load it beside their own Qt-bearing imports.
 
 from PySide6 import QtCore
 
+from .kinds import ERROR
+
 #: How long a flashed refusal stays on the status line,
 #: milliseconds — long enough to read, gone before it reads as
 #: the screen's standing state. An outage (the daemon answered
@@ -36,7 +38,9 @@ class StatusFlash:
     flash. The host screen supplies the ``status`` label and the
     three attributes the methods read."""
 
-    def flash(self, message: str, *, outage: bool = False) -> None:
+    def flash(
+        self, message: str, *, outage: bool = False, error: bool = False
+    ) -> None:
         """The status line's flash (#939, #945, #904): the message
         shows; a refusal clears itself after the flash span, an
         outage stands for the next answer to resolve — the
@@ -44,12 +48,15 @@ class StatusFlash:
         heartbeat, #946) gives the outage's text back when its
         span ends (#1129). Each flash carries its own serial, so
         a later flash's message is not erased by an earlier
-        flash's timeout."""
+        flash's timeout. An outage or an error paints the line
+        in the error tint (#1160); an outcome wears the chrome's
+        own text."""
         if outage:
             self.daemon_down = True
             self.outage_text = message
         self.flash_seq += 1
         self.status.setText(message)
+        self.status.set_kind(ERROR if (outage or error) else None)
         if outage:
             return
         seq = self.flash_seq
@@ -66,6 +73,7 @@ class StatusFlash:
         down."""
         if seq == self.flash_seq:
             self.status.setText(self.outage_text if self.daemon_down else "")
+            self.status.set_kind(ERROR if self.daemon_down else None)
 
     def refuse(self, message: str, *, reach: bool) -> None:
         """A refused call's flash, the two kinds #904 tells apart:
@@ -79,7 +87,7 @@ class StatusFlash:
             self.flash(message, outage=True)
             return
         self.resolve()
-        self.flash(message)
+        self.flash(message, error=True)
 
     def outcome(self, message: str) -> None:
         """An action's answer (#776's mask): the daemon answered

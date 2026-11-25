@@ -7,6 +7,8 @@ pane's width (#997).
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from .tints import SemanticDelegate
+
 #: The bold-seat mark a bolded header carries (#976): the
 #: zoom's after-write walk finds the headers by it — an
 #: explicit font (the only way Qt holds a bold header) does
@@ -20,7 +22,14 @@ class ListTable(QtWidgets.QTableWidget):
     table's Up — hands the keyboard to whatever stands above
     the list in the focus chain (the window's tab strip): the
     arrows read top-to-bottom without a Tab, both directions,
-    the spatial-navigation rule."""
+    the spatial-navigation rule. Every state cell paints
+    through the semantic delegate (#1160): a cell tagged with a
+    kind wears that kind's color, read off the palette at paint
+    time."""
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+        self.setItemDelegate(SemanticDelegate(self))
 
     def keyPressEvent(self, event) -> None:
         if event.key() == QtCore.Qt.Key.Key_Up and self.currentRow() <= 0:

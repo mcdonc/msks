@@ -10,6 +10,18 @@ from functools import partial
 from PySide6 import QtCore, QtWidgets
 
 from .consent import DURATION_DEFAULT, DURATIONS, ConsentPresenter
+from .kinds import ERROR
+from .tints import TintedLabel
+
+#: How long before a hold times out to deny its countdown reads
+#: in the error tint (#1160): the seconds left to answer.
+LAST_SECONDS = 15
+
+
+def countdown_kind(remaining: float):
+    """The countdown's tint (#1160): the error tint under
+    :data:`LAST_SECONDS`, the chrome's own text above."""
+    return ERROR if remaining <= LAST_SECONDS else None
 
 
 class HoldRow(QtWidgets.QWidget):
@@ -28,8 +40,9 @@ class HoldRow(QtWidgets.QWidget):
             QtWidgets.QSizePolicy.Policy.Ignored,
             QtWidgets.QSizePolicy.Policy.Preferred,
         )
-        self.countdown = QtWidgets.QLabel(model.countdown, self)
+        self.countdown = TintedLabel(model.countdown, self)
         self.countdown.setObjectName(f"countdown-{model.id}")
+        self.countdown.set_kind(countdown_kind(model.remaining))
         self.countdown.setAccessibleName(f"Time remaining for {model.dest}")
         self.actions = QtWidgets.QWidget(self)
         buttons = QtWidgets.QHBoxLayout(self.actions)
@@ -111,7 +124,7 @@ class ConsentPanel(QtWidgets.QWidget):
         self.rows_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
         self.scroll.setWidget(self.column)
         self.column.installEventFilter(self)
-        self.note = QtWidgets.QLabel("", self)
+        self.note = TintedLabel("", self)
         self.note.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.note.setWordWrap(True)
         self.note.hide()
@@ -171,6 +184,7 @@ class ConsentPanel(QtWidgets.QWidget):
             cell.dest.setText(model.dest)
             cell.dest.setToolTip(model.dest)
             cell.countdown.setText(model.countdown)
+            cell.countdown.set_kind(countdown_kind(model.remaining))
             self.rows_layout.insertWidget(index, cell)
             cell.show()
 
@@ -235,11 +249,11 @@ class ConsentPanel(QtWidgets.QWidget):
         self.presenter.retire(key)
         self.flash_seq += 1
         seq = self.flash_seq
-        self.note.setText(f"decide failed: {error}")
+        self.note.say(f"decide failed: {error}", ERROR)
         self.note.show()
         QtCore.QTimer.singleShot(4000, self, partial(self.clear_stale, seq))
 
     def clear_stale(self, seq: int) -> None:
         if seq == self.flash_seq:
-            self.note.clear()
+            self.note.say("")
             self.note.hide()

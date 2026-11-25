@@ -363,6 +363,7 @@ def test_a_plain_refusal_names_itself(qt) -> None:
     choose(tab, "allow")
     bridge.failed.emit(tab.switch_key, "egress_mode must be one of …")
     assert tab.note.text() == "refused: egress_mode must be one of …"
+    assert tab.note.kind == "error"  # the error tint (#1160)
     assert tab.pick.currentText() == "interactive"
     choose(tab, "allow")  # the switcher stands ready
     assert len(bridge.calls) == 2
@@ -1255,6 +1256,7 @@ def test_the_trails_table_shares_the_lists_edges(qt) -> None:
     assert tab.verdicts_empty.isVisibleTo(tab)
     assert tab.audit.empty.isVisibleTo(tab.audit.footer)
     assert tab.audit.note.text() == "refused: the daemon is gone"
+    assert tab.audit.note.kind == "error"
     aligned("empty")
 
     window = tab.window()

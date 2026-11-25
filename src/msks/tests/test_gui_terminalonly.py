@@ -543,9 +543,11 @@ def test_the_status_line_takes_the_corner_seat(qt) -> None:
     # afterwards with the daemon-down state still its own.
     page.refuse("daemon down", reach=True)
     assert mode.status.text() == "daemon down"
+    assert mode.status.kind == "error"
     mode.leave()
     assert page.status is mode.chrome_status
     assert mode.chrome_status.text() == "daemon down"
+    assert mode.chrome_status.kind == "error"
     assert page.daemon_down
     # A flash whose span ends after the leave clears the label
     # that stands then — the chrome row's, to the standing
@@ -1093,3 +1095,25 @@ def test_the_consent_panel_keeps_its_place(qt) -> None:
     qt.app.processEvents()
     assert not panel.isHidden()
     assert panel.geometry().bottom() <= page.shells.geometry().top()
+
+
+def test_the_tint_crosses_with_the_text_at_the_swap(qt) -> None:
+    """The corner's label and the chrome row's trade the tint
+    with the text (#1160 review): an outage standing before the
+    mode reaches the corner in the error tint, and a refusal
+    flashed in the mode comes back to the chrome row in it. An
+    outcome after either crosses in the chrome's own text."""
+    page, _window, _bridge = make_page(qt)
+    mode = page.terminal_only
+    page.refuse("daemon down", reach=True)
+    assert page.status.kind == "error"
+    enter(page)
+    assert mode.status.kind == "error"
+    page.resolve()
+    page.flash("back")
+    assert mode.status.kind is None
+    page.flash("nope", error=True)
+    mode.leave()
+    assert mode.chrome_status.kind == "error"
+    page.flash("back")
+    assert mode.chrome_status.kind is None

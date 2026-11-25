@@ -48,6 +48,7 @@ from ..imagerows import (
 )
 from ..listtable import ListTable, bold_header, resized_viewport
 from ..statusflash import StatusFlash
+from ..tints import TintedLabel
 from . import layout
 from .cells import (
     CATALOG_COLUMNS,
@@ -215,7 +216,7 @@ class ImagesTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         self.published_table.customContextMenuRequested.connect(
             self.published_menu_requested
         )
-        self.status = QtWidgets.QLabel("", self)
+        self.status = TintedLabel("", self)
         self.import_timer = QtCore.QTimer(self)
         self.import_timer.setInterval(IMPORT_TICK_MS)
         self.import_timer.timeout.connect(self.import_tick)
@@ -312,6 +313,7 @@ class ImagesTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         self.flash_seq += 1  # retire any pending flash timeout
         self.fetch_seq = self.flash_seq
         self.status.setText("fetching the catalog and the published manifest…")
+        self.status.set_kind(None)
         self.read_seq += 1
         self.page_seq = self.read_seq
         self.bridge.call(PAGE_KEY, "images_page", self.url)

@@ -16,8 +16,10 @@ from .rows import (
     WorkspaceRow,
     pending_marker,
     restart_note,
+    state_kind,
     workspace_label,
 )
+from .tints import SEMANTIC_ROLE
 
 RANK_ROLE = QtCore.Qt.ItemDataRole.UserRole
 
@@ -116,11 +118,14 @@ class StateItem(QtWidgets.QTableWidgetItem):
     — a column click orders the rows by the vocabulary's own
     sequence, a state outside it last. The cell's tooltip names
     the restart the pending marker stands for (#986): the ↻N a
-    narrow cell renders, said as the sentence the strips read."""
+    narrow cell renders, said as the sentence the strips read.
+    The cell carries its kind under :data:`SEMANTIC_ROLE`
+    (#1160), and the delegate paints the word in it."""
 
     def __init__(self, model: WorkspaceRow) -> None:
         super().__init__(state_text(model))
         self.setData(RANK_ROLE, model.state_rank)
+        self.setData(SEMANTIC_ROLE, state_kind(model))
         note = restart_note(model)
         if note is not None:
             self.setToolTip(note)
