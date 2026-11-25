@@ -973,6 +973,18 @@ system unit is active. <code>shared-socket</code> checks that
 behind. All three are warning grade: a daemon serving TCP alone
 (the dev daemon, a remote deployment) keeps a green report
 without them.</p>
+<p>One row appears only while the <code>nested</code> setting is on
+(<code>MSKSD_NESTED=true</code>, or <code>nested: true</code> in the config file
+(#1140)), and only on an x86_64 Linux host, where the kernel
+publishes KVM's <code>nested</code> switch as the vendor module's parameter.
+<code>MSKSD_NESTED</code> is green when the host's KVM lets its guests nest.
+It is a warning when the host does not nest, with the module
+option that turns nesting on. There every workspace still boots,
+without VMX or SVM. The daemon logs the same warning at startup.
+It is also a warning when no <code>kvm_intel</code> or <code>kvm_amd</code>
+parameter is readable under <code>/sys/module</code>, and the row asks for
+the module and a visible <code>/sys</code> before a re-run. On other machines
+the kernel publishes no switch, so the row stays off.</p>
 <p>The run ends with a tally (<code>20 passed</code>, or <code>18 passed, 1
 error, 1 warning</code>). When anything failed, a closing block
 repeats every miss with its fix. The exit code is 0 when every

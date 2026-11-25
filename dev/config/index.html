@@ -1423,6 +1423,13 @@ the file itself carries them all at one level.</p>
 <td>Path to the cloud-hypervisor binary the local driver execs.</td>
 </tr>
 <tr>
+<td><code>nested</code></td>
+<td><code>MSKSD_NESTED</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Lets workspaces run VMs of their own (#1140): every workspace start sends <code>cpus.nested</code>, so the guest sees VMX (Intel) or SVM (AMD). Cloud Hypervisor v54 passes the feature through only when the config asks. The host's KVM must nest (<code>kvm_intel</code> or <code>kvm_amd</code> loaded with <code>nested=1</code> on x86_64). On x86_64, when it does not, the daemon warns at startup and <code>msksd doctor</code> names the module option. Other machines publish no switch to read, so the daemon logs that it cannot verify the setting there. Reads live: the next start sends what a reload gave, and a running VM keeps the CPUID it booted with.</td>
+</tr>
+<tr>
 <td><code>socket_wait_timeout_s</code></td>
 <td><code>MSKSD_SOCKET_WAIT_TIMEOUT_S</code></td>
 <td>float</td>
@@ -1844,7 +1851,9 @@ next start derives its attachments from the roots the reload
 left. A root the reload removed reads as a skip at start (the
 <a href="../mounts/">mounts chapter</a> gives the skip behavior); running
 VMs keep the devices they attached. <code>virtiofsd</code> reads live too:
-the next start spawns the binary the reload gives.</p>
+the next start spawns the binary the reload gives. <code>nested</code> reads
+live the same way: the next start sends the flag the reload gave,
+and a running VM keeps the CPUID it booted with.</p>
 <p>A config that fails to load or validate is refused: the daemon
 reports the error on stderr and keeps the previous settings. A
 default-path file deleted since startup is likewise refused rather
