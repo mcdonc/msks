@@ -30,7 +30,7 @@ contract: nothing imports it at CLI parse time.
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .scheme import TintedLabel
+from .tints import TintedLabel
 
 #: The toggle's tooltip (#1152): the words its glyph alone
 #: cannot carry — the maximize glyph stands for the terminal
@@ -450,6 +450,7 @@ class TerminalOnly(QtCore.QObject):
         # the flash's own timeout clears whichever label stands
         # when it fires.
         self.status.setText(self.chrome_status.text())
+        self.status.set_kind(self.chrome_status.kind)
         page.status = self.status
         self.corner.show()
         page.shells_tab.focus_shell()
@@ -548,6 +549,7 @@ class TerminalOnly(QtCore.QObject):
         # elided a long one, and the chrome row's label clips it
         # at its own width.
         self.chrome_status.setText(self.status.whole)
+        self.chrome_status.set_kind(self.status.kind)
         page.status = self.chrome_status
         if self.margins is not None:
             page.layout().setContentsMargins(self.margins)

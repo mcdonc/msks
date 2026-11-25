@@ -288,6 +288,7 @@ def test_a_refusal_names_itself_and_the_next_poke_flies(
     trail, bridge = make_trail(qt)
     bridge.failed.emit(trail.key, "the daemon is gone")
     assert trail.note.text() == "refused: the daemon is gone"
+    assert trail.note.kind == "error"  # the error tint (#1160)
     assert trail.table.rowCount() == 2
     trail.poke()
     assert [c for c in bridge.calls if c[1] == "egress_requests"]

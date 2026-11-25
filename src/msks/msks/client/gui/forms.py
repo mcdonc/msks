@@ -12,7 +12,7 @@ screens' own contract: nothing imports it at CLI parse time.
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .dialogs import center_on_parent
-from .scheme import SemanticDelegate
+from .tints import SemanticDelegate, TintedLabel
 
 
 class ModePicker(QtWidgets.QComboBox):
@@ -39,7 +39,7 @@ def muted_note(text: str) -> QtWidgets.QLabel:
     return label
 
 
-class ElidedNote(QtWidgets.QLabel):
+class ElidedNote(TintedLabel):
     """A note that keeps one line (#1154 review): the text elides
     at the label's right edge, the whole text stays on ``text()``
     and on the tooltip, and the layout reads no width from the
@@ -47,7 +47,8 @@ class ElidedNote(QtWidgets.QLabel):
     no window to its width. The label is its row's flexible item:
     it expands into the free room, so the row carries no stretch
     beside it. The Egress trail's footer row carries its refusal
-    on one."""
+    on one. A tinted label (#1160): the trail's refusal wears the
+    error tint."""
 
     def __init__(self, text: str = "") -> None:
         super().__init__()

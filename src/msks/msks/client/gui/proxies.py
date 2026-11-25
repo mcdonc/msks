@@ -31,7 +31,7 @@ from .proxyrows import (
     status_kind,
     status_text,
 )
-from .scheme import SEMANTIC_ROLE, TintedLabel
+from .tints import SEMANTIC_ROLE, TintedLabel
 
 #: The listing read's key stem (#988): each flight carries its
 #: own key off it, the per-flight rule the mounts tab taught —

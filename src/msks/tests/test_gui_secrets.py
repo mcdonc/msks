@@ -1671,7 +1671,7 @@ def test_the_rows_carry_their_kinds_under_the_tick(qt, monkeypatch) -> None:
     and the locked row's warn; the locked row's expiry cell turns
     warn under the renew floor as the tick counts down, and the
     unbounded row's stays in the chrome's own text."""
-    from msks.client.gui.scheme import SEMANTIC_ROLE
+    from msks.client.gui.tints import SEMANTIC_ROLE
 
     tab, _window, _bridge = make_tab(qt, monkeypatch)
     state, expires = cells.STATE_COLUMN, cells.EXPIRES_COLUMN
@@ -1698,3 +1698,14 @@ def test_the_rows_carry_their_kinds_under_the_tick(qt, monkeypatch) -> None:
     model = tab.secret_models[0]
     tab.table.setRowCount(0)
     tab.tint_row(0, model)
+
+
+def test_a_fetch_line_wears_the_chromes_own_text(qt, monkeypatch) -> None:
+    """The status line's tint (#1160): a refusal's error tint does
+    not survive into the next refresh's fetch line."""
+    tab, _window, _bridge = make_tab(qt, monkeypatch)
+    tab.refuse("nope", reach=False)
+    assert tab.status.kind == "error"
+    tab.refresh()
+    assert tab.status.text().startswith("fetching")
+    assert tab.status.kind is None

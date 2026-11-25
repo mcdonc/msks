@@ -48,7 +48,6 @@ from ..listtable import (
     fill_columns,
     resized_viewport,
 )
-from ..scheme import SEMANTIC_ROLE, TintedLabel
 from ..secretrows import (
     SECRET_TTL_SECONDS,
     SECRET_TTLS,
@@ -64,6 +63,7 @@ from ..secretrows import (
     secret_rows as build_secret_rows,
 )
 from ..statusflash import StatusFlash
+from ..tints import SEMANTIC_ROLE, TintedLabel
 from . import cells
 from .mint import MintDialog
 
@@ -301,6 +301,7 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         self.flash_seq += 1
         self.fetch_seq = self.flash_seq
         self.status.setText("fetching the placeholders and the audit rows…")
+        self.status.set_kind(None)
         self.take_flight()
 
     def take_flight(self) -> None:

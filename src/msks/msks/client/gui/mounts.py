@@ -34,7 +34,7 @@ from .mountrows import (
     resolved_index,
     saved_note,
 )
-from .scheme import SEMANTIC_ROLE, TintedLabel
+from .tints import SEMANTIC_ROLE, TintedLabel
 
 #: The save call's key stem (#987): each flight carries its
 #: own key off it — ``workspace-mounts-N``, one counter per tab

@@ -10,7 +10,7 @@ the listing presenter's own rule.
 """
 
 from ..proxies import parse_local_spec, parse_remote_spec
-from .kinds import ERROR, OK
+from .kinds import ERROR, OK, WARN
 
 #: The spec grammar's unnamed hosts (#809, mirrored from the
 #: TUI's own constants — the parity test holds the pair): a
@@ -87,10 +87,12 @@ def status_kind(row: dict) -> str | None:
     wears the chrome's own text: its workspace is not running,
     and the list shows that beside it."""
     status = row.get("status") or "stopped"
-    if status == "listening":
-        return OK
     if status == "failed":
         return ERROR
+    if status == "listening":
+        # A listening row the guest cannot reach carries its cause
+        # beside the word: the one listening row that wants a look.
+        return WARN if row.get("reason") else OK
     return None
 
 

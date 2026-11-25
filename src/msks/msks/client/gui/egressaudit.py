@@ -19,6 +19,7 @@ from PySide6 import QtCore, QtWidgets
 
 from ..ages import clock_label
 from .forms import ElidedNote, ModePicker, muted_note, read_only_table
+from .kinds import ERROR
 
 #: The audit read's key stem (#1051): each flight carries its
 #: own key off it, the per-flight rule the tabs share.
@@ -192,7 +193,7 @@ class AuditTrail(QtCore.QObject):
         self.key = ""
         self.workspace_id = workspace_id
         self.rows = []
-        self.note.setText("")
+        self.note_line("")
         self.repaint_rows()
 
     def decision(self) -> str | None:
@@ -218,6 +219,13 @@ class AuditTrail(QtCore.QObject):
             self.decision(),
             AUDIT_LIMIT,
         )
+
+    def note_line(self, text: str, kind=None) -> None:
+        """The tab's note line (#1160): the text, wearing a kind
+        — a refusal the error tint, anything else the chrome's
+        own text."""
+        self.note.setText(text)
+        self.note.set_kind(kind)
 
     @QtCore.Slot()
     def refly(self) -> None:
@@ -332,7 +340,7 @@ class AuditTrail(QtCore.QObject):
             return
         self.pending = False
         self.flight = None
-        self.note.setText("")
+        self.note_line("")
         self.take(result)
 
     @QtCore.Slot(str, object)
@@ -345,4 +353,4 @@ class AuditTrail(QtCore.QObject):
             return
         self.pending = False
         self.flight = None
-        self.note.setText(f"refused: {failure}")
+        self.note_line(f"refused: {failure}", ERROR)

@@ -1874,7 +1874,7 @@ def test_the_status_cell_carries_its_kind() -> None:
     chrome's own text — the kind riding the item beside its
     word."""
     from msks.client.gui import listcells as listcells_mod
-    from msks.client.gui.scheme import SEMANTIC_ROLE
+    from msks.client.gui.tints import SEMANTIC_ROLE
 
     def item(status: str, **extra):
         row = {"id": "ws-1", "name": "alpha", "status": status, **extra}

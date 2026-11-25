@@ -211,6 +211,7 @@ def test_failed_verdict_flashes_and_retires_key(qt, panel):
     )
     assert held.decide_keys == set()
     assert panel.widget.note.text() == "decide failed: <refused>"
+    assert panel.widget.note.kind == "error"  # the error tint (#1160)
     assert panel.widget.note.textFormat() == qt.QtCore.Qt.TextFormat.PlainText
     assert not panel.widget.isHidden()
 

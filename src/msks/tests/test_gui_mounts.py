@@ -663,7 +663,7 @@ def test_the_tab_tags_the_state_cells(qt) -> None:
     """The table's state cells (#1160): the kinds ride the items
     under the semantic role — the healthy mount ok, the skipped
     one warn — and the reason column carries none."""
-    from msks.client.gui.scheme import SEMANTIC_ROLE
+    from msks.client.gui.tints import SEMANTIC_ROLE
 
     tab, _bridge = make_tab(qt)
     assert tab.table.item(0, 3).data(SEMANTIC_ROLE) == "ok"

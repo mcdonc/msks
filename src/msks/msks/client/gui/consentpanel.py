@@ -11,7 +11,7 @@ from PySide6 import QtCore, QtWidgets
 
 from .consent import DURATION_DEFAULT, DURATIONS, ConsentPresenter
 from .kinds import ERROR
-from .scheme import TintedLabel
+from .tints import TintedLabel
 
 #: How long before a hold times out to deny its countdown reads
 #: in the error tint (#1160): the seconds left to answer.
@@ -124,7 +124,7 @@ class ConsentPanel(QtWidgets.QWidget):
         self.rows_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
         self.scroll.setWidget(self.column)
         self.column.installEventFilter(self)
-        self.note = QtWidgets.QLabel("", self)
+        self.note = TintedLabel("", self)
         self.note.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.note.setWordWrap(True)
         self.note.hide()
@@ -250,6 +250,7 @@ class ConsentPanel(QtWidgets.QWidget):
         self.flash_seq += 1
         seq = self.flash_seq
         self.note.setText(f"decide failed: {error}")
+        self.note.set_kind(ERROR)
         self.note.show()
         QtCore.QTimer.singleShot(4000, self, partial(self.clear_stale, seq))
 

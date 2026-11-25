@@ -510,13 +510,17 @@ def test_the_status_cell_carries_its_kind() -> None:
     assert proxyrows.status_kind(failed) == "error"
     assert proxyrows.status_kind({"status": "stopped"}) is None
     assert proxyrows.status_kind({}) is None
+    # A listening row the guest cannot reach carries its cause:
+    # the one listening row that wants a look.
+    unreachable = {"status": "listening", "reason": "nft swap failed"}
+    assert proxyrows.status_kind(unreachable) == "warn"
 
 
 def test_the_tab_tags_the_status_cells(qt) -> None:
     """The table's status cells (#1160): the kinds ride the items
     under the semantic role — the listening row ok, the failed
     one error — and the other columns carry none."""
-    from msks.client.gui.scheme import SEMANTIC_ROLE
+    from msks.client.gui.tints import SEMANTIC_ROLE
 
     tab, _bridge = make_tab(qt)
     assert tab.table.item(0, 3).data(SEMANTIC_ROLE) == "ok"

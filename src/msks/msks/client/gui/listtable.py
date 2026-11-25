@@ -7,7 +7,7 @@ pane's width (#997).
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .scheme import SemanticDelegate
+from .tints import SemanticDelegate
 
 #: The bold-seat mark a bolded header carries (#976): the
 #: zoom's after-write walk finds the headers by it — an
