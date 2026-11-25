@@ -41,7 +41,7 @@ from .consent import (
     parse_rules,
 )
 from .dialogs import Centered
-from .egressaudit import AuditTrail
+from .egressaudit import BODY_ROW, FOOTER_ROW, HEADING_ROW, AuditTrail
 from .forms import ModePicker, confirm, muted_note, save_cancel_row
 
 #: The rules read's key stem (#1042): each flight carries its own
@@ -324,13 +324,13 @@ class EgressTab(QtWidgets.QWidget):
         columns = QtWidgets.QGridLayout()
         columns.setColumnStretch(0, 1)
         columns.setColumnStretch(1, 1)
-        columns.setRowStretch(1, 1)
         # The gutter between the two framed panes: the trail's
         # own margins gave it before the columns shared rows.
         columns.setHorizontalSpacing(12)
-        columns.addWidget(self.heading, 0, 0)
-        columns.addLayout(posture, 1, 0)
-        columns.addLayout(verdict_buttons, 2, 0)
+        columns.addWidget(self.heading, HEADING_ROW, 0)
+        columns.addLayout(posture, BODY_ROW, 0)
+        columns.addLayout(verdict_buttons, FOOTER_ROW, 0)
+        columns.setRowStretch(BODY_ROW, 1)
         self.audit = AuditTrail(bridge, columns, column=1)
         self.audit.allow_wanted.connect(self.allow_denied)
         layout = QtWidgets.QVBoxLayout(self)

@@ -1264,6 +1264,23 @@ def test_the_trails_table_shares_the_lists_edges(qt) -> None:
     aligned("grown")
 
 
+def test_a_long_refusal_wraps_inside_the_footer_row(qt) -> None:
+    """The footer's width contract (#1154 review): the trail's
+    refusal note wraps in its row. A message far wider than the
+    pane leaves the tab's minimum width where an empty note
+    stands it, under the window's 1280 default, instead of
+    holding the window open to the message's width."""
+    tab, bridge = make_tab(qt)
+    bare = tab.minimumSizeHint().width()
+    assert bare < 1280
+    tab.poke()
+    failure = ("the daemon is gone " * 20).strip()
+    bridge.failed.emit(tab.audit.key, failure)
+    assert tab.audit.note.text() == f"refused: {failure}"
+    assert tab.audit.note.wordWrap()
+    assert tab.minimumSizeHint().width() == bare
+
+
 def test_the_revoke_button_follows_the_flight(qt, monkeypatch) -> None:
     """The Revoke button's affordance (#1051 review): the button
     grays while the revoke flies — the editor buttons' own rule

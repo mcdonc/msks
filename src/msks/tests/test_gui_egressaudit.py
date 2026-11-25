@@ -106,18 +106,22 @@ def qt(tmp_path):
     app.processEvents()
 
 
-def bare_trail(bridge) -> audit_mod.AuditTrail:
-    """The trail in a parentless grid: the tab's own placement
+def bare_trail(qt, bridge) -> audit_mod.AuditTrail:
+    """The trail in a scratch grid: the tab's own placement
     (#1154) with no window behind it — the state the trail's own
-    tests read."""
-    return audit_mod.AuditTrail(bridge, QtWidgets.QGridLayout(), 0)
+    tests read. The grid goes in the fixture's keep: a parentless
+    grid dies with its last Python reference, and the bands are
+    its items."""
+    grid = QtWidgets.QGridLayout()
+    qt.keep.append(grid)
+    return audit_mod.AuditTrail(bridge, grid, 0)
 
 
 def make_trail(qt) -> tuple:
     """The trail over the stub bridge, hosted on the workspace
     with its first read landed and the calls cleared."""
     bridge = StubBridge()
-    trail = bare_trail(bridge)
+    trail = bare_trail(qt, bridge)
     qt.keep.append(trail)
     trail.host("ws-a")
     trail.poke()
@@ -258,7 +262,7 @@ def test_a_poke_before_a_host_flies_nothing(qt) -> None:
     """The unhosted trail (#1051): no workspace stands, and the
     poke and the refly both guard."""
     bridge = StubBridge()
-    trail = bare_trail(bridge)
+    trail = bare_trail(qt, bridge)
     qt.keep.append(trail)
     trail.poke()
     trail.refly()
@@ -419,7 +423,7 @@ def test_a_first_read_with_no_rows_shows_the_stand_in(qt) -> None:
     the trail advertises. The hosted trail with nothing read
     shows it too: the blanked table is the honest state."""
     bridge = StubBridge()
-    trail = bare_trail(bridge)
+    trail = bare_trail(qt, bridge)
     qt.keep.append(trail)
     trail.host("ws-a")
     assert trail.empty.isVisibleTo(trail.footer)  # nothing read yet

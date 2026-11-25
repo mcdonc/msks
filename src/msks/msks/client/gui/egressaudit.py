@@ -59,6 +59,15 @@ AUDIT_COLUMNS = ("destination", "decision", "duration", "requested")
 #: the destination, which shares the pane's width.
 AUDIT_CONTENT = ("decision", "duration", "requested")
 
+#: The tab grid's rows, shared by both columns (#1154): the
+#: heading row on top, the stretching row in the middle, the
+#: footer row under it. The tab places the left column's bands
+#: in them and the trail its own, so one row is one height for
+#: both columns.
+HEADING_ROW = 0
+BODY_ROW = 1
+FOOTER_ROW = 2
+
 #: The deny-to-allowlist action's label (#1051).
 ALLOW_BUTTON = "Allowlist"
 
@@ -150,6 +159,10 @@ class AuditTrail(QtCore.QObject):
         self.allow_button.clicked.connect(self.allow)
         self.allow_button.setEnabled(False)
         self.note = QtWidgets.QLabel("")
+        # The note wraps in its row (#1154 review): a refusal's
+        # words are the route's own, and a line of them wider
+        # than the pane would hold the window open to its width.
+        self.note.setWordWrap(True)
         self.note.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
         )
@@ -160,12 +173,9 @@ class AuditTrail(QtCore.QObject):
         foot.addWidget(self.note)
         foot.addStretch(1)
         foot.addWidget(self.allow_button)
-        # The grid's three rows are the tab's: the heading row on
-        # top, the stretching row in the middle, the footer row
-        # under it (#1154).
-        grid.addWidget(self.heading_row, 0, column)
-        grid.addWidget(self.table, 1, column)
-        grid.addWidget(self.footer, 2, column)
+        grid.addWidget(self.heading_row, HEADING_ROW, column)
+        grid.addWidget(self.table, BODY_ROW, column)
+        grid.addWidget(self.footer, FOOTER_ROW, column)
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
 
