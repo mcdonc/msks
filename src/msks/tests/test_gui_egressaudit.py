@@ -448,6 +448,40 @@ def test_a_recovered_read_clears_the_refusal_note(qt) -> None:
     assert trail.note.text() == ""
 
 
+def test_a_wide_refusal_elides_in_the_footer_and_keeps_its_words(
+    qt,
+) -> None:
+    """The footer's one line (#1154 review): the refusal stands
+    whole on the note whatever the label's width, the label shows
+    the line that fits — the whole words on the tooltip once the
+    line elides — and the footer's minimum reads no width from
+    it: a refusal no space breaks, a URL's own shape, holds no
+    window open."""
+    trail, bridge = make_trail(qt)
+    trail.footer.show()  # the row's resizes reach the note
+    trail.poke()
+    refusal = "https://" + "a" * 180
+    bridge.failed.emit(trail.key, refusal)
+    note = trail.note
+    whole = f"refused: {refusal}"
+    assert note.text() == whole
+    assert trail.footer.minimumSizeHint().width() < 400
+
+    metrics = note.fontMetrics()
+    narrow = metrics.horizontalAdvance("refused: https://aaa")
+    note.resize(narrow, note.height())
+    elided = metrics.elidedText(
+        whole, QtCore.Qt.TextElideMode.ElideRight, narrow
+    )
+    assert note.line == elided
+    assert note.line != whole
+    assert note.toolTip() == whole
+
+    note.resize(metrics.horizontalAdvance(whole) + 10, note.height())
+    assert note.line == whole
+    assert note.toolTip() == ""
+
+
 def test_the_decisions_match_the_daemons_tokens() -> None:
     """The duplicated vocabulary's pin (#1051 review): the
     filter's decisions are the daemon's own tokens in the same

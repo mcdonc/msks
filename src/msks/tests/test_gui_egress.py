@@ -1264,21 +1264,27 @@ def test_the_trails_table_shares_the_lists_edges(qt) -> None:
     aligned("grown")
 
 
-def test_a_long_refusal_wraps_inside_the_footer_row(qt) -> None:
-    """The footer's width contract (#1154 review): the trail's
-    refusal note wraps in its row. A message far wider than the
-    pane leaves the tab's minimum width where an empty note
-    stands it, under the window's 1280 default, instead of
-    holding the window open to the message's width."""
+def test_a_wide_refusal_leaves_the_tabs_minimum_alone(qt) -> None:
+    """The footer's width contract (#1154 review): a refusal no
+    space breaks — a URL's own shape, far wider than the pane —
+    leaves the tab's minimum width, and the window's, where an
+    empty note stands them, under the window's 1280 default. The
+    next layout pass reads the note; the note elides in its row,
+    its whole words on the tooltip."""
     tab, bridge = make_tab(qt)
+    qt.app.processEvents()  # the landed rows' layout requests land
     bare = tab.minimumSizeHint().width()
     assert bare < 1280
     tab.poke()
-    failure = ("the daemon is gone " * 20).strip()
-    bridge.failed.emit(tab.audit.key, failure)
-    assert tab.audit.note.text() == f"refused: {failure}"
-    assert tab.audit.note.wordWrap()
+    bridge.failed.emit(tab.audit.key, "https://" + "a" * 180)
+    assert tab.audit.note.text() == "refused: https://" + "a" * 180
+    qt.app.processEvents()  # the note's layout request lands
+    tab.layout().invalidate()  # the next layout reads the note
+    qt.app.processEvents()
     assert tab.minimumSizeHint().width() == bare
+    assert tab.window().minimumWidth() == bare
+    assert tab.audit.note.line != tab.audit.note.text()  # elided in its row
+    assert tab.audit.note.toolTip() == tab.audit.note.text()
 
 
 def test_the_revoke_button_follows_the_flight(qt, monkeypatch) -> None:

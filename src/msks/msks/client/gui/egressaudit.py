@@ -18,7 +18,7 @@ tab (itself lazily imported) owns the import.
 from PySide6 import QtCore, QtWidgets
 
 from ..ages import clock_label
-from .forms import ModePicker, muted_note, read_only_table
+from .forms import ElidedNote, ModePicker, muted_note, read_only_table
 
 #: The audit read's key stem (#1051): each flight carries its
 #: own key off it, the per-flight rule the tabs share.
@@ -158,11 +158,10 @@ class AuditTrail(QtCore.QObject):
         self.allow_button = QtWidgets.QPushButton(ALLOW_BUTTON)
         self.allow_button.clicked.connect(self.allow)
         self.allow_button.setEnabled(False)
-        self.note = QtWidgets.QLabel("")
-        # The note wraps in its row (#1154 review): a refusal's
+        # The note keeps its one line (#1154 review): a refusal's
         # words are the route's own, and a line of them wider
         # than the pane would hold the window open to its width.
-        self.note.setWordWrap(True)
+        self.note = ElidedNote()
         self.note.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
         )
@@ -171,7 +170,6 @@ class AuditTrail(QtCore.QObject):
         foot.setContentsMargins(0, 0, 0, 0)
         foot.addWidget(self.empty)
         foot.addWidget(self.note)
-        foot.addStretch(1)
         foot.addWidget(self.allow_button)
         grid.addWidget(self.heading_row, HEADING_ROW, column)
         grid.addWidget(self.table, BODY_ROW, column)
