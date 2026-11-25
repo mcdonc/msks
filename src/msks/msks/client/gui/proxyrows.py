@@ -10,6 +10,7 @@ the listing presenter's own rule.
 """
 
 from ..proxies import parse_local_spec, parse_remote_spec
+from .kinds import ERROR, OK
 
 #: The spec grammar's unnamed hosts (#809, mirrored from the
 #: TUI's own constants — the parity test holds the pair): a
@@ -78,6 +79,19 @@ def status_text(row: dict) -> str:
     if row.get("reason"):
         return f"{status} ({row['reason']})"
     return status
+
+
+def status_kind(row: dict) -> str | None:
+    """The status cell's tint (#1160): a listening row reads ok,
+    a failed one with its cause reads error. A stopped row
+    wears the chrome's own text: its workspace is not running,
+    and the list shows that beside it."""
+    status = row.get("status") or "stopped"
+    if status == "listening":
+        return OK
+    if status == "failed":
+        return ERROR
+    return None
 
 
 def parsed_body(letter: str, raw: str) -> tuple[dict | None, str]:

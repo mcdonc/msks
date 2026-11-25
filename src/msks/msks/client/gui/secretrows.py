@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from ..ages import clock_label, clock_now, created_label, parse_stamp
+from .kinds import OK, WARN
 
 #: The renew picker's ttl choices (#390): the duration picker
 #: over TTL-appropriate labels — the hours-to-a-month span a
@@ -144,6 +145,37 @@ def countdown(expires_ts: float, now: datetime | None = None) -> str:
     if remaining <= 0:
         return "expired"
     return fmt_duration(remaining)
+
+
+#: How long before its deadline a placeholder's expiry cell reads
+#: warn (#1160): the quarter hour an operator needs to renew it.
+EXPIRY_WARN_S = 15 * 60
+
+
+def state_kind(model) -> str | None:
+    """The state cell's tint (#1160): an open placeholder reads
+    ok, a locked one warn — the lock is a fact to act on (the
+    unlock), not a failure."""
+    if model.state == "open":
+        return OK
+    if model.state == "locked":
+        return WARN
+    return None
+
+
+def expiry_kind(expires_ts, now: datetime | None = None) -> str | None:
+    """The expiry cell's tint (#1160): warn while less than
+    :data:`EXPIRY_WARN_S` stands between now and the deadline.
+    An unbounded row, a deadline further out, and one already
+    past (its cell reads ``expired`` in the chrome's own text)
+    wear the chrome's text."""
+    if expires_ts is None:
+        return None
+    when = now if now is not None else clock_now()
+    remaining = expires_ts - when.timestamp()
+    if 0 < remaining < EXPIRY_WARN_S:
+        return WARN
+    return None
 
 
 def dests_cell(row: dict) -> str:

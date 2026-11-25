@@ -49,6 +49,7 @@ LIST_COLUMNS = ("COVERAGE", "NAME", "DESTS", "EXPIRES", "CREATED", "STATE")
 #: The countdown column (#966): a rank cell — the deadline
 #: epoch the presenter lands, the unbounded row last.
 EXPIRES_COLUMN = 3
+STATE_COLUMN = 5
 
 #: The created column (#966): a rank cell — the creation epoch,
 #: the undated row last.

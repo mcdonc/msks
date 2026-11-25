@@ -452,6 +452,26 @@ terminal that sets its own colors keeps winning over the theme.
 A desktop that states no scheme keeps the palette the platform
 handed the window.
 
+### State colors
+
+A state word wears one of three colors beside its text, in both
+palettes. Green means the state is as it should be: a running
+workspace, a mount the last start attached, a listening proxy,
+an open secret. Amber means the state is in flight or wants a
+look: a workspace that is starting, stopping, or paused, a row
+with unresolved mounts or changes that wait for the next start,
+a skipped mount, a locked secret, a secret that expires within
+fifteen minutes. Red means something failed or cannot be placed:
+an absent or unknown workspace, a failed proxy, a refusal or an
+outage on a status line, and a consent request in its last
+fifteen seconds.
+
+The word stays in the cell, so a color-blind reader and a
+grayscale screenshot keep the same information. A selected row
+keeps the highlight's own text color. Each color meets a 4.5:1
+contrast ratio against its palette's background, and a scheme
+switch repaints the colors with the rest of the window.
+
 ## Environment, icons and scaling
 
 The window needs a display. A Linux session provides one through

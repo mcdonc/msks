@@ -12,6 +12,7 @@ screens' own contract: nothing imports it at CLI parse time.
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .dialogs import center_on_parent
+from .scheme import SemanticDelegate
 
 
 class ModePicker(QtWidgets.QComboBox):
@@ -113,6 +114,7 @@ def read_only_table(
     hugging their text. The caller owns the rows and the
     selection's wiring."""
     table = QtWidgets.QTableWidget(0, len(columns))
+    table.setItemDelegate(SemanticDelegate(table))
     table.setHorizontalHeaderLabels(columns)
     table.verticalHeader().setVisible(False)
     table.setSelectionBehavior(

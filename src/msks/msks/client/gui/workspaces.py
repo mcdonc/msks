@@ -57,6 +57,7 @@ from .rows import (
     workspace_costs,
     workspace_rows,
 )
+from .scheme import TintedLabel
 from .statusflash import StatusFlash
 
 #: The bridge call's key for a listing refresh (#939): the
@@ -204,7 +205,7 @@ class WorkspaceList(StatusFlash, QtWidgets.QWidget):
         # keypress or double-click the platform serves lands on
         # the row the index names.
         self.table.activated.connect(self.open_current)
-        self.status = QtWidgets.QLabel("", self)
+        self.status = TintedLabel("", self)
         # The daemon-down state (#904, #1129 — the TUI listing's own
         # marker): its own flag, not the flash's, so the feed's
         # heartbeat flashing over the outage (#946) leaves it

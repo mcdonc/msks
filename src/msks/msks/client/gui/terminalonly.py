@@ -30,6 +30,8 @@ contract: nothing imports it at CLI parse time.
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from .scheme import TintedLabel
+
 #: The toggle's tooltip (#1152): the words its glyph alone
 #: cannot carry — the maximize glyph stands for the terminal
 #: taking the window.
@@ -69,7 +71,7 @@ PALETTE_EVENTS = (
 )
 
 
-class CornerLabel(QtWidgets.QLabel):
+class CornerLabel(TintedLabel):
     """One of the corner's labels (#1152): its text elides at the
     width the row gives it, never past a cap — in the middle for
     the name, at the right for the status — with the whole text
@@ -82,7 +84,9 @@ class CornerLabel(QtWidgets.QLabel):
     shell strip for the row — :class:`QTabWidget` sizes its
     corner on its own layout request alone, so without the ask a
     flash would paint into the width the corner froze at the
-    enter."""
+    enter. The label is a tinted one (#1160): the status
+    flash's refusal and outage paint it in the error tint, the
+    same as the page's own line."""
 
     def __init__(self, mode: QtCore.Qt.TextElideMode, parent) -> None:
         super().__init__("", parent)

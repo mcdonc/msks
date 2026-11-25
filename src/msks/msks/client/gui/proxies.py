@@ -19,6 +19,7 @@ from PySide6 import QtCore, QtWidgets
 
 from .dialogs import Centered
 from .forms import confirm, read_only_table, save_cancel_row
+from .kinds import ERROR
 from .proxyrows import (
     DIRECTION_CHOICES,
     direction_letter,
@@ -27,8 +28,10 @@ from .proxyrows import (
     parsed_body,
     proxy_transition,
     spec_text,
+    status_kind,
     status_text,
 )
+from .scheme import SEMANTIC_ROLE, TintedLabel
 
 #: The listing read's key stem (#988): each flight carries its
 #: own key off it, the per-flight rule the mounts tab taught —
@@ -42,6 +45,7 @@ CHANGE_STEM = "proxies-change"
 #: The tab's row of columns (#988): the TUI page's own set with
 #: the direction in its own column.
 PROXY_COLUMNS = ("DIRECTION", "SPEC", "LABEL", "STATUS")
+STATUS_COLUMN = PROXY_COLUMNS.index("STATUS")
 
 #: The columns that hug their text (#1025): the direction and
 #: the status stay at their content width; the spec and the
@@ -141,7 +145,7 @@ class ProxiesTab(QtWidgets.QWidget):
         buttons.addWidget(self.edit_button)
         buttons.addWidget(self.remove_button)
         buttons.addStretch(1)
-        self.note = QtWidgets.QLabel("", self)
+        self.note = TintedLabel("", self)
         self.note.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
         )
@@ -170,7 +174,7 @@ class ProxiesTab(QtWidgets.QWidget):
         self.change_key = ""
         self.workspace_id = workspace_id
         self.rows = []
-        self.note.setText("")
+        self.note_line("")
         self.repaint_rows()
 
     def poke(self) -> None:
@@ -207,11 +211,14 @@ class ProxiesTab(QtWidgets.QWidget):
                 str(row.get("label") or ""),
                 status_text(row),
             )
+            kinds: list = [None] * len(PROXY_COLUMNS)
+            kinds[STATUS_COLUMN] = status_kind(row)
             for column, value in enumerate(values):
                 item = QtWidgets.QTableWidgetItem(value)
                 item.setFlags(
                     item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable
                 )
+                item.setData(SEMANTIC_ROLE, kinds[column])
                 self.table.setItem(index, column, item)
         self.sync_buttons()
 
@@ -253,7 +260,7 @@ class ProxiesTab(QtWidgets.QWidget):
         body posting one proxy row."""
         dialog = ProxyDialog(parent=self)
         if dialog.exec() and dialog.body is not None:
-            self.note.setText("adding …")
+            self.note_line("adding …")
             self.change("create_proxy", dialog.body)
 
     @QtCore.Slot()
@@ -266,7 +273,7 @@ class ProxiesTab(QtWidgets.QWidget):
         row = self.rows[index]
         dialog = ProxyDialog(row, self)
         if dialog.exec() and dialog.body is not None:
-            self.note.setText("saving …")
+            self.note_line("saving …")
             self.change("update_proxy", row["id"], dialog.body)
 
     @QtCore.Slot()
@@ -280,7 +287,7 @@ class ProxiesTab(QtWidgets.QWidget):
         row = self.rows[index]
         if not self.confirm_remove(row):
             return
-        self.note.setText("removing …")
+        self.note_line("removing …")
         self.change("remove_proxy", row["id"], note="removed")
 
     def confirm_remove(self, row: dict) -> bool:
@@ -317,8 +324,15 @@ class ProxiesTab(QtWidgets.QWidget):
         self.change_pending = False
         self.change_flight = None
         self.sync_buttons()
-        self.note.setText(self.landing_note)
+        self.note_line(self.landing_note)
         self.poke()
+
+    def note_line(self, text: str, kind=None) -> None:
+        """The tab's note line (#1160): the text, wearing a kind
+        — a refusal the error tint, an outcome or a flight the
+        chrome's own text."""
+        self.note.setText(text)
+        self.note.set_kind(kind)
 
     @QtCore.Slot(str, object)
     def on_failed(self, key: str, failure: object) -> None:
@@ -334,4 +348,4 @@ class ProxiesTab(QtWidgets.QWidget):
         self.change_pending = False
         self.change_flight = None
         self.sync_buttons()
-        self.note.setText(f"refused: {failure}")
+        self.note_line(f"refused: {failure}", ERROR)

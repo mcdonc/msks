@@ -413,6 +413,7 @@ def test_a_named_refusal_keeps_the_edited_list(qt) -> None:
     )
     assert "outside the allowed roots" in tab.note.text()
     assert tab.note.text().startswith("refused: ")
+    assert tab.note.kind == "error"  # the error tint (#1160)
     assert tab.table.rowCount() == 2  # the rollback
     assert tab.working == settled
     assert tab.add_button.isEnabled()
@@ -647,3 +648,24 @@ def test_a_tick_under_a_flight_keeps_the_posted_list(qt) -> None:
     )
     assert tab.table.rowCount() == 2
     assert tab.note.text() == SAVED
+
+
+def test_the_state_cell_carries_its_kind(qt) -> None:
+    """The mount state cell's tint (#1160): a mount the last
+    start attached reads ok, one it skipped warn, any other word
+    the chrome's own text."""
+    assert qt.mounts.state_kind("healthy") == "ok"
+    assert qt.mounts.state_kind("skipped") == "warn"
+    assert qt.mounts.state_kind("attached") is None
+
+
+def test_the_tab_tags_the_state_cells(qt) -> None:
+    """The table's state cells (#1160): the kinds ride the items
+    under the semantic role — the healthy mount ok, the skipped
+    one warn — and the reason column carries none."""
+    from msks.client.gui.scheme import SEMANTIC_ROLE
+
+    tab, _bridge = make_tab(qt)
+    assert tab.table.item(0, 3).data(SEMANTIC_ROLE) == "ok"
+    assert tab.table.item(1, 3).data(SEMANTIC_ROLE) == "warn"
+    assert tab.table.item(1, 4).data(SEMANTIC_ROLE) is None

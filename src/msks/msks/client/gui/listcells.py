@@ -12,12 +12,14 @@ own contract: nothing imports it at CLI parse time (#927).
 
 from PySide6 import QtCore, QtWidgets
 
+from .kinds import ERROR, OK, WARN
 from .rows import (
     WorkspaceRow,
     pending_marker,
     restart_note,
     workspace_label,
 )
+from .scheme import SEMANTIC_ROLE
 
 RANK_ROLE = QtCore.Qt.ItemDataRole.UserRole
 
@@ -110,17 +112,47 @@ def state_text(model: WorkspaceRow) -> str:
     return f"{markers} {model.state}"
 
 
+#: The states that read as a failure (#1160): the daemon cannot
+#: place the row's artifacts, or lost track of it.
+ERROR_STATES = frozenset({"absent", "unknown"})
+#: The states in flight (#1160): between resting states, with
+#: the paused VM held by the hypervisor among them.
+WARN_STATES = frozenset({"starting", "stopping", "paused"})
+
+
+def marked(model: WorkspaceRow) -> bool:
+    """Whether the status cell leads with a marker: an unresolved
+    mount or a change that waits for the next start."""
+    return model.issue_marker is not None or pending_marker(model) is not None
+
+
+def state_kind(model: WorkspaceRow) -> str | None:
+    """The status cell's tint (#1160): a running workspace reads
+    ok; a transition and a row with a marker (unresolved mounts,
+    pending changes) read warn; a row the daemon cannot place
+    reads error. The resting states (created, stopped) wear the
+    chrome's own text: a stopped workspace is not news."""
+    if model.state in ERROR_STATES:
+        return ERROR
+    if model.state in WARN_STATES or marked(model):
+        return WARN
+    return OK if model.state == "running" else None
+
+
 class StateItem(QtWidgets.QTableWidgetItem):
     """The status cell as a sort item (#939): the markers beside
     the word, the lifecycle rank carried as the item's sort data
     — a column click orders the rows by the vocabulary's own
     sequence, a state outside it last. The cell's tooltip names
     the restart the pending marker stands for (#986): the ↻N a
-    narrow cell renders, said as the sentence the strips read."""
+    narrow cell renders, said as the sentence the strips read.
+    The cell carries its kind under :data:`SEMANTIC_ROLE`
+    (#1160), and the delegate paints the word in it."""
 
     def __init__(self, model: WorkspaceRow) -> None:
         super().__init__(state_text(model))
         self.setData(RANK_ROLE, model.state_rank)
+        self.setData(SEMANTIC_ROLE, state_kind(model))
         note = restart_note(model)
         if note is not None:
             self.setToolTip(note)

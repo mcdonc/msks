@@ -500,3 +500,44 @@ def test_a_workspace_switch_resets_the_tab(qt) -> None:
     bridge.succeeded.emit(tab.list_key, proxy_rows())
     assert tab.table.rowCount() == 2
     assert tab.add_button.isEnabled()
+
+
+def test_the_status_cell_carries_its_kind() -> None:
+    """The status cell's tint (#1160): a listening row reads ok,
+    a failed one error, a stopped row the chrome's own text."""
+    forward, failed = proxy_rows()
+    assert proxyrows.status_kind(forward) == "ok"
+    assert proxyrows.status_kind(failed) == "error"
+    assert proxyrows.status_kind({"status": "stopped"}) is None
+    assert proxyrows.status_kind({}) is None
+
+
+def test_the_tab_tags_the_status_cells(qt) -> None:
+    """The table's status cells (#1160): the kinds ride the items
+    under the semantic role — the listening row ok, the failed
+    one error — and the other columns carry none."""
+    from msks.client.gui.scheme import SEMANTIC_ROLE
+
+    tab, _bridge = make_tab(qt)
+    assert tab.table.item(0, 3).data(SEMANTIC_ROLE) == "ok"
+    assert tab.table.item(1, 3).data(SEMANTIC_ROLE) == "error"
+    assert tab.table.item(1, 1).data(SEMANTIC_ROLE) is None
+
+
+def test_a_refusal_paints_the_line_in_the_error_tint(qt, monkeypatch) -> None:
+    """The status line's tint (#1160): a refusal wears the error
+    kind while it stands; a saved row's outcome wears the
+    chrome's own text."""
+    tab, bridge = make_tab(qt)
+    body = {"direction": "forward", "listen_port": 1, "target_port": 2}
+    fake_dialog(monkeypatch, qt, body)
+    tab.add()
+    key = bridge.calls[0][0]
+    bridge.failed.emit(key, "workspace ws-a has no NIC: its tap is not up")
+    assert tab.note.kind == "error"
+    body = {"direction": "forward", "listen_port": 9090, "target_port": 90}
+    fake_dialog(monkeypatch, qt, body)
+    tab.add()
+    key = bridge.calls[-1][0]
+    bridge.succeeded.emit(key, {"id": 11, "status": "listening"})
+    assert tab.note.kind is None

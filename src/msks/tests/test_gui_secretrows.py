@@ -520,3 +520,30 @@ def test_the_module_imports_nothing_from_pyside6() -> None:
         if isinstance(node, ast.ImportFrom) and node.module is not None
     }
     assert not any(root.split(".")[0] == "PySide6" for root in roots)
+
+
+def test_the_state_and_expiry_kinds_read_the_model() -> None:
+    """The tints the presenter names (#1160): an open placeholder
+    reads ok and a locked one warn; the expiry cell reads warn
+    under the renew floor alone — an unbounded row, a deadline
+    further out, and one already past wear the chrome's own
+    text."""
+    open_row = gui_secrets.secret_row(placeholder(), NOW)
+    locked_row = gui_secrets.secret_row(placeholder(locked=True), NOW)
+    assert gui_secrets.state_kind(open_row) == "ok"
+    assert gui_secrets.state_kind(locked_row) == "warn"
+    expired = gui_secrets.secret_row(
+        placeholder(expires_at=(NOW - timedelta(hours=1)).isoformat()), NOW
+    )
+    assert expired.state == "open"  # the word is the lock's alone
+    other = gui_secrets.SecretRow(**{**expired.__dict__, "state": "revoked"})
+    assert gui_secrets.state_kind(other) is None
+    assert gui_secrets.expiry_kind(None, NOW) is None
+    soon = (NOW + timedelta(minutes=10)).timestamp()
+    later = (NOW + timedelta(hours=2)).timestamp()
+    past = (NOW - timedelta(minutes=1)).timestamp()
+    assert gui_secrets.expiry_kind(soon, NOW) == "warn"
+    assert gui_secrets.expiry_kind(later, NOW) is None
+    assert gui_secrets.expiry_kind(past, NOW) is None
+    edge = (NOW + timedelta(seconds=gui_secrets.EXPIRY_WARN_S)).timestamp()
+    assert gui_secrets.expiry_kind(edge, NOW) is None

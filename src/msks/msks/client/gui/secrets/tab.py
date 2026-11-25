@@ -48,10 +48,13 @@ from ..listtable import (
     fill_columns,
     resized_viewport,
 )
+from ..scheme import SEMANTIC_ROLE, TintedLabel
 from ..secretrows import (
     SECRET_TTL_SECONDS,
     SECRET_TTLS,
     countdown,
+    expiry_kind,
+    state_kind,
     ttl_default,
 )
 from ..secretrows import (
@@ -197,7 +200,7 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         # The audit empty state wraps too (#966), for the same
         # reason.
         self.audit_empty.setWordWrap(True)
-        self.status = QtWidgets.QLabel("", self)
+        self.status = TintedLabel("", self)
         self.mint_button = QtWidgets.QPushButton("Mint…", self)
         self.mint_button.clicked.connect(self.open_mint)
         self.mint_button.installEventFilter(self)
@@ -400,9 +403,9 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
             first.setData(cells.ROW_KEY_ROLE, model.id)
             self.table.setItem(index, 0, first)
             for column, (cell, rank) in enumerate(rendered[1:], start=1):
-                self.table.setItem(
-                    index, column, cells.ranked_item(cell, rank)
-                )
+                item = cells.ranked_item(cell, rank)
+                self.table.setItem(index, column, item)
+            self.tint_row(index, model)
         self.secret_models = models
         self.list_empty.setVisible(not models)
         self.table.setSortingEnabled(True)
@@ -504,6 +507,18 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
             model = self.secret_models[first.data(cells.ROW_INDEX_ROLE)]
             if model.expires_ts is not None:
                 item.setText(countdown(model.expires_ts))
+                item.setData(SEMANTIC_ROLE, expiry_kind(model.expires_ts))
+
+    def tint_row(self, index: int, model) -> None:
+        """The row's tints (#1160): the state word by its lock,
+        the expiry cell warn under the renew floor. The kinds
+        ride the items; the delegate paints them."""
+        state = self.table.item(index, cells.STATE_COLUMN)
+        expires = self.table.item(index, cells.EXPIRES_COLUMN)
+        if state is not None:
+            state.setData(SEMANTIC_ROLE, state_kind(model))
+        if expires is not None:
+            expires.setData(SEMANTIC_ROLE, expiry_kind(model.expires_ts))
 
     # -- the focused row into actions ---------------------------------------
 

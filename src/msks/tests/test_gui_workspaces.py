@@ -332,6 +332,7 @@ def test_a_failed_refresh_flashes_and_keeps_the_rows(qt) -> None:
         clientdata.RestFailure("409: workspace is running", reach=False),
     )
     assert "409" in screen.status.text()
+    assert screen.status.kind == "error"  # the error tint (#1160)
     assert screen.table.rowCount() == 3  # the rows stand
     # A refusal runs its own span (#940): a listing answer
     # landing inside it does not wipe it — only a standing
@@ -352,11 +353,13 @@ def test_a_refusal_flash_clears_on_its_timeout(qt, monkeypatch) -> None:
         clientdata.RestFailure("nope", reach=False),
     )
     assert "nope" in screen.status.text()
+    assert screen.status.kind == "error"
     deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline and screen.status.text():
         qt.app.processEvents()
         time.sleep(TICK)
     assert screen.status.text() == ""
+    assert screen.status.kind is None  # the chrome's text again
     window.close()
 
 
@@ -1862,3 +1865,28 @@ def test_a_rehosted_picker_releases_its_replaced_menu(qt) -> None:
     qt.app.processEvents()
     assert not shiboken6.isValid(gone)
     assert screen.connection.menu() is not gone
+
+
+def test_the_status_cell_carries_its_kind() -> None:
+    """The status cell's tint (#1160): a running workspace reads
+    ok, a transition and a row with a marker warn, a row the
+    daemon cannot place error, and the resting states the
+    chrome's own text — the kind riding the item beside its
+    word."""
+    from msks.client.gui import listcells as listcells_mod
+    from msks.client.gui.scheme import SEMANTIC_ROLE
+
+    def item(status: str, **extra):
+        row = {"id": "ws-1", "name": "alpha", "status": status, **extra}
+        return listcells_mod.StateItem(gui_rows.workspace_row(row))
+
+    assert item("running").data(SEMANTIC_ROLE) == "ok"
+    assert item("starting").data(SEMANTIC_ROLE) == "warn"
+    assert item("paused").data(SEMANTIC_ROLE) == "warn"
+    assert item("absent").data(SEMANTIC_ROLE) == "error"
+    assert item("unknown").data(SEMANTIC_ROLE) == "error"
+    assert item("stopped").data(SEMANTIC_ROLE) is None
+    assert item("created").data(SEMANTIC_ROLE) is None
+    marked = item("running", mount_issues=[{"host": "/srv", "guest": "/mnt"}])
+    assert marked.text().startswith("✗1 running")
+    assert marked.data(SEMANTIC_ROLE) == "warn"

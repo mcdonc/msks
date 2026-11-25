@@ -433,3 +433,115 @@ def test_the_light_base_sixteen_reads_on_the_white_page(qt):
     # now the grays, at the ratios a light theme ships.
     assert contrast(colors.LIGHT_BASE_16[7], colors.LIGHT_BACKGROUND) >= 5
     assert contrast(colors.LIGHT_BASE_16[15], colors.LIGHT_BACKGROUND) >= 2.8
+
+
+def test_every_tint_reads_on_its_bases(qt):
+    """The three tints (#1160) pass 4.5:1 on their scheme's base
+    and alternate base alike: the floor text reads by, the one
+    a color-blind reader and a grayscale screenshot keep."""
+    floor = 4.5
+    for palette, tints in (
+        (qt.scheme.dark_palette(), qt.scheme._DARK_SEMANTIC),
+        (qt.scheme.light_palette(), qt.scheme._LIGHT_SEMANTIC),
+    ):
+        roles = qt.QtGui.QPalette.ColorRole
+        for base_role in (roles.Base, roles.AlternateBase):
+            base = palette.color(base_role)
+            for kind, values in tints.items():
+                ratio = qt.scheme.contrast(qt.QtGui.QColor(*values), base)
+                assert ratio >= floor, (kind, base_role, ratio)
+
+
+def test_the_tints_read_the_scheme_off_the_base(qt):
+    """A kind's color comes from the base the palette paints on
+    (#1160): the dark set on the dark chrome, the light set on
+    the light one, None for no kind at all."""
+    dark = qt.scheme.dark_palette()
+    light = qt.scheme.light_palette()
+    assert qt.scheme.is_dark(dark) and not qt.scheme.is_dark(light)
+
+    def hexed(kind, tints):
+        red, green, blue = tints[kind]
+        return f"#{red:02x}{green:02x}{blue:02x}"
+
+    for kind in (qt.scheme.OK, qt.scheme.WARN, qt.scheme.ERROR):
+        assert qt.scheme.semantic(kind, dark).name() == hexed(
+            kind, qt.scheme._DARK_SEMANTIC
+        )
+        assert qt.scheme.semantic(kind, light).name() == hexed(
+            kind, qt.scheme._LIGHT_SEMANTIC
+        )
+    assert qt.scheme.semantic(None, dark) is None
+    assert qt.scheme.semantic("else", light) is None
+
+
+def test_the_delegate_tints_an_unselected_cell_alone(qt):
+    """The delegate (#1160) writes the kind's color into the
+    option's text roles for an untagged-by-selection cell, and
+    leaves a selected cell's palette alone: the highlight's own
+    text keeps its contrast. An untagged cell paints as the
+    style would."""
+    table = qt.QtWidgets.QTableWidget(2, 1)
+    delegate = qt.scheme.SemanticDelegate(table)
+    table.setItemDelegate(delegate)
+    failed = qt.QtWidgets.QTableWidgetItem("failed (bind refused)")
+    failed.setData(qt.scheme.SEMANTIC_ROLE, qt.scheme.ERROR)
+    plain = qt.QtWidgets.QTableWidgetItem("stopped")
+    table.setItem(0, 0, failed)
+    table.setItem(1, 0, plain)
+    State = qt.QtWidgets.QStyle.StateFlag
+    roles = qt.QtGui.QPalette.ColorRole
+    base = qt.QtGui.QPalette(qt.scheme.dark_palette())
+    error = qt.scheme.semantic(qt.scheme.ERROR, base)
+
+    def text_color(index, state):
+        option = qt.QtWidgets.QStyleOptionViewItem()
+        option.palette = qt.QtGui.QPalette(base)
+        option.state = state
+        delegate.initStyleOption(option, index)
+        return option.palette.brush(roles.Text).color()
+
+    index = table.model().index(0, 0)
+    assert text_color(index, State.State_Enabled) == error
+    assert text_color(index, State.State_Enabled | State.State_Selected) == (
+        base.color(roles.Text)
+    )
+    assert text_color(table.model().index(1, 0), State.State_Enabled) == (
+        base.color(roles.Text)
+    )
+
+
+def test_a_tinted_label_follows_the_scheme_switch(qt):
+    """A tinted label (#1160) wears its kind on the base it sits
+    on, takes the kind's other color when the application
+    palette switches, and with no kind keeps following the
+    application palette's own text — the resolve mask names the
+    text roles alone."""
+    roles = qt.QtGui.QPalette.ColorRole
+    label = qt.scheme.TintedLabel("daemon back")
+    label.show()
+    qt.app.processEvents()
+    label.set_kind(qt.scheme.ERROR)
+    dark = qt.scheme.dark_palette()
+    qt.app.setPalette(dark)
+    qt.app.processEvents()
+    assert label.palette().color(roles.Text) == qt.scheme.semantic(
+        qt.scheme.ERROR, dark
+    )
+    assert label.palette().color(roles.WindowText) == label.palette().color(
+        roles.Text
+    )
+    # The base follows the application, not the label's own palette.
+    assert label.palette().color(roles.Base) == dark.color(roles.Base)
+    light = qt.scheme.light_palette()
+    qt.app.setPalette(light)
+    qt.app.processEvents()
+    assert label.palette().color(roles.Text) == qt.scheme.semantic(
+        qt.scheme.ERROR, light
+    )
+    label.set_kind(None)
+    assert label.palette().color(roles.Text) == light.color(roles.Text)
+    dark_text = qt.QtGui.QPalette(dark)
+    qt.app.setPalette(dark_text)
+    qt.app.processEvents()
+    assert label.palette().color(roles.Text) == dark.color(roles.Text)

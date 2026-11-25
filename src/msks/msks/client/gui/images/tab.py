@@ -47,6 +47,7 @@ from ..imagerows import (
     published_rows,
 )
 from ..listtable import ListTable, bold_header, resized_viewport
+from ..scheme import TintedLabel
 from ..statusflash import StatusFlash
 from . import layout
 from .cells import (
@@ -215,7 +216,7 @@ class ImagesTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         self.published_table.customContextMenuRequested.connect(
             self.published_menu_requested
         )
-        self.status = QtWidgets.QLabel("", self)
+        self.status = TintedLabel("", self)
         self.import_timer = QtCore.QTimer(self)
         self.import_timer.setInterval(IMPORT_TICK_MS)
         self.import_timer.timeout.connect(self.import_tick)
