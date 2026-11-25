@@ -1963,25 +1963,32 @@ def test_the_button_rows_follow_the_flights(qt, monkeypatch) -> None:
 def test_enter_on_a_held_row_takes_the_groups_action(qt, monkeypatch) -> None:
     """Enter on a held row (#1161): a catalog row opens its detail
     and a published row starts its import. The catalog table
-    takes the page's focus at the show — the button rows take
-    none of it — and a focused list keeps the focus its row
-    selection leaves, so the key reaches the list, as a real
-    keypress would."""
+    takes the page's focus at the show, a row selection moves
+    no focus, and the button rows take none of it; the list's
+    own Enter handling then activates the row, the handler
+    keyed directly as the secrets tab's edge tests key it:
+    ``QTest.keyClick`` reached it on the Linux host and not on
+    the macOS runner."""
     opened: list[dict] = []
     fake_detail(monkeypatch, opened)
     tab, window, bridge = make_tab(qt)
     bridge.calls.clear()
-    enter = qt.QtCore.Qt.Key.Key_Return
+    enter = qt.QtGui.QKeyEvent(
+        qt.QtCore.QEvent.Type.KeyPress,
+        qt.QtCore.Qt.Key.Key_Return,
+        qt.QtCore.Qt.KeyboardModifier.NoModifier,
+    )
     qt.app.processEvents()  # the show's activation lands
     assert qt.app.focusWidget() is tab.catalog_table  # the show's focus
     tab.catalog_table.selectRow(catalog_row_of(tab, "ubuntu:24.04"))
-    qt.QtTest.QTest.keyClick(qt.app.focusWidget(), enter)
+    assert qt.app.focusWidget() is tab.catalog_table  # the selection kept it
+    tab.catalog_table.keyPressEvent(enter)
     assert opened == [catalog_raw()[1]]
     tab.published_table.setFocus()
     tab.published_table.selectRow(row_of(tab, "alpine:3.21"))
     qt.app.processEvents()
     assert qt.app.focusWidget() is tab.published_table
-    qt.QtTest.QTest.keyClick(qt.app.focusWidget(), enter)
+    tab.published_table.keyPressEvent(enter)
     assert bridge.calls == [
         (
             images_mod.IMPORT_KEY,
