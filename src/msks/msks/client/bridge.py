@@ -9,7 +9,10 @@ ssh ``-W 127.0.0.1:<port>`` channel over the forward websocket
 operator's agent when it holds the key, else the configured
 identity file — the ``session_identity`` ladder). The private half
 stays in this process or the operator's agent; the daemon holds
-no key material anywhere.
+no key material anywhere. The guest's host key pins in the same
+per-workspace cache a session pins in, rotation suffix and all
+(#1158): a renewed seed re-keys the guest, and the channel must
+read the directory the session re-pinned, not the first boot's.
 
 ``msks start`` leaves a holder behind when the workspace has
 forward rows, so the proxies serve after the command exits; the
@@ -37,7 +40,7 @@ from . import wsdial
 from .env import env_token, env_url, is_unix, ssl_context
 from .forwarding import config_quote
 from .hold import holder_due, spawn_holder  # noqa: F401  (spawn re-export)
-from .identity import known_hosts_path
+from .identity import cache_key, known_hosts_path
 from .rest import fetch_ssh_key
 from .ssh import proxy_command, session_identity, workspace_user
 from .wsdial import ws_url
@@ -154,14 +157,17 @@ def parse_control(message: str) -> tuple[str, int, int | None, str | None]:
 
 class Holder:
     """The serving loop's state: the websocket, one ssh channel
-    per connection id, and the workspace's login facts. The spawn
-    seam lets the tests drive a fake ssh."""
+    per connection id, the workspace's login user, and the
+    known_hosts file its channels pin the guest's host key under.
+    The spawn seam lets the tests drive a fake ssh."""
 
-    def __init__(self, socket, workspace_id: str, user: str) -> None:
+    def __init__(
+        self, socket, workspace_id: str, user: str, known_hosts: str
+    ) -> None:
         self.socket = socket
         self.workspace_id = workspace_id
         self.user = user
-        self.known_hosts = known_hosts_path(workspace_id)
+        self.known_hosts = known_hosts
         self.channels: dict[int, object] = {}
         self.spawner = asyncio.create_subprocess_exec
 
@@ -301,7 +307,16 @@ async def hold(
     address = bridge_ws_url(url, workspace_id)
     connection = wsdial.dial(address, token, ssl_ctx, max_size=2**22)
     async with await connection as socket:
-        server = Holder(socket, workspace_id, workspace_user(key))
+        # The session's own cache key (#697, #803): the row's disk
+        # and seed epochs rotate the directory the guest's fresh
+        # host keys re-pin under (#1158).
+        cache_ref, instance = cache_key(key, workspace_id)
+        server = Holder(
+            socket,
+            workspace_id,
+            workspace_user(key),
+            known_hosts_path(cache_ref, instance=instance),
+        )
         try:
             await serve(
                 socket, server, holder.server_address, holder.identity_path

@@ -124,7 +124,7 @@ async def test_holder_serves_one_connection() -> None:
     """One open, bytes both ways, the channel's end closing the
     connection — the frames the daemon side sends and expects."""
     socket = FakeSocket([])
-    holder = bridge.Holder(socket, "ws-a", "root")
+    holder = bridge.Holder(socket, "ws-a", "root", "/kh")
     process = FakeProcess()
     spawn_argv = []
 
@@ -157,7 +157,7 @@ async def test_holder_serves_one_connection() -> None:
 
 async def test_holder_feed_skips_what_it_cannot_place() -> None:
     socket = FakeSocket([])
-    holder = bridge.Holder(socket, "ws-a", "root")
+    holder = bridge.Holder(socket, "ws-a", "root", "/kh")
     await holder.feed(b"\x00\x01")  # shorter than an id
     await holder.feed(pack_frame(9, b"x"))  # no such channel
     holder.close(9)  # never stood: quiet
@@ -191,7 +191,7 @@ async def test_serve_dispatches_until_the_websocket_ends() -> None:
             text(CLOSE, 9),  # a close for nothing standing
         ]
     )
-    holder = bridge.Holder(socket, "ws-a", "root")
+    holder = bridge.Holder(socket, "ws-a", "root", "/kh")
     spawn = FakeSpawn()
     holder.spawner = spawn
     with pytest.raises(websockets.ConnectionClosed):
@@ -271,6 +271,76 @@ def test_run_hold_serves_until_the_websocket_ends(monkeypatch, capsys) -> None:
     assert bridge.run_hold("ws-a") == 0
 
 
+@pytest.mark.parametrize(
+    ("row", "directory"),
+    [
+        ({"id": "ws-id", "seed_epoch": 2}, "ws-id.r2"),
+        ({"id": "ws-id", "disk_epoch": 1, "seed_epoch": 2}, "ws-id.e1.r2"),
+        ({"id": "ws-id"}, "ws-id"),
+    ],
+)
+def test_run_hold_keys_the_host_cache_like_a_session(
+    monkeypatch, row, directory
+) -> None:
+    """The holder pins the guest's host key in the session's own
+    cache directory (#1158): the row's seed and disk epochs rotate
+    it, so a renewed workspace's channels read the re-pinned key
+    instead of the first boot's."""
+    pubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample bridge-test"
+
+    async def fake_fetch(*args, **kwargs):
+        return {**row, "public_key": pubkey, "user": "dev"}
+
+    monkeypatch.setattr(bridge, "fetch_ssh_key", fake_fetch)
+
+    @contextmanager
+    def fake_identity(key, workspace_id):
+        yield type(
+            "Held", (), {"server_address": "/a", "identity_path": "/i"}
+        )()
+
+    monkeypatch.setattr(bridge, "session_identity", fake_identity)
+
+    def fake_known_hosts(cache_ref, base=None, instance=None):
+        name = f"{cache_ref}.{instance}" if instance else cache_ref
+        return f"/kh/{name}"
+
+    monkeypatch.setattr(bridge, "known_hosts_path", fake_known_hosts)
+    made = []
+
+    class Recording(bridge.Holder):
+        def __init__(self, socket, workspace_id, user, known_hosts):
+            super().__init__(socket, workspace_id, user, known_hosts)
+            made.append(self)
+
+    monkeypatch.setattr(bridge, "Holder", Recording)
+    clean = FakeSocket([])
+
+    async def recv_clean():
+        raise closed_with(1000)
+
+    clean.recv = recv_clean
+
+    class CleanConnection:
+        async def __aenter__(self):
+            return clean
+
+        async def __aexit__(self, *exc):
+            return None
+
+    def fake_dial(*args, **kwargs):
+        async def connect():
+            return CleanConnection()
+
+        return connect()
+
+    monkeypatch.setattr(bridge.wsdial, "dial", fake_dial)
+    monkeypatch.setenv("MSKSC_URL", "https://d")
+    monkeypatch.setenv("MSKSC_TOKEN", "t")
+    assert bridge.run_hold("ws-id") == 0
+    assert [holder.known_hosts for holder in made] == [f"/kh/{directory}"]
+
+
 def test_run_hold_names_a_refusal_close(monkeypatch) -> None:
     held = type("Held", (), {"server_address": "/a", "identity_path": "/i"})()
 
@@ -313,7 +383,7 @@ def test_run_hold_names_a_refusal_close(monkeypatch) -> None:
 
 async def test_sweep_ends_live_channels() -> None:
     socket = FakeSocket([])
-    holder = bridge.Holder(socket, "ws-a", "root")
+    holder = bridge.Holder(socket, "ws-a", "root", "/kh")
     spawn = FakeSpawn()
     holder.spawner = spawn
     await holder.open(0, 8080, "/a", "/i")
@@ -324,7 +394,7 @@ async def test_sweep_ends_live_channels() -> None:
 
 async def test_dispatch_control_closes_a_channel() -> None:
     socket = FakeSocket([])
-    holder = bridge.Holder(socket, "ws-a", "root")
+    holder = bridge.Holder(socket, "ws-a", "root", "/kh")
     spawn = FakeSpawn()
     holder.spawner = spawn
     await bridge.dispatch_control(holder, text(OPEN, 0, 8080), "/a", "/i")
@@ -372,7 +442,7 @@ async def test_guarded_open_isolates_a_failed_spawn() -> None:
     with contextlib.suppress(AttributeError):
         pass
     socket = FakeSocket([])
-    holder = bridge.Holder(socket, "ws-a", "root")
+    holder = bridge.Holder(socket, "ws-a", "root", "/kh")
 
     async def raising(cid, port, agent, ident, host="127.0.0.1"):
         raise OSError("no fork left")
@@ -386,7 +456,7 @@ async def test_pump_out_names_a_failed_channel() -> None:
     """A channel whose ssh exited nonzero says one line on
     stderr (the repair path's diagnosability)."""
     socket = FakeSocket([])
-    holder = bridge.Holder(socket, "ws-a", "root")
+    holder = bridge.Holder(socket, "ws-a", "root", "/kh")
     process = FakeProcess(returncode=255)
     process.stdout.feed_data(b"data")
     process.stdout.feed_eof()
@@ -400,7 +470,7 @@ async def test_guarded_open_answers_its_own_close_on_failure() -> None:
     """The spawn-isolated open: an OSError from the channel spawn
     prints one line and answers the connection's close."""
     socket = FakeSocket([])
-    holder = bridge.Holder(socket, "ws-a", "root")
+    holder = bridge.Holder(socket, "ws-a", "root", "/kh")
 
     async def raising(cid, port, agent, ident, host="127.0.0.1"):
         raise OSError("no fork left")
