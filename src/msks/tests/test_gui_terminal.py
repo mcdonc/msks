@@ -1400,8 +1400,8 @@ def test_motion_without_tracking_sends_nothing(screen, qt):
 
 
 def wheel_event(qt, dy: int, pixels: int = 0):
-    """A wheel event of ``dy`` notch units; ``pixels`` is the
-    pixel delta a touchpad delivers instead."""
+    """A wheel event of ``dy`` Qt angle units (120 per notch);
+    ``pixels`` is the pixel delta a touchpad delivers instead."""
     return qt.QtGui.QWheelEvent(
         qt.QtCore.QPointF(10, 10),
         qt.QtCore.QPointF(10, 10),
@@ -1440,7 +1440,7 @@ def test_the_wheel_moves_twelve_rows_per_notch(screen, qt):
     """One notch scrolls twelve rows (#1156): the offset moves by
     twelve per notch, touchpad travel included, since a pixel
     delta of one cell height counts as one notch."""
-    for index in range(screen.rows * 2 + 12):
+    for index in range(screen.rows * 2 + 24):
         vt(screen, f"line {index}\r\n".encode())
     total, length, offset = scrollbar(screen)
     assert offset == total - length  # at the bottom

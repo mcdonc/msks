@@ -57,8 +57,10 @@ def is_paging(modifiers, key) -> bool:
 
 # Wheel rows per notch (#1156): one notch moves twelve rows, so
 # a 24-row pane passes one screen every two notches. The rate
-# covers every notch wheel_steps counts, touchpad travel
-# included: a pixel delta of one cell height is one notch.
+# covers every notch that reaches the scrollback, touchpad
+# travel included: a pixel delta of one cell height is one
+# notch. A child with mouse reporting owns its wheel before
+# this rate applies.
 WHEEL_ROWS_PER_NOTCH = 12
 
 #: How long the exit report waits for a child the kernel has not
