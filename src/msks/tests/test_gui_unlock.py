@@ -358,3 +358,87 @@ def test_the_outcome_line_reads_only_a_line() -> None:
     )
     assert unlock_mod.outcome_line(None) is None
     assert unlock_mod.outcome_line({"line": "x"}) is None
+
+
+@pytest.fixture()
+def qt(tmp_path):
+    """The offscreen ``QApplication`` real widgets need, the GUI
+    suites' fixture shape (#939)."""
+    import os
+
+    fonts = tmp_path / "fonts.conf"
+    fonts.write_text("<fontconfig/>\n")
+    os.environ["FONTCONFIG_FILE"] = str(fonts)
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from PySide6 import QtCore, QtWidgets
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
+        ["msks-test"]
+    )
+    yield SimpleNamespace(app=app, QtCore=QtCore, QtWidgets=QtWidgets)
+    for widget in app.topLevelWidgets():
+        widget.close()
+        widget.deleteLater()
+    QtCore.QCoreApplication.sendPostedEvents(
+        None, QtCore.QEvent.Type.DeferredDelete
+    )
+    app.processEvents()
+
+
+def test_a_re_dial_unhooks_the_real_tabs(qt, monkeypatch) -> None:
+    """The re-dial over real widgets (#1009, #1147): the window's
+    path swaps the main window's central widget before the flow
+    retargets, and the flow still unhooks the retired tree's
+    Secrets tab — its button reaching no one afterwards — while
+    the fresh tab's button reaches the flow. A window closed
+    with a flow hooked raises nothing on the way out."""
+    from msks.client.gui.secrets import tab as secrets_mod
+
+    prompts: list = []
+    monkeypatch.setattr(
+        unlock_mod,
+        "prompt_password",
+        lambda *args, **kwargs: prompts.append(args) or "pw",
+    )
+    window = qt.QtWidgets.QMainWindow()
+    flow = unlock_mod.UnlockFlow(window)
+    first_bridge, second_bridge = StubBridge(), StubBridge()
+    first, second = (
+        secrets_mod.SecretsTab(first_bridge),
+        secrets_mod.SecretsTab(second_bridge),
+    )
+    tabs = qt.QtWidgets.QTabWidget()
+    tabs.addTab(first, "Secrets")
+    window.setCentralWidget(tabs)
+    flow.retarget(first_bridge, Screen(), first)
+    first_bridge.succeeded.emit("unlock-prepare", offering())
+    first_bridge.succeeded.emit("unlock-finish", "unlocked 1 placeholder row")
+
+    # The re-dial: a fresh strip replaces the central one, as
+    # open_window's land() does, then the flow follows it.
+    tabs = qt.QtWidgets.QTabWidget()
+    tabs.addTab(second, "Secrets")
+    window.setCentralWidget(tabs)
+    second_listing = Screen()
+    flow.retarget(second_bridge, second_listing, second)
+    # The fresh tree's own offer answers quietly first — the
+    # gate holds one ask at a time.
+    second_bridge.succeeded.emit(
+        "unlock-prepare",
+        {"line": None, "rows": None, "path": None, "encrypted": False},
+    )
+    calls = list(second_bridge.calls)
+    first.unlock_asked.emit()
+    assert second_bridge.calls == calls
+    second.unlock_asked.emit()
+    assert second_bridge.calls == calls + [BY_HAND]
+    second_bridge.succeeded.emit("unlock-prepare", offering())
+    # The button asks by hand whatever the session asked: the
+    # first tree's flow spent the prompt, the second tree's
+    # button asks anyway, and its second flight flies.
+    assert len(prompts) == 2
+    assert second_bridge.calls[-1][0] == "unlock-finish"
+    assert flow.passphrase_asked
+    window.close()
+    window.deleteLater()
+    qt.app.processEvents()
