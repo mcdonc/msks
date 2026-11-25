@@ -596,10 +596,19 @@ bottom edge: the verdict keys, the mode switch, and the hide/show entry.
 `q`, `Esc`, or `C-b` hide the viewer. The decider keeps running, its queue
 keeps living, and `C-b p` brings the popup back. A popup the app raised
 returns the same way on the next hold. The session ends with its window, and
-the decider registration ends with the server. It works with any terminal
-that runs a command: put your terminal and its command flag in
-`terminal_open_cmd`, and `msks-term-popup` right after it (tmux 3.2 or newer
-must be on PATH):
+the decider registration ends with the server.
+
+A command that exits nonzero keeps its window open. The pane prints a
+close prompt under the command's last output, and Enter closes the window,
+so a startup refusal (an encrypted identity the agent does not hold) stays
+readable. A clean exit closes the window at once, as before. The launcher
+also records its own startup failures in `msks-term-popup.log` under the
+tmp dir. A launch that dies before tmux exists closes its window within a
+second. The log keeps the reason readable after it.
+
+The launcher works with any terminal that runs a command: put your terminal
+and its command flag in `terminal_open_cmd`, and `msks-term-popup` right
+after it (tmux 3.2 or newer must be on PATH):
 
 On macOS, an `open`-opened window resolves commands on a fresh login PATH, and
 `msks-setup-macos-host` links both client commands there. tmux comes
