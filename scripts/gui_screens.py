@@ -17,25 +17,29 @@ PySide6, and the shell exports the font directory below):
 The pixels do not vary with the host's fonts (#1172). On Linux
 Qt resolves every family through fontconfig, so the run pins
 ``FONTCONFIG_FILE`` to a file it writes: one directory,
-``GUI_SCREENS_FONT_DIR``, with the generic families aliased to
-DejaVu Sans. DejaVu Sans is the chrome's face: the one face
-with every marker the GUI paints (``✗``, ``↻``, ``·``) in a
-single file, where Noto Sans and Liberation Sans lack some and
-fall back to whatever the host holds. ``devenv.nix`` exports
-the directory as the DejaVu package the devenv lock pins; a
-Linux host needs no system-level step, the font is in the shell,
-and without the variable the script refuses — an empty pin hands
-the chrome to Qt's box engine, every glyph a hollow rectangle,
-the shape the first Linux render came out in. The terminal's
-face is the wheel's own bundled JetBrains Mono, registered as
-an application font, so it reads no fontconfig. On macOS Qt
-resolves through CoreText and reads none either; the pin leaves
-that platform's system font alone. The chrome's size is the
-window's own anchor, the terminal face's 15 logical pixels
-through the screen's dpi (#939, #1056): the capture shows the
-window at the size the operator sees on the platform, where a
-bare scale of the offscreen platform's own default (9pt) left
-the chrome a fifth smaller than the window it documents.
+``GUI_SCREENS_FONT_DIR``, with the generic families aliased —
+sans-serif to DejaVu Sans, monospace to DejaVu Sans Mono. DejaVu
+Sans is the chrome's face: the one face with every marker the GUI
+paints (``✗``, ``↻``, ``·``) in a single file, where Noto Sans and
+Liberation Sans lack some and fall back to whatever the host
+holds. ``devenv.nix`` exports the directory as the DejaVu package
+the devenv lock pins; a Linux host needs no system-level step, the
+font is in the shell, and without the variable the script refuses
+— an empty pin hands the chrome to Qt's box engine, every glyph a
+hollow rectangle, the shape the first Linux render came out in.
+The session's platform theme and style engine stay out of it too
+(``QT_QPA_PLATFORMTHEME`` dropped, Fusion forced), and once the
+application stands the run checks that the chrome resolved to
+DejaVu Sans, since a theme's family ask or a file that did not
+parse resolves somewhere else — the host's fonts in play again.
+The run stops on macOS there: Qt reads CoreText, not fontconfig.
+The terminal's face is the wheel's own bundled JetBrains Mono,
+registered as an application font, so it reads no fontconfig. The
+chrome's size is the window's own anchor, the terminal face's 15
+logical pixels through the screen's dpi (#939, #1056): the capture
+shows the window at the size the operator sees on the platform,
+where a bare scale of the offscreen platform's own default (9pt)
+left the chrome a fifth smaller than the window it documents.
 
 The fixed clock pins every relative label (``2d ago``, the
 TTL countdown) to one moment, so re-running the script
@@ -65,6 +69,12 @@ FONT_DIR_ENV = "GUI_SCREENS_FONT_DIR"
 #: defaults (Noto Sans, Liberation Sans) lack some.
 CHROME_FAMILY = "DejaVu Sans"
 
+#: The monospace generic's face under the pin (#1172): no chrome
+#: widget asks for the generic (the terminal names JetBrains Mono),
+#: but an ask must land on a fixed-pitch face, not the first face
+#: in the sort.
+MONO_FAMILY = "DejaVu Sans Mono"
+
 #: The moment every relative label reads (#1008's
 #: captures): an aware local datetime, the shape the shared
 #: leaf's own clock returns — a naive pin would read as local
@@ -77,14 +87,18 @@ PINNED_UTC = PINNED.astimezone(UTC)
 
 def pinned_fontconfig() -> str:
     """Write the fontconfig the run pins (#1172) and return its
-    path: one directory, ``GUI_SCREENS_FONT_DIR``, with the two
-    generic families Qt asks the chrome with aliased to
-    CHROME_FAMILY. Without the alias fontconfig hands the generic
-    to the first face in its sort — DejaVu Math TeX Gyre over
-    DejaVu Sans with the DejaVu directory listed. An unset or
+    path: one directory, ``GUI_SCREENS_FONT_DIR``, with the
+    generic families aliased — sans-serif to CHROME_FAMILY,
+    monospace to DejaVu Sans Mono. Without the alias fontconfig
+    hands a generic to the first face in its sort, DejaVu Math
+    TeX Gyre over DejaVu Sans with the DejaVu directory listed,
+    and a proportional face for a monospace ask. An unset or
     missing directory stops the run with one line: the capture
     belongs in the devenv shell, and a directory fontconfig cannot
-    find renders the same boxes as no font at all."""
+    find renders the same boxes as no font at all. The path is
+    XML-escaped: a file that does not parse drops fontconfig back
+    to the host's own config, every host font in play again, and
+    only the resolved-face check in capture() would name it."""
     font_dir = os.environ.get(FONT_DIR_ENV)
     if not font_dir:
         sys.exit(
@@ -98,11 +112,15 @@ def pinned_fontconfig() -> str:
         "<?xml version='1.0'?>\n"
         "<!DOCTYPE fontconfig SYSTEM 'fonts.dtd'>\n"
         "<fontconfig>\n"
-        f"  <dir>{font_dir}</dir>\n"
+        f"  <dir>{font_dir.replace('&', '&amp;').replace('<', '&lt;')}</dir>\n"
         "  <alias><family>sans-serif</family><prefer>"
         f"<family>{CHROME_FAMILY}</family></prefer></alias>\n"
         "  <alias><family>Sans Serif</family><prefer>"
         f"<family>{CHROME_FAMILY}</family></prefer></alias>\n"
+        "  <alias><family>monospace</family><prefer>"
+        f"<family>{MONO_FAMILY}</family></prefer></alias>\n"
+        "  <alias><family>Monospace</family><prefer>"
+        f"<family>{MONO_FAMILY}</family></prefer></alias>\n"
         "</fontconfig>\n"
     )
     fonts.close()
@@ -198,11 +216,11 @@ class FakePresenter:
 
 def daemon_rows() -> list[dict]:
     """The listing the workspaces screenshot reads: three
-    workspaces, newest first — the first with an unresolved
-    mount, the second with changes waiting for its next start,
-    the third running unmarked, so the list shows the healthy
-    row's green beside the marked rows' amber (#1160, #1172):
-    the first row is the one the list holds selected, and a
+    workspaces — alpha with an unresolved mount, beta with changes
+    waiting for its next start, gamma running unmarked — so the
+    list, newest first on screen (alpha, gamma, beta), shows the
+    healthy row's green beside the marked rows' amber (#1160,
+    #1172): alpha is the row the list holds selected, and a
     selected row keeps the highlight's own text color."""
     return [
         {
@@ -302,6 +320,24 @@ def unselect(*tables) -> None:
         table.selectionModel().clearCurrentIndex()
 
 
+def require_chrome_face(app) -> None:
+    """The pin's proof (#1172): the chrome resolved to the pinned
+    face or the run stops with one line. A theme's family ask, a
+    fontconfig file that did not parse, or a directory without the
+    face all resolve somewhere else — the host's fonts in play
+    again — and macOS resolves through CoreText, where the pin
+    reads nothing: the captures render on a Linux host."""
+    from PySide6 import QtGui
+
+    resolved = QtGui.QFontInfo(app.font()).family()
+    if resolved != CHROME_FAMILY:
+        sys.exit(
+            f"gui_screens: the chrome resolved to {resolved!r}, not "
+            f"{CHROME_FAMILY!r} — the captures render on a Linux host "
+            "from the devenv shell (docs/development.md)"
+        )
+
+
 def preset_rows():
     """The connection picker's menu rows: two aliases with the
     first standing, the dev daemon's dial."""
@@ -318,8 +354,14 @@ def preset_rows():
 
 def main() -> int:
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    # A desktop session's platform theme (gtk3, kde) hands Qt its
+    # own font family and palette, and a preset style engine its
+    # own chrome: none of the host's, for the capture — the theme
+    # variable goes, and the style is the window's own Fusion, not
+    # a setdefault the host could pre-empt (#1172).
+    os.environ.pop("QT_QPA_PLATFORMTHEME", None)
+    os.environ["QT_STYLE_OVERRIDE"] = "Fusion"
     os.environ["FONTCONFIG_FILE"] = pinned_fontconfig()
-    os.environ.setdefault("QT_STYLE_OVERRIDE", "Fusion")
     try:
         capture()
     finally:
@@ -378,10 +420,12 @@ def capture() -> None:
     # at the size the operator's window opens at — the
     # offscreen platform's own default (9pt) is no desktop
     # session's font, and a bare scale of it left the chrome a
-    # fifth smaller than the window it documents.
+    # fifth smaller than the window it documents. The operator's
+    # MSKSC_GUI_FONT_SCALE knob stays out of a docs render.
     font = app.font()
     font.setPointSizeF(chrome_pt(DEFAULT_PT * FONT_SCALE, screen_dpi(app)))
     app.setFont(font)
+    require_chrome_face(app)
 
     list_bridge = StubBridge()
 

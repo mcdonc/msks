@@ -545,12 +545,16 @@ DejaVu Sans from that directory. The terminal keeps the wheel's
 bundled JetBrains Mono. The host's own fonts take no part, and a
 Linux host needs no font package or system setting beyond the
 shell. The script stops with one line when the variable is unset.
-A second run on the same host reproduces the committed pixels.
-The events tab's clock stamps and the terminal child's output
-may differ between runs. Qt reads CoreText on macOS and ignores
-the pin there. The screenshots then come out in that platform's
-system font. The committed captures come from a Linux host.
-Re-render them from one too.
+A second run on the same host reproduces the committed pixels,
+except the events tab's clock stamps and the terminal child's
+output, which may differ between runs. The session's platform
+theme and style engine stay out of the capture. Once the
+application stands, the script checks that the chrome resolved
+to DejaVu Sans. A host whose theme asks for another family, or a
+fontconfig file that did not parse, stops the run there. The
+same check stops a macOS host, where Qt reads CoreText: the
+committed captures come from a Linux host. Re-render them from
+one too.
 
 ### The workspace LLM proxy
 
