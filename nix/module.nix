@@ -50,29 +50,47 @@ let
   # own key spelling.
   yamlFormat = pkgs.formats.yaml { };
 
-  # The keys this module generates: every settings key with a
-  # first-class option. Rejected in services.msksd.server.settings — the
-  # option owns them, and a settings-layer override would desync the
-  # unit contract (state_dir from StateDirectory, port from the
-  # firewall rule).
-  generatedKeys = [
-    "state_dir"
-    "host"
-    "port"
-    "socket"
-    "socket_group"
-    "cloud_hypervisor"
-    "qemu_img"
-    "mkfs_ext4"
-    "resize2fs"
-    "e2fsck"
-    "mkisofs"
-    "conntrack_tool"
-    "egress_enabled"
-    "egress_uplink"
-    "ip_tool"
-    "nft_tool"
-  ];
+  # The keys this module generates, each with the remedy its
+  # refusal gives: the first-class option that owns the key (the
+  # option owns it, and a settings-layer override would desync the
+  # unit contract — state_dir from StateDirectory, port from the
+  # firewall rule), or null for a tool path the module pins to the
+  # host's packages, which no option overrides. Rejected in
+  # services.msksd.server.settings.
+  generatedKeys = {
+    state_dir = "services.msksd.stateDir (fixed at /var/lib/msksd under the module)";
+    host = "services.msksd.listenAddress, with services.msksd.tcp.enable";
+    port = "services.msksd.port";
+    socket = "services.msksd.socket.enable";
+    socket_group = "services.msksd.socket.group";
+    cloud_hypervisor = "services.msksd.cloudHypervisor";
+    qemu_img = null;
+    mkfs_ext4 = null;
+    resize2fs = null;
+    e2fsck = null;
+    mkisofs = null;
+    conntrack_tool = null;
+    egress_enabled = "services.msksd.egress.enable";
+    egress_uplink = "services.msksd.egress.uplink";
+    ip_tool = null;
+    nft_tool = null;
+  };
+
+  # A Nix path value anywhere in the client layer (#801): the yaml
+  # type admits paths, and a path copies its file into the store —
+  # world-readable, and the client file's paths (token_file,
+  # identity_file) point at secrets. The layer has no legitimate
+  # store-path content, so a path value anywhere under it refuses.
+  hasPathValue =
+    v:
+    if builtins.isPath v then
+      true
+    else if builtins.isAttrs v then
+      builtins.any hasPathValue (builtins.attrValues v)
+    else if builtins.isList v then
+      builtins.any hasPathValue v
+    else
+      false;
 
   # The daemon closure, built against the consuming host's nixpkgs
   # (the same wiring the appliance used): python 3.14 and the
@@ -171,6 +189,22 @@ let
     ++ lib.optional (cfg.tcp.enable && cfg.port < 1024) "CAP_NET_BIND_SERVICE";
 in
 {
+  # The scalar-only settings option (v0.10.0 through v0.10.2)
+  # renamed to server.settings (#801): the old spelling still
+  # evaluates, with the rename warning, since every value the old
+  # type took is a yaml value too.
+  imports = [
+    (lib.mkRenamedOptionModule
+      [ "services" "msksd" "settings" ]
+      [
+        "services"
+        "msksd"
+        "server"
+        "settings"
+      ]
+    )
+  ];
+
   options.services.msksd = {
     enable = lib.mkEnableOption "msksd, the msks daemon (workspaces as cloud-hypervisor microvms)";
 
@@ -309,17 +343,21 @@ in
       description = ''
         The host's client config, generated as /etc/msks/msks.yaml —
         the file a bare msks reads (docs/cli.md, the client config
-        file), under the file's own spelling: url, token_file, cafile,
-        socket, identity_file, pubkey_file, ssh_options, and the
-        daemons aliases. The module points every user's
-        MSKSC_CONFIG_DIR at /etc/msks, so a bare msks on the host
-        reads this file; a user with a config of their own exports
+        file), under the file's own spelling: every key the file
+        takes, url, token_file, cafile, socket, identity_file,
+        pubkey_file, daemons and active_daemon, ssh_options among
+        them. The file applies to every user of the host: a
+        cache_dir or state_dir in it gives every user one state
+        root. The module points every user's MSKSC_CONFIG_DIR at
+        /etc/msks as a default, so a bare msks on the host reads
+        this file; a user with a config of their own exports
         MSKSC_CONFIG_DIR elsewhere. The file holds paths and
-        addresses, never a secret: token_file names the file that
-        holds the token. Spell file paths as strings — a path value
-        copies its file into the store, token file included. The
-        client refuses an unknown key at load, naming the key and the
-        valid ones.
+        addresses, never a secret: token_file and identity_file
+        name the files that hold them. Spell file paths as strings:
+        a path value copies its file into the world-readable store,
+        and the module refuses a path value in this layer. The
+        client refuses an unknown key at load, naming the key and
+        the valid ones.
       '';
     };
 
@@ -372,7 +410,7 @@ in
     # addresses (token_file is a path), and the client's closed key
     # list refuses anything else.
     environment.etc."msks/msks.yaml".source = clientSettingsFile;
-    environment.sessionVariables.MSKSC_CONFIG_DIR = "/etc/msks";
+    environment.sessionVariables.MSKSC_CONFIG_DIR = lib.mkDefault "/etc/msks";
 
     assertions = [
       {
@@ -400,10 +438,23 @@ in
         message = "services.msksd.socket.group must differ from the daemon's own group — share a group of operators instead (the daemon user always connects).";
       }
     ]
-    ++ map (key: {
+    ++ lib.mapAttrsToList (key: remedy: {
       assertion = !builtins.hasAttr key serverSettings;
-      message = "services.msksd.server.settings.${key} is generated by the module — set its first-class option under services.msksd instead.";
-    }) generatedKeys;
+      message =
+        "services.msksd.server.settings.${key} is generated by the module — "
+        + (
+          if remedy != null then
+            "set ${remedy} instead."
+          else
+            "the module pins this tool path to the host's packages, and no option overrides it."
+        );
+    }) generatedKeys
+    ++ [
+      {
+        assertion = !hasPathValue cfg.client.settings;
+        message = "services.msksd.client.settings carries a Nix path value — spell file paths as strings: a path value copies its file into the world-readable store (token_file and identity_file point at secrets).";
+      }
+    ];
 
     # The service identity (#101, verbatim from the appliance): a
     # dedicated system user; /dev/kvm arrives through the kvm

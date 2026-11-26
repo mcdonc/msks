@@ -69,17 +69,22 @@ tagged `vX.Y.Z`.
 
 - **The NixOS module's settings layers (#801).**
   `services.msksd.server.settings` holds every `msksd.yaml` key the
-  module does not generate, in the file's own spelling, and lists and
-  mappings pass: `seed_images` and `llm_models` are expressible in Nix
-  now, where the scalar-only `services.msksd.settings` option could
-  not carry them. That option is renamed to
-  `services.msksd.server.settings`. `services.msksd.client.settings`
-  generates the host's client config at `/etc/msks/msks.yaml`, and the
-  module sets `MSKSC_CONFIG_DIR=/etc/msks` for every user, so a bare
-  `msks` reads it. See
+  module does not generate, in the file's own spelling. Lists and
+  mappings pass, so `seed_images` and `llm_models` are expressible in
+  Nix now. `services.msksd.client.settings` generates the host's
+  client config at `/etc/msks/msks.yaml`, and the module sets
+  `MSKSC_CONFIG_DIR=/etc/msks` for every user, so a bare `msks` reads
+  it. See
   [docs/installation.md](installation.md#every-daemon-key-and-the-hosts-client-config).
 
 ### Changed
+
+- **The NixOS module's `services.msksd.settings` is renamed to
+  `services.msksd.server.settings` (#801).** The old spelling still
+  evaluates with a rename warning, and its scalar values read the
+  same. Under the module a bare `msks` now reads
+  `/etc/msks/msks.yaml` instead of `~/.config/msks/msks.yaml`. A user
+  with a config of their own exports `MSKSC_CONFIG_DIR` to keep it.
 
 - **The workspaces list under a heading, the picker in the
   bottom bar (#1177).** The list's table sits under a

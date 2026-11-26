@@ -144,6 +144,23 @@
           token_file = "/etc/msks/token";
         };
       };
+      # The renamed option (#801): services.msksd.settings, the
+      # v0.10.x spelling, still flows into server.settings — the
+      # eval prints the rename warning, and the file carries the key.
+      renamed = evalConfig {
+        enable = true;
+        egress.uplink = "eno4";
+        settings.storage_warn_pct = 90;
+      };
+      # A null layer (#801): the yaml type admits null, and the
+      # module reads it as an unset layer — the generated keys stay,
+      # and the client file still renders.
+      nulled = evalConfig {
+        enable = true;
+        egress.uplink = "eno4";
+        server.settings = null;
+        client.settings = null;
+      };
       hasTun = c: builtins.any (m: m == "tun") c.boot.kernelModules;
       # Package names compared as strings in the check's build:
       # the enabled eval's PATH must carry the exact package the
@@ -200,7 +217,14 @@
             # the session variable pointing every user's msks at it.
             clientCfgOn = toString on.environment.etc."msks/msks.yaml".source;
             clientCfgLayered = toString layered.environment.etc."msks/msks.yaml".source;
+            clientCfgNulled = toString nulled.environment.etc."msks/msks.yaml".source;
             cfgDir = on.environment.sessionVariables.MSKSC_CONFIG_DIR or "";
+            # The inert branch contributes neither the file nor the
+            # variable (both `or ""`: an absent entry must stay empty).
+            clientCfgInert = toString (inert.environment.etc."msks/msks.yaml".source or "");
+            cfgDirInert = inert.environment.sessionVariables.MSKSC_CONFIG_DIR or "";
+            execRenamed = renamed.systemd.services.msksd.serviceConfig.ExecStart;
+            execNulled = nulled.systemd.services.msksd.serviceConfig.ExecStart;
             runtimeDir = on.systemd.services.msksd.serviceConfig.RuntimeDirectory or "";
             socketRuntimeDir =
               socketed.systemd.services.msksd.serviceConfig.RuntimeDirectory or "";
@@ -261,9 +285,10 @@
             # (the socket path, the empty host, the share, and
             # /run/msks), and the both branch carries the two
             # listeners together. The file is pkgs.formats.yaml's
-            # block style (#801): one `key: value` line per key, an
-            # empty string as two single quotes — spelled ''' here,
-            # the escape a Nix indented string needs for them.
+            # block style (#801): one `key: value` line per key (a
+            # long value continues on an indented line), an empty
+            # string as two single quotes — spelled ''' here, the
+            # escape a Nix indented string needs for them.
             cfg_on=''${execOn##* --config }
             grep -qxF 'host: 127.0.0.1' "$cfg_on" || {
               echo "fail: default branch lost the listen address in msksd.yaml"
@@ -373,6 +398,31 @@
             }
             test "$cfgDir" = "/etc/msks" || {
               echo "fail: the enabled branch lost MSKSC_CONFIG_DIR in the session variables"
+              exit 1
+            }
+            test -z "$clientCfgInert" || {
+              echo "fail: the inert branch contributed /etc/msks/msks.yaml"
+              exit 1
+            }
+            test -z "$cfgDirInert" || {
+              echo "fail: the inert branch contributed MSKSC_CONFIG_DIR"
+              exit 1
+            }
+            # The renamed option still flows into the server file.
+            cfg_renamed=''${execRenamed##* --config }
+            grep -qxF 'storage_warn_pct: 90' "$cfg_renamed" || {
+              echo "fail: the renamed services.msksd.settings never reached msksd.yaml"
+              exit 1
+            }
+            # A null layer leaves the generated keys and the client
+            # file in place.
+            cfg_nulled=''${execNulled##* --config }
+            grep -qxF 'host: 127.0.0.1' "$cfg_nulled" || {
+              echo "fail: a null server.settings dropped a generated key from msksd.yaml"
+              exit 1
+            }
+            test -s "$clientCfgNulled" || {
+              echo "fail: a null client.settings rendered no /etc/msks/msks.yaml"
               exit 1
             }
             touch "$out"

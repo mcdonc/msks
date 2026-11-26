@@ -128,9 +128,10 @@ Setting `enable = true` does five things:
   bearer tokens.
 - **The settings files.** The module generates `msksd.yaml` into the nix
   store at build time, with every tool path pointing into the store, and
-  the host's client config at `/etc/msks/msks.yaml`. Both take more
-  keys through `services.msksd.server.settings` and
-  `services.msksd.client.settings`. See [Every daemon key, and the
+  the host's client config at `/etc/msks/msks.yaml`. Every login session
+  gets `MSKSC_CONFIG_DIR=/etc/msks`, so a bare `msks` reads that file.
+  Both files take more keys through `services.msksd.server.settings`
+  and `services.msksd.client.settings`. See [Every daemon key, and the
   host's client config](#every-daemon-key-and-the-hosts-client-config).
 - **The egress stack.** With egress enabled the unit carries ambient
   `CAP_NET_ADMIN` and `CAP_NET_BIND_SERVICE`, loads the tun and nftables
@@ -235,18 +236,22 @@ services.msksd.server.settings = {
 };
 ```
 
-A key the module generates, such as `state_dir`, `port`, `socket`, or a
-tool path, fails evaluation when set here. The error gives the
-first-class option to use instead. The generated file is world-readable
-in the store. Pass secrets through `services.msksd.environmentFile`,
-and spell file paths as strings: a Nix path value such as `./cert.pem`
-copies the file into the store.
+A key the module generates fails evaluation when set here:
+`state_dir`, `host`, `port`, `socket`, `socket_group`, `cloud_hypervisor`,
+the two egress keys, and the tool paths. For a key with a first-class
+option, the error gives the option to set instead: `port` is
+`services.msksd.port`, `host` is `services.msksd.listenAddress`, and so
+on. The tool paths have no option: the module pins them to the host's
+packages. The generated file is world-readable in the store. Pass
+secrets through `services.msksd.environmentFile`, and spell file paths
+as strings: a Nix path value such as `./cert.pem` copies the file into
+the store.
 
 `services.msksd.client.settings` holds the host's client config. The
 module writes it to `/etc/msks/msks.yaml` and sets
-`MSKSC_CONFIG_DIR=/etc/msks` for every user. A bare `msks` on the host
-reads this file. The keys are the ones the [client config
-file](cli.md#the-client-config-file) takes:
+`MSKSC_CONFIG_DIR=/etc/msks` as a default session variable for every
+user. A bare `msks` on the host reads this file. The keys are the ones
+the [client config file](cli.md#the-client-config-file) takes:
 
 ```nix
 services.msksd.client.settings = {
@@ -256,13 +261,21 @@ services.msksd.client.settings = {
 };
 ```
 
-The file holds paths and addresses, never a token: `token_file` points
-at the file that holds the token. Write that path as a string. A Nix
-path value (`./token`) copies the token file into the store. The client
-refuses an unknown key at load, and the error gives the key and the
-valid ones. A user with a
-config of their own exports `MSKSC_CONFIG_DIR` in their shell. That
-export wins over the value the module sets.
+The token file must be readable by every `msks` user. The
+[socket listener](#the-socket-listener-instead) with a `socket.group`
+needs no token file: members of the group connect with no config.
+
+The file holds paths and addresses, never a secret: `token_file` and
+`identity_file` point at the files that hold them. Write those paths as
+strings. The module refuses a Nix path value in this layer, because a
+path value (`./token`) copies the file into the world-readable store.
+The client refuses an unknown key at load, and the error gives the key
+and the valid ones.
+
+A user with a config of their own exports `MSKSC_CONFIG_DIR` in their
+shell, and a host that needs another value defines it in
+`environment.sessionVariables`: both win over the module's default.
+Until then, `~/.config/msks/msks.yaml` is not read on this host.
 
 ## What the setup lands
 
