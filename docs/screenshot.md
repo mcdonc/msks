@@ -23,8 +23,9 @@ screenshot_command: import -window root -crop 3840x2160+0+0
 ```
 
 The variable `MSKSC_SCREENSHOT_COMMAND` carries the string form for one
-shell and overrides the file. The value can also be a list, with the tokens
-kept whole:
+shell and overrides the file. A leading `~` in the command's program
+expands to your home directory, the way the shell would take it. The value
+can also be a list, with the tokens kept whole:
 
 ```yaml
 screenshot_command:

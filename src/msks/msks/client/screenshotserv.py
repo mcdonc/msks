@@ -124,14 +124,17 @@ _running: subprocess.Popen | None = None
 
 def request_argv() -> list[str] | None:
     """The capture command's argv: the shell-split
-    :data:`SCREENSHOT_COMMAND_ENV` the holder inherited — the
-    materialized ``screenshot_command`` setting. An empty value is
-    the unconfigured form (None); the helper that runs without one
+    :data:`SCREENSHOT_COMMAND_ENV` the holder inherited (the
+    materialized ``screenshot_command`` setting), each word's
+    leading ``~`` expanded to the operator's home directory the
+    way the shell would take it — the config file's ``~/...``
+    program spelling works as written. An empty value is the
+    unconfigured form (None); the helper that runs without one
     answers the named refusal rather than guessing a program."""
     raw = os.environ.get(SCREENSHOT_COMMAND_ENV, "")
     if not raw.strip():
         return None
-    return shlex.split(raw)
+    return [os.path.expanduser(word) for word in shlex.split(raw)]
 
 
 def read_request(fd: int) -> bytes:

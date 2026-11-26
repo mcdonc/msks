@@ -1168,3 +1168,22 @@ def test_wait_readable_answers_no_when_the_budget_is_spent() -> None:
     finally:
         left.close()
         right.close()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["~/bin/capture -crop 1x1", "'~/bin/capture' -crop 1x1"],
+)
+def test_request_argv_expands_a_leading_tilde(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, raw: str
+) -> None:
+    """The command's program may carry the shell's home-directory
+    shorthand, spelled plainly or as the materialized round trip
+    quotes it — both expand to the operator's home."""
+    monkeypatch.setenv("MSKSC_SCREENSHOT_COMMAND", raw)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert screenshotserv.request_argv() == [
+        str(tmp_path / "bin/capture"),
+        "-crop",
+        "1x1",
+    ]
