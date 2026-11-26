@@ -25,6 +25,20 @@ pytestmark = pytest.mark.filterwarnings(
 )
 
 
+@pytest.fixture(autouse=True)
+def linux_shaped_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This module's key events carry the Linux spelling of the
+    modifier keys (#1184). The tests name ``ControlModifier`` for
+    Ctrl; macOS Qt reports Command there, and the terminal's
+    shortcuts follow the keyboard, so a Mac host would read the
+    keys as Command's. The offscreen platform has no keyboard of
+    its own, so the module names the platform its keys are shaped
+    for. A test of the Mac keys patches the platform to darwin
+    itself; its patch wins, being later.
+    """
+    monkeypatch.setattr(sys, "platform", "linux")
+
+
 @pytest.fixture()
 def qt(tmp_path: Path):
     """The offscreen ``QApplication``, the screens' own fixture

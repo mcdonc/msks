@@ -28,6 +28,7 @@ from PySide6.QtGui import (
     QCloseEvent,
     QFocusEvent,
     QKeyEvent,
+    QKeySequence,
     QMouseEvent,
     QPainter,
     QRegion,
@@ -53,6 +54,13 @@ def is_paging(modifiers, key) -> bool:
     return bool(
         modifiers & shift and not modifiers & control and key in page_keys
     )
+
+
+def menu_text(keys: str) -> str:
+    """A shortcut's platform spelling for a menu label (#1184):
+    Qt's native text, ``⌘C`` on macOS and ``Ctrl+Shift+C``
+    elsewhere."""
+    return QKeySequence(keys).toString(QKeySequence.SequenceFormat.NativeText)
 
 
 # Wheel rows per notch (#1156): one notch moves twelve rows, so
@@ -204,6 +212,10 @@ class TerminalWidget(QWidget):
         # rows stitch across the cached texts.
         self.link_rows: list[list[str]] = []
         self.hand_cursor = False
+        # The key a shortcut consumed on the press, so its release
+        # is dropped too: under the Kitty keyboard protocol the
+        # release alone would reach the program (#1184).
+        self.shortcut_release: int | None = None
         self.link_spans: list[list[tuple[int, int, str]]] = []
         self.search = 0
         self.find_edit: QLineEdit | None = None
@@ -583,6 +595,9 @@ class TerminalWidget(QWidget):
             return
         if self.handle_shortcut(event):
             return
+        # A press the shortcuts did not take keeps its release,
+        # even when it is the key a consumed press held before.
+        self.shortcut_release = None
         action = input.key_action(event.isAutoRepeat())
         input.encode_key(self, event, action)
 
@@ -618,33 +633,44 @@ class TerminalWidget(QWidget):
             return False
         direction = -1 if event.key() == Qt.Key.Key_PageUp else 1
         input.scroll_page(self, direction)
+        self.consume_release(event)
         return True
 
     def clipboard_shortcut(self, event: QKeyEvent) -> bool:
-        """Ctrl+Shift+C copies the selection and drops it (a
-        terminal cannot cut, so X copies too); Ctrl+Shift+V
-        pastes the clipboard."""
-        if not (
-            event.modifiers() & Qt.KeyboardModifier.ControlModifier
-            and event.modifiers() & Qt.KeyboardModifier.ShiftModifier
-        ):
+        """The shortcut modifier with C copies the selection and
+        drops it, and with V pastes the clipboard: Ctrl+Shift+C/V
+        on every platform, Cmd+C/V on macOS too (#1184). The key
+        table, X included, is ``input.clipboard_action``."""
+        if not input.command_held(event.modifiers()):
             return False
-        if event.key() in (Qt.Key.Key_C, Qt.Key.Key_X):
+        action = input.clipboard_action(event.key(), event.modifiers())
+        if action is None:
+            return False
+        if action == "copy":
             select.copy(self)
-            return True
-        if event.key() == Qt.Key.Key_V:
+        else:
             select.paste_clipboard(self)
-            return True
-        return False
+        self.consume_release(event)
+        return True
+
+    def consume_release(self, event: QKeyEvent) -> None:
+        """Note the key a shortcut consumed on the press, so its
+        release is dropped too: under the Kitty keyboard protocol
+        the release alone would reach the program (#1184). The
+        note holds the key alone. A release often carries fewer
+        modifiers than its press, because the hand lets ⌘ or
+        Shift go before the key."""
+        self.shortcut_release = event.key()
 
     def find_shortcut(self, event: QKeyEvent) -> bool:
-        """Ctrl+Shift+F toggles the find bar."""
+        """Ctrl+Shift+F (Cmd+F on macOS) toggles the find bar
+        (#1184)."""
         if not (
-            event.modifiers() & Qt.KeyboardModifier.ControlModifier
-            and event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+            input.command_held(event.modifiers())
             and event.key() == Qt.Key.Key_F
         ):
             return False
+        self.consume_release(event)
         if self.search:
             find.close(self)
         else:
@@ -664,6 +690,9 @@ class TerminalWidget(QWidget):
             return
         # The closed guard, the press's own (#1034).
         if self._closed:
+            return
+        if self.shortcut_release == event.key():
+            self.shortcut_release = None
             return
         input.encode_key(self, event, gt.ACTION_RELEASE)
 
@@ -685,10 +714,10 @@ class TerminalWidget(QWidget):
 
     def press_without_tracking(self, event: QMouseEvent) -> bool:
         """The presses a terminal owns when the program inside
-        does not report the mouse: Ctrl+Click opens a link,
-        middle-click pastes PRIMARY, and a left press starts
-        the selection gesture. Answers whether the press was
-        consumed."""
+        does not report the mouse: Ctrl+Click (Cmd+Click on
+        macOS, the same bit to Qt) opens a link, middle-click
+        pastes PRIMARY, and a left press starts the selection
+        gesture. Answers whether the press was consumed."""
         if self.link_press(event):
             return True
         if event.button() == Qt.MouseButton.MiddleButton:
@@ -700,11 +729,13 @@ class TerminalWidget(QWidget):
         return False
 
     def link_press(self, event: QMouseEvent) -> bool:
-        """A Ctrl+Click over a link opens it through the
-        desktop handler; answers whether a link opened."""
+        """A Ctrl+Click (Cmd+Click on macOS, #1184) over a link
+        opens it through the desktop handler; answers whether a
+        link opened. The check is Qt's Control bit, which is
+        Command on a Mac."""
         return (
             event.button() == Qt.MouseButton.LeftButton
-            and bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+            and input.link_modifier_held(event.modifiers())
             and links.open_at(self, event.position())
         )
 
@@ -801,10 +832,11 @@ class TerminalWidget(QWidget):
                 lambda: QApplication.clipboard().setText(link)
             )
             menu.addSeparator()
-        copy_action = menu.addAction("Copy\tCtrl+Shift+C")
+        copy_keys, paste_keys = input.clipboard_keys()
+        copy_action = menu.addAction(f"Copy\t{menu_text(copy_keys)}")
         copy_action.setEnabled(bool(select.text(self)))
         copy_action.triggered.connect(lambda: select.copy(self))
-        paste_action = menu.addAction("Paste\tCtrl+Shift+V")
+        paste_action = menu.addAction(f"Paste\t{menu_text(paste_keys)}")
         paste_action.setEnabled(bool(QApplication.clipboard().text()))
         paste_action.triggered.connect(lambda: select.paste_clipboard(self))
         return menu

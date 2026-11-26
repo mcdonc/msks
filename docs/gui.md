@@ -188,6 +188,31 @@ program that binds `Ctrl+Tab` or `Alt+1` to `Alt+5`, such as tmux
 or WeeChat, does not receive them from the GUI. Bind such a program
 to other keys.
 
+The terminal has keys of its own. Linux and Windows spell them
+`Ctrl+Shift`, as Konsole and GNOME Terminal do, because plain
+`Ctrl+C` is the program's interrupt. macOS spells them with
+Command, as Terminal.app and iTerm2 do, and answers the
+`Ctrl+Shift` keys as well.
+
+| Key                                         | Action                       |
+| ------------------------------------------- | ---------------------------- |
+| `Ctrl+Shift+C` (macOS: `Cmd+C`)             | copy the selection           |
+| `Ctrl+Shift+V` (macOS: `Cmd+V`)             | paste the clipboard          |
+| `Ctrl+Shift+F` (macOS: `Cmd+F`)             | open or close the find bar   |
+| `Shift+PgUp`, `Shift+PgDn`                  | page the scrollback          |
+| `Ctrl+Click` on a link (macOS: `Cmd+Click`) | open the link in the browser |
+
+`Ctrl+Shift+X` copies on Linux and Windows. `Cmd+X` is not a copy
+key on macOS, so the program inside the terminal receives it.
+
+On macOS the Control key is the program's Control key. `Ctrl+C`
+inside a terminal is the program's interrupt, as it is on Linux.
+The terminal keeps the keys in the table above for itself. The
+program inside receives neither the press nor the release.
+
+A right-click opens a menu with Copy and Paste. The menu shows
+the keys of the platform.
+
 A tab shows the title the program inside sets. A program that
 sets the terminal's title (vim, less, ssh, or a prompt with an
 OSC title in its `PS1`) sets its tab's title too. A long title
