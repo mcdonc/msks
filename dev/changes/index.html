@@ -2530,6 +2530,12 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>The GUI terminal's copy drops the selection (#1182).</strong>
+  Ctrl+Shift+C and the right-click menu's Copy action now clear
+  the selection after the copy. The highlight used to stay
+  until the next click.</p>
+</li>
+<li>
 <p><strong>The version-skew notice gives the Linux remedy on Linux (#1174).</strong>
   A client newer than the daemon used to send every operator to
   <code>msks-setup-macos-host</code>, including a Linux host where the daemon
