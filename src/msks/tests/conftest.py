@@ -1,6 +1,7 @@
 import asyncio
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -183,3 +184,35 @@ def isolated_client_state(
     themselves, the way the config tree's isolation does.
     """
     monkeypatch.setenv("MSKSC_STATE_DIR", str(tmp_path / "msks-state"))
+
+
+@pytest.fixture(autouse=True)
+def released_keyboard_modifiers() -> None:
+    """A GUI test leaves no modifier key held (#1161).
+
+    A test that sends a modified key through QtTest (``Ctrl+1``
+    on the shell tabs, ``Shift+Up`` in a list) leaves the
+    application's keyboard modifier state set: QtTest names the
+    modifiers on the press and the release alike, and nothing
+    afterwards reports them released — the offscreen platform has
+    no keyboard. Qt 6 has no setter for the state, and the next
+    test in the worker reads Ctrl as held: an item view's
+    ``selectRow`` then toggles or deselects instead of selecting,
+    and a listing's first fill holds nothing. One plain key event
+    to a spare widget clears the state, the way a real keypress
+    does. The binding's modules are read from ``sys.modules``, the
+    ones the worker already loaded: a test may stub the package
+    broken (#939), so nothing imports here, and a worker that never
+    loaded Qt pays a dictionary lookup.
+    """
+    yield
+    loaded = sys.modules.get
+    widgets, core, test = (
+        loaded("PySide6.QtWidgets"),
+        loaded("PySide6.QtCore"),
+        loaded("PySide6.QtTest"),
+    )
+    if None in (widgets, core, test):
+        return
+    if widgets.QApplication.instance() is not None:
+        test.QTest.keyClick(widgets.QWidget(), core.Qt.Key.Key_Shift)

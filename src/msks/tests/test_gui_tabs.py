@@ -172,17 +172,6 @@ def test_up_from_the_top_row_returns_to_the_bar(qt) -> None:
     from msks.client.gui.workspaces import LIST_KEY, WorkspaceList
     from PySide6.QtTest import QTest
 
-    class ListBridge:
-        """The list's bridge stub: the signals it connects and
-        the verb it calls."""
-
-        def __init__(self) -> None:
-            self.succeeded = Signal()
-            self.failed = Signal()
-
-        def call(self, key, method, *args):
-            return None
-
     listing = WorkspaceList(ListBridge())
     listing.on_succeeded(LIST_KEY, [daemon_row()])
     tabs = MainTabs(listing)
@@ -201,6 +190,51 @@ def test_up_from_the_top_row_returns_to_the_bar(qt) -> None:
     listing.table.setFocus()
     QTest.keyClick(listing.table, qt.QtCore.Qt.Key.Key_Right)
     assert window.focusWidget() is listing.table
+
+
+def test_return_on_a_held_row_activates_it(qt) -> None:
+    """The table's second key bridge (#1161): Return, or the
+    keypad's Enter, on a held row emits the table's own
+    ``activated`` on every host — the workspace list opens the
+    row's page on it, as the docs say. Qt's views emit nothing
+    for the key on macOS, so the table answers it itself; with
+    no current row the key reaches the view's own walk and
+    opens nothing. The handler is keyed directly, the secrets
+    suite's own shape: the key's dispatch differs by host."""
+    from msks.client.gui.workspaces import LIST_KEY, WorkspaceList
+
+    listing = WorkspaceList(ListBridge())
+    listing.on_succeeded(LIST_KEY, [daemon_row()])
+    window_over(qt, listing)
+    opened: list[str] = []
+    listing.opened.connect(opened.append)
+    key = qt.QtCore.Qt.Key
+    press_event = qt.QtCore.QEvent.Type.KeyPress
+    mods = qt.QtCore.Qt.KeyboardModifier.NoModifier
+    listing.table.keyPressEvent(
+        qt.QtGui.QKeyEvent(press_event, key.Key_Return, mods)
+    )
+    listing.table.keyPressEvent(
+        qt.QtGui.QKeyEvent(press_event, key.Key_Enter, mods)
+    )
+    assert opened == ["ws-a", "ws-a"]
+    listing.table.setCurrentCell(-1, -1)
+    listing.table.keyPressEvent(
+        qt.QtGui.QKeyEvent(press_event, key.Key_Return, mods)
+    )
+    assert opened == ["ws-a", "ws-a"]
+
+
+class ListBridge:
+    """The list's bridge stub: the signals it connects and the
+    verb it calls."""
+
+    def __init__(self) -> None:
+        self.succeeded = Signal()
+        self.failed = Signal()
+
+    def call(self, key, method, *args):
+        return None
 
 
 def daemon_row() -> dict:

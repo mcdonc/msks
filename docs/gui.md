@@ -309,7 +309,7 @@ clears at every open of the page.
 
 ## The Images tab
 
-![The Images tab: the catalog group above the published group](screens/gui-images.png)
+![The Images tab: the catalog group above the published group, each with its button row under the table](screens/gui-images.png)
 
 The second top-level tab manages the image catalog. **In the
 catalog** lists the daemon's own rows with the default marker,
@@ -321,12 +321,20 @@ shown. A published row whose exact hash the catalog holds reads
 `[imported]`. One the catalog holds under a different hash reads
 `[local]`.
 
-A right-click on a catalog row opens its menu: Open the detail
-(the same lines `msks image info` prints), Set as the default,
-and Remove… (which asks first). A right-click on a published row
-offers Import…, which runs behind a progress dialog while the
-daemon downloads, verifies, and floor-checks the archive. The
-catalog refreshes when the import lands.
+Each group carries a button row under its table. The buttons act
+on the selected row of their group, and each button stands
+disabled until a row is selected. Under **In the catalog**,
+Details… opens the selected image's record, which holds the same
+lines `msks image info` prints. Enter on a catalog row opens the
+record too. Set as the default posts the designation at once.
+Remove… asks first. Under **Published**, Import… runs behind a
+progress dialog while the daemon downloads, verifies, and
+floor-checks the archive. The catalog refreshes when the import
+lands.
+
+A right-click on a row opens the same actions as a menu: Open
+the detail, Set as the default, and Remove… on a catalog row, and
+Import… on a published row.
 
 The counts line at the page's bottom tallies both sides. The
 [images chapter](images.md) describes the catalog and the

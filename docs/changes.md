@@ -36,6 +36,21 @@ tagged `vX.Y.Z`.
   scheme switch repaints the colors with the window. See
   [docs/gui.md](gui.md#state-colors).
 
+- **The GUI Images tab's button rows (#1161).** Each group now
+  carries a button row under its table: **In the catalog** has
+  Details…, Set as the default, and Remove…, and **Published**
+  has Import…. The buttons act on the selected row and stand
+  disabled until one is selected. The right-click menus stay
+  beside them. See [docs/gui.md](gui.md#the-images-tab).
+
+### Fixed
+
+- **Enter in the GUI's lists on macOS (#1161).** Enter on the
+  selected workspace now opens its page, and Enter on a
+  selected catalog image opens its record. Qt's own item views
+  leave the key unhandled on macOS, so the tables answer it
+  themselves.
+
 ## \[v0.10.2] - 2026-11-25
 
 ### Added
