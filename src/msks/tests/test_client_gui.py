@@ -605,6 +605,7 @@ def test_open_window_reuses_an_existing_app(
     would."""
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("PySide6 is not installed on this host")
+    from msks.client.gui import arrival as arrival_mod
     from msks.client.gui import connection as connection_mod
     from msks.client.gui import interrupt as interrupt_mod
     from msks.client.gui import menubar as menubar_mod
@@ -625,6 +626,7 @@ def test_open_window_reuses_an_existing_app(
     icons: list[object] = []
     central: list[object] = []
     built: list[object] = []
+    settles: list[tuple[object, object]] = []
     screens: list[object] = []
     images: list[tuple[object, str]] = []
     zooms: list[tuple[object, object]] = []
@@ -700,6 +702,23 @@ def test_open_window_reuses_an_existing_app(
 
     monkeypatch.setattr(scheme_mod, "Scheme", FakeScheme)
 
+    class FakeSettle:
+        """The opening settle's stub (#1177): the window path
+        clears the window's central widget through the gate and
+        waits for the window's first paint — the recording
+        pins both, and the order pin reads the clear before
+        the show."""
+
+        def __init__(self, content: object, bridge: object = None) -> None:
+            self.content = content
+            self.bridge = bridge
+
+        def after_first_paint(self, window: object) -> None:
+            settles.append((self.content, self.bridge, window))
+            shown.append("settled")
+
+    monkeypatch.setattr(arrival_mod, "Settle", FakeSettle)
+
     class FakeRect:
         """The window geometry's shape for the save pin (#939):
         the four reads the close path makes."""
@@ -731,6 +750,9 @@ def test_open_window_reuses_an_existing_app(
 
         def geometry(self) -> FakeRect:
             return FakeRect()
+
+        def centralWidget(self) -> object:
+            return central[-1]
 
         def show(self) -> None:
             shown.append("shown")
@@ -823,8 +845,9 @@ def test_open_window_reuses_an_existing_app(
         signals of its own since the plus badge left it
         (#1011)."""
 
-        def __init__(self, page: object) -> None:
+        def __init__(self, page: object, bridge: object = None) -> None:
             self.page = page
+            self.bridge = bridge
             self.pages: list[tuple[object, str]] = []
 
         def addTab(self, page: object, label: str) -> None:
@@ -1046,6 +1069,9 @@ def test_open_window_reuses_an_existing_app(
         "Images",
         "Secrets",
     ]
+    # The strip carries the window's bridge (#1177): the page
+    # settle gates each tab change's fade on its refreshes.
+    assert central[0].bridge is started[0]
     # The zoom takes the shell's own hub and the window (#976):
     # the terminals it steps are the shell's, the keys sit on
     # the window.
@@ -1062,6 +1088,11 @@ def test_open_window_reuses_an_existing_app(
     # (#1007), once per open — the reconnect lands a fresh
     # content tree on the same window, not a fresh window.
     assert bars == [windows[0]]
+    # The opening settle arms on the content tree the first
+    # landing set, over the window, before the show (#1177):
+    # the first frame draws the frame over a clear content.
+    assert settles == [(central[0], started[0], windows[0])]
+    assert shown.index("settled") < shown.index("shown")
     # The desktop-scheme pairing takes the same hub and the
     # app itself (#1006): the palette it paints is the
     # application's, and its retarget follows the zoom's
@@ -1090,6 +1121,7 @@ def test_open_window_keeps_a_user_style_choice(
     with the choice preset in the swapped-out environment."""
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("PySide6 is not installed on this host")
+    from msks.client.gui import arrival as arrival_mod
     from msks.client.gui import connection as connection_mod
     from msks.client.gui import menubar as menubar_mod
     from msks.client.gui import scheme as scheme_mod
@@ -1145,7 +1177,7 @@ def test_open_window_keeps_a_user_style_choice(
         signals of its own since the plus badge left it
         (#1011)."""
 
-        def __init__(self, page: object) -> None:
+        def __init__(self, page: object, bridge: object = None) -> None:
             pass
 
         def addTab(self, page: object, label: str) -> None:
@@ -1186,6 +1218,9 @@ def test_open_window_keeps_a_user_style_choice(
         def height(self) -> int:
             return 600
 
+        def centralWidget(self) -> object:
+            return central[-1]
+
         def show(self) -> None:
             pass
 
@@ -1220,6 +1255,19 @@ def test_open_window_keeps_a_user_style_choice(
             pass
 
     monkeypatch.setattr(zoom_mod, "Zoom", FakeZoom)
+
+    class FakeSettle:
+        """The opening settle's stub (#1177): built, never read —
+        the style test reads the environment and the app font
+        only."""
+
+        def __init__(self, content: object, bridge: object = None) -> None:
+            pass
+
+        def after_first_paint(self, window: object) -> None:
+            pass
+
+    monkeypatch.setattr(arrival_mod, "Settle", FakeSettle)
 
     class FakeScheme:
         """The pairing's stub (#1006): built, never read — the

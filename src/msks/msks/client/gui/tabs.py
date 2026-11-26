@@ -20,6 +20,7 @@ while it stands.
 
 from PySide6 import QtCore, QtWidgets
 
+from .arrival import Settle, stagger_on_change
 from .tabstyle import mark_active
 
 #: The first tab's label (#962): the workspace screens' page.
@@ -50,8 +51,9 @@ class MainTabs(QtWidgets.QTabWidget):
     where it stood.
     """
 
-    def __init__(self, workspaces: QtWidgets.QWidget) -> None:
+    def __init__(self, workspaces: QtWidgets.QWidget, bridge=None) -> None:
         super().__init__()
+        self.bridge = bridge
         self.addTab(workspaces, WORKSPACES_LABEL)
         self.tabBar().setFocusPolicy(QtCore.Qt.FocusPolicy.TabFocus)
         # The active tab's mark (#1012): the same accent tint
@@ -59,6 +61,27 @@ class MainTabs(QtWidgets.QTabWidget):
         # levels read the same way.
         mark_active(self.tabBar())
         self.tabBar().installEventFilter(self)
+        # The page settle on every tab change (#1177): the page
+        # shown clears, stands in its final shape behind the
+        # gate — the bridge's refresh landed, the layout quiet
+        # — then shows at once, its visible tables' rows rising
+        # from the first paint. The opening's own settle again,
+        # one gate per page, so a page returned to mid-hold
+        # starts its hold over.
+        self.gates: dict[QtWidgets.QWidget, Settle] = {}
+        self.currentChanged.connect(self.settle)
+        # The rows of the page's visible tables rise on the same
+        # change (#1177), a loop iteration after the show.
+        stagger_on_change(self, self.widget)
+
+    def settle(self, index: int) -> None:
+        """A tab change's settle: the page the strip shows
+        clears and shows once its refresh has landed."""
+        page = self.widget(index)
+        gate = self.gates.get(page)
+        if gate is None:
+            gate = self.gates[page] = Settle(page, self.bridge)
+        gate.hold()
 
     def set_bar_hidden(self, hidden: bool) -> None:
         """Hide the strip's own bar (#1152): the workspace page's

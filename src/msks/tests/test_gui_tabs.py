@@ -8,6 +8,7 @@ fixture shape); the strip's slots are driven directly.
 
 import importlib.util
 import os
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -246,6 +247,65 @@ def daemon_row() -> dict:
         "status": "running",
         "created_at": "2026-01-02T12:00:00",
     }
+
+
+def test_a_tab_change_settles_the_page_behind_the_gate(qt) -> None:
+    """A tab change settles the page it shows (#1177): the page
+    clears behind the gate — held while the strip's bridge has
+    a flight in flight, then through the quiet spell — shows
+    once the flight landed, and the rows of its visible table
+    rise from that first paint. The strip carries the window's
+    bridge for the gate."""
+    from msks.client.gui import arrival
+
+    class Bridge(qt.QtCore.QObject):
+        idle = qt.QtCore.Signal()
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.in_flight = 1
+
+    bridge = Bridge()
+    first = qt.QtWidgets.QWidget()
+    page = qt.QtWidgets.QWidget()
+    table = qt.QtWidgets.QTableWidget(2, 1, page)
+    table.setItem(0, 0, qt.QtWidgets.QTableWidgetItem("a"))
+    table.setItem(1, 0, qt.QtWidgets.QTableWidgetItem("b"))
+    tabs = MainTabs(first, bridge)
+    tabs.addTab(page, "Later")
+    window = window_over(qt, tabs)
+    assert tabs.bridge is bridge
+    assert window.centralWidget() is tabs
+    tabs.setCurrentIndex(1)
+
+    def spin(predicate) -> None:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            qt.app.processEvents()
+            if predicate():
+                return
+            time.sleep(0.005)
+        pytest.fail("the page never settled")
+
+    spin(lambda: tabs.gates[page].on_idle)
+    assert page.graphicsEffect().opacity() == 0.0
+    bridge.in_flight = 0
+    bridge.idle.emit()
+    spin(lambda: page.graphicsEffect() is None)
+    spin(lambda: [s for s in table.findChildren(arrival.RowStagger) if s.live])
+    spin(
+        lambda: (
+            not [s for s in table.findChildren(arrival.RowStagger) if s.live]
+        )
+    )
+    # A page returned to settles again behind the same gate: the
+    # strip keeps one gate per page.
+    gate = tabs.gates[page]
+    tabs.setCurrentIndex(0)
+    tabs.setCurrentIndex(1)
+    assert tabs.gates[page] is gate
+    assert page.graphicsEffect().opacity() == 0.0
+    spin(lambda: page.graphicsEffect() is None)
 
 
 def test_down_falls_back_to_the_page_itself(qt) -> None:

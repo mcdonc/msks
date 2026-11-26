@@ -27,6 +27,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ..bridge import GAVE_UP, became_running, bridge_serving, holder_lost
 from ..data import RestFailure
 from ..frames import listing_frame, row_frame
+from .arrival import stagger_on_change
 from .bridge import Bridge
 from .consent import ConsentPresenter
 from .create import CreateDialog
@@ -235,6 +236,10 @@ class WorkspaceDetail(StatusFlash, QtWidgets.QWidget):
         self.stack.addWidget(self.egress_tab)
         self.stack.addWidget(self.events_tab)
         self.bar.currentChanged.connect(self.stack.setCurrentIndex)
+        # The tab change's settle (#1177): the page the bar shows
+        # gives its visible tables' rows the rise, the main
+        # strip's own.
+        stagger_on_change(self.bar, self.stack.widget)
         self.chrome.insertWidget(1, self.bar)
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(self.chrome)  # the arrow's own row
