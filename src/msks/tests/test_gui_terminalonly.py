@@ -3,12 +3,12 @@ on the chrome row and its key hide the page's controls and ask
 the window's strip to hide its own bar, the corner over the
 shell tabs carries the muted workspace name, the status line's
 seat, and the restore button, the page's margins stand at the
-mode's own — the tab strip the window's first row, the restore
-button's right edge where the toggle's stood (#1189) — and
-every path off the page brings the chrome back. The widgets run
-under the offscreen platform on every host (#945's fixture
-shape); the page's slots are driven directly over the stub
-bridge, the page's own suite's shape.
+mode's own — the top margin zero, the restore button's right
+edge where the toggle's stood (#1189) — and every path off the
+page brings the chrome back. The widgets run under the offscreen
+platform on every host (#945's fixture shape); the page's slots
+are driven directly over the stub bridge, the page's own suite's
+shape.
 """
 
 import importlib.util
@@ -982,9 +982,8 @@ def test_the_restore_button_keeps_the_toggle_s_right_edge(qt) -> None:
     toggle stood at (#1152, #1189): its right edge parks at the
     toggle's old distance from the window's right edge — the frame
     the shell strip keeps inside the page corrected in the page's
-    right margin, either direction — within the few pixels a
-    platform's late tab row keeps, while the vertical place is the
-    tab row's own. The chrome row's own right margin stands in
+    right margin, either direction — while the vertical place is
+    the tab row's own. The chrome row's own right margin stands in
     for the platform's corner inset here, so the correction has
     effect: the page's right margin moves by the distance, and
     deleting the park would leave the button 20 pixels off. A
@@ -992,7 +991,9 @@ def test_the_restore_button_keeps_the_toggle_s_right_edge(qt) -> None:
     the platform settles a pass late still lands there, and a
     wider window keeps the button at its distance from the right
     edge. The leave gives the margins back, and the toggle
-    returns to the distance."""
+    returns to the distance. Under the top-level strip the
+    platform's own corner geometry holds, so the parked edge
+    lands within a few pixels there."""
     page, window, _bridge = make_page(qt)
     mode = page.terminal_only
     # The toggle left of the corner's natural place (#1152): a

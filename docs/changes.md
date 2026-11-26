@@ -61,10 +61,10 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
-- **Terminal-only mode: the tab strip is the window's first row
-  (#1189).** The shell tab strip now sits flush under the window's
-  title bar: the mode stands the workspace page's top margin at
-  zero, and the blank band above the strip is gone. The restore
+- **Terminal-only mode: the page's top margin stands at zero
+  (#1189).** The blank band the mode kept above the shell tab
+  strip is gone. With no egress hold waiting, the strip is the
+  window's first row, flush under the title bar. The restore
   button keeps the right edge the terminal-only button stood at
   and rides the tab row. Leaving the mode by mouse may take one
   move of the pointer, and `Ctrl+Shift+M` still leaves the mode
