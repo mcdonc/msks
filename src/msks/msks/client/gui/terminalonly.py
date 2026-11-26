@@ -2,15 +2,13 @@
 toggle hides the window's chrome and leaves the shell tabs and
 the terminal in the layout of a tabbed terminal app — the tab
 bar on top, the terminal filling the rest. The tab strip is
-the window's first row (#1189): the mode stands the page's top
-margin at zero, and the band the mode once kept above the tab
-row is gone. A corner over the shell tabs holds the way back:
-the workspace's name, painted muted, and the restore button,
-whose right edge parks at the distance the toggle stood from
-the window's right edge — the pointer that clicked the toggle
-then rests below the button, and the mode's own key leaves it
-from anywhere. The desktop's own title bar and the macOS menu
-bar stay.
+the window's first row (#1189, a waiting consent panel's row
+above it): the mode stands the page's top margin at zero, and
+the band the mode once kept above the tab row is gone. A corner
+over the shell tabs holds the way back: the workspace's name,
+painted muted, and the restore button, whose right edge parks
+at the distance the toggle stood from the window's right edge.
+The desktop's own title bar and the macOS menu bar stay.
 
 The mode belongs to the page. It ends at every hide the page
 takes (the listing and the other top-level tabs must never show
@@ -294,10 +292,12 @@ class TerminalOnly(QtCore.QObject):
     itself. The page hands in its own controls at construction
     — the chrome row's widgets, the footer, the Escape shortcut
     — and the mode shows and hides them whole, then stands the
-    page's margins at the mode's own: the top margin at zero,
-    the shell tab strip the window's first row (#1189), and the
-    right one trimmed so the restore button's right edge takes
-    the toggle's place."""
+    page's margins at the mode's own: the top margin at zero —
+    the shell tab strip the window's first row, a waiting
+    consent panel's row above it (#1189) — and the right one
+    moved by the distance between the toggle's old place and
+    the corner's natural one, so the restore button's right
+    edge takes the toggle's place."""
 
     #: True while the mode stands (#1152): the window's own
     #: top-level strip hides through it.
@@ -438,10 +438,10 @@ class TerminalOnly(QtCore.QObject):
         and the Back shortcut hide, the corner stands up with
         the status line's seat, the terminal takes the keyboard,
         the window's strip hears the ask, and the page's margins
-        stand at the mode's own: the top margin zero, the tab
-        strip the window's first row, and the restore button's
-        right edge parked where the toggle's stood. A second ask
-        while the mode stands changes nothing."""
+        stand at the mode's own: the top margin zero and the
+        restore button's right edge parked where the toggle's
+        stood. A second ask while the mode stands changes
+        nothing."""
         if self.on:
             return
         self.on = True
@@ -485,16 +485,21 @@ class TerminalOnly(QtCore.QObject):
     @QtCore.Slot()
     def park_restore(self) -> None:
         """Stand the page's margins at the mode's own (#1152,
-        #1189): the top margin at zero, so the shell tab strip is
-        the window's first row, and the right one trimmed so the
-        restore button's right edge stands where the toggle's
-        stood — right for the frame the shell strip keeps inside
-        the page. The padding consumes no vertical space: the
+        #1189): the top margin at zero — the shell tab strip the
+        window's first row, a waiting consent panel's row above
+        it — and the right one moved so the restore button's
+        right edge stands where the toggle's stood, by the
+        distance between the button's natural place and the
+        toggle's old one: the frame the shell strip keeps inside
+        the page, or any style that parks its corner elsewhere.
+        The move goes either way, trimming the margin or growing
+        it, and one past the page's own right margin stops at
+        zero. The correction consumes no vertical space: the
         band the mode once kept over the tab row, holding the
         button under the pointer, is gone (#1189). The hides
         above unsettled two layouts — the page's own and the
         strip's, whose bar the ask took away — so they settle
-        first. The trim always builds on the margins the page
+        first. The move always builds on the margins the page
         wore before the mode, so a re-park never compounds. The
         measurement assumes a window that stands still through
         the settle: a window its own minimum width grows under

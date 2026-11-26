@@ -234,14 +234,16 @@ window's top-level tab strip. `Ctrl+Shift+M` does the same from
 the keyboard, from a terminal too. The window then shows the
 shell tabs and the terminal alone, in the layout of a tabbed
 terminal app: the tab row on top, the terminal filling the rest.
-The tab row is the window's first row, flush under the title
-bar. The workspace's name shows in gray at the tab row's right
-end, and the restore button follows it. The restore button
-keeps the right edge the terminal-only button stood at, and it
-rides the tab row. The pointer that clicked the terminal-only
-button does not rest on it. Leaving the mode by mouse takes one
-move of the pointer, and `Ctrl+Shift+M` leaves the mode from
-anywhere on the page.
+The mode sets the page's top margin to zero. With no egress hold
+waiting, the tab row is then the window's first row, flush under
+the title bar. The workspace's name shows in gray at the tab
+row's right end, and the restore button follows it. The restore
+button keeps the right edge the terminal-only button stood at,
+and it rides the tab row. Where the page's top row stood taller
+than the tab row, the pointer rests on the terminal, below the
+restore button. Leaving the mode by mouse then takes one move of
+the pointer. `Ctrl+Shift+M` leaves the mode from anywhere on the
+page.
 
 The mode shows the Shells tab when another page tab was current.
 The shell tabs, the **+** tab, the rename, the close buttons, and

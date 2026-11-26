@@ -981,22 +981,34 @@ def test_the_restore_button_keeps_the_toggle_s_right_edge(qt) -> None:
     """The corner's restore button keeps the horizontal place the
     toggle stood at (#1152, #1189): its right edge parks at the
     toggle's old distance from the window's right edge — the frame
-    the shell strip keeps inside the page trimmed from the page's
-    right margin — within the few pixels a platform's late tab row
-    keeps, while the vertical place is the tab row's own. A page
-    moved or resized under the mode re-parks it, so a layout the
-    platform settles a pass late still lands there, and a wider
-    window keeps the button at its distance from the right edge.
-    The leave gives the margins back, and the toggle returns to the
-    distance."""
+    the shell strip keeps inside the page corrected in the page's
+    right margin, either direction — within the few pixels a
+    platform's late tab row keeps, while the vertical place is the
+    tab row's own. The chrome row's own right margin stands in
+    for the platform's corner inset here, so the correction has
+    effect: the page's right margin moves by the distance, and
+    deleting the park would leave the button 20 pixels off. A
+    page moved or resized under the mode re-parks it, so a layout
+    the platform settles a pass late still lands there, and a
+    wider window keeps the button at its distance from the right
+    edge. The leave gives the margins back, and the toggle
+    returns to the distance."""
     page, window, _bridge = make_page(qt)
     mode = page.terminal_only
+    # The toggle left of the corner's natural place (#1152): a
+    # right margin on the chrome row, standing in for the corner
+    # inset a platform's style ships — the corner sits flush
+    # here, and a park with nothing to correct proves nothing.
+    page.chrome.setContentsMargins(0, 0, 20, 0)
+    settle(qt)
     margins = qt.QtCore.QMargins(page.layout().contentsMargins())
     distance = from_right(window, mode.toggle)
+    assert distance == margins.right() + 20
     enter(page)
     settle(qt)
     parked = window_rect(mode.restore)
-    assert abs(from_right(window, mode.restore) - distance) <= 3
+    assert from_right(window, mode.restore) == distance
+    assert page.layout().contentsMargins().right() == distance
     # The page's own move or resize re-parks (#1152): the event
     # schedules the check for the loop's next pass, and the
     # shell strip's and the corner's own do the same.
@@ -1019,7 +1031,7 @@ def test_the_restore_button_keeps_the_toggle_s_right_edge(qt) -> None:
     # the right edge the toggle kept.
     window.resize(window.width() + 240, window.height())
     settle(qt)
-    assert abs(from_right(window, mode.restore) - distance) <= 3
+    assert from_right(window, mode.restore) == distance
     mode.restore.click()
     settle(qt)
     assert page.layout().contentsMargins() == margins
@@ -1042,6 +1054,41 @@ def test_the_restore_button_keeps_the_toggle_s_right_edge(qt) -> None:
     assert page.layout().contentsMargins() == margins
     assert mode.spot is None
     assert from_right(window, mode.toggle) == distance
+
+
+def test_a_park_past_the_page_s_right_edge_stops_at_zero(qt) -> None:
+    """The right correction is a layout margin, and a margin
+    stops at zero (#1152, #1189): a corner whose natural place
+    stands left of the toggle's by more than the page's own right
+    margin parks with the margin at the floor and the button at
+    the corner's own place, and the re-park holds it there — the
+    correction never pushes the page's contents past the window's
+    edge. The leave gives the page its own margins back."""
+    page, window, _bridge = make_page(qt)
+    mode = page.terminal_only
+    # The corner's natural place, pushed left of the toggle's by
+    # more than the page's right margin (#1152): a right margin
+    # on the Shells tab's own layout, the rig an inset style
+    # would give the corner — no platform's style ships one this
+    # deep, and the floor is the mode's own guard.
+    page.shells_tab.layout().setContentsMargins(0, 0, 20, 0)
+    settle(qt)
+    margins = qt.QtCore.QMargins(page.layout().contentsMargins())
+    distance = from_right(window, mode.toggle)
+    enter(page)
+    settle(qt)
+    parked = from_right(window, mode.restore)
+    assert page.layout().contentsMargins().right() == 0
+    assert parked > distance
+    # The re-park holds the floor: the target stands already, and
+    # the correction does not oscillate around it.
+    mode.eventFilter(page, qt.QtCore.QEvent(qt.QtCore.QEvent.Type.Move))
+    settle(qt)
+    assert page.layout().contentsMargins().right() == 0
+    assert from_right(window, mode.restore) == parked
+    mode.leave()
+    settle(qt)
+    assert page.layout().contentsMargins() == margins
 
 
 def test_the_name_follows_the_stand_in_and_the_row(qt) -> None:
