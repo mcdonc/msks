@@ -74,6 +74,19 @@ tagged `vX.Y.Z`.
   leave the key unhandled on macOS, so the tables answer it
   themselves.
 
+### Security
+
+- **The `virtiofsd-as` helper resets the signal handlers and the
+  signal mask before it execs virtiofsd (#1176).** The helper
+  ends a share's virtiofsd when the daemon dies, and that signal
+  is `SIGTERM`. An ignored disposition and a blocked mask both
+  survive an exec, so a daemon that ignored or blocked `SIGTERM`
+  in the thread that spawned the share left every such share
+  running after a daemon restart. The share now dies with the
+  daemon whatever the daemon's signal state. The CI compile
+  check and the nix build also run gcc's static analyzer over
+  the helper at every push.
+
 ## \[v0.10.2] - 2026-11-25
 
 ### Added

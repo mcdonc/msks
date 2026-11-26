@@ -590,7 +590,19 @@ class FsDaemonMixin:
         in the child; the helper lane's binary clears the
         close-on-exec bit itself on the way in). *missing* is
         the named refusal an exec the OS refuses maps to — the
-        lane's own binary, not a generic one."""
+        lane's own binary, not a generic one.
+
+        This spawn stays on the event loop thread (#1176). The
+        helper lane arms the share's parent-death signal, and
+        the kernel delivers it when the parent *thread* exits,
+        not the process: asyncio forks here on the loop thread,
+        which lives as long as the daemon, so the signal means
+        the daemon's death. A spawn moved to a worker thread
+        (``to_thread``, an executor) would arm the share's death
+        on that worker's exit instead. The helper resets the
+        signal dispositions and the mask before its own exec, so
+        the daemon's signal state (main's SIGTERM handler, a
+        mask some library blocked) never reaches the share."""
         log_file = open(log_path, "wb")
         try:
             return await asyncio.create_subprocess_exec(
