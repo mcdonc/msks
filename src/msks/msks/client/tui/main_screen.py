@@ -15,7 +15,9 @@ every frame that moves the listing, and a daemon at rest reads
 nothing periodic from an attached idle client — the standing
 interval the listing kept is gone. The host's own facts (the
 shell counts, the status line's paint) stay on local timers:
-they read no daemon state.
+they read no daemon state. The bridge frames the connection
+lands cross to the re-hold watch, :mod:`msks.client.tui.rehold`'s
+mixin over the screen (#1127).
 
 Spatial navigation: arrows walk the rows in reading order, the
 page keys act on the focused row, and ``q`` or Escape quits the
@@ -33,7 +35,6 @@ from textual.events import Click, Resize
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Footer, Input, ListItem, ListView, Static
 
-from ..bridge import GAVE_UP, became_running, bridge_serving, holder_lost
 from ..data import RestFailure
 from ..frames import decode_frame, listing_frame
 from ..sshsessions import count_sessions
@@ -56,6 +57,7 @@ from .forms import CreateScreen
 from .help import HelpKeys
 from .importer import ImagesScreen
 from .link import CONNECTED, AuditLink
+from .rehold import ReholdWatch
 from .rows import (
     DEFAULT_SORT,
     LIST_COLUMNS,
@@ -99,6 +101,17 @@ async def guarded_flash(app, label: str, work):
 #: session records on disk), so the timer keeps its cadence
 #: whatever the events socket does.
 LOCAL_WATCH_S = 1.0
+
+#: The worker group of the listing's two flights (#1179): the rows
+#: read and the standing re-sort. A group of their own keeps the
+#: power keys' exclusive workers — the screen's default group —
+#: from cancelling a flight in progress. An exclusive worker
+#: cancels every worker its node started in its group, and a
+#: cancelled flight lands no rows and serves no armed poke: one
+#: cancelled inside the swap strands the tree (#776's shape), and
+#: one cancelled before its first step leaves the in-flight mark
+#: standing, since the coroutine's ``finally`` never ran.
+LISTING_FLIGHTS = "listing"
 
 
 class ListingLink(AuditLink):
@@ -196,7 +209,7 @@ class ColumnsHeader(Static):
         self.pick(event.x - gutter)
 
 
-class MainScreen(HelpKeys, Screen):
+class MainScreen(ReholdWatch, HelpKeys, Screen):
     """The tree's root (#309): every workspace one row over a
     two-line detail strip at the listing's bottom (#849) that
     carries the focused row's quick facts; create, start, stop,
@@ -255,6 +268,12 @@ class MainScreen(HelpKeys, Screen):
         # (#1019): the landing flight serves it.
         self.rows_loading = False
         self.rows_pending = False
+        # The row a swap returns to (#1179): the workspace id the
+        # fresh list highlights once it mounts, standing for it
+        # while the old list is gone and the fresh one is not —
+        # a key pressed in that window reaches the row. None
+        # outside a swap.
+        self.swap_focus: str | None = None
         # The detail strip's storage cache (#849): the last
         # capacity report's per-workspace root-plus-home cost,
         # refreshed with the listing — a selection move
@@ -318,7 +337,7 @@ class MainScreen(HelpKeys, Screen):
             self.rows_pending = True
             return
         self.rows_loading = True
-        self.run_worker(self.resort_standing_rows())
+        self.run_worker(self.resort_standing_rows(), group=LISTING_FLIGHTS)
 
     async def resort_standing_rows(self) -> None:
         try:
@@ -349,77 +368,11 @@ class MainScreen(HelpKeys, Screen):
         for a scripted one."""
         return ListingLink(self.refresh_rows, self.bridge_frame)
 
-    # -- the bridge re-hold watch (#1127) ----------------------------
-
-    def bridge_frame(self, msg: dict) -> None:
-        """One bridge-relevant frame to the app's re-hold watch
-        (#1127): a listener that answers a spawn this session
-        made says the recovery once, and a failure signal (the
-        holder died, or a running start left none) goes to the
-        policy for its ruling — a weigh runs the rows read, and
-        the give-up line names the remedy the row's cause
-        already carries."""
-        serving = bridge_serving(msg)
-        if serving is not None:
-            self.note_reheld(serving)
-            return
-        lost = holder_lost(msg) or became_running(msg)
-        if lost is not None:
-            self.weigh_bridge_signal(lost)
-
-    def note_reheld(self, workspace_id: str) -> None:
-        """A listener came up (#1127): the one that answers a
-        spawn this session made says the recovery once, on the
-        surface the operator stands on."""
-        if self.app.data.reholder.serving(workspace_id):
-            label = flash_safe(self.bridge_label(workspace_id))
-            self.app.flash_standing(f"bridge re-held — {label}")
-
-    def weigh_bridge_signal(self, workspace_id: str) -> None:
-        """One failure signal's ruling (#1127), landed: the
-        shared path decides the give-up line or the weigh."""
-        ruling = self.app.data.reholder.signal(workspace_id)
-        self.land_ruling(workspace_id, ruling)
-
-    def land_ruling(self, workspace_id: str, ruling: str | None) -> None:
-        """One ruling's effect (#1127): the give-up line names the
-        remedy the row's cause already carries, and a weigh runs
-        the rows read that gates the spawn."""
-        if ruling is None:
-            return
-        if ruling == GAVE_UP:
-            label = flash_safe(self.bridge_label(workspace_id))
-            self.app.flash_standing(
-                f"bridge not re-held — {label}; "
-                "the row's cause names 'msks proxy hold'"
-            )
-            return
-        self.run_worker(self.weigh_rehold(workspace_id), group="rehold")
-
-    def watch_rehold(self) -> None:
-        """The re-hold deferrals' drain (#1127): the failure
-        frames are edge-triggered, so a signal the window
-        swallowed waits as a mark — the tick re-rules each one
-        whose window closed, exactly as a fresh signal would. A
-        screen without its link decides nothing: the signals
-        land on the connection it would hold."""
-        if self.link is None:
-            return
-        for workspace_id, ruling in self.app.data.reholder.take_due():
-            self.land_ruling(workspace_id, ruling)
-
-    def bridge_label(self, workspace_id: str) -> str:
-        """The workspace's label for a re-hold line: the standing
-        row's, the id alone for one the listing does not hold."""
-        row = next(
-            (row for row in self.rows if row["id"] == workspace_id), None
-        )
-        return workspace_label(row) if row is not None else workspace_id
-
     async def weigh_rehold(self, workspace_id: str) -> None:
-        """One weighed signal's rows read (#1127): the refreshed
-        rows gate the spawn — a listening row means a holder
-        stands and a failed row with another cause means a
+        """One weighed signal's rows read (#1127), the watch's
+        daemon call kept beside the screen's other reads: the
+        refreshed rows gate the spawn — a listening row means a
+        holder stands and a failed row with another cause means a
         holder cannot serve it. A refusal decides nothing: the
         window stands, the row's cause stays visible, and the
         next signal weighs again."""
@@ -518,17 +471,24 @@ class MainScreen(HelpKeys, Screen):
         mark skips instead; a skipped poke arms the landing flight
         (#1019 — the standing interval that once served the skip
         is gone), so a frame that lands mid-flight still gets its
-        read.
+        read. The flight runs in :data:`LISTING_FLIGHTS`, out of
+        the power keys' exclusive reach (#1179).
         """
         if self.rows_loading:
             self.rows_pending = True
             return
         self.rows_loading = True
-        self.run_worker(self.load_rows)
+        self.run_worker(self.load_rows, group=LISTING_FLIGHTS)
 
     def serve_pending(self) -> None:
         """The poke a flight skipped (#1019): served the moment no
-        flight stands — one more read, no frame lost to a skip."""
+        flight stands — one more read, no frame lost to a skip. No
+        await stands between a flight's ``finally`` and this call,
+        so the mark it reads is that flight's own and no other
+        flight can take the flag in between (#1179 ruled the
+        shared flag out); an arm left standing is a cancelled
+        flight's, and the ``[tui-wait]`` line's two marks say
+        so."""
         if self.rows_pending and not self.rows_loading:
             self.rows_pending = False
             self.refresh_rows()
@@ -669,7 +629,19 @@ class MainScreen(HelpKeys, Screen):
         equality with the daemon's list would differ by order
         alone and never skip), so the standing refresh repaints
         nothing while the daemon serves the same rows, and focus
-        and scroll never blip on the interval."""
+        and scroll never blip on the interval.
+
+        The swap's window stays answerable (#1179): between the old
+        list's removal and the fresh one's focus no widget holds
+        the focus, and a key pressed there reaches the screen's
+        bindings with no row to act on. :attr:`swap_focus` stands
+        in for the row the fresh list will highlight — the focused
+        row's when the fresh rows keep it, else the top — from the
+        removal to the focus, so :meth:`focused_row` answers a
+        press in the window: ahead of the list in the window's
+        head (no list answers) and ahead of the list's own top-row
+        highlight in its tail (the fresh list registered, its kept
+        row not yet highlighted)."""
         ordered = sort_rows(rows, self.sort)
         if ordered == self.rows and self.rows_widget() is not None:
             self.sync_status()
@@ -681,14 +653,29 @@ class MainScreen(HelpKeys, Screen):
         focused = focused_attr(old, "row_key")
         items = [self.row_item(row) for row in self.rows]
         fresh = ListView(*items, id="rows")
-        if old is not None:
-            await old.remove()  # frees the id before the fresh list mounts
-        await listing.mount(fresh, before=self.query_one("#detail", Static))
-        fresh.focus()
-        focus_attr(fresh, "row_key", focused)
+        self.swap_focus = self.swap_target(focused, items)
+        try:
+            if old is not None:
+                await old.remove()  # frees the id before the fresh list mounts
+            await listing.mount(
+                fresh, before=self.query_one("#detail", Static)
+            )
+            fresh.focus()
+            focus_attr(fresh, "row_key", focused)
+        finally:
+            self.swap_focus = None
         self.paint_rows()  # the bold cue lands on the row focus kept
         self.sync_status()
         self.paint_detail()
+
+    def swap_target(self, focused, items: list[ListItem]) -> str | None:
+        """The workspace id the fresh list highlights once it
+        mounts (#1179): the focused row's when a fresh item carries
+        its key, else the top item's — :func:`focus_attr`'s rule,
+        read ahead of the mount. None for an empty listing."""
+        keys = [item.row_key for item in items]
+        kept = focused if focused in keys else (keys[0] if keys else None)
+        return None if kept is None else kept[1]
 
     def row_item(self, row: dict) -> ListItem:
         """One listing row at the terminal's column widths, tagged
@@ -794,7 +781,11 @@ class MainScreen(HelpKeys, Screen):
         """The detail strip (#849): the focused row's quick facts
         at the listing's bottom, painted from the standing rows
         and the storage cache. The strip hides while no row stands
-        focused — the empty state owns that space. A screen going
+        focused — the empty state owns that space — and starts
+        hidden (#1179): the status line paints the empty state on
+        its own timer and on a refused refresh, both before any
+        paint here, and a strip showing beside ``No workspaces``
+        was a blank two-line box. A screen going
         away under the timer or a worker leaves the query empty —
         teardown noise, not a crash."""
         try:
@@ -838,8 +829,17 @@ class MainScreen(HelpKeys, Screen):
 
     def focused_row(self) -> dict | None:
         """The focused listing row's dict, or None when nothing is
-        focused (an empty listing, or a rebuild's swap window)."""
-        ws_id = focused_attr(self.rows_widget(), "workspace_id")
+        focused (an empty listing). A rebuild's swap window answers
+        the row the swap returns to (#1179): the old list is gone
+        and the fresh one not yet focused, and the press that
+        lands there still has a row to act on. The stand-in answers
+        before the list does: in the window's tail the fresh list
+        stands registered with the top row highlighted — its mount
+        event's doing — while the kept row is still a call away,
+        and the list's own answer there is not the final one."""
+        ws_id = self.swap_focus
+        if ws_id is None:
+            ws_id = focused_attr(self.rows_widget(), "workspace_id")
         if ws_id is None:
             return None
         return next((row for row in self.rows if row["id"] == ws_id), None)

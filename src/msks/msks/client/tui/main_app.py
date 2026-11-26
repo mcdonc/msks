@@ -125,6 +125,9 @@ class MsksTuiApp(App):
     # being cut off (the consent decider app made the same call).
     ENABLE_COMMAND_PALETTE = False
 
+    # #detail starts hidden (#1179): paint_detail shows it with the
+    # first focused row, so the empty state never stands over a
+    # blank strip.
     CSS = """
     Screen { layout: vertical; }
     #status { height: 1; padding: 0 1; background: $panel;
@@ -135,7 +138,7 @@ class MsksTuiApp(App):
     #rows ListItem { height: 1; padding: 0 1; }
     #rows ListItem Static { text-wrap: nowrap; }
     #empty { padding: 1 2; color: $text-muted; }
-    #detail { height: 2; padding: 0 1; background: $panel;
+    #detail { display: none; height: 2; padding: 0 1; background: $panel;
               color: $text; text-wrap: nowrap;
               text-overflow: ellipsis; }
     #header { height: 1; padding: 0 1; background: $panel;

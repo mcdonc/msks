@@ -126,6 +126,19 @@ tagged `vX.Y.Z`.
   such share running after a daemon restart. The share now dies
   with the daemon whatever the daemon's signal state.
 
+- **The TUI listing keeps its refresh across the power keys
+  (#1179).** `s` or `S` pressed while a listing refresh was in
+  flight cancelled that refresh, so the listing could keep the
+  old status until the next event and the next key skipped
+  against it. The refresh now runs apart from the power keys'
+  workers. A key pressed while the list rebuilds acts on the row
+  the listing returns to.
+
+- **The TUI's detail strip stays hidden until a row has focus
+  (#1179).** The strip used to show as a blank two-line box under
+  `No workspaces — c creates one.` while the listing was empty or
+  still loading. It now appears when the first row has focus.
+
 ## \[v0.10.2] - 2026-11-25
 
 ### Added
