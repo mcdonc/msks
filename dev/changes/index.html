@@ -2529,11 +2529,23 @@ tagged <code>vX.Y.Z</code>.</p>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Enter in the GUI's lists on macOS (#1161).</strong> Enter on the
+<li>
+<p><strong>The version-skew notice gives the Linux remedy on Linux (#1174).</strong>
+  A client newer than the daemon used to send every operator to
+  <code>msks-setup-macos-host</code>, including a Linux host where the daemon
+  runs on the host itself. On Linux the notice now says to restart
+  the daemon (<code>sudo systemctl restart msksd</code>) to pick up an
+  installed newer release, or to rerun <code>msks-setup-debian-host</code> or
+  <code>msks-setup-fedora-host</code> when the host still has the old one. On
+  macOS it keeps the Mac tool. See <a href="../cli/#the-cli-client">docs/cli.md</a>.</p>
+</li>
+<li>
+<p><strong>Enter in the GUI's lists on macOS (#1161).</strong> Enter on the
   selected workspace now opens its page, and Enter on a
   selected catalog image opens its record. Qt's own item views
   leave the key unhandled on macOS, so the tables answer it
-  themselves.</li>
+  themselves.</p>
+</li>
 </ul>
 <h2 id="v0102-2026-11-25">[v0.10.2] - 2026-11-25<a class="headerlink" href="#v0102-2026-11-25" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>

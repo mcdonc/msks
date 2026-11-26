@@ -1718,10 +1718,20 @@ be run from different installation directories, so daemon and client versions
 may not be in sync, which may cause problems. To cope with this, every command
 makes one best-effort <code>/health</code> roundtrip by the client to the daemon to do a
 version compatibility check. If the daemon is a different version than the
-client, the invocation prints one stderr line giving both and a remedy. This is
-most usually encountered on MacOS, because the daemon runs in a Lima VM
-separate from the client. If you see this on MacOS, rerun
-<code>msks-setup-macos-host</code> on the Mac to update the daemon in the Lima VM.</p>
+client, the invocation prints one stderr line giving both and a remedy. The
+remedy follows the host the client runs on.</p>
+<p>On macOS the daemon lives in a Lima VM separate from the client. Rerun
+<code>msks-setup-macos-host</code> on the Mac to update the daemon in the VM.</p>
+<p>On Linux the daemon usually runs on the host itself, and the client and the
+daemon share one install. There the usual skew is a daemon that kept running
+through an upgrade. The setup script refreshes the install, and it restarts a
+running daemon only when the unit file changed. An upgrade leaves the unit
+file as it was. Restart the daemon with <code>sudo systemctl restart msksd</code> to
+pick up the installed release. A restart stops running workspaces first, and
+each starts again with <code>msks start</code>. If the host still has the old release,
+rerun the host setup script (<code>msks-setup-debian-host</code> or
+<code>msks-setup-fedora-host</code>) on the daemon's host. A NixOS module host updates
+through its configuration, and the dev daemon through its tree.</p>
 <h2 id="machine-readable-output">Machine-readable output<a class="headerlink" href="#machine-readable-output" title="Permanent link">&para;</a></h2>
 <p>Every command that prints a report or a confirmation takes <code>--json</code>.
 The flag switches the command's stdout to one JSON document and its
