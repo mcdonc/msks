@@ -267,10 +267,11 @@ needs no token file: members of the group connect with no config.
 
 The file holds paths and addresses, never a secret: `token_file` and
 `identity_file` point at the files that hold them. Write those paths as
-strings. The module refuses a Nix path value in this layer, because a
-path value (`./token`) copies the file into the world-readable store.
-The client refuses an unknown key at load, and the error gives the key
-and the valid ones.
+plain strings, as in the example. The module refuses a Nix path in this
+layer, as a path value (`./token`) or inside a string interpolation
+(`"${./token}"`). Both spellings copy the file into the world-readable
+store. The client refuses an unknown key at load, and the error gives
+the key and the valid ones.
 
 A user with a config of their own exports `MSKSC_CONFIG_DIR` in their
 shell, and a host that needs another value defines it in

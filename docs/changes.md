@@ -82,9 +82,7 @@ tagged `vX.Y.Z`.
 - **The NixOS module's `services.msksd.settings` is renamed to
   `services.msksd.server.settings` (#801).** The old spelling still
   evaluates with a rename warning, and its scalar values read the
-  same. Under the module a bare `msks` now reads
-  `/etc/msks/msks.yaml` instead of `~/.config/msks/msks.yaml`. A user
-  with a config of their own exports `MSKSC_CONFIG_DIR` to keep it.
+  same.
 
 - **The workspaces list under a heading, the picker in the
   bottom bar (#1177).** The list's table sits under a
@@ -127,6 +125,15 @@ tagged `vX.Y.Z`.
   without enabling still installs nothing. The installation chapter
   gained a [NixOS hosts](installation.md#nixos-hosts) section
   documenting the module.
+
+### Breaking
+
+- **Under the NixOS module, a bare `msks` reads `/etc/msks/msks.yaml`
+  (#801).** The module sets `MSKSC_CONFIG_DIR=/etc/msks` for every
+  user, so `~/.config/msks/msks.yaml` is no longer read by default. A
+  user with a config of their own exports `MSKSC_CONFIG_DIR` in their
+  shell to keep it. A host that needs another value sets it in
+  `environment.sessionVariables`.
 
 ### Fixed
 

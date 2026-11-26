@@ -146,12 +146,35 @@
       };
       # The renamed option (#801): services.msksd.settings, the
       # v0.10.x spelling, still flows into server.settings — the
-      # eval prints the rename warning, and the file carries the key.
+      # file carries the key, and the eval records the rename
+      # warning (config.warnings; nixos-rebuild prints it).
       renamed = evalConfig {
         enable = true;
         egress.uplink = "eno4";
         settings.storage_warn_pct = 90;
       };
+      renameWarned = pkgs.lib.any (
+        w: pkgs.lib.hasInfix "has been renamed to" w
+      ) renamed.warnings;
+      # The two refusals (#801) as negative evals: a false assertion
+      # is a value here, not a throw, so the check reads the
+      # assertion lists directly — a module-generated key under the
+      # old name, and a path value in the client layer — and forces
+      # each refused message, so a message that throws fails here.
+      refused = pkgs.lib.any (a: !a.assertion && builtins.isString a.message) (
+        (evalConfig {
+          enable = true;
+          egress.uplink = "eno4";
+          settings.port = 1;
+        }).assertions
+      );
+      pathRefused = pkgs.lib.any (a: !a.assertion && builtins.isString a.message) (
+        (evalConfig {
+          enable = true;
+          egress.uplink = "eno4";
+          client.settings.token_file = ./flake.nix;
+        }).assertions
+      );
       # A null layer (#801): the yaml type admits null, and the
       # module reads it as an unset layer — the generated keys stay,
       # and the client file still renders.
@@ -225,6 +248,9 @@
             cfgDirInert = inert.environment.sessionVariables.MSKSC_CONFIG_DIR or "";
             execRenamed = renamed.systemd.services.msksd.serviceConfig.ExecStart;
             execNulled = nulled.systemd.services.msksd.serviceConfig.ExecStart;
+            renameWarned = pkgs.lib.boolToString renameWarned;
+            oldNameRefused = pkgs.lib.boolToString refused;
+            pathRefused = pkgs.lib.boolToString pathRefused;
             runtimeDir = on.systemd.services.msksd.serviceConfig.RuntimeDirectory or "";
             socketRuntimeDir =
               socketed.systemd.services.msksd.serviceConfig.RuntimeDirectory or "";
@@ -408,10 +434,25 @@
               echo "fail: the inert branch contributed MSKSC_CONFIG_DIR"
               exit 1
             }
-            # The renamed option still flows into the server file.
+            # The renamed option still flows into the server file,
+            # with the warning, and its generated-key refusal holds
+            # under the old name; a path value in the client layer
+            # refuses.
             cfg_renamed=''${execRenamed##* --config }
             grep -qxF 'storage_warn_pct: 90' "$cfg_renamed" || {
               echo "fail: the renamed services.msksd.settings never reached msksd.yaml"
+              exit 1
+            }
+            test "$renameWarned" = "true" || {
+              echo "fail: the renamed services.msksd.settings raised no rename warning"
+              exit 1
+            }
+            test "$oldNameRefused" = "true" || {
+              echo "fail: a module-generated key under the renamed services.msksd.settings was not refused"
+              exit 1
+            }
+            test "$pathRefused" = "true" || {
+              echo "fail: a Nix path value in client.settings was not refused"
               exit 1
             }
             # A null layer leaves the generated keys and the client
