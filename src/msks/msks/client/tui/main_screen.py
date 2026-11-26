@@ -690,7 +690,8 @@ class MainScreen(ReholdWatch, HelpKeys, Screen):
         )
         item.workspace_id = row["id"]
         item.row_key = ("workspace", row["id"])
-        item.add_class(status_class(row["status"]))
+        item.status_class = status_class(row["status"])
+        item.add_class(item.status_class)
         return item
 
     def paint_rows(self) -> None:
@@ -710,7 +711,14 @@ class MainScreen(ReholdWatch, HelpKeys, Screen):
 
     def paint_row(self, child, row: dict, focused: bool) -> None:
         """Repaint one standing row; teardown may have unmounted
-        its Static under the walk — noise, not a crash."""
+        its Static under the walk — noise, not a crash. The status
+        class follows the row (#1187): a power reply moves the
+        status with no swap, and the mount-time class goes stale."""
+        fresh = status_class(row["status"])
+        if fresh != child.status_class:
+            child.remove_class(child.status_class)
+            child.add_class(fresh)
+            child.status_class = fresh
         try:
             child.query_one(Static).update(
                 row_content(
@@ -887,7 +895,8 @@ class MainScreen(ReholdWatch, HelpKeys, Screen):
         workspace page's dimmed row carries (#470 L5) — the
         refusal costs no round-trip and reads identically on both
         screens. A refused start opens the failure panel (#1139);
-        a refused stop flashes."""
+        a refused stop flashes. The reply's status lands on the
+        standing row before the refresh flies (#1187)."""
         row = self.focused_row()
         if row is None:
             self.app.flash("no workspace focused")
@@ -905,8 +914,24 @@ class MainScreen(ReholdWatch, HelpKeys, Screen):
             self.app.flash,
         )
         if reply is not None:
+            self.land_power_reply(row["id"], reply["status"])
             self.app.flash(f"{escape(workspace_label(row))} {reply['status']}")
             self.refresh_rows()
+
+    def land_power_reply(self, ws_id: str, status: str) -> None:
+        """Write a power reply's status onto the standing row and
+        repaint the rows and the detail strip from it (#1187): the
+        row used to keep the prior status until the re-read landed,
+        and the opposite key pressed in that window skipped against
+        it. Found by id at reply time — a refresh may have swapped
+        the rows in while the call flew. The refresh still follows:
+        the reply carries the status alone (#912)."""
+        standing = next((row for row in self.rows if row["id"] == ws_id), None)
+        if standing is None:
+            return
+        standing["status"] = status
+        self.paint_rows()
+        self.paint_detail()
 
     def action_remove(self) -> None:
         """Ask, then delete the focused workspace and its data."""

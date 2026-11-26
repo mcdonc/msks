@@ -10276,14 +10276,15 @@ async def test_a_listing_wait_timeout_names_its_in_flight_marks(
 async def test_a_power_key_keeps_the_earlier_keys_refresh_alive(
     monkeypatch,
 ) -> None:
-    """#1179 (the third flake, reproduced under load): ``s`` lands
-    its start and refreshes the listing; ``S`` pressed while that
-    re-read stands used to cancel it — the exclusive worker's
-    group — so the row kept reading ``stopped``, every later ``S``
-    skipped client-side against the stale row, and the stop never
-    reached the daemon. The re-read lands despite the press: the
-    skip the stale row earns stands only until it does, and the
-    next ``S`` reaches the daemon."""
+    """#1179 (the third flake, reproduced under load) over #1187:
+    ``s`` lands its start and refreshes the listing; ``S``
+    pressed while that re-read stands used to cancel it (#1179),
+    and once the flight survived, the standing row still read
+    ``stopped`` until it landed, so the key skipped client-side
+    against the stale row and the stop never reached the daemon
+    (#1187). The reply's status lands on the standing row before
+    the refresh flies: the row paints ``running`` while the flight
+    stands, and ``S`` reads it and reaches the daemon."""
     gate = asyncio.Event()
     hold = [0]
     fetches = 0
@@ -10308,19 +10309,112 @@ async def test_a_power_key_keeps_the_earlier_keys_refresh_alive(
         await wait_for(lambda: data.calls == [("start", WS)])
         await wait_for(lambda: fetches == hold[0])  # inside its fetch
         assert screen.rows_loading
-        # S lands while the re-read stands: the standing row still
-        # reads stopped, so the verb skips client-side — and the
-        # flight keeps standing.
-        await pilot.press("S")
-        await wait_for(
-            lambda: "Stop skipped: workspace is stopped" in status_text(app)
-        )
-        assert screen.rows_loading
-        gate.set()
-        await wait_for(lambda: screen.focused_row()["status"] == "running")
+        # The reply's status stands on the row while the re-read
+        # is still in flight: the painted cell reads it, the
+        # item's status class follows it, and the standing row
+        # answers it.
+        await wait_for(lambda: "running" in row_text(app, 0))
+        assert screen.focused_row()["status"] == "running"
+        item = screen.rows_widget().children[0]
+        assert "running" in item.classes and "stopped" not in item.classes
+        # S lands while the re-read stands: the row reads the
+        # reply's running, so the verb reaches the daemon — and
+        # the flight keeps standing, the stop's own poke armed
+        # behind it.
         await pilot.press("S")
         await wait_for(lambda: ("stop", WS) in data.calls)
         await wait_for(lambda: "alpha stopped" in status_text(app))
+        assert "skipped" not in status_text(app)
+        assert screen.rows_loading
+        assert screen.rows_pending
+        assert "stopped" in item.classes and "running" not in item.classes
+        # The gated flight lands the daemon's row behind the
+        # reply's write, the armed poke flies after it, and the
+        # listing settles quiet.
+        gate.set()
+        await startup_quiet(pilot, app)
+        assert fetches >= hold[0] + 1  # the armed poke served
+        assert list_children(app) == 1
+        assert data.calls == [("start", WS), ("stop", WS)]
+
+
+async def test_the_opposite_power_key_reads_the_stops_reply(
+    monkeypatch,
+) -> None:
+    """#1187, the other direction: ``S`` lands its stop on a
+    running row and refreshes; ``s`` pressed while that re-read
+    stands reads the reply's ``stopped`` and reaches the daemon,
+    where it used to skip against the row's stale ``running``."""
+    gate = asyncio.Event()
+    hold = [0]
+    fetches = 0
+
+    class GatedData(FakeData):
+        async def workspaces(self) -> list[dict]:
+            nonlocal fetches
+            fetches += 1
+            if hold[0] and fetches == hold[0]:
+                await gate.wait()
+            return await super().workspaces()
+
+    data = GatedData([row(status="running")])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: listing_settled(app))
+        await startup_quiet(pilot, app)
+        screen = app.screen
+        hold[0] = fetches + 1  # the stop's own refresh
+        await pilot.press("S")
+        await wait_for(lambda: data.calls == [("stop", WS)])
+        await wait_for(lambda: fetches == hold[0])
+        assert screen.rows_loading
+        await wait_for(lambda: "stopped" in row_text(app, 0))
+        await pilot.press("s")
+        await wait_for(lambda: data.calls == [("stop", WS), ("start", WS)])
+        await wait_for(lambda: "alpha running" in status_text(app))
+        assert "skipped" not in status_text(app)
+        gate.set()
+        await startup_quiet(pilot, app)
+
+
+async def test_a_power_reply_whose_row_left_decides_nothing() -> None:
+    """#1187: the reply's status lands on the row found by id at
+    reply time, and a row another surface removed while the boot
+    flew is not there to take it — the flash names the outcome,
+    the refresh follows, and the empty listing stays as it is."""
+    entered = asyncio.Event()
+    gate = asyncio.Event()
+    gone = [False]
+
+    class GatedStart(FakeData):
+        async def start(self, workspace_id: str) -> dict:
+            entered.set()
+            await gate.wait()
+            return await super().start(workspace_id)
+
+        async def workspaces(self) -> list[dict]:
+            rows = await super().workspaces()
+            return [] if gone[0] else rows
+
+    data = GatedStart([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: listing_settled(app))
+        await startup_quiet(pilot, app)
+        screen = app.screen
+        await pilot.press("s")
+        await wait_for(entered.is_set)  # the boot flies
+        # Another surface removes the workspace meanwhile: the
+        # listing's next read finds no row.
+        gone[0] = True
+        screen.action_refresh()
+        await wait_for(lambda: list_children(app) == 0)
+        await wait_for(lambda: screen.focused_row() is None)
+        gate.set()  # the boot's reply lands on a row that left
+        await wait_for(lambda: "alpha running" in status_text(app))
+        await startup_quiet(pilot, app)
+        assert list_children(app) == 0
+        assert data.calls == [("start", WS)]
 
 
 def bridge_cause_rows(ws: str = WS) -> list[dict]:
