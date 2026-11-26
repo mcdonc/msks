@@ -23,10 +23,11 @@ from msks.client.gui import arrival  # noqa: E402
 
 #: The settle's clocks, shortened for the tests but long enough to
 #: observe mid-flight on a loaded runner: the quiet spell, the
-#: cap, and the rise.
+#: cap (past the spell, so a gate under test shows through the
+#: spell and not the cap), and the rise.
 FAST = {
     "QUIET_MS": 100,
-    "SETTLE_CAP_MS": 80,
+    "SETTLE_CAP_MS": 200,
     "ROW_STEP_MS": 100,
     "STAGGER_MS": 1000,
     "RISE_MS": 200,
@@ -394,9 +395,12 @@ def test_a_refill_under_a_running_stagger_joins_the_clock(qt) -> None:
     button = qt.QtWidgets.QToolButton()
     table.setCellWidget(2, 1, button)
     # The rows already risen keep their progress through the
-    # landing: only the new row starts clear.
+    # landing, only the new row starts clear, and the clock
+    # under way runs long enough for the new row's own step.
     assert stagger.progress[0] > 0.0
     assert stagger.progress[2] == 0.0
+    assert stagger.anim is not None
+    assert stagger.anim.duration() == stagger.step * 3 + arrival.RISE_MS
     spin(qt, lambda: button.graphicsEffect() is not None)
     assert button.graphicsEffect().opacity() == stagger.progress[2]
     spin(qt, lambda: not stagger.live)

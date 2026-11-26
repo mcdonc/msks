@@ -283,7 +283,7 @@ class RowStagger(QtCore.QObject):
         self.read_rows()
         if self.rows > 0:
             self.arm_cells()
-            table.viewport().installEventFilter(self)
+            self.watch_for_paint(table)
 
     def read_rows(self) -> None:
         self.rows = self.table.rowCount()
@@ -305,7 +305,29 @@ class RowStagger(QtCore.QObject):
         ]
         self.arm_cells()
         if self.anim is None:
-            self.table.viewport().installEventFilter(self)
+            self.watch_for_paint(self.table)
+        else:
+            # A rise under way runs its whole clock over the
+            # rows it now has: a refill that grew the table
+            # gives its new rows their steps before the end.
+            # The two writes each recompute the value once at
+            # the standing time against the other's old setting
+            # — a spurious tick that would blink the rows — so
+            # the value changes stay silent across them.
+            self.anim.blockSignals(True)
+            self.anim.setDuration(self.step * self.rows + RISE_MS)
+            self.anim.setEndValue(self.anim.duration())
+            self.anim.blockSignals(False)
+
+    def watch_for_paint(self, table: QtWidgets.QTableWidget) -> None:
+        """The clock starts at the table's next paint. The page
+        may have painted before this ask (a strip's change
+        shows the page in the same turn the ask lands a
+        iteration later), and nothing would repaint it: the
+        ask schedules the paint itself, which a hidden page
+        takes at its show."""
+        table.viewport().installEventFilter(self)
+        table.viewport().update()
 
     def progress_of(self, row: int) -> float:
         if 0 <= row < len(self.progress):

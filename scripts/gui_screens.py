@@ -329,8 +329,43 @@ def settle(app, rounds: int = 12) -> None:
         time.sleep(0.05)
 
 
+def live_rises(app) -> list:
+    """The row rises still running under the application's
+    windows. A stagger on an empty table waits for rows the stub
+    data never lands and paints nothing, so it is no rise to
+    wait for."""
+    from msks.client.gui.arrival import RowStagger
+
+    live = []
+    for window in app.topLevelWidgets():
+        for stagger in window.findChildren(RowStagger):
+            if stagger.live and stagger.rows:
+                live.append(stagger)
+    return live
+
+
+def risen(app) -> None:
+    """Let every row rise under the application land before a
+    shot (#1177): the rise starts at a table's first paint and
+    runs its whole clock after the settle rounds, and a grab
+    mid-rise bakes a faint row into the page."""
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        app.processEvents()
+        if not live_rises(app):
+            return
+        time.sleep(0.02)
+    sys.exit("msks-gui-screens: a row rise never landed")
+
+
 def shot(widget, name: str) -> None:
-    """One surface to ``docs/screens`` as a PNG."""
+    """One surface to ``docs/screens`` as a PNG, its rows at
+    rest."""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is not None:
+        risen(app)
     path = OUT / name
     widget.grab().save(str(path))
     print(f"captured {path.relative_to(ROOT)}")
