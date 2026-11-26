@@ -61,6 +61,16 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **Terminal-only mode: the page's top margin stands at zero
+  (#1189).** The blank band the mode kept above the shell tab
+  strip is gone. With no egress hold waiting, the strip is the
+  window's first row, flush under the title bar. The restore
+  button keeps the right edge the terminal-only button stood at
+  and rides the tab row. Leaving the mode by mouse may take one
+  move of the pointer, and `Ctrl+Shift+M` still leaves the mode
+  from anywhere on the page. See
+  [docs/gui.md](gui.md#terminal-only-mode).
+
 - **The workspaces list under a heading, the picker in the
   bottom bar (#1177).** The list's table sits under a
   **Workspaces** heading like the Images and Secrets tables, so
