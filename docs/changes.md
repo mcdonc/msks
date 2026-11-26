@@ -133,10 +133,14 @@ tagged `vX.Y.Z`.
 - **Under the NixOS module, a bare `msks` reads `/etc/msks/msks.yaml`
   (#801).** The module sets `MSKSC_CONFIG_DIR=/etc/msks` for every
   user, so `~/.config/msks/msks.yaml` is no longer read by default. A
-  user with a config of their own exports `MSKSC_CONFIG_DIR` in their
-  shell to keep it. A host that needs another value sets it in
-  `environment.sessionVariables`, and a daemon host that wants no
-  client layer sets `programs.msks.enable = false`.
+  daemon host's file carries its listener: the socket when the socket
+  serves, and the address with the CA when TCP serves. A bare `msks`
+  on a TCP host now asks for a token file instead of reporting an
+  unconfigured client. A user with a config of their own exports
+  `MSKSC_CONFIG_DIR` in their shell to keep it. A host that needs
+  another value sets it in `environment.sessionVariables`, and a
+  daemon host that wants no client layer sets
+  `programs.msks.enable = false`.
 
 ### Fixed
 

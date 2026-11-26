@@ -163,11 +163,12 @@ flake's own build instead, pin the package:
 services.msksd.package = msks.packages.x86_64-linux.msksd;
 ```
 
-The pinned build comes from the flake's nixpkgs revision. The unit and
-the PATH binaries come from one derivation either way. `programs.msks.package`
-is the client's own option, and under the daemon it defaults to
-`services.msksd.package`, so the pin above covers both. A host that runs
-the client alone pins `programs.msks.package` the same way.
+The pinned build comes from the flake's nixpkgs revision. Under the
+daemon, `programs.msks.package` defaults to `services.msksd.package`,
+so the pin above covers the PATH binaries too, and the unit and the
+PATH stay one derivation. Pinning `programs.msks.package` alone
+changes only the PATH binaries. A host that runs the client alone pins
+`programs.msks.package` the same way.
 
 ### Connecting the client
 
@@ -186,24 +187,30 @@ tokens minted from it. The daemon writes `msks-ca.pem` into its state
 directory on first serve (`/var/lib/msksd` under the module). The
 daemon's TLS certificate covers exactly the address in
 `listenAddress`. A remote client verifies that name, and the hostname
-it dials must match it. The [client
+it connects to must match it. The [client
 environment](cli.md#client-environment) table documents each variable,
 and the [API](api.md) chapter documents token minting past the
 bootstrap credential.
 
 Under the module, `programs.msks.settings` writes the client config for
-every user of the host. A daemon host fills the address and the CA file
-in from its listener, so `token_file` is the key left to add. See
-[Every daemon key, and the host's client
+every user of the host. A daemon host fills the listener in, so on a
+TCP host `token_file` is the key left to add. See [Every daemon key,
+and the host's client
 config](#every-daemon-key-and-the-hosts-client-config).
 
-A client on another host needs the listener reachable. Set
-`listenAddress` off loopback and `openFirewall = true`:
+A client on another host needs the listener reachable and its
+certificate to verify. Set `listenAddress` to the host's own name and
+`openFirewall = true`:
 
 ```nix
-services.msksd.listenAddress = "0.0.0.0";
+services.msksd.listenAddress = "hv-1.example.com";
 services.msksd.openFirewall = true;
 ```
+
+A wildcard address (`0.0.0.0`, `::`) serves every interface, and the
+host's own client still verifies it. A remote client cannot: the
+certificate covers the wildcard spelling alone, so set the host's
+name.
 
 That other host, when it runs NixOS, uses the module as a client alone:
 `programs.msks.enable` with the daemon's address, its CA file, and the
@@ -217,6 +224,10 @@ programs.msks.settings = {
   token_file = "/etc/msks/token";
 };
 ```
+
+Copy the daemon's `msks-ca.pem` to `/etc/msks/hv-1-ca.pem` (the daemon
+writes it to its state directory on first serve). The token file must
+be readable by every `msks` user on that host.
 
 ### The socket listener instead
 
@@ -275,12 +286,15 @@ the store.
 `/etc/msks/msks.yaml`, and `MSKSC_CONFIG_DIR=/etc/msks` as a default
 session variable for every user. A bare `msks` on the host reads this
 file. A daemon host turns the client on by default and fills the
-listener in: `socket` when the socket serves, and `url` and `cafile`
-when TCP serves. The `url` dials the listener's own address, the one
-name the daemon's certificate covers. The keys set here win over those
-defaults, and the rest are the keys of the [client config
-file](cli.md#the-client-config-file). On a daemon host over TCP, the
-token's file is the key left to add:
+listener in: `socket` when the socket serves (TCP on beside it makes
+no difference — the socket is the listener a same-host client needs no
+token for), `url` and `cafile` otherwise. The `url` is the listener's
+own address, the one name the daemon's certificate covers. A wildcard
+`listenAddress` connects on the host itself. A remote client needs
+`listenAddress` set to the name it connects to. The keys set here win
+over those defaults, and the rest are the keys of the [client config
+file](cli.md#the-client-config-file). On a daemon host that serves TCP,
+the token's file is the key left to add:
 
 ```nix
 programs.msks.settings = {

@@ -196,27 +196,30 @@ let
   clientSettingsFile = yamlFormat.generate "msks.yaml" pcfg.settings;
 
   # The listener a daemon host hands its own client, the sshd shape
-  # (services.openssh feeding programs.ssh): the socket path when
-  # the socket serves, the TCP address with the daemon's CA when
-  # TCP serves. The url dials the listener's own address because
-  # that is the one name the daemon's certificate covers (an IPv6
-  # literal takes its brackets); the CA is the daemon's, written
-  # 0644 into its state directory. Merged as defaults: the
-  # operator's programs.msks.settings wins key by key.
+  # (services.openssh feeding programs.ssh): the socket when the
+  # socket serves — the listener a same-host client needs no token
+  # for, and the one the client probes on its own; the TCP address
+  # with the daemon's CA otherwise, the shape a token_file completes.
+  # The url is the listener's own address, the one name the daemon's
+  # certificate covers (an IPv6 literal takes its brackets; a
+  # wildcard address connects on the host itself, and a remote
+  # client needs listenAddress set to the name it connects to). The
+  # CA is the daemon's, written 0644 into its state directory.
+  # Merged as defaults: the operator's programs.msks.settings wins
+  # key by key.
   clientListenerDefaults =
-    { }
-    // (lib.optionalAttrs cfg.tcp.enable {
-      url = "https://${
-        if lib.hasInfix ":" cfg.listenAddress then
-          "[${cfg.listenAddress}]"
-        else
-          cfg.listenAddress
-      }:${toString cfg.port}";
-      cafile = "${cfg.stateDir}/msks-ca.pem";
-    })
-    // (lib.optionalAttrs cfg.socket.enable {
-      socket = "/run/msks/msksd.sock";
-    });
+    if cfg.socket.enable then
+      { socket = "/run/msks/msksd.sock"; }
+    else
+      {
+        url = "https://${
+          if lib.hasInfix ":" cfg.listenAddress then
+            "[${cfg.listenAddress}]"
+          else
+            cfg.listenAddress
+        }:${toString cfg.port}";
+        cafile = "${cfg.stateDir}/msks-ca.pem";
+      };
 
   # The capability set per enabled path: egress work keeps
   # CAP_NET_ADMIN (taps, per-VM nftables chains, NAT) and
@@ -522,11 +525,11 @@ in
         }
         {
           assertion = cfg.socket.enable || cfg.tcp.enable;
-          message = "services.msksd serves nothing — enable the socket listener (services.msksd.socket.enable, the default) or the TCP listener (services.msksd.tcp.enable).";
+          message = "services.msksd serves nothing — enable the socket listener (services.msksd.socket.enable) or the TCP listener (services.msksd.tcp.enable, the module's default).";
         }
         {
           assertion = cfg.openFirewall -> cfg.tcp.enable;
-          message = "services.msksd.openFirewall needs services.msksd.tcp.enable — the module's default listener is the socket, and the firewall rule belongs to the TCP listener.";
+          message = "services.msksd.openFirewall needs services.msksd.tcp.enable — the module's default listener is TCP, and the firewall rule belongs to it.";
         }
         {
           assertion = (cfg.socket.group != null) -> cfg.socket.enable;

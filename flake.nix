@@ -176,6 +176,14 @@
         services.msksd = daemon;
         programs.msks.enable = false;
       };
+      # #801: the package wiring — a daemon host's client layer
+      # follows a pinned daemon package. The pin is a stand-in
+      # package (the eval never builds it; the check reads names).
+      pinned = evalConfig {
+        services.msksd = daemon // {
+          package = pkgs.hello;
+        };
+      };
       # The renamed option (#801): services.msksd.settings, the
       # v0.10.x spelling, still flows into server.settings — the
       # file carries the key, and the eval records the rename
@@ -236,6 +244,7 @@
       # inputs stay the handful the ExecStart strings already
       # pulled in.
       pkgOn = on.services.msksd.package.name;
+      clientPkgOn = on.programs.msks.package.name;
       pathOn = pkgs.lib.concatStringsSep " " (
         map (p: p.name) on.environment.systemPackages
       );
@@ -275,10 +284,14 @@
             execBoth = both.systemd.services.msksd.serviceConfig.ExecStart;
             execLayered = layered.systemd.services.msksd.serviceConfig.ExecStart;
             # #801: the host's client config — the enabled branch's
-            # file (empty client.settings) and the layered branch's,
+            # file (empty settings, the listener defaults alone), the
+            # layered branch's,
             # both read from the store through environment.etc, and
             # the session variable pointing every user's msks at it.
             clientCfgOn = toString on.environment.etc."msks/msks.yaml".source;
+            clientCfgBoth = toString both.environment.etc."msks/msks.yaml".source;
+            clientPkgPinned = pinned.programs.msks.package.name;
+            pinnedPkg = pkgs.hello.name;
             clientCfgLayered = toString layered.environment.etc."msks/msks.yaml".source;
             clientCfgNulled = toString nulled.environment.etc."msks/msks.yaml".source;
             cfgDir = on.environment.sessionVariables.MSKSC_CONFIG_DIR or "";
@@ -322,6 +335,7 @@
               socketed.systemd.services.msksd.serviceConfig.RuntimeDirectory or "";
             groupExists = pkgs.lib.boolToString (socketed.users.groups ? msksops);
             suppGroups = socketed.systemd.services.msksd.serviceConfig.SupplementaryGroups;
+            clientPkgOn = on.programs.msks.package.name;
             inherit pkgOn pathOn pathInert;
             # The owner-exec wrapper (#1087): setuid-root and
             # root:msksd, the exact privilege contract the daemon's
@@ -494,8 +508,20 @@
               echo "fail: the socketed branch's client file lost the socket path"
               exit 1
             }
+            # The both branch carries the socket alone: the socket is
+            # the listener a same-host client needs no token for, and
+            # the client's own tie-break otherwise sends every user to
+            # the url and its token.
+            grep -qxF 'socket: /run/msks/msksd.sock' "$clientCfgBoth" || {
+              echo "fail: the both branch's client file lost the socket path"
+              exit 1
+            }
+            if grep -qxE 'url: .*|cafile: .*' "$clientCfgBoth"; then
+              echo "fail: the both branch's client file points at TCP"
+              exit 1
+            fi
             if grep -qxE 'url: .*' "$clientCfgSocketed"; then
-              echo "fail: the socketed branch's client file dials TCP"
+              echo "fail: the socketed branch's client file connects over TCP"
               exit 1
             fi
             test -s "$clientCfgLayered" || {
@@ -520,6 +546,14 @@
             }
             test "$cfgDir" = "/etc/msks" || {
               echo "fail: the enabled branch lost MSKSC_CONFIG_DIR in the session variables"
+              exit 1
+            }
+            test "$clientPkgOn" = "$pkgOn" || {
+              echo "fail: the daemon's client layer lost the daemon's package default"
+              exit 1
+            }
+            test "$clientPkgPinned" = "$pinnedPkg" || {
+              echo "fail: a pinned daemon package never reached the client layer's default"
               exit 1
             }
             test -s "$clientCfgClientNulled" || {
@@ -601,7 +635,7 @@
               exit 1
             }
             test "$pathRefused" = "true" || {
-              echo "fail: a Nix path value in client.settings was not refused"
+              echo "fail: a Nix path value in programs.msks.settings was not refused"
               exit 1
             }
             # A null layer leaves the generated keys and the client
@@ -612,7 +646,7 @@
               exit 1
             }
             test -s "$clientCfgNulled" || {
-              echo "fail: a null client.settings rendered no /etc/msks/msks.yaml"
+              echo "fail: a null server.settings dropped the client file"
               exit 1
             }
             touch "$out"
