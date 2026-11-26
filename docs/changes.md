@@ -139,6 +139,15 @@ tagged `vX.Y.Z`.
   `No workspaces — c creates one.` while the listing was empty or
   still loading. It now appears when the first row has focus.
 
+- **The TUI listing's power keys read the daemon's answer
+  (#1187).** `s` on a stopped workspace flashes `alpha running`.
+  `S` pressed before the listing's re-read landed used to answer
+  `Stop skipped: workspace is stopped` and send nothing to the
+  daemon, because the row kept its old status until the re-read
+  landed. The row now takes the reply's status before the re-read
+  flies. The next power key reaches the daemon, and the row paints
+  the new status at once. The same holds for `s` after `S`.
+
 ## \[v0.10.2] - 2026-11-25
 
 ### Added
