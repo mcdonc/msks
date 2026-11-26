@@ -67,7 +67,24 @@ tagged `vX.Y.Z`.
   serves the unix socket alone: no TLS material resolves, no CA
   is generated, and both listeners off refuses at startup.
 
+- **The NixOS module's settings layers (#801).**
+  `services.msksd.server.settings` holds every `msksd.yaml` key the
+  module does not generate, in the file's own spelling, and lists and
+  mappings pass: `seed_images` and `llm_models` are expressible in Nix
+  now. The client has its own half, `programs.msks`:
+  `programs.msks.enable` puts the client on the host with
+  `/etc/msks/msks.yaml` generated from `programs.msks.settings`, and a
+  daemon host turns it on by default with its listener filled in. A
+  host that runs the client alone sets `programs.msks.enable` without
+  the daemon. See
+  [docs/installation.md](installation.md#every-daemon-key-and-the-hosts-client-config).
+
 ### Changed
+
+- **The NixOS module's `services.msksd.settings` is renamed to
+  `services.msksd.server.settings` (#801).** The old spelling still
+  evaluates with a rename warning, and its scalar values read the
+  same.
 
 - **The workspaces list under a heading, the picker in the
   bottom bar (#1177).** The list's table sits under a
@@ -110,6 +127,21 @@ tagged `vX.Y.Z`.
   without enabling still installs nothing. The installation chapter
   gained a [NixOS hosts](installation.md#nixos-hosts) section
   documenting the module.
+
+### Breaking
+
+- **Under the NixOS module, a bare `msks` reads `/etc/msks/msks.yaml`
+  (#801).** The module sets `MSKSC_CONFIG_DIR=/etc/msks` for every
+  user, so `~/.config/msks/msks.yaml` is no longer read by default. A
+  daemon host's file carries its listener: the socket when it is
+  shared through a `socket.group` or the only listener, and the
+  address with the CA otherwise. A bare `msks` whose file points at
+  TCP now asks for a token file instead of reporting an unconfigured
+  client. A user with a config of their own exports
+  `MSKSC_CONFIG_DIR` in their shell to keep it. A host that needs
+  another value sets it in `environment.sessionVariables`, and a
+  daemon host that wants no client layer sets
+  `programs.msks.enable = false`.
 
 ### Fixed
 

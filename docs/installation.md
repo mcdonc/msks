@@ -111,10 +111,14 @@ prints it. The module requires a value while egress is enabled (the
 default). A wrong interface installs cleanly and NAT matches nothing.
 That failure mode is why the module refuses to guess.
 
-Importing the module alone installs nothing. All of its host
-configuration applies only when `services.msksd.enable` is set.
+The module has two halves, the way NixOS splits `programs.ssh` from
+`services.openssh`: `services.msksd` is the daemon, and `programs.msks`
+is the client on the host. Importing the module alone installs
+nothing. The daemon's host configuration applies when
+`services.msksd.enable` is set, and the client's when
+`programs.msks.enable` is set, which the daemon turns on by default.
 
-Setting `enable = true` does five things:
+Setting `services.msksd.enable = true` does five things:
 
 - **The binaries on PATH.** The msks console scripts (`msks`, `msksd`,
   `msks-term-popup`, the `msks-setup-*` tools) go on the system PATH for
@@ -126,10 +130,14 @@ Setting `enable = true` does five things:
 - **The TCP listener.** The daemon serves its API on HTTPS + WSS at
   `listenAddress:port` (the default `127.0.0.1:8660`), with TLS and
   bearer tokens.
-- **The settings file.** The module generates `msksd.yaml` into the nix
-  store at build time, with every tool path pointing into the store. The
-  [Configuration](config.md) chapter documents the keys the module
-  generates.
+- **The settings files, and the client.** The module generates
+  `msksd.yaml` into the nix store at build time, with every tool path
+  pointing into the store. It also turns `programs.msks` on: the host's
+  client config at `/etc/msks/msks.yaml`, and `MSKSC_CONFIG_DIR=/etc/msks`
+  in every login session, so a bare `msks` reads that file. Both files
+  take more keys through `services.msksd.server.settings` and
+  `programs.msks.settings`. See [Every daemon key, and the host's client
+  config](#every-daemon-key-and-the-hosts-client-config).
 - **The egress stack.** With egress enabled the unit carries ambient
   `CAP_NET_ADMIN` and `CAP_NET_BIND_SERVICE`, loads the tun and nftables
   kernel modules, and sets `net.ipv4.ip_forward = 1`. With
@@ -155,8 +163,12 @@ flake's own build instead, pin the package:
 services.msksd.package = msks.packages.x86_64-linux.msksd;
 ```
 
-The pinned build comes from the flake's nixpkgs revision. The unit and
-the PATH binaries come from one derivation either way.
+The pinned build comes from the flake's nixpkgs revision. Under the
+daemon, `programs.msks.package` defaults to `services.msksd.package`,
+so the pin above covers the PATH binaries too, and the unit and the
+PATH stay one derivation. Pinning `programs.msks.package` alone
+changes only the PATH binaries. A host that runs the client alone pins
+`programs.msks.package` the same way.
 
 ### Connecting the client
 
@@ -175,18 +187,50 @@ tokens minted from it. The daemon writes `msks-ca.pem` into its state
 directory on first serve (`/var/lib/msksd` under the module). The
 daemon's TLS certificate covers exactly the address in
 `listenAddress`. A remote client verifies that name, and the hostname
-it dials must match it. The [client
+it connects to must match it. The [client
 environment](cli.md#client-environment) table documents each variable,
 and the [API](api.md) chapter documents token minting past the
 bootstrap credential.
 
-A client on another host needs the listener reachable. Set
-`listenAddress` off loopback and `openFirewall = true`:
+Under the module, `programs.msks.settings` writes the client config for
+every user of the host. A daemon host fills the listener in, so a host
+whose file points at TCP is missing only `token_file`. See [Every
+daemon key, and the host's client
+config](#every-daemon-key-and-the-hosts-client-config).
+
+A client on another host needs the listener reachable and its
+certificate to verify. Set `listenAddress` to the host's own name and
+`openFirewall = true`:
 
 ```nix
-services.msksd.listenAddress = "0.0.0.0";
+services.msksd.listenAddress = "hv-1.example.com";
 services.msksd.openFirewall = true;
 ```
+
+A wildcard address (`0.0.0.0`, `::`) serves every interface, and the
+host's own client still verifies it. A remote client cannot: the
+certificate covers the wildcard spelling alone, so set the host's
+name. The name must resolve to the host's public address (a DNS
+alias, or an address on one of its interfaces). NixOS maps the
+machine's own `hostName` to loopback, so that name serves nothing
+off the host.
+
+That other host, when it runs NixOS, uses the module as a client alone:
+`programs.msks.enable` with the daemon's address, its CA file, and the
+token's file in `programs.msks.settings`, and no daemon:
+
+```nix
+programs.msks.enable = true;
+programs.msks.settings = {
+  url = "https://hv-1.example.com:8660";
+  cafile = "/etc/msks/hv-1-ca.pem";
+  token_file = "/etc/msks/token";
+};
+```
+
+Copy the daemon's `msks-ca.pem` to `/etc/msks/hv-1-ca.pem` (the daemon
+writes it to its state directory on first serve). The token file must
+be readable by every `msks` user on that host.
 
 ### The socket listener instead
 
@@ -205,7 +249,87 @@ socket lands at `/run/msks/msksd.sock`. Access is the socket group:
 the module creates the group, adds it to the unit's
 `SupplementaryGroups`, and the daemon moves the socket file into it
 at bind. Members of the group run `msks` with no configuration — the
-unconfigured client probes that path on its own.
+unconfigured client probes that path on its own, and the daemon host's
+client config carries the socket path as its default.
+
+### Every daemon key, and the host's client config
+
+The module writes two config files from Nix values: the daemon's
+`msksd.yaml`, and the host's client config `/etc/msks/msks.yaml`. Each
+settings layer takes the keys of the file it writes, spelled as the file
+spells them: `state_dir`, `seed_images`, `url`, `token_file`.
+
+`services.msksd.server.settings` holds the `msksd.yaml` keys the module
+does not generate. Every key in the [Configuration](config.md) chapter
+passes. Lists and mappings pass too:
+
+```nix
+services.msksd.server.settings = {
+  seed_images = [ "/var/lib/msksd/seeds/debian-trixie.tar" ];
+  egress_dns_upstream = "1.1.1.1";
+  llm_models = [
+    { model_name = "gpt-4o"; litellm_params.model = "openai/gpt-4o"; }
+  ];
+};
+```
+
+A key the module generates fails evaluation when set here:
+`state_dir`, `host`, `port`, `socket`, `socket_group`, `cloud_hypervisor`,
+the two egress keys, and the tool paths. For a key with a first-class
+option, the error gives the option to set instead: `port` is
+`services.msksd.port`, `host` is `services.msksd.listenAddress`, and so
+on. The tool paths have no option: the module pins them to the host's
+packages. The generated file is world-readable in the store. Pass
+secrets through `services.msksd.environmentFile`, and spell file paths
+as strings: a Nix path value such as `./cert.pem` copies the file into
+the store.
+
+`programs.msks.settings` holds the host's client config, and
+`programs.msks.enable` turns the client on: the binaries on PATH,
+`/etc/msks/msks.yaml`, and `MSKSC_CONFIG_DIR=/etc/msks` as a default
+session variable for every user. A bare `msks` on the host reads this
+file. A daemon host turns the client on by default and fills the
+listener in: `socket` when the socket is the listener a same-host user
+can connect to (shared through a `socket.group`, or the only
+listener), `url` and `cafile` otherwise. A private socket beside TCP
+stays out of the host's defaults. Without a group it serves the daemon
+user alone, and every other user would face a refusal at connect. The
+`url` is the listener's own address, the one name the daemon's
+certificate covers. A wildcard `listenAddress` connects on the host
+itself. A remote client needs `listenAddress` set to the name it
+connects to. The keys set here win over those defaults, and the rest
+are the keys of the [client config
+file](cli.md#the-client-config-file). On a host whose file points at
+the TCP listener, the token's file is the key left to add:
+
+```nix
+programs.msks.settings = {
+  token_file = "/etc/msks/token";
+};
+```
+
+A host that runs the client alone sets the address, the CA file, and
+the token's file itself. [Connecting the client](#connecting-the-client)
+shows that configuration.
+
+The token file must be readable by every `msks` user. The
+[socket listener](#the-socket-listener-instead) with a `socket.group`
+needs no token file: members of the group connect with no config.
+
+The file holds paths and addresses, never a secret: `token_file` and
+`identity_file` point at the files that hold them. Write those paths as
+plain strings, as in the example. The module refuses a Nix path in this
+layer, as a path value (`./token`) or inside a string interpolation
+(`"${./token}"`). Both spellings copy the file into the world-readable
+store. The client refuses an unknown key at load, and the error gives
+the key and the valid ones.
+
+A user with a config of their own exports `MSKSC_CONFIG_DIR` in their
+shell, and a host that needs another value defines it in
+`environment.sessionVariables`: both win over the module's default.
+Until then, `~/.config/msks/msks.yaml` is not read on this host. A
+daemon host that wants no client layer at all sets
+`programs.msks.enable = false`.
 
 ## What the setup lands
 
