@@ -61,6 +61,16 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **Terminal-only mode: the tab strip is the window's first row
+  (#1189).** The mode stands the workspace page's top margin at
+  zero, so the shell tab strip sits flush under the window's
+  title bar and the blank band above it is gone. The restore
+  button keeps the right edge the terminal-only button stood at
+  and rides the tab row. Leaving the mode by mouse takes one
+  move of the pointer, and `Ctrl+Shift+M` still leaves the mode
+  from anywhere on the page. See
+  [docs/gui.md](gui.md#terminal-only-mode).
+
 - **The workspaces list under a heading, the picker in the
   bottom bar (#1177).** The list's table sits under a
   **Workspaces** heading like the Images and Secrets tables, so
