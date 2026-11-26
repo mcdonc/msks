@@ -27,11 +27,13 @@ the devenv lock pins; a Linux host needs no system-level step, the
 font is in the shell, and without the variable the script refuses
 — an empty pin hands the chrome to Qt's box engine, every glyph a
 hollow rectangle, the shape the first Linux render came out in.
-The session's platform theme and style engine stay out of it too
-(``QT_QPA_PLATFORMTHEME`` dropped, Fusion forced), and once the
-application stands the run checks that the chrome resolved to
-DejaVu Sans, since a theme's family ask or a file that did not
-parse resolves somewhere else — the host's fonts in play again.
+The session's platform theme, style engine, scaling, and plugin
+path stay out of it too (SCRUBBED_ENV dropped, Fusion forced), and
+once the application stands the run checks that the database holds
+the DejaVu faces alone and that the chrome resolved to DejaVu
+Sans: a directory without the face, or a fontconfig file that did
+not parse (fontconfig then falls back to the host's own config),
+resolves somewhere else — the host's fonts in play again.
 The run stops on macOS there: Qt reads CoreText, not fontconfig.
 The terminal's face is the wheel's own bundled JetBrains Mono,
 registered as an application font, so it reads no fontconfig. The
@@ -74,6 +76,32 @@ CHROME_FAMILY = "DejaVu Sans"
 #: but an ask must land on a fixed-pitch face, not the first face
 #: in the sort.
 MONO_FAMILY = "DejaVu Sans Mono"
+
+#: The family name every face in the pinned directory carries
+#: (#1172): the database holds those alone when the pin took.
+PINNED_PREFIX = "DejaVu"
+
+#: The generic family names Qt lists whatever the fontconfig
+#: holds (#1172): the names the offscreen theme asks with, beside
+#: the pinned directory's faces.
+GENERIC_FAMILIES = frozenset({"Sans Serif", "Serif", "Monospace"})
+
+#: The host's session variables the capture drops before Qt loads
+#: (#1172): a desktop session's platform theme (gtk3, kde) hands
+#: Qt its own font family and palette; a preset scale factor or
+#: font dpi resizes every capture (QT_SCALE_FACTOR=2 doubles
+#: them) while the face check still passes; the host's Qt plugin
+#: path would let its own platform plugin stand in for the wheel's.
+SCRUBBED_ENV = (
+    "QT_QPA_PLATFORMTHEME",
+    "QT_SCALE_FACTOR",
+    "QT_SCALE_FACTOR_ROUNDING_POLICY",
+    "QT_SCREEN_SCALE_FACTORS",
+    "QT_FONT_DPI",
+    "QT_AUTO_SCREEN_SCALE_FACTOR",
+    "QT_ENABLE_HIGHDPI_SCALING",
+    "QT_PLUGIN_PATH",
+)
 
 #: The moment every relative label reads (#1008's
 #: captures): an aware local datetime, the shape the shared
@@ -320,15 +348,41 @@ def unselect(*tables) -> None:
         table.selectionModel().clearCurrentIndex()
 
 
+def foreign_families(families) -> list[str]:
+    """The families outside the pin (#1172), sorted: the pinned
+    directory's faces carry PINNED_PREFIX and Qt lists the
+    generic names on its own, so anything else came from the
+    host's own fontconfig — the file did not parse, or the
+    variable named another directory."""
+    return sorted(
+        family
+        for family in families
+        if family not in GENERIC_FAMILIES
+        and not family.startswith(PINNED_PREFIX)
+    )
+
+
 def require_chrome_face(app) -> None:
-    """The pin's proof (#1172): the chrome resolved to the pinned
-    face or the run stops with one line. A theme's family ask, a
-    fontconfig file that did not parse, or a directory without the
-    face all resolve somewhere else — the host's fonts in play
-    again — and macOS resolves through CoreText, where the pin
-    reads nothing: the captures render on a Linux host."""
+    """The pin's proof (#1172): the database holds the pinned
+    directory's faces alone and the chrome resolved to the pinned
+    face, or the run stops with one line. A fontconfig file that
+    did not parse drops fontconfig back to the host's own config,
+    and the host's families show in the database — the one host
+    that passes then holds nothing but DejaVu faces, where only
+    the hinting could differ. A directory without the face
+    resolves the chrome somewhere else, and macOS resolves
+    through CoreText, where the pin reads nothing: the captures
+    render on a Linux host."""
     from PySide6 import QtGui
 
+    foreign = foreign_families(QtGui.QFontDatabase.families())
+    if foreign:
+        sys.exit(
+            "gui_screens: the font database holds families outside the "
+            f"pin ({', '.join(foreign[:5])}) — FONTCONFIG_FILE did not "
+            "take; the captures render on a Linux host from the devenv "
+            "shell (docs/development.md)"
+        )
     resolved = QtGui.QFontInfo(app.font()).family()
     if resolved != CHROME_FAMILY:
         sys.exit(
@@ -354,12 +408,12 @@ def preset_rows():
 
 def main() -> int:
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
-    # A desktop session's platform theme (gtk3, kde) hands Qt its
-    # own font family and palette, and a preset style engine its
-    # own chrome: none of the host's, for the capture — the theme
-    # variable goes, and the style is the window's own Fusion, not
-    # a setdefault the host could pre-empt (#1172).
-    os.environ.pop("QT_QPA_PLATFORMTHEME", None)
+    # None of the host's session in the capture (#1172): the theme,
+    # scaling, and plugin variables go before Qt loads, and the style
+    # is the window's own Fusion, not a setdefault the host could
+    # pre-empt.
+    for name in SCRUBBED_ENV:
+        os.environ.pop(name, None)
     os.environ["QT_STYLE_OVERRIDE"] = "Fusion"
     os.environ["FONTCONFIG_FILE"] = pinned_fontconfig()
     try:
