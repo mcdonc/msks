@@ -44,6 +44,7 @@ from .dialogs import Centered
 from .egressaudit import BODY_ROW, FOOTER_ROW, HEADING_ROW, AuditTrail
 from .forms import ModePicker, confirm, muted_note, save_cancel_row
 from .kinds import ERROR
+from .listtable import bold_heading
 from .tints import TintedLabel
 
 #: The rules read's key stem (#1042): each flight carries its own
@@ -265,6 +266,7 @@ class EgressTab(QtWidgets.QWidget):
         row.addWidget(self.pick)
         row.addWidget(self.words, stretch=1)
         self.heading = QtWidgets.QLabel(ALLOWLIST_HEADING, self)
+        bold_heading(self.heading)
         self.entries = QtWidgets.QListWidget(self)
         # The three scroll areas carry no minimum of their own
         # (#1051): the tab's two columns stack two lists and a
@@ -290,6 +292,7 @@ class EgressTab(QtWidgets.QWidget):
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
         )
         self.verdicts_heading = QtWidgets.QLabel(VERDICTS_HEADING, self)
+        bold_heading(self.verdicts_heading)
         self.verdicts = QtWidgets.QListWidget(self)
         self.verdicts.setMinimumHeight(0)
         self.verdicts.itemSelectionChanged.connect(self.sync_buttons)

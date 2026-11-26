@@ -8,6 +8,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI's opening settle (#1177).** The window's content
+  appears once it stands in its final shape: the first
+  refreshes have landed and the layout is quiet, so a page never
+  shows its columns or scrollbars moving into place. Every tab
+  change settles its page the same way, and the rows of its
+  tables rise into place from the top down, a few milliseconds
+  apart. See [docs/gui.md](gui.md).
+
 - **Keys for the GUI's shell tabs (#1163).** On the workspace
   page, with a terminal focused or anywhere else on the page,
   `Ctrl+Shift+T` opens a shell, `Ctrl+Shift+W` closes the current
@@ -44,6 +52,18 @@ tagged `vX.Y.Z`.
   beside them. See [docs/gui.md](gui.md#the-images-tab).
 
 ### Changed
+
+- **The workspaces list under a heading, the picker in the
+  bottom bar (#1177).** The list's table sits under a
+  **Workspaces** heading like the Images and Secrets tables, so
+  the first table of every tab starts at the same height and
+  the header line stays put across a tab change. The status line
+  and the connection picker moved from the top of the page into
+  the bottom bar beside Add, Edit, Clone, and Remove. Every
+  table's headers now read bold and left, aligned with their
+  cells, where Qt centered them, and the Egress tab's list
+  headings read the same way. See
+  [docs/gui.md](gui.md#the-workspace-list).
 
 - **The GUI Secrets tab's coverage, buttons, expiry cell, and
   audit columns (#1165).** The COVERAGE cell reads `daemon-wide`

@@ -11,8 +11,9 @@ directly: every page uses the API.
 
 ![The connection picker's menu: two aliases and the dev daemon, the standing one checked](screens/gui-connection.png)
 
-The status row's right end carries the connection picker: the
-standing daemon's name beside a menu. The menu lists the config
+The list's bottom bar carries the connection picker at its
+right end, beside the buttons: the standing daemon's name beside a
+menu. The menu lists the config
 file's [daemon aliases](cli.md#daemon-aliases) in file order, the
 dev daemon's state dir, and the environment's own exports when
 they carry an address.
@@ -27,13 +28,22 @@ it.
 The window opens on three top-level tabs: **Workspaces**,
 **Images**, and **Secrets**.
 
+The content appears once it is final. At open and on every tab
+change, the page holds clear until its refresh has landed and the
+layout is quiet. It then shows at once, and the rows of its tables
+rise into place from the top down. The workspace page's own tabs
+(Mounts, Proxies, Egress, Events) give their tables the same rise.
+
 ## The workspace list
 
-![The workspaces list: three rows, the action buttons at each row's end, the connection picker at the status row's right](screens/gui-list.png)
+![The workspaces list: three rows, the action buttons at each row's end, the connection picker at the bottom bar's right end](screens/gui-list.png)
 
 The **Workspaces** tab opens on the list: one row per workspace,
 newest first, in five columns. NAME, STATUS, ID, IMAGE, and
 CREATED. A start/stop toggle and a shell button close each row.
+The list sits under a **Workspaces** heading, the shape the Images
+and Secrets pages use, so the first table of every tab starts at
+the same height.
 
 The list re-reads the daemon when the daemon publishes a websocket
 event: a workspace changed from another surface (the CLI, another
@@ -60,15 +70,16 @@ opens the row's menu: Edit, Start or Stop, Open a shell, Clone,
 and Delete. Clone asks for the new workspace's name. Delete asks
 for confirmation, and the workspace's data goes with it.
 
-The page's bottom row carries **Add**, **Edit**, **Clone**, and
-**Remove**. Add opens the create dialog. Edit, Clone, and Remove
+The page's bottom bar carries **Add**, **Edit**, **Clone**, and
+**Remove**, then the status line, then the connection picker at the
+right end. Add opens the create dialog. Edit, Clone, and Remove
 act on the selected row. Clone asks for the new workspace's name
 there too, and the clone takes the same route the `msks clone`
 command takes: both disks copy under the source's egress mode.
 A stopped workspace clones; a running one answers a refusal that
 flashes on the status line.
 
-A failed refresh flashes the status line at the top of the page.
+A failed refresh flashes the status line in the bottom bar.
 A refusal clears itself after four seconds. A daemon outage
 stands on the line until an answer resolves it, and the rows
 already on screen stand the whole time. While the daemon is

@@ -33,11 +33,21 @@ class ListTable(QtWidgets.QTableWidget):
     rename, and the lists open their row on it everywhere, the
     docs' own rule. Every state cell paints through the
     semantic delegate (#1160): a cell tagged with a kind wears
-    that kind's color, read off the palette at paint time."""
+    that kind's color, read off the palette at paint time. The
+    headers read bold and left like their cells (#1177): Qt
+    centers a header's label by default, and a centered label
+    over a left-aligned column reads as its own row; the bold
+    weight is :func:`bold_header`'s, applied here so every
+    table's headers share one definition."""
 
     def __init__(self, *args) -> None:
         super().__init__(*args)
         self.setItemDelegate(SemanticDelegate(self))
+        bold_header(self)
+        self.horizontalHeader().setDefaultAlignment(
+            QtCore.Qt.AlignmentFlag.AlignLeft
+            | QtCore.Qt.AlignmentFlag.AlignVCenter
+        )
 
     def keyPressEvent(self, event) -> None:
         if self.leaves_upward(event):
@@ -67,24 +77,35 @@ class ListTable(QtWidgets.QTableWidget):
 
 
 def bold_header(table: QtWidgets.QTableWidget) -> None:
-    """One group table's header text (#964, #976): the bold
-    weight on the panes' headers — one definition, so every
-    pane's column labels read as one table's chrome whatever
-    the platform style would draw on its own. The header
-    carries the bold-seat mark: the whole-client zoom's
-    after-write walk (:func:`rebold_headers`) finds it there
-    and moves the header with the rest of the chrome."""
+    """One table's header text (#964, #976): the bold
+    weight on the headers — one definition, so every pane's
+    column labels read as one table's chrome whatever the
+    platform style would draw on its own. :class:`ListTable`
+    applies it to itself (#1177); the header carries the
+    bold-seat mark: the whole-client zoom's after-write walk
+    (:func:`rebold_headers`) finds it there and moves the
+    header with the rest of the chrome."""
     header = table.horizontalHeader()
     header.setProperty(BOLD_SEAT, True)
     header_font(header)
 
 
-def header_font(header: QtWidgets.QHeaderView) -> None:
+def header_font(header: QtWidgets.QWidget) -> None:
     """The header's bold face off the application font (#976):
     the size and the family stay the application's own."""
     font = QtGui.QGuiApplication.font()
     font.setBold(True)
     header.setFont(font)
+
+
+def bold_heading(label: QtWidgets.QWidget) -> None:
+    """A heading label in the headers' own face (#1177): the
+    egress tab's list headings are plain labels over list
+    widgets, and read like every table's header — the same
+    weight, and the zoom's after-write walk moves them with the
+    rest."""
+    label.setProperty(BOLD_SEAT, True)
+    header_font(label)
 
 
 def rebold_headers() -> None:

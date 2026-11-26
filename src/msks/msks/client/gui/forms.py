@@ -12,7 +12,8 @@ screens' own contract: nothing imports it at CLI parse time.
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .dialogs import center_on_parent
-from .tints import SemanticDelegate, TintedLabel
+from .listtable import ListTable
+from .tints import TintedLabel
 
 
 class ModePicker(QtWidgets.QComboBox):
@@ -106,16 +107,16 @@ def fit_columns(
         header.setSectionResizeMode(column, mode)
 
 
-def read_only_table(
-    columns: tuple, content_columns: tuple = ()
-) -> QtWidgets.QTableWidget:
+def read_only_table(columns: tuple, content_columns: tuple = ()) -> ListTable:
     """A table that renders but never edits (#987, #988): one
     row per record, single-row selection, the columns sharing
     the pane's whole width (#1025) with the content columns
-    hugging their text. The caller owns the rows and the
+    hugging their text. The table is the listing's own class
+    (#1177), so its headers read like every other page's —
+    bold and left over their cells — and its keys follow the
+    spatial-navigation rule. The caller owns the rows and the
     selection's wiring."""
-    table = QtWidgets.QTableWidget(0, len(columns))
-    table.setItemDelegate(SemanticDelegate(table))
+    table = ListTable(0, len(columns))
     table.setHorizontalHeaderLabels(columns)
     table.verticalHeader().setVisible(False)
     table.setSelectionBehavior(
