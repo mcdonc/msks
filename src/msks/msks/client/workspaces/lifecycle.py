@@ -34,7 +34,7 @@ from ..create import (
     operator_pubkey,
     read_pubkey,
 )
-from ..hold import holder_due, spawn_holder
+from ..hold import holder_due, pipe_due, spawn_holder
 from ..jsonio import ApiExit, emit, json_line, outcome
 from ..proxies import workspace_proxies
 from ..resize import display_name, resize_message
@@ -236,14 +236,16 @@ async def start_stop_row(
 def bridge_hook(workspace_id: str, transport=None) -> None:
     """The start's bridge step (#1102): a workspace with forward
     proxy rows takes its holder at once — a detached child that
-    serves them after this command exits. Best-effort by design:
+    serves them after this command exits — and so does a client
+    with a screenshot command configured (#1194): the pipe rides
+    the same holder. Best-effort by design:
     a start that arrives without the identity (a raw API call, a
     client without the key) keeps its exit code, the refusal is
     one stderr line, and the rows carry the named cause until the
     next bridge-bearing client visit."""
     try:
         rows = asyncio.run(workspace_proxies(workspace_id, transport))
-        due = holder_due(rows)
+        due = holder_due(rows) or pipe_due()
     except (Exception, SystemExit) as exc:
         # Best-effort by contract (#1102): the start keeps its
         # exit code whatever the rows read says.

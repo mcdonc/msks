@@ -8,6 +8,18 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The screenshot pipe (#1194).** A skill running inside a
+  workspace guest can capture one of the client's screens through a
+  loopback port in the guest (default `127.0.0.1:8662`) that reaches,
+  through the bridge holder's ssh reverse forward, the capture command
+  the client runs. The new `screenshot_command` client setting enables
+  the pipe by its presence and carries that command; `screenshot_port`
+  overrides the port, and `msks screenshot hold` holds the pipe on
+  demand. The client runs at most four captures at once (a fifth request
+  answers `503`), and one JSONL line per capture under the client state
+  root is the audit trail. See
+  [docs/screenshot.md](screenshot.md).
+
 - **Command keys in the GUI terminal on macOS (#1184).** On
   macOS, `Cmd+C` copies the selection, `Cmd+V` pastes, `Cmd+F`
   opens and closes the find bar, and `Cmd+Click` opens a link, as

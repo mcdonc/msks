@@ -74,7 +74,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..configio import write_exclusive
-from .config_keys import GLOBAL_ENV_VARS, SSH_OPTIONS_ENV, TERMINAL_ENV_VAR
+from .config_keys import (
+    GLOBAL_ENV_VARS,
+    SCREENSHOT_COMMAND_ENV,
+    SCREENSHOT_PORT_ENV,
+    SSH_OPTIONS_ENV,
+    TERMINAL_ENV_VAR,
+)
 from .template import render_template
 from .validate import parse_config_doc, split_words
 
@@ -364,6 +370,55 @@ def resolved_ssh_options(doc: dict, layer: dict) -> list[str]:
     return list(options)
 
 
+def resolved_screenshot_command(doc: dict, layer: dict) -> list[str] | None:
+    """The capture command (#1194): the variable's string form, else
+    the file's value, else none. The file's winner is materialized
+    into the environment (shell-joined, the same round trip
+    :func:`resolved_ssh_options` gives ``ssh_options``) because the
+    reader lives in the holder's child — the detached process the
+    start path spawns — and the environment is the one substrate
+    both inherit. The command's presence alone is the pipe's
+    enablement: an unset command leaves the pipe down.
+    """
+    env = os.environ.get(SCREENSHOT_COMMAND_ENV, "")
+    if env.strip():
+        return split_words(env, SCREENSHOT_COMMAND_ENV, "environment")
+    words = doc.get("screenshot_command") or []
+    if words:
+        layer[SCREENSHOT_COMMAND_ENV] = shlex.join(words)
+    return list(words) or None
+
+
+def resolved_screenshot_port(doc: dict, layer: dict) -> int | None:
+    """The pipe's guest-side port (#1194): the variable's digit
+    string, else the file's value, else none (the reader's own
+    default answers). The file's winner is materialized so the
+    holder's child — and the ssh child it spawns — read one form.
+    """
+    env = os.environ.get(SCREENSHOT_PORT_ENV, "")
+    if env.strip():
+        return port_number(env)
+    value = doc.get("screenshot_port")
+    if value is not None:
+        layer[SCREENSHOT_PORT_ENV] = str(value)
+    return value
+
+
+def port_number(raw: str) -> int:
+    """One port value from the environment: a whole number
+    1-65535, else the load-time refusal naming the variable."""
+    if not raw.strip().isdigit():
+        raise ValueError(
+            f"{SCREENSHOT_PORT_ENV} must be a port number, got {raw!r}"
+        )
+    port = int(raw)
+    if not 1 <= port <= 65535:
+        raise ValueError(
+            f"{SCREENSHOT_PORT_ENV} {port} is out of range (1-65535)"
+        )
+    return port
+
+
 @dataclass
 class ClientConfig:
     """One invocation's resolved client settings (#314).
@@ -388,6 +443,8 @@ class ClientConfig:
     image_manifest_url: str
     ssh_options: list[str]
     daemon: str | None
+    screenshot_command: list[str] | None = None
+    screenshot_port: int | None = None
     env_layer: dict[str, str] = field(default_factory=dict)
     #: The config file the resolution read (#1009): the path
     #: itself, or the ``none`` opt-out sentinel — the GUI's
@@ -437,6 +494,8 @@ def resolve(
         ),
         ssh_options=resolved_ssh_options(doc, layer),
         daemon=selection.alias,
+        screenshot_command=resolved_screenshot_command(doc, layer),
+        screenshot_port=resolved_screenshot_port(doc, layer),
         env_layer=layer,
         config_path=path,
     )

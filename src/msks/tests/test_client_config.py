@@ -27,6 +27,8 @@ CLIENT_VARS = (
     "MSKSC_IDENTITY_FILE",
     "MSKSC_TERMINAL_OPEN_CMD",
     "MSKSC_SSH_OPTIONS",
+    "MSKSC_SCREENSHOT_COMMAND",
+    "MSKSC_SCREENSHOT_PORT",
 )
 
 
@@ -1091,3 +1093,140 @@ def test_the_image_manifest_url_resolves_in_tier_order(
     assert config.resolve(None, bare).image_manifest_url == (
         "https://github.com/mcdonc/msks/releases/latest/download/images.json"
     )
+
+
+# --- the screenshot pipe's keys (#1194) ---
+
+
+def test_screenshot_command_takes_both_forms(tmp_path: Path) -> None:
+    """The capture command: string form shell-split, list form
+    verbatim — the command's own argv either way."""
+    doc = config.load_config(
+        write_config(tmp_path, "screenshot_command: import -crop 1x1+0+0\n")
+    )
+    assert doc["screenshot_command"] == ["import", "-crop", "1x1+0+0"]
+    doc = config.load_config(
+        write_config(
+            tmp_path,
+            "screenshot_command:\n  - import\n  - -crop\n  - 1x1+0+0\n",
+        )
+    )
+    assert doc["screenshot_command"] == ["import", "-crop", "1x1+0+0"]
+
+
+def test_screenshot_command_unset_and_refused_forms(
+    tmp_path: Path,
+) -> None:
+    # Null, blank, and the empty list are the unset form: the pipe
+    # stays down. A `--` token is legitimate command argv, so
+    # unlike ssh_options it is kept.
+    for body in (
+        "screenshot_command:\n",
+        "screenshot_command: ''\n",
+        "screenshot_command: []\n",
+    ):
+        assert config.load_config(write_config(tmp_path, body)) == {}
+    doc = config.load_config(
+        write_config(tmp_path, "screenshot_command: import -- all\n")
+    )
+    assert doc["screenshot_command"] == ["import", "--", "all"]
+    for body, message in (
+        ('screenshot_command: import "unclosed\n', "screenshot_command"),
+        ("screenshot_command:\n  - import\n  - 3\n", "non-empty strings"),
+        ("screenshot_command:\n  - import\n  - ''\n", "non-empty strings"),
+        ("screenshot_command: 3\n", "string or a list of strings"),
+    ):
+        path = write_config(tmp_path, body)
+        with pytest.raises(ValueError, match=message):
+            config.load_config(path)
+
+
+@pytest.mark.parametrize(
+    ("body", "port"),
+    [
+        ("screenshot_port: 8662\n", 8662),
+        ("screenshot_port: '9000'\n", 9000),
+        ("screenshot_port: 1\n", 1),
+    ],
+)
+def test_screenshot_port_takes_whole_numbers(
+    tmp_path: Path, body: str, port: int
+) -> None:
+    assert config.load_config(write_config(tmp_path, body)) == {
+        "screenshot_port": port
+    }
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ("screenshot_port: 0\n", "out of range"),
+        ("screenshot_port: 65536\n", "out of range"),
+        ("screenshot_port: true\n", "got bool"),
+        ("screenshot_port: x\n", "port number"),
+        ("screenshot_port: 8.5\n", "port number"),
+    ],
+)
+def test_screenshot_port_refuses_the_rest(
+    tmp_path: Path, body: str, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        config.load_config(write_config(tmp_path, body))
+
+
+def test_screenshot_port_unset_forms_drop_out(tmp_path: Path) -> None:
+    for body in ("screenshot_port:\n", "screenshot_port: ''\n"):
+        assert config.load_config(write_config(tmp_path, body)) == {}
+
+
+def test_a_daemon_entry_refuses_the_screenshot_keys(
+    tmp_path: Path,
+) -> None:
+    """Both keys are global-only: the screen the pipe captures is
+    the operator's desktop, not a daemon connection's."""
+    path = write_config(
+        tmp_path,
+        "daemons:\n  lab:\n    url: https://lab:8660\n"
+        "    screenshot_command: import\n",
+    )
+    with pytest.raises(ValueError, match="screenshot_command"):
+        config.load_config(path)
+
+
+def test_resolve_layers_the_screenshot_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The file's values resolve onto the config and materialize
+    into the environment the holder's children inherit; the
+    environment's own values win and are left as they stand."""
+    clean_env(monkeypatch)
+    path = write_config(
+        tmp_path,
+        "url: https://daemon\nscreenshot_command: import -crop 1x1\n"
+        "screenshot_port: 9001\n",
+    )
+    conf = config.resolve(config=path)
+    assert conf.screenshot_command == ["import", "-crop", "1x1"]
+    assert conf.screenshot_port == 9001
+    assert conf.env_layer["MSKSC_SCREENSHOT_COMMAND"] == "import -crop 1x1"
+    assert conf.env_layer["MSKSC_SCREENSHOT_PORT"] == "9001"
+
+    clean_env(monkeypatch)
+    monkeypatch.setenv("MSKSC_SCREENSHOT_COMMAND", "spectacle -b")
+    monkeypatch.setenv("MSKSC_SCREENSHOT_PORT", "9002")
+    conf = config.resolve(config=path)
+    assert conf.screenshot_command == ["spectacle", "-b"]
+    assert conf.screenshot_port == 9002
+    assert "MSKSC_SCREENSHOT_COMMAND" not in conf.env_layer
+    assert "MSKSC_SCREENSHOT_PORT" not in conf.env_layer
+
+
+def test_resolve_refuses_an_invalid_port_variable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clean_env(monkeypatch)
+    path = write_config(tmp_path, "url: https://daemon\n")
+    for raw in ("junk", "65536", "0"):
+        monkeypatch.setenv("MSKSC_SCREENSHOT_PORT", raw)
+        with pytest.raises(ValueError, match="MSKSC_SCREENSHOT_PORT"):
+            config.resolve(config=path)

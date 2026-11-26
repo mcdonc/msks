@@ -16,6 +16,10 @@ from __future__ import annotations
 #: belongs to the operator, not to a daemon connection.
 #: ``pubkey_file`` names the operator's key's public half (#495)
 #: and carries the same global-only rule for the same reason.
+#: ``screenshot_command`` and ``screenshot_port`` configure the
+#: client-held screenshot pipe (#1194) and carry the same rule:
+#: the screen the pipe captures belongs to the operator's
+#: desktop, not to a daemon connection.
 GLOBAL_ENV_VARS: dict[str, str] = {
     "url": "MSKSC_URL",
     "socket": "MSKSC_SOCKET",
@@ -27,6 +31,8 @@ GLOBAL_ENV_VARS: dict[str, str] = {
     "identity_file": "MSKSC_IDENTITY_FILE",
     "pubkey_file": "MSKSC_PUBKEY_FILE",
     "image_manifest_url": "MSKSC_IMAGE_MANIFEST_URL",
+    "screenshot_command": "MSKSC_SCREENSHOT_COMMAND",
+    "screenshot_port": "MSKSC_SCREENSHOT_PORT",
 }
 
 #: The terminal-launch setting's variable (#314): the string form
@@ -38,10 +44,23 @@ TERMINAL_ENV_VAR = "MSKSC_TERMINAL_OPEN_CMD"
 #: shell — the same shape :data:`TERMINAL_ENV_VAR` carries.
 SSH_OPTIONS_ENV = "MSKSC_SSH_OPTIONS"
 
+#: The screenshot pipe's two settings (#1194): the capture
+#: command whose presence enables the pipe, and the guest's
+#: loopback port its sshd binds. The variables are the one-shell
+#: forms of the file's global-only keys.
+SCREENSHOT_COMMAND_ENV = "MSKSC_SCREENSHOT_COMMAND"
+SCREENSHOT_PORT_ENV = "MSKSC_SCREENSHOT_PORT"
+
 #: The keys one ``daemons:`` entry may carry. Exactly one of
 #: ``url`` and ``socket`` is required — a remote daemon's address
 #: or a local listener's socket path (#555); the rest override
 #: their global forms for that alias. A ``socket`` entry needs no
 #: ``token_file``: the local listener authenticates by peer
 #: credential.
-DAEMON_ENTRY_KEYS = ("url", "socket", "token_file", "cafile", "expected_image")
+DAEMON_ENTRY_KEYS = (
+    "url",
+    "socket",
+    "token_file",
+    "cafile",
+    "expected_image",
+)

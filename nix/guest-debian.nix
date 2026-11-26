@@ -82,7 +82,7 @@ let
       imageHash = "sha512:8ea9faae810043a0b35b0149f05014f26705c2339ffb11ead308f33e844a87cc3ef46ec81d5262b38817b6a88af404874d48a5857ebe072ef6a31dfb6e371f50";
       kernelDeb = "linux-image-6.12.107+deb13-amd64-unsigned_6.12.107-1_amd64.deb";
       kernelHash = "sha256-fRPNgqHTd+QIJsMT9du9su3xtIxxOjdeTP5eIHdJy04=";
-      rsyncHash = "sha256-iqEi9rqNL/ESxyu5gU7glu5RbwITs2uYu+ecg8kvsiY=";
+      rsyncHash = "sha256-rkE2KA1z8wfwkI2aqODwXZS5rYw1EkupuDy5lMLzN+g=";
       fdHash = "sha256-FVTGiS23vhDUxr2/GfetQXKCahttAeXMU3uB1rAttNE=";
       rgHash = "sha256-fgwyUQwmTDEzX+O5rjerdtzSL30WJ6CghRilvyixesI=";
       console = "ttyS0";
@@ -98,7 +98,7 @@ let
       imageHash = "sha512-Mhrc8httKUHgnpbzM68MjzWwhlkEg0pOuBSc/SKGuQLUhoSU3fyGMFKjJniGUzeWqj4h2ySiQ8D8VqScdTRxvg==";
       kernelDeb = "linux-image-6.12.107+deb13-arm64-16k-unsigned_6.12.107-1_arm64.deb";
       kernelHash = "sha256-qYM8BDJIU9FFuAKQUEL2OzzuNB7V/qmWGJ7AW3vNhn0=";
-      rsyncHash = "sha256-Z+t85goFbiO4bArAIPwA2mJkf9v740RTaTYB+Nsavyk=";
+      rsyncHash = "sha256-bJ5aSTv6GqTuUI0Po3zJTzb9BR7rzOgJItxwp0kRzVU=";
       fdHash = "sha256-8pYF6zpjMDr5Qf0tjp9ArQwNLD9GCJUiw5EyaA5tGbg=";
       rgHash = "sha256-m080e6IyCyLLohfMSweFNllsxqFAnfAB/FYK0/o5Zgk=";
       console = "ttyAMA0";
@@ -224,7 +224,7 @@ let
   rsyncDeb = pkgs.fetchurl {
     url =
       "https://deb.debian.org/debian/pool/main/r/rsync/"
-      + "rsync_3.4.1+ds1-5+deb13u4_${facts.debianArch}.deb";
+      + "rsync_3.5.0+ds1-0+deb13u2_${facts.debianArch}.deb";
     hash = facts.rsyncHash;
   };
 
@@ -496,6 +496,9 @@ let
           'PasswordAuthentication no' \
           'KbdInteractiveAuthentication no' \
           'PermitRootLogin prohibit-password' \
+          '# #1194: the screenshot pipe asks sshd to bind a loopback' \
+          '# listener; the default says yes, this pins the contract.' \
+          'AllowTcpForwarding yes' \
           > $out/etc/ssh/sshd_config.d/00-msks.conf
 
         # The admin group's sudo (#169): passwordless root for every

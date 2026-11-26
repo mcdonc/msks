@@ -19,7 +19,7 @@ import httpx
 
 from ..spec.owners import AMBIGUOUS_WORKSPACE, owners_word
 from .env import is_unix, ssl_context, unix_path
-from .hold import holder_due, spawn_holder
+from .hold import holder_due, pipe_due, spawn_holder
 from .jsonio import ApiExit
 
 # Generous read budget: ``POST .../start`` answers only after the
@@ -444,7 +444,7 @@ async def hold_if_due(
             ssl_ctx=ssl_ctx,
             transport=transport,
         )
-        if holder_due(rows):
+        if holder_due(rows) or pipe_due():
             spawn_holder(workspace_id)
     except Exception, SystemExit:
         return

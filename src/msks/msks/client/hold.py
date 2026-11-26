@@ -9,8 +9,11 @@ import each other. ``holder_due`` decides whether a boot owes the
 workspace a holder; ``spawn_holder`` leaves one behind.
 """
 
+import os
 import subprocess
 import sys
+
+from .config_keys import SCREENSHOT_COMMAND_ENV
 
 
 def holder_due(rows: list[dict]) -> bool:
@@ -23,6 +26,23 @@ def holder_due(rows: list[dict]) -> bool:
     if not forward:
         return False
     return not any(row.get("status") == "listening" for row in forward)
+
+
+def pipe_due(environ=None) -> bool:
+    """Whether this client's environment carries a screenshot
+    command (#1194): the start path owes the workspace a holder
+    when the pipe would serve, beside the forward rows' own rule.
+    The command's presence is the pipe's whole enablement — an
+    unconfigured client leaves the pipe down and its holder
+    spawn unwarranted.
+
+    Purely an environment read, by placement: the boot helpers in
+    :mod:`msks.client.rest` and the lifecycle hooks reach this
+    from deep inside every session pre-flight, and the pipe's
+    own module pulls the ssh layer those paths must not.
+    """
+    env = os.environ if environ is None else environ
+    return bool(env.get(SCREENSHOT_COMMAND_ENV, "").strip())
 
 
 def spawn_holder(workspace_id: str) -> bool:

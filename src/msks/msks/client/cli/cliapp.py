@@ -128,8 +128,13 @@ home_app = typer.Typer(
 secret_app = typer.Typer(
     help="placeholder secrets: mint, list, revoke, renew, unlock"
 )
+screenshot_app = typer.Typer(
+    help="the client-held screenshot pipe: capture this client's "
+    "screen for a workspace's guest (#1194)"
+)
 app.add_typer(egress_app, name="egress")
 app.add_typer(image_app, name="image")
 app.add_typer(proxy_app, name="proxy")
 app.add_typer(home_app, name="home")
 app.add_typer(secret_app, name="secret")
+app.add_typer(screenshot_app, name="screenshot")
