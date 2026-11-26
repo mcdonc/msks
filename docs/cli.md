@@ -28,13 +28,21 @@ may not be in sync, which may cause problems. To cope with this, every command
 makes one best-effort `/health` roundtrip by the client to the daemon to do a
 version compatibility check. If the daemon is a different version than the
 client, the invocation prints one stderr line giving both and a remedy. The
-remedy follows the host the client runs on. On macOS the daemon lives in a
-Lima VM separate from the client. Rerun `msks-setup-macos-host` on the Mac to
-update the daemon in the VM. On Linux the daemon most often runs on the host
-itself. Rerun the host setup script (`msks-setup-debian-host` or
-`msks-setup-fedora-host`) on the daemon's host to update the daemon. A NixOS
-module host updates through its configuration, and the dev daemon through its
-tree.
+remedy follows the host the client runs on.
+
+On macOS the daemon lives in a Lima VM separate from the client. Rerun
+`msks-setup-macos-host` on the Mac to update the daemon in the VM.
+
+On Linux the daemon usually runs on the host itself, and the client and the
+daemon share one install. There the usual skew is a daemon that kept running
+through an upgrade. The setup script refreshes the install, and it restarts a
+running daemon only when the unit file changed. An upgrade leaves the unit
+file as it was. Restart the daemon with `sudo systemctl restart msksd` to
+pick up the installed release. A restart stops running workspaces first, and
+each starts again with `msks start`. If the host still has the old release,
+rerun the host setup script (`msks-setup-debian-host` or
+`msks-setup-fedora-host`) on the daemon's host. A NixOS module host updates
+through its configuration, and the dev daemon through its tree.
 
 ## Machine-readable output
 

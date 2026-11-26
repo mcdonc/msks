@@ -182,24 +182,37 @@ def test_the_rerun_remedy_names_the_clients_host(
 ) -> None:
     """#1174: the daemon-update remedy follows the client's own
     host, the side of the pair that says where the daemon lives.
-    A Linux client names the Linux host setup scripts and never
-    the Mac tool; a Mac client keeps the Mac tool. A dev-marked
-    client word takes the wheel path on both hosts, and the
-    daemon-leads arms stay the host's silence (they name the
-    client's own update, which is the same on every host)."""
+    A Linux client gives the Linux remedy and never the Mac tool:
+    the restart leads, because a daemon still running the release
+    from before an upgrade is the usual Linux skew (the setup
+    script refreshes the install and restarts the daemon only
+    when the unit file changed), and the setup rerun is the
+    fallback for a host that still has the old release. A
+    dev-marked client word takes the wheel path and restarts
+    after; a Mac client keeps the Mac tool. The daemon-leads
+    arms stay silent on the host (they give the client's own
+    update, which is the same everywhere)."""
     monkeypatch.setattr(workspaces.listing, "__version__", "0.6.0")
     monkeypatch.setattr(sys, "platform", "linux")
     linux = workspaces.version_skew_notice({"version": "0.1.0"})
+    restart = workspaces.listing.DAEMON_RESTART
+    assert restart in linux
     assert "rerun msks-setup-debian-host or msks-setup-fedora-host" in linux
+    assert linux.index("systemctl restart msksd") < linux.index(
+        "rerun msks-setup"
+    )
     assert "macos" not in linux
     monkeypatch.setattr(workspaces.listing, "__version__", "0.6.0.dev0")
     linux_dev = workspaces.version_skew_notice({"version": "0.1.0"})
     assert "--wheel" in linux_dev
     assert "msks-setup-fedora-host" in linux_dev
+    assert f"then restart the daemon ({restart})" in linux_dev
+    assert linux_dev.index("--wheel") < linux_dev.index("systemctl restart")
     assert "macos" not in linux_dev
     monkeypatch.setattr(sys, "platform", "darwin")
     mac_dev = workspaces.version_skew_notice({"version": "0.1.0"})
     assert "rerun msks-setup-macos-host --wheel" in mac_dev
+    assert "systemctl" not in mac_dev
     assert "fedora" not in mac_dev
     assert "update this client" in workspaces.version_skew_notice(
         {"version": "9.9.9"}

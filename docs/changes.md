@@ -62,10 +62,11 @@ tagged `vX.Y.Z`.
 - **The version-skew notice gives the Linux remedy on Linux (#1174).**
   A client newer than the daemon used to send every operator to
   `msks-setup-macos-host`, including a Linux host where the daemon
-  runs on the host itself. The notice now points to
-  `msks-setup-debian-host` or `msks-setup-fedora-host` when the
-  client runs on Linux, and keeps the Mac tool on macOS. See
-  [docs/cli.md](cli.md#the-cli-client).
+  runs on the host itself. On Linux the notice now says to restart
+  the daemon (`sudo systemctl restart msksd`) to pick up an
+  installed newer release, or to rerun `msks-setup-debian-host` or
+  `msks-setup-fedora-host` when the host still has the old one. On
+  macOS it keeps the Mac tool. See [docs/cli.md](cli.md#the-cli-client).
 
 - **Enter in the GUI's lists on macOS (#1161).** Enter on the
   selected workspace now opens its page, and Enter on a
