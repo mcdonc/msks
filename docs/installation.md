@@ -193,9 +193,9 @@ and the [API](api.md) chapter documents token minting past the
 bootstrap credential.
 
 Under the module, `programs.msks.settings` writes the client config for
-every user of the host. A daemon host fills the listener in, so on a
-TCP host `token_file` is the key left to add. See [Every daemon key,
-and the host's client
+every user of the host. A daemon host fills the listener in, so a host
+whose file points at TCP is missing only `token_file`. See [Every
+daemon key, and the host's client
 config](#every-daemon-key-and-the-hosts-client-config).
 
 A client on another host needs the listener reachable and its
@@ -210,7 +210,10 @@ services.msksd.openFirewall = true;
 A wildcard address (`0.0.0.0`, `::`) serves every interface, and the
 host's own client still verifies it. A remote client cannot: the
 certificate covers the wildcard spelling alone, so set the host's
-name.
+name. The name must resolve to the host's public address (a DNS
+alias, or an address on one of its interfaces). NixOS maps the
+machine's own `hostName` to loopback, so that name serves nothing
+off the host.
 
 That other host, when it runs NixOS, uses the module as a client alone:
 `programs.msks.enable` with the daemon's address, its CA file, and the
@@ -286,15 +289,18 @@ the store.
 `/etc/msks/msks.yaml`, and `MSKSC_CONFIG_DIR=/etc/msks` as a default
 session variable for every user. A bare `msks` on the host reads this
 file. A daemon host turns the client on by default and fills the
-listener in: `socket` when the socket serves (TCP on beside it makes
-no difference — the socket is the listener a same-host client needs no
-token for), `url` and `cafile` otherwise. The `url` is the listener's
-own address, the one name the daemon's certificate covers. A wildcard
-`listenAddress` connects on the host itself. A remote client needs
-`listenAddress` set to the name it connects to. The keys set here win
-over those defaults, and the rest are the keys of the [client config
-file](cli.md#the-client-config-file). On a daemon host that serves TCP,
-the token's file is the key left to add:
+listener in: `socket` when the socket is the listener a same-host user
+can connect to (shared through a `socket.group`, or the only
+listener), `url` and `cafile` otherwise. A private socket beside TCP
+stays out of the host's defaults. Without a group it serves the daemon
+user alone, and every other user would face a refusal at connect. The
+`url` is the listener's own address, the one name the daemon's
+certificate covers. A wildcard `listenAddress` connects on the host
+itself. A remote client needs `listenAddress` set to the name it
+connects to. The keys set here win over those defaults, and the rest
+are the keys of the [client config
+file](cli.md#the-client-config-file). On a host whose file points at
+the TCP listener, the token's file is the key left to add:
 
 ```nix
 programs.msks.settings = {

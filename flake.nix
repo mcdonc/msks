@@ -126,6 +126,20 @@
       both = evalConfig {
         services.msksd = {
           enable = true;
+          socket = {
+            enable = true;
+            group = "msksops";
+          };
+          tcp.enable = true;
+          egress.uplink = "eno4";
+        };
+      };
+      # #801: a private socket beside TCP — no group shares it, so
+      # the socket serves the daemon user alone and the client's
+      # defaults point at TCP.
+      bothPrivate = evalConfig {
+        services.msksd = {
+          enable = true;
           socket.enable = true;
           tcp.enable = true;
           egress.uplink = "eno4";
@@ -244,7 +258,6 @@
       # inputs stay the handful the ExecStart strings already
       # pulled in.
       pkgOn = on.services.msksd.package.name;
-      clientPkgOn = on.programs.msks.package.name;
       pathOn = pkgs.lib.concatStringsSep " " (
         map (p: p.name) on.environment.systemPackages
       );
@@ -290,6 +303,9 @@
             # the session variable pointing every user's msks at it.
             clientCfgOn = toString on.environment.etc."msks/msks.yaml".source;
             clientCfgBoth = toString both.environment.etc."msks/msks.yaml".source;
+            clientCfgBothPrivate =
+              toString
+                bothPrivate.environment.etc."msks/msks.yaml".source;
             clientPkgPinned = pinned.programs.msks.package.name;
             pinnedPkg = pkgs.hello.name;
             clientCfgLayered = toString layered.environment.etc."msks/msks.yaml".source;
@@ -508,16 +524,30 @@
               echo "fail: the socketed branch's client file lost the socket path"
               exit 1
             }
-            # The both branch carries the socket alone: the socket is
+            # A shared socket beside TCP carries the socket alone: it is
             # the listener a same-host client needs no token for, and
             # the client's own tie-break otherwise sends every user to
-            # the url and its token.
+            # the url and its token. A private socket beside TCP — the
+            # group alone shares it, and without one it serves the
+            # daemon user alone — leaves the TCP keys as the defaults.
             grep -qxF 'socket: /run/msks/msksd.sock' "$clientCfgBoth" || {
               echo "fail: the both branch's client file lost the socket path"
               exit 1
             }
             if grep -qxE 'url: .*|cafile: .*' "$clientCfgBoth"; then
-              echo "fail: the both branch's client file points at TCP"
+              echo "fail: the shared-socket both branch's client file points at TCP"
+              exit 1
+            fi
+            grep -qxF 'url: https://127.0.0.1:8660' "$clientCfgBothPrivate" || {
+              echo "fail: the private-socket both branch's client file lost the url default"
+              exit 1
+            }
+            grep -qxF 'cafile: /var/lib/msksd/msks-ca.pem' "$clientCfgBothPrivate" || {
+              echo "fail: the private-socket both branch's client file lost the cafile default"
+              exit 1
+            }
+            if grep -qxE 'socket: .*' "$clientCfgBothPrivate"; then
+              echo "fail: the private-socket both branch's client file points at the socket"
               exit 1
             fi
             if grep -qxE 'url: .*' "$clientCfgSocketed"; then

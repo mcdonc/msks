@@ -196,11 +196,13 @@ let
   clientSettingsFile = yamlFormat.generate "msks.yaml" pcfg.settings;
 
   # The listener a daemon host hands its own client, the sshd shape
-  # (services.openssh feeding programs.ssh): the socket when the
-  # socket serves — the listener a same-host client needs no token
-  # for, and the one the client probes on its own; the TCP address
-  # with the daemon's CA otherwise, the shape a token_file completes.
-  # The url is the listener's own address, the one name the daemon's
+  # (services.openssh feeding programs.ssh): the socket when it is
+  # the listener a same-host user can actually connect to — shared
+  # through a socket.group, or the only listener — else the TCP
+  # address with the daemon's CA, the shape a token_file completes
+  # (a private socket beside TCP serves the daemon user alone, and
+  # every other user would face Permission denied at connect). The
+  # url is the listener's own address, the one name the daemon's
   # certificate covers (an IPv6 literal takes its brackets; a
   # wildcard address connects on the host itself, and a remote
   # client needs listenAddress set to the name it connects to). The
@@ -208,7 +210,7 @@ let
   # Merged as defaults: the operator's programs.msks.settings wins
   # key by key.
   clientListenerDefaults =
-    if cfg.socket.enable then
+    if cfg.socket.enable && (cfg.socket.group != null || !cfg.tcp.enable) then
       { socket = "/run/msks/msksd.sock"; }
     else
       {
