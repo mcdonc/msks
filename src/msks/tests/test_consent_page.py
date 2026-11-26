@@ -574,8 +574,12 @@ def wait_diagnostics(cycles: int, credited: float, budget: float) -> None:
       serve — the flight that owed the serve was cancelled inside
       its read or swap; the ``finally`` cleared the mark, and the
       serve after it never ran.
-    - ``loading=False pending=False``: the poke the test waited on
-      never armed — the test's own ordering, not the listing's.
+    - ``loading=False pending=False``: every arm was served and no
+      flight stands — the listing is consistent, and the count the
+      test waited on was passed by a later poke's read (the mount's
+      deferred startup poke runs on the screen's idle callback and
+      can land mid-flight under load). The test's predicate, not
+      the listing's.
     """
     parts = [
         f"cycles={cycles}",

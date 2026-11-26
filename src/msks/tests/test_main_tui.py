@@ -10081,7 +10081,71 @@ async def test_a_refresh_in_flight_skips_instead_of_cancelling(
         await wait_for(lambda: list_children(app) == 1)
         # The armed poke served: the landing flight re-reads — the
         # skip never lost the frame, and the tree never stranded.
-        await wait_for(lambda: fetches == 2)
+        # At least the one read: the mount's deferred startup poke
+        # runs on the screen's idle callback and can land during
+        # the landing flight under a loaded runner, arming a third
+        # read (#1179's mac-lane flake: an exact count skipped from
+        # one to three between two polls, with both marks clear).
+        await wait_for(lambda: fetches >= 2)
+        await startup_quiet(pilot, app)
+        assert screen.rows_widget() is not None
+
+
+async def test_a_startup_poke_landing_on_the_landing_flight_is_served(
+    monkeypatch,
+) -> None:
+    """#1179's mechanism B, settled from its own diagnostics line
+    (``loading=False pending=False``): the mount's deferred startup
+    poke runs on the screen's idle callback, and under a loaded
+    runner it can land during the flight that serves an earlier
+    arm. It arms a third read there, and a test polling an exact
+    count misses it — one to three between two polls. The listing
+    is consistent throughout: every arm served, both marks clear.
+    Here the startup poke is held by hand and released while the
+    landing flight stands parked on its own gate."""
+    import asyncio as _asyncio
+
+    gate = _asyncio.Event()
+    landing = _asyncio.Event()
+    fetches = 0
+
+    class GatedData(FakeData):
+        async def workspaces(self) -> list[dict]:
+            nonlocal fetches
+            fetches += 1
+            if fetches == 1:
+                await gate.wait()
+            elif fetches == 2:
+                await landing.wait()
+            return self.rows
+
+    held: list = []
+
+    def hold_refresh(self, callback, *args, **kwargs) -> None:
+        held.append(callback)  # the mount's deferred startup poke
+
+    monkeypatch.setattr(MainScreen, "call_after_refresh", hold_refresh)
+    data = GatedData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: on_main(app))
+        screen = app.screen
+        # The link's connect poke opened the gated flight alone.
+        while not screen.rows_loading:
+            await pilot.pause()
+        await wait_for(lambda: fetches == 1)
+        assert held and held[0] == screen.refresh_rows
+        screen.refresh_rows()  # the arm the landing flight serves
+        gate.set()
+        await wait_for(lambda: fetches == 2)  # the landing flight, parked
+        assert screen.rows_loading  # inside its read, the first list standing
+        held[0]()  # the startup poke lands mid-flight: armed, not lost
+        assert screen.rows_pending
+        landing.set()
+        await wait_for(lambda: fetches >= 3)  # served as the third read
+        await startup_quiet(pilot, app)
+        assert not screen.rows_loading
+        assert not screen.rows_pending
         assert screen.rows_widget() is not None
 
 
@@ -10131,7 +10195,7 @@ async def test_a_power_key_does_not_cancel_the_refresh_in_flight(
         assert screen.rows_pending
         gate.set()
         await wait_for(lambda: list_children(app) == 1)
-        await wait_for(lambda: fetches == 2)  # the armed poke served
+        await wait_for(lambda: fetches >= 2)  # the armed poke served
         await startup_quiet(pilot, app)
         assert screen.rows_widget() is not None
         assert data.calls == []
