@@ -770,17 +770,16 @@ def list_children(app) -> int:
 
 
 def listing_settled(app) -> bool:
-    """Whether the listing stands past a rebuild's swap window
-    (#519): the list answers its query and the click's own read
-    — the focused row the screen's rows imply — is not None. The
-    status line alone cannot gate a single-shot read or press:
-    its 0.5s timer reads ``len(self.rows)``, which the rebuild
-    sets before it mounts the fresh list. Since #1179 the swap
-    window answers the read too (``swap_focus`` stands in for the
-    row), so this gate passes inside the window as well — a click
-    or press fired there lands on the row the swap returns to.
-    A test that needs the window closed reads ``swap_focus``
-    directly."""
+    """Whether the screen answers a focused row (#519, #1179):
+    past a rebuild's swap window the list answers it, and inside
+    the window the stand-in does (``swap_focus``), so this gate
+    passes in both. The status line alone cannot gate a read: its
+    0.5s timer reads ``len(self.rows)``, which the rebuild sets
+    before it mounts the fresh list. A key or a selection message
+    fired inside the window lands on the row the swap returns to;
+    a real click cannot (no ``#rows`` is registered in the
+    window's head). A test that needs the list itself reads
+    ``swap_closed`` and ``rows_widget``."""
     return app.screen.focused_row() is not None
 
 
@@ -6819,29 +6818,30 @@ async def test_a_row_selection_opens_the_page(monkeypatch) -> None:
         await wait_for(lambda: "1 workspace" in status_text(app))
         # The settle gate, not the status line: the count can
         # stand on the line while the first rebuild's swap window
-        # is still open (#519), and the click fired there no-ops.
+        # is still open (#519). Since #1179 the message fired
+        # there opens the stand-in row's page all the same — the
+        # gated and the ungated press read the same row.
         await wait_for(lambda: listing_settled(app))
         app.screen.on_list_view_selected(None)  # the click's message
         await wait_for(lambda: on_page(app))
 
 
-async def test_a_row_selection_waits_out_the_listing_swap_window(
+async def test_a_row_selection_inside_the_swap_window_opens_the_row(
     monkeypatch,
 ) -> None:
-    """#519: the click's message must not fire inside the first
-    rebuild's swap window. The status line cannot gate it — the
-    0.5s status timer reads ``len(self.rows)``, which the rebuild
-    sets before it mounts the fresh list, so the count stands on
-    the line while no list does; a click fired in that window
-    no-ops (the no-focus flash) and the page never opens, the
-    exact CI lane shape (#518's run: "condition never landed"
-    while the code under test completed fine). The mount seam
-    here holds the window open the way a descheduled runner
-    does; the settle gate rides past it before the click fires."""
+    """#1179, over #519: the selection message fired inside the
+    first rebuild's swap window opens the page of the row the
+    swap returns to. #519 gated the message past the window
+    because one fired there no-oped into the no-focus flash (the
+    #518 lane's shape); the window answers now, so the gate is a
+    read's gate, not the message's. The mount seam holds the
+    window open the way a descheduled runner does."""
     original = Vertical.mount
+    window = asyncio.Event()
 
     async def stalled_mount(self, *widgets, **kwargs):
         if any(getattr(widget, "id", None) == "rows" for widget in widgets):
+            window.set()
             await asyncio.sleep(0.7)  # the deschedule the CI lane rides
         return await original(self, *widgets, **kwargs)
 
@@ -6850,10 +6850,14 @@ async def test_a_row_selection_waits_out_the_listing_swap_window(
     data = FakeData([row()])
     app, _ = make_app(data)
     async with app.run_test():
-        await wait_for(lambda: "1 workspace" in status_text(app))
-        await wait_for(lambda: listing_settled(app))
-        app.screen.on_list_view_selected(None)  # the click's message
+        await wait_for(window.is_set)
+        assert list_children(app) == -1  # inside the window: no list answers
+        listing = app.screen
+        listing.on_list_view_selected(None)  # the click's message
         await wait_for(lambda: on_page(app))
+        # The swap runs on under the page and lands its list.
+        await wait_for(lambda: listing.swap_focus is None)
+        assert listing.rows_widget() is not None
 
 
 async def test_a_press_inside_the_swap_window_reaches_the_row(
@@ -6940,6 +6944,49 @@ async def test_a_first_builds_window_answers_its_top_row(monkeypatch) -> None:
         await wait_for(lambda: app.screen.rows_widget() is not None)
         assert app.screen.rows_widget().highlighted_child.workspace_id == WS
         assert data.calls == []
+
+
+async def test_the_swap_windows_tail_answers_the_kept_row(
+    monkeypatch,
+) -> None:
+    """#1179: the window's tail, where the fresh list stands
+    registered and its mount event has already highlighted the top
+    row while the kept row is still a call away. The list's own
+    answer there is the top row; the stand-in answers the kept one,
+    so a press in that slice reaches the row the operator highlighted
+    and not the listing's first. The probe reads both at the moment
+    the kept row is applied."""
+    seen: dict = {}
+    original = main_screen_mod.focus_attr
+
+    def probing_focus_attr(rows, attr, target) -> None:
+        seen["row"] = app.screen.focused_row()["id"]
+        seen["highlighted"] = rows.highlighted_child.workspace_id
+        original(rows, attr, target)
+
+    monkeypatch.setattr(main_screen_mod, "focus_attr", probing_focus_attr)
+    scripted_listing(monkeypatch, [])
+    data = FakeData(
+        [row(), row(id="ws-b", name="beta"), row(id="ws-c", name="gamma")]
+    )
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: list_children(app) == 3)
+        await startup_quiet(pilot, app)
+        screen = app.screen
+        screen.rows_widget().index = 2  # gamma, the row the swap keeps
+        await pilot.pause()
+        seen.clear()  # the first build's apply is not the probe
+        data.rows[0]["status"] = "running"  # a poke that swaps
+        screen.action_refresh()
+        await wait_for(lambda: "row" in seen)
+        assert seen["row"] == "ws-c"  # the stand-in answers first
+        assert (
+            seen["highlighted"] == "ws-a"
+        )  # the list's own answer: the top row
+        await wait_for(lambda: swap_closed(app))
+        assert screen.focused_row()["id"] == "ws-c"
+        assert screen.rows_widget().highlighted_child.workspace_id == "ws-c"
 
 
 async def test_a_stale_child_skips_in_the_repaint(monkeypatch) -> None:
@@ -10223,7 +10270,7 @@ async def test_a_listing_wait_timeout_names_its_in_flight_marks(
     assert "focused=" in line
     assert "queue=" in line
     assert "loading=True pending=True" in line
-    assert "workers=" in line
+    assert "screen_workers=" in line
 
 
 async def test_a_power_key_keeps_the_earlier_keys_refresh_alive(

@@ -638,7 +638,10 @@ class MainScreen(ReholdWatch, HelpKeys, Screen):
         in for the row the fresh list will highlight — the focused
         row's when the fresh rows keep it, else the top — from the
         removal to the focus, so :meth:`focused_row` answers a
-        press in the window."""
+        press in the window: ahead of the list in the window's
+        head (no list answers) and ahead of the list's own top-row
+        highlight in its tail (the fresh list registered, its kept
+        row not yet highlighted)."""
         ordered = sort_rows(rows, self.sort)
         if ordered == self.rows and self.rows_widget() is not None:
             self.sync_status()
@@ -829,10 +832,14 @@ class MainScreen(ReholdWatch, HelpKeys, Screen):
         focused (an empty listing). A rebuild's swap window answers
         the row the swap returns to (#1179): the old list is gone
         and the fresh one not yet focused, and the press that
-        lands there still has a row to act on."""
-        ws_id = focused_attr(self.rows_widget(), "workspace_id")
+        lands there still has a row to act on. The stand-in answers
+        before the list does: in the window's tail the fresh list
+        stands registered with the top row highlighted — its mount
+        event's doing — while the kept row is still a call away,
+        and the list's own answer there is not the final one."""
+        ws_id = self.swap_focus
         if ws_id is None:
-            ws_id = self.swap_focus
+            ws_id = focused_attr(self.rows_widget(), "workspace_id")
         if ws_id is None:
             return None
         return next((row for row in self.rows if row["id"] == ws_id), None)

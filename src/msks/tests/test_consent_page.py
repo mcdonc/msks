@@ -558,28 +558,34 @@ def wait_diagnostics(cycles: int, credited: float, budget: float) -> None:
     diagnostics never outrank the failure they describe.
 
     A listing screen adds its in-flight marks (#1179),
-    ``loading=`` and ``pending=``, and every app its worker count
-    — the triage key for a listing wait that ran its whole budget
-    with an empty queue (#1179's Nov 25 flakes):
+    ``loading=`` and ``pending=``, and every app the workers its
+    screen owns (``screen_workers=``, any group) — the triage key
+    for a listing wait that ran its whole budget with an empty
+    queue (#1179's flakes). The marks say what stands; the likely
+    readings follow, and each names the one it cannot rule out:
 
     - ``focused=NoneType``: the press or read landed in a
       rebuild's swap window — no widget held the focus.
-    - ``loading=True`` with ``workers=0``: no task runs for the
-      flight that holds the mark — one cancelled before its
+    - ``loading=True`` with ``screen_workers=0``: no task runs for
+      the flight that holds the mark — one cancelled before its
       first step never ran the ``finally`` that clears it, and
       nothing will.
-    - ``loading=True`` with a worker still counted: the flight runs
-      — a read or a mount that has not answered.
+    - ``loading=True`` with ``screen_workers`` past zero: a worker
+      of the screen's still runs — the flight's own read or mount
+      most likely, a power key's or a re-hold weigh possibly.
     - ``loading=False pending=True``: an armed poke no flight will
       serve — the flight that owed the serve was cancelled inside
       its read or swap; the ``finally`` cleared the mark, and the
       serve after it never ran.
-    - ``loading=False pending=False``: every arm was served and no
-      flight stands — the listing is consistent, and the count the
-      test waited on was passed by a later poke's read (the mount's
-      deferred startup poke runs on the screen's idle callback and
-      can land mid-flight under load). The test's predicate, not
-      the listing's.
+    - ``loading=False pending=False``: no flight and no arm stand.
+      The usual reading is that every arm was served and the count
+      the test waited on was passed by a later poke's read (the
+      mount's deferred startup poke runs on the screen's idle
+      callback and can land mid-flight under load) — the test's
+      predicate. The other is a served flight cancelled after its
+      first step and before its read began (the power keys no
+      longer can; teardown can); a read count beside the marks
+      tells the two apart.
     """
     parts = [
         f"cycles={cycles}",
@@ -598,7 +604,9 @@ def wait_diagnostics(cycles: int, credited: float, budget: float) -> None:
                 value = getattr(app.screen, mark, None)
                 if value is not None:
                     parts.append(f"{mark.removeprefix('rows_')}={value}")
-            parts.append(f"workers={len(app.workers)}")
+            screen = app.screen
+            owned = sum(1 for worker in app.workers if worker.node is screen)
+            parts.append(f"screen_workers={owned}")
     # fd 2, not sys.stderr: Textual's run_test replaces the
     # stream object for the app's lifetime, and the line exists
     # for timeouts that fire inside one — the descriptor write
