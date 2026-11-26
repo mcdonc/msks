@@ -87,6 +87,14 @@ tagged `vX.Y.Z`.
   sizes in the same spelling (`8G`). See
   [docs/gui.md](gui.md#creating-a-workspace).
 
+- **`services.msksd.enable` puts the msks binaries on the system
+  PATH (#796).** Enabling the service adds the daemon package to
+  `environment.systemPackages`, and `msks` and `msks-term-popup` are on
+  the system PATH for every user of the host. Importing the module
+  without enabling still installs nothing. The installation chapter
+  gained a [NixOS hosts](installation.md#nixos-hosts) section
+  documenting the module.
+
 ### Fixed
 
 - **The GUI terminal's copy drops the selection (#1182).**
