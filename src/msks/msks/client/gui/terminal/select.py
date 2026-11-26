@@ -293,10 +293,10 @@ def text(screen) -> str:
 
 
 def copy(screen) -> None:
-    """Ctrl+Shift+C and the menu's Copy: the selection to the
-    clipboard, then dropped, so the highlight leaves with the
-    text (#1182). The keyboard and the menu both come here,
-    and both leave no selection behind."""
+    """Ctrl+Shift+C and the menu's Copy: the selection's text
+    to the clipboard, then the selection dropped, so the
+    highlight leaves with the text (#1182). A selection over
+    blank cells formats to nothing and still drops."""
     picked = text(screen)
     if picked:
         QApplication.clipboard().setText(picked)
