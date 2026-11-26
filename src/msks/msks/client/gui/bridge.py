@@ -106,6 +106,14 @@ class Bridge(QtCore.QObject):
     feed_served = QtCore.Signal()
     decider_landed = QtCore.Signal(str, object)
     decider_rejected = QtCore.Signal(str)
+    #: The last flight in flight landed (#1177): every call the
+    #: screens asked has answered. The opening settle reads it
+    #: to know the pages stand in their final shape.
+    idle = QtCore.Signal()
+    #: One flight's delivery, raised from the worker thread and
+    #: counted on the bridge's own thread — the count stays
+    #: this thread's alone.
+    flight_landed = QtCore.Signal()
 
     def __init__(
         self,
@@ -138,6 +146,23 @@ class Bridge(QtCore.QObject):
         self._retiring: set[asyncio.Task] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
+        #: The flights the screens asked and not yet answered
+        #: (#1177): a call counts from ``call`` to its delivery,
+        #: every arm of it.
+        self._flights = 0
+        self.flight_landed.connect(self.count_landed)
+
+    @property
+    def in_flight(self) -> int:
+        """The calls asked and not yet answered."""
+        return self._flights
+
+    def count_landed(self) -> None:
+        """One flight left: the count down, and the last one
+        out answers ``idle``."""
+        self._flights -= 1
+        if self._flights == 0:
+            self.idle.emit()
 
     @property
     def running(self) -> bool:
@@ -344,6 +369,7 @@ class Bridge(QtCore.QObject):
             return None
         coro = getattr(self._data, method)(*args)
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        self._flights += 1
         future.add_done_callback(lambda done: self.deliver(key, done))
         return future
 
@@ -367,23 +393,31 @@ class Bridge(QtCore.QObject):
         combined arm carries both the exit contract a coroutine
         raised past its guard (SystemExit, BaseException-derived;
         uncaught, a screen would wait forever) and a data-layer
-        bug, each as the same visible shape (a failed call)."""
+        bug, each as the same visible shape (a failed call). The
+        flight is counted out on the bridge's own thread,
+        whatever arm delivered it."""
         try:
-            result = future.result()
-        except RestFailure as exc:
-            self.failed.emit(key, exc)
-        except CancelledError:
-            pass
-        except (SystemExit, Exception) as exc:
-            self.failed.emit(key, self.as_failure(exc))
-        else:
-            self.succeeded.emit(key, result)
+            try:
+                result = future.result()
+            except RestFailure as exc:
+                self.failed.emit(key, exc)
+            except CancelledError:
+                pass
+            except (SystemExit, Exception) as exc:
+                self.failed.emit(key, self.as_failure(exc))
+            else:
+                self.succeeded.emit(key, result)
+        finally:
+            self.flight_landed.emit()
 
     def stop(self) -> None:
         """Take the loop down and land the worker: idempotent (a
         window that both quits and closes calls it twice), and
         safe from any thread — stop() never touches the loop
-        except through its own threadsafe door."""
+        except through its own threadsafe door. A flight still
+        out when the loop goes never lands (#1177): the count
+        stands past zero on a stopped bridge, and nothing reads
+        it there — the settle's cap bounds any waiter."""
         loop = self._loop
         thread = self._thread
         if loop is None or thread is None:

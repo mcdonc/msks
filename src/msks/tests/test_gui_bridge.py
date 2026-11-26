@@ -240,6 +240,64 @@ def test_a_feed_done_before_stop_stops_clean(qapp_setup) -> None:
     assert not bridge.running
 
 
+def settle_count(qt, bridge, until: int = 0) -> None:
+    """Spin Qt's queue until the flight count reaches ``until``:
+    the count drops on the bridge's own thread through a queued
+    signal, a turn behind the answer itself."""
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        qt.app.processEvents()
+        if bridge.in_flight <= until:
+            return
+        time.sleep(TICK)
+    pytest.fail("the flight count never came down")
+
+
+def test_the_flights_count_and_the_last_one_out_answers_idle(
+    qapp_setup, tmp_path: Path
+) -> None:
+    """The in-flight count (#1177): a call counts from ``call``
+    to its delivery on every arm — the answer and the
+    cancellation — and the last flight out answers ``idle``, the
+    opening settle's gate; a flight still out holds it. The
+    count is the bridge's own thread's: the worker's delivery
+    crosses to the GUI thread before the count drops. The
+    answered-at-once arm (a stopped bridge) is no flight. The
+    flights here are the slow ones, so the count reads before
+    any of them can land — a quick call may deliver on the
+    caller's own thread before ``call`` returns (the first
+    test's own note)."""
+    qt = qapp_setup
+    data = StubData()
+    bridge = qt.Bridge(data)
+    idles: list[int] = []
+    bridge.idle.connect(lambda: idles.append(bridge.in_flight))
+    assert bridge.in_flight == 0
+    bridge.start()
+    receiver = qt.Receiver(bridge)
+    first = bridge.call("slow", "slow")
+    second = bridge.call("slow", "slow")
+    assert bridge.in_flight == 2 and idles == []
+    # A cancelled flight counts out like any other: the screen
+    # closing is not a failure, but the gate waits for it.
+    assert first is not None and first.cancel()
+    settle_count(qt, bridge, until=1)
+    assert idles == []  # one still out: not idle
+    assert second is not None and second.cancel()
+    settle_count(qt, bridge)
+    assert idles == [0]
+    # An answered flight counts out the same way, behind its
+    # own delivery.
+    bridge.call("list", "workspaces")
+    pump(qt, receiver, okay=1)
+    settle_count(qt, bridge)
+    assert idles == [0, 0]
+    bridge.stop()
+    bridge.call("late", "workspaces")
+    assert bridge.in_flight == 0
+    assert idles == [0, 0]
+
+
 def test_the_feed_rides_the_loop_and_its_frames_cross(
     qapp_setup,
 ) -> None:

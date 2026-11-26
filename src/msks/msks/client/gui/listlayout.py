@@ -19,7 +19,7 @@ contract: nothing imports it at CLI parse time, and the
 listing's module owns the import (#927).
 """
 
-from PySide6 import QtCore
+from PySide6 import QtCore, QtWidgets
 
 from .listcells import (
     ACTION_COLUMN,
@@ -106,3 +106,18 @@ def fit_images(table: ListTable, budget: int | None) -> None:
                 budget,
             )
         )
+
+
+def grouped(
+    title: str, owner: QtWidgets.QWidget, table: QtWidgets.QTableWidget
+) -> QtWidgets.QGroupBox:
+    """One labeled group's box over a table (#1177): the title
+    above the table and nothing between — the Images and
+    Secrets pages' own shape — so the first table of every
+    top-level page starts at the same height under its
+    heading, and the header line stays put across a tab
+    change."""
+    box = QtWidgets.QGroupBox(title, owner)
+    rows = QtWidgets.QVBoxLayout(box)
+    rows.addWidget(table)
+    return box

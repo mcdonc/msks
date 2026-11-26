@@ -490,7 +490,7 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
         bridge.start()
         app.aboutToQuit.connect(bridge.stop)
         shell = WorkspaceShell(bridge, terminal_cmd=terminal_command(conf))
-        tabs = MainTabs(shell)
+        tabs = MainTabs(shell, bridge)
         tabs.addTab(ImagesTab(bridge, channel_url(conf)), IMAGES_LABEL)
         secrets = SecretsTab(bridge)
         tabs.addTab(secrets, SECRETS_LABEL)
@@ -574,6 +574,17 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     # remembers one.
     if not restore_geometry(window):
         window.resize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
+    # allow-deferred-import — the opening settle carries PySide6
+    # at module scope there, loaded only on the window path
+    # after the guards.
+    from .arrival import Settle
+
+    # The opening settle: the content cleared before the show,
+    # so the first frame draws the frame over a clear content
+    # area, and the content shows once the window's first paint
+    # pass stands and the bridge's first refreshes have landed
+    # — once per window, not per re-dial.
+    Settle(window.centralWidget(), tree["bridge"]).after_first_paint(window)
     window.show()
     # allow-deferred-import — the Ctrl-C wiring (#1037) carries
     # PySide6 at module scope there; the window path loads it

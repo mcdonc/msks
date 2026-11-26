@@ -50,7 +50,7 @@ from ..imagerows import (
     catalog_rows,
     published_rows,
 )
-from ..listtable import ListTable, bold_header, resized_viewport
+from ..listtable import ListTable, resized_viewport
 from ..statusflash import StatusFlash
 from ..tints import TintedLabel
 from . import layout
@@ -305,7 +305,6 @@ class ImagesTab(FeedPage, StatusFlash, ButtonRows, QtWidgets.QWidget):
             f"QTableView::item {{ border-bottom: 1px solid {rule}; }}"
         )
         table.verticalHeader().setVisible(False)
-        bold_header(table)
         # The pane's own resizes re-flow the columns (#964): a
         # vertical scrollbar's appearance shrinks the viewport
         # after a fill sized against the wider one.

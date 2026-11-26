@@ -26,6 +26,7 @@ bridge's own docstring states the same contract).
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..data import RestFailure
+from .arrival import stagger_rows
 from .bridge import Bridge
 from .connectionbar import ConnectionButton
 from .edit import EditDialog
@@ -49,7 +50,7 @@ from .listcells import (
     read_only_item,
     state_text,
 )
-from .listlayout import size_columns
+from .listlayout import grouped, size_columns
 from .listtable import ListTable
 from .rows import (
     WorkspaceRow,
@@ -64,6 +65,10 @@ from .tints import TintedLabel
 #: screen answers only its own key, whatever else shares the
 #: bridge.
 LIST_KEY = "workspaces-list"
+
+#: The listing's group title (#1177): the heading over the
+#: table, the Images and Secrets pages' own shape.
+LIST_GROUP = "Workspaces"
 
 #: The action calls' keys (#940, #972, #1063): start, stop,
 #: remove, and clone on a row, each its own flight.
@@ -127,6 +132,10 @@ class WorkspaceList(StatusFlash, QtWidgets.QWidget):
         self.bridge = bridge
         self.pending = False
         self.refresh_due = False
+        # The opening settle's one run: the first rows the
+        # listing shows arrive in a stagger, later refills in
+        # place.
+        self.arrived = False
         self.flash_seq = 0
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
@@ -252,33 +261,36 @@ class WorkspaceList(StatusFlash, QtWidgets.QWidget):
         self.remove_button.clicked.connect(self.remove_held)
         self.remove_button.setEnabled(False)
         self.sync_actions()
-        # The status line alone rides the top (#972): the row
-        # cells carry the start/stop and shell actions, the
-        # page's own actions the bottom row carries, and the
-        # rows reclaim the vertical space a toolbar held.
-        # The connection picker rides the status row's right
-        # end (#1009, phase 5): the standing connection's name
-        # beside a menu of the client's presets — the config
-        # file's aliases, the environment, the dev daemon's
-        # state dir — and a pick crosses as
-        # ``connection_picked(preset)`` for the window path to
-        # re-dial. The button is the row's own child, its menu
-        # dropping below it.
+        # The page's shape (#1177): the table under its group
+        # title, so the first table of every top-level page
+        # starts at one height and the header line stays put
+        # across a tab change. The page's bottom bar carries
+        # the actions (#1011) — Add, Edit, Clone, and Remove,
+        # the detail pages' Mounts and Proxies pattern — with
+        # the status line filling the row's spare (#972, moved
+        # down from the top with #1177) and the connection
+        # picker at its right end (#1009, phase 5): the
+        # standing connection's name beside a menu of the
+        # client's presets — the config file's aliases, the
+        # environment, the dev daemon's state dir — and a pick
+        # crosses as ``connection_picked(preset)`` for the
+        # window path to re-dial. The button is the page's own
+        # child, its menu opening above it at the bottom edge.
         self.connection = ConnectionButton(self)
         self.connection.picked.connect(self.connection_picked)
-        top = QtWidgets.QHBoxLayout()
-        top.addWidget(self.status, stretch=1)
-        top.addWidget(self.connection)
-        actions = QtWidgets.QHBoxLayout()
-        actions.addWidget(self.add_button)
-        actions.addWidget(self.edit_button)
-        actions.addWidget(self.clone_button)
-        actions.addWidget(self.remove_button)
-        actions.addStretch(1)
+        bar = QtWidgets.QHBoxLayout()
+        for button in (
+            self.add_button,
+            self.edit_button,
+            self.clone_button,
+            self.remove_button,
+        ):
+            bar.addWidget(button)
+        bar.addWidget(self.status, stretch=1)
+        bar.addWidget(self.connection)
         layout = QtWidgets.QVBoxLayout(self)
-        layout.addLayout(top)
-        layout.addWidget(self.table, stretch=1)
-        layout.addLayout(actions)
+        layout.addWidget(grouped(LIST_GROUP, self, self.table))
+        layout.addLayout(bar)
         layout.addWidget(self.detail)
         self.setLayout(layout)
 
@@ -338,6 +350,16 @@ class WorkspaceList(StatusFlash, QtWidgets.QWidget):
         self.table.setSortingEnabled(True)
         size_columns(self.table)
         self.settle_hold(was_empty, held)
+        self.arrive(was_empty)
+
+    def arrive(self, was_empty: bool) -> None:
+        """The first rows a listing ever shows rise into place
+        (#1177): once per listing, on the first fill that
+        carries rows; the listing's later refills stand in
+        place."""
+        if was_empty and not self.arrived and self.table.rowCount() > 0:
+            self.arrived = True
+            stagger_rows(self.table)
 
     def settle_hold(
         self, was_empty: bool, held: tuple[set[str], tuple | None]

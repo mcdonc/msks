@@ -887,11 +887,15 @@ def test_the_hold_keeps_its_color_unfocused(qt) -> None:
 def test_the_page_carries_the_action_row_and_the_rows_hold_theirs(
     qt,
 ) -> None:
-    """The page's actions (#972, #1011, #1063): the bottom row
-    carries Add, Edit, Clone, and Remove — the detail pages'
-    Mounts and Proxies pattern — and each row's own cell keeps
-    the toggle and the shell button beside them; no other push
-    button lives on the page."""
+    """The page's actions (#972, #1011, #1063): the bottom
+    bar carries Add, Edit, Clone, and Remove — the detail pages'
+    Mounts and Proxies pattern — with the status line filling
+    the row's spare and the picker at its right end (#1177),
+    and each row's own cell keeps the toggle and the shell
+    button beside them; no other push button lives on the page.
+    The table sits under the page's group title, the Images and
+    Secrets pages' shape, so every tab's first table starts at
+    one height."""
     screen, window, _bridge = make_screen(qt)
     buttons = screen.findChildren(qt.QtWidgets.QPushButton)
     assert [button.text() for button in buttons] == [
@@ -900,16 +904,21 @@ def test_the_page_carries_the_action_row_and_the_rows_hold_theirs(
         "Clone",
         "Remove",
     ]
-    # The row (#1011) sits at the page's bottom: the table
-    # above it, the detail strip below it.
+    # The page (#1177): the group over the table, the bar
+    # under it, the detail strip last.
     layout = screen.layout()
-    assert layout.itemAt(1).widget() is screen.table
-    row = layout.itemAt(2)
+    group = layout.itemAt(0).widget()
+    assert isinstance(group, qt.QtWidgets.QGroupBox)
+    assert group.title() == "Workspaces"
+    assert group.layout().itemAt(0).widget() is screen.table
+    row = layout.itemAt(1)
     assert row.itemAt(0).widget() is screen.add_button
     assert row.itemAt(1).widget() is screen.edit_button
     assert row.itemAt(2).widget() is screen.clone_button
     assert row.itemAt(3).widget() is screen.remove_button
-    assert layout.itemAt(3).widget() is screen.detail
+    assert row.itemAt(4).widget() is screen.status
+    assert row.itemAt(5).widget() is screen.connection
+    assert layout.itemAt(2).widget() is screen.detail
     for workspace in ("ws-1", "ws-2", "ws-3"):
         cell = screen.table.cellWidget(
             screen.row_ids()[workspace], qt.cells_mod.ACTION_COLUMN

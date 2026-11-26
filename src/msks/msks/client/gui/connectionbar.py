@@ -1,9 +1,10 @@
 """The connection picker's button (phase 5 of #924, #1009): the
-tool button the workspace list's status row carries — the
+tool button the workspace list's bottom bar carries — the
 standing connection's name beside a menu of the presenter's
-presets, the standing one checked. The button is a row's child,
-never a pane of its own: its menu drops below the status row it
-rides in. The widget stays thin — it renders
+presets, the standing one checked. The button is the bar's own
+child, never a pane of its own: its menu opens above the bar it
+rides in, at the window's bottom edge (#1177). The widget stays
+thin — it renders
 :class:`msks.client.gui.connection.ConnectionPreset` rows and
 forwards picks as ``picked(preset)``; the application and the
 re-dial belong to the presenter and the window path.

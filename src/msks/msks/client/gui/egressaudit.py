@@ -20,6 +20,7 @@ from PySide6 import QtCore, QtWidgets
 from ..ages import clock_label
 from .forms import ElidedNote, ModePicker, muted_note, read_only_table
 from .kinds import ERROR
+from .listtable import bold_heading
 
 #: The audit read's key stem (#1051): each flight carries its
 #: own key off it, the per-flight rule the tabs share.
@@ -43,8 +44,9 @@ DECISIONS = ("pending", "allowed", "denied", "expired", "revoked")
 #: static posture's recorded NXDOMAIN denial alike.
 DENIED = "denied"
 
-#: The trail's heading (#1051).
-AUDIT_HEADING = "audit trail"
+#: The trail's heading (#1051), capitalized like every page's
+#: group title (#1177).
+AUDIT_HEADING = "Audit trail"
 
 #: The empty trail's stand-in (#1051): the muted note beneath
 #: the table while the read carries no rows.
@@ -54,11 +56,11 @@ AUDIT_EMPTY = "no consent rows"
 #: reads it, the decision, the duration, and the local
 #: wall-clock label — the same day-aware spelling the secrets
 #: audit's rows carry (#1064).
-AUDIT_COLUMNS = ("destination", "decision", "duration", "requested")
+AUDIT_COLUMNS = ("DESTINATION", "DECISION", "DURATION", "REQUESTED")
 
 #: The columns that hug their text (#1025): every column but
 #: the destination, which shares the pane's width.
-AUDIT_CONTENT = ("decision", "duration", "requested")
+AUDIT_CONTENT = ("DECISION", "DURATION", "REQUESTED")
 
 #: The tab grid's rows, shared by both columns (#1154): the
 #: heading row on top, the stretching row in the middle, the
@@ -134,6 +136,7 @@ class AuditTrail(QtCore.QObject):
         self.flight = None
         self.seq = 0
         self.heading = QtWidgets.QLabel(AUDIT_HEADING)
+        bold_heading(self.heading)
         self.filter = ModePicker()
         self.filter.addItems([FILTER_ALL, *DECISIONS])
         # The filter's pick is the commit, the switcher's own
