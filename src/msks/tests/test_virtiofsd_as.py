@@ -52,6 +52,10 @@ def build_helper(
     if cc is None:  # pragma: no cover -- a host without a C compiler
         pytest.skip("this shell carries no C compiler")
     out = tmp_path / "virtiofsd-as"
+    # The sanitized build's stderr is captured so the fixture's
+    # skip can carry it; the plain build's goes to the test's
+    # stderr, where a failing gate shows it in pytest's output.
+    captured = bool(extra_flags)
     subprocess.run(
         [
             cc,
@@ -66,6 +70,8 @@ def build_helper(
             str(out),
         ],
         check=True,
+        capture_output=captured,
+        text=captured,
     )
     return out
 

@@ -328,10 +328,11 @@ int main(int argc, char **argv)
      * shortcut lane's direct exec hands them to a virtiofsd, so
      * a share behaves the same whichever lane serves it. None
      * of them needs a helper decision: virtiofsd clears its own
-     * umask at startup and applies the guest's per-request mask,
-     * --shared-dir is an absolute path so the cwd is never
-     * read, and the daemon's limits are the ceiling every
-     * share's virtiofsd runs under. */
+     * umask at startup and applies the guest's per-request mask
+     * (upstream's passthrough backend, which sets umask(0) so the
+     * guest's mode bits arrive whole), --shared-dir is an
+     * absolute path so the cwd is never read, and the daemon's
+     * limits are the ceiling every share's virtiofsd runs under. */
     child = calloc((size_t)(argc - 4) + 1, sizeof(*child));
     if (child == NULL)
         fail("cannot build the exec argv");
