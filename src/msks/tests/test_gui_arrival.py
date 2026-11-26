@@ -21,14 +21,15 @@ if importlib.util.find_spec("PySide6") is None:
 
 from msks.client.gui import arrival  # noqa: E402
 
-#: The settle's clocks, shortened: the quiet spell, the cap,
-#: and the rise.
+#: The settle's clocks, shortened for the tests but long enough to
+#: observe mid-flight on a loaded runner: the quiet spell, the
+#: cap, and the rise.
 FAST = {
-    "QUIET_MS": 10,
+    "QUIET_MS": 100,
     "SETTLE_CAP_MS": 80,
-    "ROW_STEP_MS": 10,
-    "STAGGER_MS": 40,
-    "RISE_MS": 20,
+    "ROW_STEP_MS": 100,
+    "STAGGER_MS": 1000,
+    "RISE_MS": 200,
 }
 
 
@@ -168,29 +169,33 @@ def test_a_quiet_layout_change_delays_the_show(qt) -> None:
     """The quiet spell (#1177): a resize or a layout request
     under the content while the spell runs starts it over, so
     the content never shows a page still moving into shape; a
-    change outside the content, or on something that is no
-    widget, does not."""
+    change outside the content, on something that is no
+    widget, or of any other kind does not."""
     _window, content, _tables = make_window(qt)
     gate = arrival.Settle(content)
     gate.cap.setInterval(5000)  # the quiet spell under test, not the cap
     gate.hold()
     spin(qt, lambda: gate.quiet.isActive())
-    outside = qt.QtWidgets.QWidget()
-    outside.resize(10, 10)
-    qt.app.processEvents()
-    assert gate.quiet.isActive()
+    # The spell's starts counted, so the test reads the restart
+    # itself and not a clock that a loaded runner moves under it.
+    starts: list[int] = []
+    original_start = gate.quiet.start
+
+    def counting_start() -> None:
+        starts.append(1)
+        original_start()
+
+    gate.quiet.start = counting_start  # type: ignore[method-assign]
     resize = qt.QtCore.QEvent(qt.QtCore.QEvent.Type.Resize)
     assert gate.eventFilter(qt.app.focusWindow(), resize) is False
-    before = gate.quiet.remainingTime()
     layout_request = qt.QtCore.QEvent(qt.QtCore.QEvent.Type.LayoutRequest)
     gate.eventFilter(qt.QtWidgets.QWidget(), layout_request)  # outside
     # Any other event under the content leaves the spell alone.
     gate.eventFilter(content, qt.QtCore.QEvent(qt.QtCore.QEvent.Type.User))
-    assert gate.quiet.remainingTime() <= before  # never restarted
+    assert starts == []
     gate.eventFilter(content.findChild(qt.QtWidgets.QLabel), layout_request)
-    qt.app.processEvents()
+    assert starts == [1]
     assert gate.quiet.isActive()
-    assert gate.quiet.remainingTime() >= before  # started over
     spin(qt, lambda: content.graphicsEffect() is None)
 
 
@@ -343,12 +348,13 @@ def test_the_rows_rise_and_land_in_place(qt) -> None:
     assert stagger.progress == [0.0, 0.0]
     # The clock's shape, read off the ticks themselves: a step
     # apart, each row easing out over its rise.
+    step = stagger.step
     stagger.tick(5)
     assert stagger.progress[0] > 0.0 and stagger.progress[1] == 0.0
     first = stagger.progress[0]
-    stagger.tick(15)
+    stagger.tick(step + 20)
     assert stagger.progress[0] > first and stagger.progress[1] > 0.0
-    stagger.tick(10 * 2 + arrival.RISE_MS)
+    stagger.tick(step * 2 + arrival.RISE_MS)
     assert stagger.progress == [1.0, 1.0]
     assert table.cellWidget(0, 1).graphicsEffect().opacity() == 1.0
     spin(qt, lambda: not stagger.live)
@@ -387,6 +393,10 @@ def test_a_refill_under_a_running_stagger_joins_the_clock(qt) -> None:
     table.setItem(2, 0, qt.QtWidgets.QTableWidgetItem("new"))
     button = qt.QtWidgets.QToolButton()
     table.setCellWidget(2, 1, button)
+    # The rows already risen keep their progress through the
+    # landing: only the new row starts clear.
+    assert stagger.progress[0] > 0.0
+    assert stagger.progress[2] == 0.0
     spin(qt, lambda: button.graphicsEffect() is not None)
     assert button.graphicsEffect().opacity() == stagger.progress[2]
     spin(qt, lambda: not stagger.live)

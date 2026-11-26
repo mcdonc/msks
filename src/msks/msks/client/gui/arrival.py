@@ -292,12 +292,17 @@ class RowStagger(QtCore.QObject):
 
     def rows_landed(self, *_args) -> None:
         """The page's refill landed its rows: read them and arm
-        their cells, and wait for the table's paint when the
-        clock has not started — an empty table armed at the
-        tab change gets its rows this way; a table refilled
-        under a running stagger has the new rows join the
-        clock."""
+        their cells, the rows already risen keeping their
+        progress (only the new ones start clear), and wait for
+        the table's paint when the clock has not started — an
+        empty table armed at the tab change gets its rows this
+        way; a table refilled under a running stagger has the
+        new rows join the clock."""
+        risen = self.progress
         self.read_rows()
+        self.progress = [
+            risen[row] if row < len(risen) else 0.0 for row in range(self.rows)
+        ]
         self.arm_cells()
         if self.anim is None:
             self.table.viewport().installEventFilter(self)

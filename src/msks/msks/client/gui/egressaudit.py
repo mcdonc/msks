@@ -54,11 +54,11 @@ AUDIT_EMPTY = "no consent rows"
 #: reads it, the decision, the duration, and the local
 #: wall-clock label — the same day-aware spelling the secrets
 #: audit's rows carry (#1064).
-AUDIT_COLUMNS = ("destination", "decision", "duration", "requested")
+AUDIT_COLUMNS = ("DESTINATION", "DECISION", "DURATION", "REQUESTED")
 
 #: The columns that hug their text (#1025): every column but
 #: the destination, which shares the pane's width.
-AUDIT_CONTENT = ("decision", "duration", "requested")
+AUDIT_CONTENT = ("DECISION", "DURATION", "REQUESTED")
 
 #: The tab grid's rows, shared by both columns (#1154): the
 #: heading row on top, the stretching row in the middle, the

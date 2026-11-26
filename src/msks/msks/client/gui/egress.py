@@ -102,15 +102,16 @@ ENTRY_HINT = (
     "an address, a CIDR, or host:port"
 )
 
-#: The allowlist section's heading (#1050).
-ALLOWLIST_HEADING = "static allowlist"
+#: The allowlist section's heading (#1050), capitalized like
+#: every page's group title (#1177).
+ALLOWLIST_HEADING = "Static allowlist"
 
 #: The empty list's stand-in (#1050): the TUI rules line's own
 #: shape, ``(empty)``, as the tab's muted note.
 ALLOWLIST_EMPTY = "no entries"
 
 #: The verdicts section's heading (#1051).
-VERDICTS_HEADING = "in-effect verdicts"
+VERDICTS_HEADING = "In-effect verdicts"
 
 #: The empty verdicts' stand-in (#1051).
 VERDICTS_EMPTY = "no in-effect verdicts"

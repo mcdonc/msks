@@ -61,8 +61,9 @@ tagged `vX.Y.Z`.
   and the connection picker moved from the top of the page into
   the bottom bar beside Add, Edit, Clone, and Remove. Every
   table's headers now read bold and left, aligned with their
-  cells, where Qt centered them, and the Egress tab's list
-  headings read the same way. See
+  cells, where Qt centered them; the Egress tab's headings and
+  audit columns read capitalized and bold like every other
+  page's. See
   [docs/gui.md](gui.md#the-workspace-list).
 
 - **The GUI Secrets tab's coverage, buttons, expiry cell, and

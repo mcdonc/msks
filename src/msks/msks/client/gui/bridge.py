@@ -414,7 +414,10 @@ class Bridge(QtCore.QObject):
         """Take the loop down and land the worker: idempotent (a
         window that both quits and closes calls it twice), and
         safe from any thread — stop() never touches the loop
-        except through its own threadsafe door."""
+        except through its own threadsafe door. A flight still
+        out when the loop goes never lands (#1177): the count
+        stands past zero on a stopped bridge, and nothing reads
+        it there — the settle's cap bounds any waiter."""
         loop = self._loop
         thread = self._thread
         if loop is None or thread is None:

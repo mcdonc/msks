@@ -76,8 +76,12 @@ class MainTabs(QtWidgets.QTabWidget):
 
     def settle(self, index: int) -> None:
         """A tab change's settle: the page the strip shows
-        clears and shows once its refresh has landed."""
+        clears and shows once its refresh has landed. A change
+        naming no page — the strip's last tab leaving — asks
+        nothing."""
         page = self.widget(index)
+        if page is None:
+            return
         gate = self.gates.get(page)
         if gate is None:
             gate = self.gates[page] = Settle(page, self.bridge)

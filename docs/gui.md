@@ -33,6 +33,8 @@ change, the page holds clear until its refresh has landed and the
 layout is quiet. It then shows at once, and the rows of its tables
 rise into place from the top down. The workspace page's own tabs
 (Mounts, Proxies, Egress, Events) give their tables the same rise.
+A page's live terminals blank for the same spell and repaint when it
+shows.
 
 ## The workspace list
 

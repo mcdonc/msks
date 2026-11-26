@@ -306,6 +306,11 @@ def test_a_tab_change_settles_the_page_behind_the_gate(qt) -> None:
     assert tabs.gates[page] is gate
     assert page.graphicsEffect().opacity() == 0.0
     spin(lambda: page.graphicsEffect() is None)
+    # A change naming no page asks nothing: the strip's last
+    # tab leaving emits currentChanged(-1).
+    gates = dict(tabs.gates)
+    tabs.settle(-1)
+    assert tabs.gates == gates
 
 
 def test_down_falls_back_to_the_page_itself(qt) -> None:
