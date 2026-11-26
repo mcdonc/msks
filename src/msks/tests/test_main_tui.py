@@ -10311,10 +10311,12 @@ async def test_a_power_key_keeps_the_earlier_keys_refresh_alive(
         assert screen.rows_loading
         # The reply's status stands on the row while the re-read
         # is still in flight: the painted cell reads it, the
-        # strip stays painted, and the standing row answers it.
+        # item's status class follows it, and the standing row
+        # answers it.
         await wait_for(lambda: "running" in row_text(app, 0))
         assert screen.focused_row()["status"] == "running"
-        assert "alpha" in detail_text(app)
+        item = screen.rows_widget().children[0]
+        assert "running" in item.classes and "stopped" not in item.classes
         # S lands while the re-read stands: the row reads the
         # reply's running, so the verb reaches the daemon — and
         # the flight keeps standing, the stop's own poke armed
@@ -10325,12 +10327,14 @@ async def test_a_power_key_keeps_the_earlier_keys_refresh_alive(
         assert "skipped" not in status_text(app)
         assert screen.rows_loading
         assert screen.rows_pending
+        assert "stopped" in item.classes and "running" not in item.classes
+        # The gated flight lands the daemon's row behind the
+        # reply's write, the armed poke flies after it, and the
+        # listing settles quiet.
         gate.set()
-        await wait_for(lambda: screen.focused_row()["status"] == "stopped")
-        await wait_for(lambda: "stopped" in row_text(app, 0))
-        # The armed poke flies behind the start's flight, and
-        # the listing settles quiet.
         await startup_quiet(pilot, app)
+        assert fetches >= hold[0] + 1  # the armed poke served
+        assert list_children(app) == 1
         assert data.calls == [("start", WS), ("stop", WS)]
 
 

@@ -141,12 +141,11 @@ tagged `vX.Y.Z`.
 
 - **The TUI listing's power keys read the daemon's answer
   (#1187).** `s` on a stopped workspace flashes `alpha running`.
-  `S` pressed before the listing's re-read landed used to answer
-  `Stop skipped: workspace is stopped` and send nothing to the
-  daemon, because the row kept its old status until the re-read
-  landed. The row now takes the reply's status before the re-read
-  flies. The next power key reaches the daemon, and the row paints
-  the new status at once. The same holds for `s` after `S`.
+  `S` pressed before the listing re-read landed answered
+  `Stop skipped: workspace is stopped` and sent nothing to the
+  daemon. The row now takes the reply's status before the re-read
+  flies, and the next power key reaches the daemon. The same
+  holds for `s` after `S`.
 
 ## \[v0.10.2] - 2026-11-25
 
