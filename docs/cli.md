@@ -27,10 +27,12 @@ be run from different installation directories, so daemon and client versions
 may not be in sync, which may cause problems. To cope with this, every command
 makes one best-effort `/health` roundtrip by the client to the daemon to do a
 version compatibility check. If the daemon is a different version than the
-client, the invocation prints one stderr line giving both and a remedy. This is
-most usually encountered on MacOS, because the daemon runs in a Lima VM
-separate from the client. If you see this on MacOS, rerun
-`msks-setup-macos-host` on the Mac to update the daemon in the Lima VM.
+client, the invocation prints one stderr line giving both and a remedy. The
+remedy names the tool for the host the client runs on. On macOS the daemon
+lives in a Lima VM separate from the client: rerun `msks-setup-macos-host` on
+the Mac to update the daemon in the VM. On Linux the daemon runs on the host
+itself: rerun the host setup script (`msks-setup-debian-host` or
+`msks-setup-fedora-host`) on the daemon's host to update it.
 
 ## Machine-readable output
 

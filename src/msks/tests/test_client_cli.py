@@ -161,16 +161,47 @@ def test_a_release_clients_skew_notice_names_the_rerun(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """#715's fourth direction: a release client behind a release
-    daemon names the setup rerun — and an equal-base dev daemon
-    does too (#715 review): the dev marker names an in-progress
-    release, and the plain rerun lands the shipped release over
-    the older dev build — an upgrade, not the downgrade the tree
-    arm exists to prevent."""
+    daemon on a Mac names the setup rerun — and an equal-base dev
+    daemon does too (#715 review): the dev marker names an
+    in-progress release, and the plain rerun lands the shipped
+    release over the older dev build — an upgrade, not the
+    downgrade the tree arm exists to prevent. The host is pinned
+    so the arm holds on a Linux test host too (#1174)."""
+    monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(workspaces.listing, "__version__", "0.6.0")
     notice = workspaces.version_skew_notice({"version": "0.1.0"})
     assert "rerun msks-setup-macos-host" in notice
     equal_base = workspaces.version_skew_notice({"version": "0.6.0.dev0"})
     assert "rerun msks-setup-macos-host" in equal_base
+
+
+def test_the_rerun_remedy_names_the_clients_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1174: the daemon-update remedy follows the client's own
+    host, the side of the pair that says where the daemon lives.
+    A Linux client names the Linux host setup scripts and never
+    the Mac tool; a Mac client keeps the Mac tool. A dev-marked
+    client word takes the wheel path on both hosts, and the
+    daemon-leads arms stay the host's silence (they name the
+    client's own update, which is the same on every host)."""
+    monkeypatch.setattr(workspaces.listing, "__version__", "0.6.0")
+    monkeypatch.setattr(sys, "platform", "linux")
+    linux = workspaces.version_skew_notice({"version": "0.1.0"})
+    assert "rerun msks-setup-debian-host or msks-setup-fedora-host" in linux
+    assert "macos" not in linux
+    monkeypatch.setattr(workspaces.listing, "__version__", "0.6.0.dev0")
+    linux_dev = workspaces.version_skew_notice({"version": "0.1.0"})
+    assert "--wheel" in linux_dev
+    assert "msks-setup-fedora-host" in linux_dev
+    assert "macos" not in linux_dev
+    monkeypatch.setattr(sys, "platform", "darwin")
+    mac_dev = workspaces.version_skew_notice({"version": "0.1.0"})
+    assert "rerun msks-setup-macos-host --wheel" in mac_dev
+    assert "fedora" not in mac_dev
+    assert "update this client" in workspaces.version_skew_notice(
+        {"version": "9.9.9"}
+    )
 
 
 def test_version_ordering_compares_by_release() -> None:

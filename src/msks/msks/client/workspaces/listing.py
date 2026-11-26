@@ -169,7 +169,8 @@ def skew_remedy(theirs: str) -> str:
     older dev build is one the plain rerun upgrades), and a
     client that leads names the daemon's (the wheel path when
     the client's own word is a dev build the plain rerun
-    refuses)."""
+    refuses; :func:`host_setup_remedy` names the tool for the
+    client's host, #1174)."""
     if ".dev" in theirs and ordering(theirs) > ordering(__version__):
         return (
             "the daemon runs a development build no release matches — "
@@ -178,13 +179,45 @@ def skew_remedy(theirs: str) -> str:
         )
     if ordering(theirs) > ordering(__version__):
         return "update this client (pip install -U msks)"
-    if ".dev" in __version__:
+    return host_setup_remedy(".dev" in __version__)
+
+
+#: The Linux host setup scripts (docs/installation.md): either one
+#: re-runs idempotently, and a re-run at a newer version is the
+#: daemon's upgrade.
+LINUX_SETUP_TOOLS = "msks-setup-debian-host or msks-setup-fedora-host"
+
+
+def host_setup_remedy(dev: bool) -> str:
+    """The remedy for a daemon behind this client (#715, #1174):
+    the setup tool that re-installs the daemon, named for where
+    the daemon lives. That follows the client's own host, the one
+    side of the pair the notice can see: the daemon's ``/health``
+    cannot say, since the Lima VM and a Linux host both report a
+    Linux daemon. On a Mac the daemon lives in the Lima VM and
+    ``msks-setup-macos-host`` updates it. On Linux the daemon runs
+    on the host itself, and the host setup scripts re-run
+    idempotently. ``dev`` names a dev-marked client word: its
+    wheel reaches the daemon through the same tool, run from the
+    tree (the tool refuses a wheel whose version disagrees with
+    its own)."""
+    if sys.platform == "darwin":
+        if dev:
+            return (
+                "build a wheel (uv build) and rerun "
+                "msks-setup-macos-host --wheel"
+            )
         return (
-            "build a wheel (uv build) and rerun msks-setup-macos-host --wheel"
+            "rerun msks-setup-macos-host (on the Mac) to update the "
+            "daemon in the VM"
+        )
+    if dev:
+        return (
+            f"build a wheel (uv build) and rerun {LINUX_SETUP_TOOLS} "
+            "--wheel from the same tree"
         )
     return (
-        "rerun msks-setup-macos-host (on the Mac) to update the "
-        "daemon in the VM"
+        f"rerun {LINUX_SETUP_TOOLS} on the daemon's host to update the daemon"
     )
 
 
