@@ -1632,7 +1632,7 @@ newest last, the window keeps the last twenty, and the tail
 stays in view. Long summaries wrap to the next line. The tab
 clears at every open of the page.</p>
 <h2 id="the-images-tab">The Images tab<a class="headerlink" href="#the-images-tab" title="Permanent link">&para;</a></h2>
-<p><img alt="The Images tab: the catalog group above the published group" src="../screens/gui-images.png" /></p>
+<p><img alt="The Images tab: the catalog group above the published group, each with its button row under the table" src="../screens/gui-images.png" /></p>
 <p>The second top-level tab manages the image catalog. <strong>In the
 catalog</strong> lists the daemon's own rows with the default marker,
 the hash prefix, and the import date. <strong>Published</strong> lists the
@@ -1642,12 +1642,19 @@ architecture stays off the page. A row that declares none is
 shown. A published row whose exact hash the catalog holds reads
 <code>[imported]</code>. One the catalog holds under a different hash reads
 <code>[local]</code>.</p>
-<p>A right-click on a catalog row opens its menu: Open the detail
-(the same lines <code>msks image info</code> prints), Set as the default,
-and Remove… (which asks first). A right-click on a published row
-offers Import…, which runs behind a progress dialog while the
-daemon downloads, verifies, and floor-checks the archive. The
-catalog refreshes when the import lands.</p>
+<p>Each group carries a button row under its table. The buttons act
+on the selected row of their group, and each button stands
+disabled until a row is selected. Under <strong>In the catalog</strong>,
+Details… opens the selected image's record, which holds the same
+lines <code>msks image info</code> prints. Enter on a catalog row opens the
+record too. Set as the default posts the designation at once.
+Remove… asks first. Under <strong>Published</strong>, Import… runs behind a
+progress dialog while the daemon downloads, verifies, and
+floor-checks the archive. The catalog refreshes when the import
+lands.</p>
+<p>A right-click on a row opens the same actions as a menu: Open
+the detail, Set as the default, and Remove… on a catalog row, and
+Import… on a published row.</p>
 <p>The counts line at the page's bottom tallies both sides. The
 <a href="../images/">images chapter</a> describes the catalog and the
 channel.</p>
