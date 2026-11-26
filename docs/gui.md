@@ -213,6 +213,14 @@ program inside receives neither the press nor the release.
 A right-click opens a menu with Copy and Paste. The menu shows
 the keys of the platform.
 
+Output wrapped in a synchronized-output block (mode 2026) holds
+its presentation until the block closes. The terminal then
+paints the block's whole change once, as the mode specifies. A
+block that stays open past half a second presents anyway, so a
+program wedged inside its own block cannot freeze the terminal.
+A program that writes without the mode sees each chunk painted
+as it arrives.
+
 A tab shows the title the program inside sets. A program that
 sets the terminal's title (vim, less, ssh, or a prompt with an
 OSC title in its `PS1`) sets its tab's title too. A long title

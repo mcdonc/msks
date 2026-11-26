@@ -79,6 +79,13 @@ WHEEL_ROWS_PER_NOTCH = 12
 #: stalling the GUI on it.
 EXIT_REPORT_GRACE_S = 0.5
 
+#: How long a synchronized-output block may hold presentation
+#: (#1193): the block's own end releases the hold, and a
+#: program that dies inside its block, or wedges with one open,
+#: still presents within the cap — the order of a frame's own
+#: pacing.
+SYNC_HOLD_MAX_S = 0.5
+
 
 class TerminalWidget(QWidget):
     """A terminal screen: the emulator, the painter, and the
@@ -181,6 +188,18 @@ class TerminalWidget(QWidget):
         self.bell_timer = QTimer(self)
         self.bell_timer.setSingleShot(True)
         self.bell_timer.timeout.connect(self.bell_off)
+        # The synchronized-output hold (#1193): a program's
+        # open block holds presentation — the mode's own
+        # contract — and the cap below releases a stuck one. A
+        # block that opens and closes inside one read presents
+        # at once, as before; the hold stands only when the
+        # block is still open after the emulator took the
+        # bytes, the shape of a whole-transcript replay.
+        self.sync_hold = False
+        self.sync_release = QTimer(self)
+        self.sync_release.setSingleShot(True)
+        self.sync_release.setInterval(int(SYNC_HOLD_MAX_S * 1000))
+        self.sync_release.timeout.connect(self.sync_release_due)
         self._wheel_accum = 0
         self._closed = False
         self._exit_reported = False
@@ -238,6 +257,7 @@ class TerminalWidget(QWidget):
             links.set_hand(self, False)
         self.reaper.stop()
         self.bell_timer.stop()
+        self.sync_release.stop()
         self.autoscroll.stop()
         if self.search:
             find.close(self)
@@ -261,20 +281,54 @@ class TerminalWidget(QWidget):
 
     def read_master(self) -> None:
         """The master has bytes (or the child is gone): parse
-        them into the emulator and repaint. A child's final
-        output and its exit often land in one readiness window
-        — the drain delivers the bytes with the session already
-        marked exited — so the exit path runs from either arm,
-        never leaving the notifier armed on the closed master."""
+        them into the emulator and repaint, unless the program
+        inside holds presentation in an open synchronized-
+        output block — the block's end, the cap, or the child's
+        own exit releases the hold and presents the block's net
+        state in one paint. A child's final output and its exit
+        often land in one readiness window — the drain delivers
+        the bytes with the session already marked exited — so
+        the exit path runs from either arm, never leaving the
+        notifier armed on the closed master."""
         data = self.session.drain()
         if data is None:
             self.child_gone()
             return
         if data:
             self.lib.vt_write(self.terminal, data)
-            self.refresh()
+            if input.mode_enabled(self, gt.MODE_SYNCHRONIZED_OUTPUT):
+                self.hold_presentation()
+            else:
+                self.release_presentation()
+                self.refresh()
             if self.session.exited:
                 self.child_gone()
+
+    def hold_presentation(self) -> None:
+        """Stand the synchronized-output hold (#1193): the
+        emulator has taken a block's opening and not its close,
+        so presentation waits for the block's end. The cap timer
+        arms with the hold and runs once for its whole length —
+        a long replay holds as one block, not one cap per
+        chunk."""
+        if not self.sync_hold:
+            self.sync_hold = True
+            self.sync_release.start()
+
+    def release_presentation(self) -> None:
+        """End the hold, when one stands: the block closed, and
+        the caller's own refresh presents what it held."""
+        if self.sync_hold:
+            self.sync_hold = False
+            self.sync_release.stop()
+
+    def sync_release_due(self) -> None:
+        """The cap's own release (#1193): a block stuck open — a
+        program wedged or dead inside it — still presents, and
+        the reads that follow hold again only on a block that
+        stands open past them."""
+        self.release_presentation()
+        self.refresh()
 
     def child_gone(self) -> None:
         """The exit path, once: disarm the notifier (the
@@ -293,6 +347,7 @@ class TerminalWidget(QWidget):
             return
         self._exit_reported = True
         self.notifier.setEnabled(False)
+        self.release_presentation()
         self.session.reap()
         if self.session.exit_status is None:
             self.session.await_exit(EXIT_REPORT_GRACE_S)
