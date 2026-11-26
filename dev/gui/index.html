@@ -1540,6 +1540,49 @@ the Images and Secrets pages do not answer them.</p>
 program that binds <code>Ctrl+Tab</code> or <code>Alt+1</code> to <code>Alt+5</code>, such as tmux
 or WeeChat, does not receive them from the GUI. Bind such a program
 to other keys.</p>
+<p>The terminal has keys of its own. Linux and Windows spell them
+<code>Ctrl+Shift</code>, as Konsole and GNOME Terminal do, because plain
+<code>Ctrl+C</code> is the program's interrupt. macOS spells them with
+Command, as Terminal.app and iTerm2 do, and answers the
+<code>Ctrl+Shift</code> keys as well.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Ctrl+Shift+C</code> (macOS: <code>Cmd+C</code>)</td>
+<td>copy the selection</td>
+</tr>
+<tr>
+<td><code>Ctrl+Shift+V</code> (macOS: <code>Cmd+V</code>)</td>
+<td>paste the clipboard</td>
+</tr>
+<tr>
+<td><code>Ctrl+Shift+F</code> (macOS: <code>Cmd+F</code>)</td>
+<td>open or close the find bar</td>
+</tr>
+<tr>
+<td><code>Shift+PgUp</code>, <code>Shift+PgDn</code></td>
+<td>page the scrollback</td>
+</tr>
+<tr>
+<td><code>Ctrl+Click</code> on a link (macOS: <code>Cmd+Click</code>)</td>
+<td>open the link in the browser</td>
+</tr>
+</tbody>
+</table>
+<p><code>Ctrl+Shift+X</code> copies on Linux and Windows. <code>Cmd+X</code> is not a copy
+key on macOS, so the program inside the terminal receives it.</p>
+<p>On macOS the Control key is the program's Control key. <code>Ctrl+C</code>
+inside a terminal is the program's interrupt, as it is on Linux.
+The terminal keeps the keys in the table above for itself. The
+program inside receives neither the press nor the release.</p>
+<p>A right-click opens a menu with Copy and Paste. The menu shows
+the keys of the platform.</p>
 <p>A tab shows the title the program inside sets. A program that
 sets the terminal's title (vim, less, ssh, or a prompt with an
 OSC title in its <code>PS1</code>) sets its tab's title too. A long title
