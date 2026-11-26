@@ -2503,7 +2503,8 @@ tagged <code>vX.Y.Z</code>.</p>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>The GUI Secrets tab's coverage, buttons, expiry cell, and
+<li>
+<p><strong>The GUI Secrets tab's coverage, buttons, expiry cell, and
   audit columns (#1165).</strong> The COVERAGE cell reads <code>daemon-wide</code>
   or <code>scoped: ws-a, ws-b</code>, the mint form's own words, and the
   column's header explains them as a tooltip. <strong>Renew…</strong> and
@@ -2513,7 +2514,18 @@ tagged <code>vX.Y.Z</code>.</p>
   countdown then the deadline's local clock, with the full date
   and time as its tooltip. The audit table shows TIME, KIND,
   PLACEHOLDER, and DEST, and the <code>!</code> column is gone. See
-  <a href="../gui/#the-secrets-tab">docs/gui.md</a>.</li>
+  <a href="../gui/#the-secrets-tab">docs/gui.md</a>.</p>
+</li>
+<li>
+<p><strong>The GUI's create and edit dialogs take sizes in human units
+  (#1164).</strong> <code>8G</code>, <code>8GiB</code>, and <code>8192M</code> all mean 8192 MiB,
+  <code>0.5G</code> means 512 MiB, and a bare number is still MiB. The
+  create dialog's fields read <code>Memory</code>, <code>Root disk</code>, and
+  <code>Home disk</code>, with a line under them that restates the four
+  sizes as you type. The edit dialog opens with the workspace's
+  sizes in the same spelling (<code>8G</code>). See
+  <a href="../gui/#creating-a-workspace">docs/gui.md</a>.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>

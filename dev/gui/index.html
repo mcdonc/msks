@@ -1434,22 +1434,32 @@ pending note, and storage cost. The storage figure comes from the
 daemon's capacity report. The strip follows the selection, and
 an empty list blanks it.</p>
 <h2 id="creating-a-workspace">Creating a workspace<a class="headerlink" href="#creating-a-workspace" title="Permanent link">&para;</a></h2>
-<p><img alt="The create dialog: the fields, the image picker, the size placeholders" src="../screens/gui-create.png" /></p>
+<p><img alt="The create dialog: the fields, the image picker, the size placeholders, the summary line" src="../screens/gui-create.png" /></p>
 <p><strong>Add</strong> opens the create dialog over the list, centered on the
 window. Name is the only required field. The image picker offers
-the daemon's default first, then every catalog ref. The size
-fields show the daemon's defaults in their placeholders, and a
-blank field takes that default. The user field's placeholder is
-your own account name. A create the daemon refuses keeps the
-dialog standing with the reason on its note line. A landed
-create closes the dialog and refreshes the list, which holds the
-new workspace on its first row.</p>
+the daemon's default first, then every catalog ref. Each size
+field takes a whole number of MiB. It also takes a size with a
+<code>G</code>, <code>GiB</code>, <code>M</code>, or <code>MiB</code> suffix: <code>8G</code>, <code>8GiB</code>, and <code>8192M</code> all
+mean 8192 MiB, and <code>0.5G</code> means 512 MiB. Their placeholders show
+the defaults (<code>default 4G</code>), and a blank field takes that
+default. The user field's placeholder is your own account name.
+A line under the fields restates the four sizes as you type, with
+the defaults filling the blanks:
+<code>4 vCPU · 8 GiB RAM · 4 GiB root · 8 GiB home</code>. A decimal entry
+shows its resolved size there: <code>0.5G</code> shows <code>512 MiB</code>. A create
+the daemon refuses keeps the dialog standing with the reason on
+its note line. A landed create closes the dialog and refreshes
+the list, which holds the new workspace on its first row.</p>
 <p>You may need to <a href="../first-run/#importing-a-guest-vm-image">import an
 image</a> before the first
 create.</p>
 <p><strong>Edit</strong> opens a dialog seeded with the workspace's sizes and
-topology: VCPUs, memory, and the root and home volumes. Apply
-posts to the same endpoint <code>msks resize</code> uses.</p>
+topology: VCPUs, memory, and the root and home volumes. The size
+fields take the same forms as the create dialog. Each one opens
+with the workspace's current size. <code>8G</code>, <code>1.5G</code>, and <code>1000M</code> are
+the usual spellings, and a size those spellings would round opens
+in plain MiB (<code>8193M</code>). Apply posts to the same endpoint
+<code>msks resize</code> uses, with the sizes as MiB counts.</p>
 <h2 id="the-workspace-page">The workspace page<a class="headerlink" href="#the-workspace-page" title="Permanent link">&para;</a></h2>
 <p><img alt="The workspace page: the back arrow, the tab strip with one shell tab titled by its program and one renamed, the consent panel, the terminal" src="../screens/gui-shells.png" /></p>
 <p>Enter on a row opens the workspace's page. The back arrow (or
