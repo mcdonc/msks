@@ -582,15 +582,29 @@ class FsDaemonMixin:
         fd: int,
         missing: str,
     ):
-        """One virtiofsd under the VMM's session rules: the
-        daemon's death must not kill a serving share (a restarted
-        daemon finds it by pidfile, the #56 pattern), and a
-        workspace's teardown takes it with the VMM. The
-        listening fd crosses the exec (pass_fds holds its number
-        in the child; the helper lane's binary clears the
-        close-on-exec bit itself on the way in). *missing* is
-        the named refusal an exec the OS refuses maps to — the
-        lane's own binary, not a generic one."""
+        """One virtiofsd under the VMM's session rules: the two
+        lanes answer a daemon's death differently. The shortcut
+        lane's child outlives the daemon (a restarted daemon
+        finds it by pidfile, the #56 pattern); the helper lane's
+        child dies with it, through the parent-death signal the
+        helper arms. A workspace's teardown takes either with
+        the VMM. The listening fd crosses the exec (pass_fds
+        holds its number in the child; the helper lane's binary
+        clears the close-on-exec bit itself on the way in).
+        *missing* is the named refusal an exec the OS refuses
+        maps to — the lane's own binary, not a generic one.
+
+        This spawn stays on the event loop thread (#1176). The
+        helper lane's parent-death signal is delivered when the
+        parent *thread* exits, not the process: asyncio forks
+        here on the loop thread, which lives as long as the
+        daemon, so the signal means the daemon's death. A spawn
+        moved to a worker thread (``to_thread``, an executor)
+        would arm the share's death on that worker's exit
+        instead. The helper resets the signal dispositions and
+        the mask before its own exec, so the daemon's signal
+        state (an ignored disposition, a mask some library
+        blocked) never reaches the share."""
         log_file = open(log_path, "wb")
         try:
             return await asyncio.create_subprocess_exec(

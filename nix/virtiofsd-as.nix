@@ -15,7 +15,9 @@
 #     release with their checksums in SHASUMS;
 #
 #   - CI compiles the source (lint.yml, plain cc -Werror) so the
-#     C cannot rot between releases.
+#     C cannot rot between releases; the build below carries the
+#     same analyzer and warning set, so a flag added in either
+#     joins the other (#1176).
 {
   lib,
   stdenv,
@@ -43,8 +45,15 @@ stdenv.mkDerivation {
 
   buildPhase = ''
     runHook preBuild
+    # -fanalyzer runs gcc's static analyzer over every path at
+    # compile time (#1176); the warning set past -Wall/-Wextra
+    # (implicit conversions, shadowing, prototype drift) matches
+    # lint.yml's compile check.
     "$CC" -O2 -D_FORTIFY_SOURCE=2 -fstack-protector-strong \
-      -Wall -Wextra -Werror -static \
+      -Wall -Wextra -Werror -fanalyzer \
+      -Wformat=2 -Wconversion -Wsign-conversion -Wshadow \
+      -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition \
+      -Wtrampolines -Wjump-misses-init -Wstack-protector -static \
       -DVIRTIOFSD_PATH=\""$virtiofsdPath"\" \
       -o virtiofsd-as "$src"
     runHook postBuild

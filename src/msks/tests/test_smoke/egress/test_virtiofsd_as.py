@@ -22,12 +22,16 @@ the exec and the assertions.
 """
 
 import asyncio
+import contextlib
 import os
 import pwd
+import select
 import shutil
+import signal
 import socket
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -57,11 +61,13 @@ HELPER_PATH = (
 )
 
 #: The probe: one line per fact — uid/gid, the supplementary group
-#: list, the capability lines from /proc/self/status, every
-#: environment entry, every open fd and whether it is a socket,
-#: and argv[1] to prove the pass-through.
+#: list, the capability and signal lines from /proc/self/status,
+#: every environment entry, every open fd and whether it is a
+#: socket, and every argument after argv[0] as hex, so a control
+#: byte in an argument never breaks the evidence's own lines.
 PROBE = """\
 #include <stdio.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -83,7 +89,8 @@ int main(int argc, char **argv)
         char line[256];
         while (fgets(line, sizeof(line), status) != NULL)
             if ((line[0] == 'C' && line[1] == 'a' && line[2] == 'p') ||
-                (line[0] == 'N' && line[1] == 'o' && line[2] == 'N'))
+                (line[0] == 'N' && line[1] == 'o' && line[2] == 'N') ||
+                (line[0] == 'S' && line[1] == 'i' && line[2] == 'g'))
                 fputs(line, stdout);
         fclose(status);
     }
@@ -95,10 +102,85 @@ int main(int argc, char **argv)
             printf("fd:%d:%s\\n", fd,
                    S_ISSOCK(st.st_mode) ? "socket" : "other");
     }
-    if (argc > 1)
-        printf("arg=%s\\n", argv[1]);
+    for (int i = 1; i < argc; i++) {
+        printf("arg%d=", i);
+        for (const unsigned char *p = (const unsigned char *)argv[i]; *p; p++)
+            printf("%02x", *p);
+        printf("\\n");
+    }
     fflush(stdout);
     return 0;
+}
+"""
+
+#: The linger probe (#1176): records its pid where the test can
+#: read it, then sleeps until a signal ends it — the stand-in for
+#: a serving virtiofsd, which nothing but a signal stops.
+LINGER = """\
+#include <stdio.h>
+#include <unistd.h>
+
+int main(int argc, char **argv)
+{
+    if (argc < 2)
+        return 64;
+    FILE *pid = fopen(argv[1], "w");
+    if (pid == NULL)
+        return 65;
+    fprintf(pid, "%ld\\n", (long)getpid());
+    fclose(pid);
+    for (;;)
+        pause();
+}
+"""
+
+#: The hostile parent (#1176): SIGTERM ignored and every signal
+#: blocked — the state a daemon could leave in the thread that
+#: forks — then the helper's exec in a forked child, a wait for
+#: the linger probe's pid file, and "ready" on stdout. It then
+#: sleeps for good; only SIGKILL ends it, which is the parent
+#: death the test stages.
+IGNORING_PARENT = """\
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+int main(int argc, char **argv)
+{
+    int sv[2];
+    sigset_t all;
+    pid_t child;
+    if (argc != 4 || socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0)
+        return 65;
+    if (signal(SIGTERM, SIG_IGN) == SIG_ERR)
+        return 66;
+    sigfillset(&all);
+    if (sigprocmask(SIG_BLOCK, &all, NULL) != 0)
+        return 66;
+    child = fork();
+    if (child < 0)
+        return 67;
+    if (child == 0) {
+        char fd[16];
+        snprintf(fd, sizeof(fd), "%d", sv[0]);
+        execl(argv[1], argv[1], argv[2], "--fd", fd, "--", argv[3],
+              (char *)NULL);
+        _exit(127);
+    }
+    for (int i = 0; i < 200; i++) {
+        struct stat st;
+        if (stat(argv[3], &st) == 0) {
+            printf("ready\\n");
+            fflush(stdout);
+            for (;;)
+                pause();
+        }
+        usleep(50000);
+    }
+    return 68;
 }
 """
 
@@ -167,6 +249,39 @@ def build_probe(tmp_path: Path) -> Path:
     return probe
 
 
+def build_program(tmp_path: Path, name: str, source: str) -> Path:
+    """One more C program of the lane's own, runnable by the
+    owner uid."""
+    out = tmp_path / name
+    cc(source, out)
+    out.chmod(0o755)
+    return out
+
+
+def process_state(pid: int) -> str | None:
+    """The state letter of /proc/<pid>/stat, None once the pid is
+    gone. A zombie (Z) is a process that died and nobody reaped
+    yet — dead all the same."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except FileNotFoundError:
+        return None
+    return stat.rpartition(")")[2].split()[0]
+
+
+def gone_within(pid: int, seconds: float) -> bool:
+    """True when the pid is dead (gone or a zombie) within the
+    window."""
+    deadline = time.monotonic() + seconds
+    while True:
+        state = process_state(pid)
+        if state is None or state == "Z":
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
 def run_as(
     caller_uid: int,
     caller_gid: int,
@@ -175,15 +290,17 @@ def run_as(
     fd: int,
     *,
     inh_caps: str | None = None,
+    ambient_caps: str | None = None,
+    argv: tuple[str, ...] = ("carried-arg",),
 ):
     """One helper invocation as an unprivileged caller through
     setpriv — the setuid bit on the helper is what lifts euid to
     root — targeting ``target_uid``, and carrying a hostile
     environment nothing of which may cross the exec. ``inh_caps``
-    raises one inheritable capability in the caller (util-linux
-    2.38+): the uid-0 leg uses it to prove the helper's explicit
-    capset, not the caller's empty inheritable set, is what drops
-    the capabilities."""
+    raises one inheritable capability in the caller and
+    ``ambient_caps`` one ambient (util-linux 2.38+): the uid-0 leg
+    uses them to prove the helper's explicit capset, not the
+    caller's sets, is what drops the capabilities."""
     command = [
         "setpriv",
         "--reuid",
@@ -194,13 +311,15 @@ def run_as(
     ]
     if inh_caps is not None:
         command += ["--inh-caps", inh_caps]
+    if ambient_caps is not None:
+        command += ["--ambient-caps", ambient_caps]
     command += [
         str(binary),
         str(target_uid),
         "--fd",
         str(fd),
         "--",
-        "carried-arg",
+        *argv,
     ]
     return subprocess.run(
         command,
@@ -219,7 +338,9 @@ def evidence(result) -> dict[str, str | list[str]]:
     fds: list[str] = []
     for line in result.stdout.splitlines():
         if (
-            line.startswith("Cap") or line.startswith("NoNewPrivs")
+            line.startswith("Cap")
+            or line.startswith("Sig")
+            or line.startswith("NoNewPrivs")
         ) and ":" in line:
             key, _, value = line.partition(":")
             facts[key.strip()] = value.strip()
@@ -239,11 +360,15 @@ def assert_common_drops(evidence_map, uid: int, fd: int) -> None:
     assert evidence_map["uid"] == str(uid)
     assert evidence_map["gid"] == str(uid)
     assert evidence_map["groups"] == ""
-    for key in ("CapEff", "CapPrm", "CapInh", "CapBnd"):
+    for key in ("CapEff", "CapPrm", "CapInh", "CapBnd", "CapAmb"):
         assert int(str(evidence_map[key]), 16) == 0, (key, evidence_map[key])
     # The exec carries no-new-privileges: nothing about the
     # target path's packaging can lift the child later.
     assert evidence_map["NoNewPrivs"] == "1"
+    # The caller's signal state does not cross (#1176): nothing
+    # ignored, nothing blocked.
+    assert int(str(evidence_map["SigIgn"]), 16) == 0, evidence_map["SigIgn"]
+    assert int(str(evidence_map["SigBlk"]), 16) == 0, evidence_map["SigBlk"]
     # Exactly the fixed environment crosses — one PATH, nothing
     # else; no shell sits between exec and environ.
     assert evidence_map["env"] == [HELPER_PATH]
@@ -252,7 +377,7 @@ def assert_common_drops(evidence_map, uid: int, fd: int) -> None:
     open_fds = {int(line.split(":")[1]) for line in evidence_map["fds"]}
     assert open_fds == {0, 1, 2, fd}
     assert any(line == f"fd:{fd}:socket" for line in evidence_map["fds"])
-    assert evidence_map["arg"] == "carried-arg"
+    assert bytes.fromhex(str(evidence_map["arg1"])) == b"carried-arg"
 
 
 def test_execs_as_the_owner_uid_with_every_privilege_dropped(tmp_path):
@@ -283,7 +408,17 @@ def test_execs_as_uid_0_with_every_capability_dropped(tmp_path):
     raised inheritable capability (wake_alarm) into the exec, so
     an empty capset is the ONLY way the probe reads zeros — a
     deleted capset leaks the inheritable cap across and fails
-    here, whatever the host session's own capability state."""
+    here, whatever the host session's own capability state.
+
+    The caller also carries that capability ambient (#1176) — the
+    daemon's own hosting condition, msks-caps raising
+    CAP_NET_ADMIN and CAP_NET_BIND_SERVICE ambient — and the
+    probe's ambient set must read zero as well. The kernel
+    empties the ambient set at the exec of a setuid binary
+    (capabilities(7): a privileged file clears it) before the
+    helper's first instruction runs, and the empty capset keeps
+    it empty; the assertion pins both, so a future lane that
+    reaches the helper without the setuid exec still answers."""
     entry = owner_account()
     open_tmp_tree(tmp_path)
     probe = build_probe(tmp_path)
@@ -292,10 +427,129 @@ def test_execs_as_uid_0_with_every_capability_dropped(tmp_path):
     fd = server.fileno()
     with server, client:
         result = run_as(
-            entry.pw_uid, entry.pw_gid, 0, binary, fd, inh_caps="+wake_alarm"
+            entry.pw_uid,
+            entry.pw_gid,
+            0,
+            binary,
+            fd,
+            inh_caps="+wake_alarm",
+            ambient_caps="+wake_alarm",
         )
     assert result.returncode == 0, result.stderr
     assert_common_drops(evidence(result), 0, fd)
+
+
+def test_parent_death_ends_the_share_though_the_parent_ignores_sigterm(
+    tmp_path,
+):
+    """The helper's parent-death signal is SIGTERM, and both an
+    ignored disposition and a blocked mask cross an execve
+    (#1176): a daemon that left either behind in the thread that
+    forked would arm a signal the share's virtiofsd never takes,
+    and every helper-lane share would outlive the dead daemon.
+    The helper resets the signal state before the exec, so the
+    share dies with its parent whatever the parent's state. The
+    hostile parent ignores SIGTERM and blocks every signal, then
+    forks the helper; the linger probe stands in for virtiofsd.
+    It lives while the parent lives — the parent-death signal is
+    the only thing that takes it — and dies once the parent
+    does."""
+    entry = owner_account()
+    open_tmp_tree(tmp_path)
+    pids = tmp_path / "pids"
+    pids.mkdir()
+    os.chown(pids, entry.pw_uid, entry.pw_gid)
+    linger = build_program(tmp_path, "linger", LINGER)
+    parent = build_program(tmp_path, "ignoring-parent", IGNORING_PARENT)
+    binary = build_helper(tmp_path, linger)
+    pidfile = pids / "linger.pid"
+    proc = subprocess.Popen(
+        [
+            "setpriv",
+            "--reuid",
+            str(entry.pw_uid),
+            "--regid",
+            str(entry.pw_gid),
+            "--clear-groups",
+            str(parent),
+            str(binary),
+            str(entry.pw_uid),
+            str(pidfile),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    pid = None
+    try:
+        readable = select.select([proc.stdout], [], [], 10.0)[0]
+        assert readable, "the parent never reached the pid file"
+        line = proc.stdout.readline()
+        assert line == "ready\n", (
+            f"the parent exited {proc.wait()} without the pid file: "
+            f"{proc.stderr.read()}"
+        )
+        pid = int(pidfile.read_text())
+        # Alive while its parent lives.
+        time.sleep(0.5)
+        assert process_state(pid) not in (None, "Z"), (
+            "the share died before its parent"
+        )
+        # The parent dies: the kernel's parent-death signal takes
+        # the share, ignored SIGTERM and blocked mask or not.
+        proc.kill()
+        proc.wait(timeout=10.0)
+        assert gone_within(pid, 5.0), (
+            f"the share (pid {pid}) outlived its dead parent"
+        )
+        assert "audit:" in proc.stderr.read()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        for stream in (proc.stdout, proc.stderr):
+            stream.close()
+        if pid is not None:
+            # A failed assertion leaves the share behind; take it.
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+
+
+def test_audit_line_cannot_be_forged(tmp_path):
+    """The audit line's author is the helper (#1176): control
+    bytes in the passed argv become '?', so no argument can forge
+    a second journal line under the helper's ident, and a long
+    argv truncates at the line's bound. The exec'd virtiofsd still
+    receives every argument verbatim."""
+    entry = owner_account()
+    open_tmp_tree(tmp_path)
+    probe = build_probe(tmp_path)
+    binary = build_helper(tmp_path, probe)
+    server, client = socket.socketpair()
+    fd = server.fileno()
+    long_arg = "a" * 5000
+    argv = ("carried\narg", "x\x1b[31m", long_arg)
+    with server, client:
+        result = run_as(
+            entry.pw_uid, entry.pw_gid, entry.pw_uid, binary, fd, argv=argv
+        )
+    assert result.returncode == 0, result.stderr
+    prefix = "virtiofsd-as: audit: "
+    audit_lines = [
+        line for line in result.stderr.splitlines() if line.startswith(prefix)
+    ]
+    assert len(audit_lines) == 1, result.stderr
+    line = audit_lines[0]
+    assert "argv=carried?arg x?[31m " in line
+    assert "\x1b" not in line
+    assert len(line) <= len(prefix) + 4095
+    assert line.count("a") < len(long_arg)
+    # The exec'd virtiofsd gets the argv verbatim: the scrub is
+    # the log's, not the child's.
+    facts = evidence(result)
+    assert bytes.fromhex(str(facts["arg1"])) == b"carried\narg"
+    assert bytes.fromhex(str(facts["arg2"])) == b"x\x1b[31m"
+    assert bytes.fromhex(str(facts["arg3"])) == long_arg.encode()
 
 
 def test_refuses_when_the_setuid_bit_is_absent(tmp_path):

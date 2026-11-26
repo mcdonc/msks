@@ -147,6 +147,29 @@ static void drop_capabilities(void)
         fail("cannot drop capabilities");
 }
 
+/* Every signal disposition the caller set and every signal it
+ * blocked would otherwise cross the exec: execve keeps the
+ * ignored dispositions and the signal mask (execve(2)), and the
+ * parent-death signal below is SIGTERM. A daemon that ignored
+ * SIGTERM, or blocked it in the thread that forked, would arm a
+ * signal the virtiofsd never takes — every share would outlive
+ * a dead daemon. SIGKILL and SIGSTOP carry no settable
+ * disposition, and glibc reserves two real-time numbers; EINVAL
+ * from those is the only refusal. */
+static void reset_signals(void)
+{
+    sigset_t empty;
+    for (int sig = 1; sig < NSIG; sig++) {
+        if (sig == SIGKILL || sig == SIGSTOP)
+            continue;
+        if (signal(sig, SIG_DFL) == SIG_ERR && errno != EINVAL)
+            fail("cannot reset a signal disposition");
+    }
+    sigemptyset(&empty);
+    if (sigprocmask(SIG_SETMASK, &empty, NULL) != 0)
+        fail("cannot unblock the signal mask");
+}
+
 /* Append text with control bytes replaced: the audit line's
  * author is this binary, so no argv byte can forge another
  * journal line under its ident. */
@@ -278,6 +301,10 @@ int main(int argc, char **argv)
      * serving sockets no client will ever open again. It
      * survives the execve; the getppid check closes the race
      * where the parent died between the fork and this prctl. */
+    /* The reset comes first, so a parent death in the window
+     * between the prctl and the execve also meets a default
+     * disposition. */
+    reset_signals();
     if (prctl(PR_SET_PDEATHSIG, SIGTERM, 0UL, 0UL, 0UL) != 0)
         fail("cannot set the parent-death signal");
     if (getppid() == 1)
@@ -296,7 +323,16 @@ int main(int argc, char **argv)
     audit(uid, fd, argc, argv);
 
     /* The exec: the fixed path as argv[0], the passed argv
-     * verbatim behind it. */
+     * verbatim behind it. The umask, the working directory, and
+     * the resource limits cross as the daemon's, exactly as the
+     * shortcut lane's direct exec hands them to a virtiofsd, so
+     * a share behaves the same whichever lane serves it. None
+     * of them needs a helper decision: virtiofsd clears its own
+     * umask at startup and applies the guest's per-request mask
+     * (upstream's passthrough backend, which sets umask(0) so the
+     * guest's mode bits arrive whole), --shared-dir is an
+     * absolute path so the cwd is never read, and the daemon's
+     * limits are the ceiling every share's virtiofsd runs under. */
     child = calloc((size_t)(argc - 4) + 1, sizeof(*child));
     if (child == NULL)
         fail("cannot build the exec argv");

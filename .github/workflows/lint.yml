@@ -55,17 +55,26 @@ jobs:
           devenv --quiet -O dotenv.enable:bool false shell --
           bash -c 'ruff check src/ && ruff format --check src/'
 
-      # The helper's compile check (#1087): the C source cannot
-      # rot between releases — -Werror at every push, the same
-      # flags the release legs and the nix build compile with. A
-      # plain dynamic compile here; the setuid-carrying static
+      # The helper's compile check (#1087, #1176): the C source
+      # cannot rot between releases — -Werror at every push with
+      # the release legs' and the nix build's flags, plus gcc's
+      # static analyzer and a warning set past -Wall/-Wextra
+      # (implicit conversions, shadowing, prototype drift) that
+      # the source carries clean. nix/virtiofsd-as.nix compiles
+      # with the same analyzer and warning set; the release legs
+      # build with the runner's own gcc on the base flags alone.
+      # A plain dynamic compile here; the setuid-carrying static
       # shapes are the release legs' and the module build's.
       - name: Compile check (virtiofsd-as)
         env:
           TMPDIR: /tmp
         run: >-
           devenv --quiet -O dotenv.enable:bool false shell --
-          cc -O2 -Wall -Wextra -Werror -o /tmp/virtiofsd-as nix/virtiofsd-as.c
+          cc -O2 -Wall -Wextra -Werror -fanalyzer
+          -Wformat=2 -Wconversion -Wsign-conversion -Wshadow
+          -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition
+          -Wtrampolines -Wjump-misses-init -Wstack-protector
+          -o /tmp/virtiofsd-as nix/virtiofsd-as.c
 
       - name: Complexity gate (xenon rank A)
         env:
