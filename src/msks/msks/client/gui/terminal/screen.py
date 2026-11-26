@@ -258,6 +258,7 @@ class TerminalWidget(QWidget):
         self.reaper.stop()
         self.bell_timer.stop()
         self.sync_release.stop()
+        self.release_presentation()  # a hold standing at close ends here
         self.autoscroll.stop()
         if self.search:
             find.close(self)

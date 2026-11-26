@@ -215,11 +215,13 @@ the keys of the platform.
 
 Output wrapped in a synchronized-output block (mode 2026) holds
 its presentation until the block closes. The terminal then
-paints the block's whole change once, as the mode specifies. A
-block that stays open past half a second presents anyway, so a
-program wedged inside its own block cannot freeze the terminal.
-A program that writes without the mode sees each chunk painted
-as it arrives.
+paints the block's whole change once, as the mode specifies.
+Your own actions still paint right away: scrolling the buffer,
+selecting, resizing, and searching each show the current state
+at once. A block that stays open past half a second presents
+anyway, so a program wedged inside its own block cannot freeze
+the terminal. A program that writes without the mode sees each
+chunk painted as it arrives.
 
 A tab shows the title the program inside sets. A program that
 sets the terminal's title (vim, less, ssh, or a prompt with an

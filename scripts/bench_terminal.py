@@ -30,7 +30,8 @@ every chunk paints.
 The ssh share (the child the GUI really spawns) is not measured
 here: it needs a live workspace. Run the same corpus inside one
 (``--emit-script`` prints a shell snippet that cats the corpus
-file) to time that share by the wall clock.
+file, and the file stays on disk for it) to time that share by
+the wall clock.
 
 The corpus is deterministic for a given ``--size``/``--cols``:
 a transcript-shaped replay — one synchronized-output block of
@@ -241,25 +242,23 @@ def bench_emulator(corpus: bytes, chunks: list[bytes], grid) -> dict:
     }
 
 
-def bench_widget(args):
+def bench_widget():
     """The offscreen widget the gui stages feed: the
     application, the bundled faces, and a sleeper child that
     writes once and never again — no event loop runs, so the
-    feeder owns every byte the emulator takes."""
+    feeder owns every byte the emulator takes. The widget keeps
+    its 80x24 grid; the caller sizes it inside its own guarded
+    region, so a sizing error cannot strand the child."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from msks.client.gui.terminal import TerminalWidget, paint
+    from msks.client.gui.terminal import TerminalWidget
     from msks.client.gui.terminal import fonts as fonts_mod
-    from PySide6 import QtCore, QtWidgets
+    from PySide6 import QtWidgets
 
     if QtWidgets.QApplication.instance() is None:
         QtWidgets.QApplication(["msks-bench"])
     fonts_mod.register_faces()  # after the application exists
     sleeper = "import time\nprint('ready', flush=True)\ntime.sleep(600)\n"
-    widget = TerminalWidget([sys.executable, "-c", sleeper])
-    widget.resize_grid(args.cols, args.rows)
-    width, height = widget.metrics.size(widget.cols, widget.rows)
-    widget.resize(QtCore.QSize(width + paint.LANE_W, height))
-    return widget
+    return TerminalWidget([sys.executable, "-c", sleeper])
 
 
 def feed_pipeline(widget, painter, chunks, profile):
@@ -335,15 +334,28 @@ def pipeline_stages(
     ]
 
 
+def size_widget(widget, args) -> None:
+    """Set the widget's grid to the asked geometry and size its
+    pixels around it — the scrollbar lane included, the shape a
+    visible terminal takes."""
+    from msks.client.gui.terminal import paint
+    from PySide6 import QtCore
+
+    widget.resize_grid(args.cols, args.rows)
+    width, height = widget.metrics.size(widget.cols, widget.rows)
+    widget.resize(QtCore.QSize(width + paint.LANE_W, height))
+
+
 def bench_gui(corpus: bytes, chunks: list[bytes], args) -> list[dict]:
     """The widget pipeline, one presentation per unheld chunk:
     the parse, the plan, and the paint timed apart, painted
     onto one kept image the way the widget's backing store
     paints it."""
-    widget = bench_widget(args)
+    widget = bench_widget()
     profile = cProfile.Profile() if args.profile else None
     painter = None
     try:
+        size_widget(widget, args)
         from PySide6.QtGui import QImage, QPainter
 
         image = QImage(
@@ -358,11 +370,11 @@ def bench_gui(corpus: bytes, chunks: list[bytes], args) -> list[dict]:
 
         widget.closeEvent(QCloseEvent())
     if profile is not None:
-        _print_profile(profile)
+        print_profile(profile)
     return pipeline_stages(corpus, *timings)
 
 
-def _print_profile(profile) -> None:
+def print_profile(profile) -> None:
     """The gui loop's top functions by cumulative time."""
     stats = pstats.Stats(profile)
     stats.sort_stats("cumulative")
@@ -383,12 +395,32 @@ def report(stats: dict) -> None:
     )
 
 
+def print_header(path: Path, corpus: bytes, args, chunks, lines) -> None:
+    """The lines every run opens with: the corpus's shape, and
+    the replay snippet when ``--emit-script`` asked for it."""
+    print(
+        f"corpus: {len(corpus) / (1024 * 1024):.1f} MiB"
+        f" ({lines} lines), grid {args.cols}x{args.rows},"
+        f" chunk {args.chunk} KiB ({len(chunks)} chunks),"
+        f" seed {args.seed}"
+    )
+    print(f"corpus file: {path}")
+    if args.emit_script:
+        print(
+            "\nreplay inside a workspace (time the wall clock):\n"
+            f"  time cat {path}\n"
+            "Run it in a GUI shell tab; compare against a local\n"
+            "terminal to isolate the ssh share. The corpus file\n"
+            "stays on disk for this."
+        )
+    print()
+
+
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     size = int(args.size * 1024 * 1024)
     corpus = build_corpus(size, args.cols, args.seed, not args.no_sync)
     chunks = chunked(corpus, args.chunk * 1024)
-    lines = corpus.count(b"\r\n")
     path = args.corpus_file or Path(
         tempfile.NamedTemporaryFile(
             prefix="msks-bench-corpus-", suffix=".ansi", delete=False
@@ -396,21 +428,7 @@ def main(argv: list[str]) -> int:
     )
     path.write_bytes(corpus)
     try:
-        print(
-            f"corpus: {len(corpus) / (1024 * 1024):.1f} MiB"
-            f" ({lines} lines), grid {args.cols}x{args.rows},"
-            f" chunk {args.chunk} KiB ({len(chunks)} chunks),"
-            f" seed {args.seed}"
-        )
-        print(f"corpus file: {path}")
-        if args.emit_script:
-            print(
-                "\nreplay inside a workspace (time the wall clock):\n"
-                f"  time cat {path}\n"
-                "Run it in a GUI shell tab; compare against a local\n"
-                "terminal to isolate the ssh share."
-            )
-        print()
+        print_header(path, corpus, args, chunks, corpus.count(b"\r\n"))
         rows = []
         rows.append(bench_pty(corpus, path))
         rows.append(bench_emulator(corpus, chunks, (args.cols, args.rows)))
@@ -419,7 +437,9 @@ def main(argv: list[str]) -> int:
             report(row)
         return 0
     finally:
-        if args.corpus_file is None:
+        # The snippet --emit-script prints needs its file; every
+        # other run cleans up after itself.
+        if args.corpus_file is None and not args.emit_script:
             path.unlink(missing_ok=True)
 
 

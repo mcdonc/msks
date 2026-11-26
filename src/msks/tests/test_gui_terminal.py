@@ -668,18 +668,20 @@ def test_read_master_holds_an_open_block_and_presents_its_close(screen, qt):
 def test_the_cap_releases_a_block_stuck_open(screen, qt):
     """A block that never closes still presents (#1193): the
     cap's own release ends the hold and refreshes, so a program
-    wedged or dead inside its block leaves the terminal live —
-    and the reads that follow hold again only while the block
-    stands open past them."""
+    wedged or dead inside its block leaves the terminal live.
+    A read that arrives while the hold already stands re-arms
+    nothing — the cap keeps its own countdown, not a fresh one
+    per read."""
+    from msks.client.gui.terminal.screen import SYNC_HOLD_MAX_S
+
     vt(screen, b"\x1b[2J\x1b[Hbefore")
     before = screen.grab().toImage()
     screen.lib.vt_write(screen.terminal, b"\x1b[?2026h\x1b[2J\x1b[Hduring")
     screen.hold_presentation()
-    # A read that arrives while the hold already stands changes
-    # nothing: the hold is one and the cap runs once for the
-    # block's whole length, not once per read inside it.
-    screen.hold_presentation()
     assert screen.sync_release.isActive()
+    time.sleep(0.05)  # let the cap's countdown run down a little
+    screen.hold_presentation()  # a read inside the standing hold
+    assert screen.sync_release.remainingTime() < SYNC_HOLD_MAX_S * 1000
     screen.sync_release_due()  # the cap's own slot, driven directly
     assert screen.sync_hold is False
     assert not screen.sync_release.isActive()
@@ -719,6 +721,7 @@ def test_a_child_dying_inside_its_block_presents(qt):
     )
     widget = TerminalWidget([sys.executable, "-c", block])
     try:
+        blank = widget.grab().toImage()  # before any read runs
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline and not widget.session.exited:
             widget.read_master()
@@ -726,7 +729,9 @@ def test_a_child_dying_inside_its_block_presents(qt):
         assert widget.session.exited
         assert widget.sync_hold is False
         assert not widget.sync_release.isActive()
-        assert widget.grab().toImage().size() == widget.size()
+        final = widget.grab().toImage()
+        assert final.size() == widget.size()
+        assert final != blank  # the held content and the banner present
     finally:
         shutdown(widget)
 

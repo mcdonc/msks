@@ -59,6 +59,16 @@ tagged `vX.Y.Z`.
   disabled until one is selected. The right-click menus stay
   beside them. See [docs/gui.md](gui.md#the-images-tab).
 
+- **Synchronized output in the GUI terminal (#1193).** The
+  terminal follows synchronized-output blocks (mode 2026): a
+  program's open block holds presentation until it closes, and
+  the block's whole change paints once at its end, so quitting
+  pi in a GUI shell no longer repaints its whole session
+  transcript chunk by chunk. A block stuck open past half a
+  second presents anyway. The cell painter also runs about
+  twice as fast, with identical pixels. See
+  [docs/gui.md](gui.md#the-shells-tab).
+
 ### Changed
 
 - **Terminal-only mode: the page's top margin stands at zero
@@ -106,18 +116,6 @@ tagged `vX.Y.Z`.
   [docs/gui.md](gui.md#creating-a-workspace).
 
 ### Fixed
-
-- **The GUI terminal's synchronized output and paint speed
-  (#1193).** The terminal now follows synchronized-output
-  blocks (mode 2026): a program's open block holds presentation
-  until it closes, and the block's whole change paints once at
-  its end. A whole-session replay, the shape pi's fullscreen
-  exit writes, used to repaint the entire transcript chunk by
-  chunk and made quitting pi in a GUI shell take seconds; it
-  now paints once. A block stuck open past half a second
-  presents anyway. The cell painter itself runs about twice as
-  fast for plain output floods, with identical pixels. See
-  [docs/gui.md](gui.md#the-shells-tab).
 
 - **The GUI terminal's copy drops the selection (#1182).**
   Ctrl+Shift+C and the right-click menu's Copy action now clear
