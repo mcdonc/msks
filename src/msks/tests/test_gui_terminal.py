@@ -2514,13 +2514,14 @@ def test_selection_survives_reflow(screen, qt):
 
 def test_copy_puts_the_selection_on_the_clipboard(screen, qt):
     """Ctrl+Shift+C (and X, a terminal cannot cut) copies the
-    selection."""
+    selection, and the copy drops the selection (#1182)."""
     from msks.client.gui.terminal import select
 
     Qt = qt.QtCore.Qt
     vt(screen, b"\x1b[2J\x1b[Hclipboard words")
-    select.word_at(screen, qt.QtCore.QPointF(4, 2))
     for key in (Qt.Key.Key_C, Qt.Key.Key_X):
+        qt.QtWidgets.QApplication.clipboard().clear()
+        select.word_at(screen, qt.QtCore.QPointF(4, 2))
         screen.keyPressEvent(
             key_event(
                 qt,
@@ -2530,6 +2531,7 @@ def test_copy_puts_the_selection_on_the_clipboard(screen, qt):
             )
         )
         assert qt.QtWidgets.QApplication.clipboard().text() == "clipboard"
+        assert select.selection(screen) is None
 
 
 def test_ctrl_shift_v_pastes_the_clipboard(screen, qt):
@@ -3224,7 +3226,7 @@ def test_the_context_menu_paths(screen, qt, monkeypatch):
 
 def test_the_menu_copy_action_carries_the_selection(screen, qt):
     """The menu's Copy action copies the selection through the
-    clipboard path."""
+    clipboard path, and drops the selection after (#1182)."""
     from msks.client.gui.terminal import select
 
     vt(screen, b"\x1b[2J\x1b[Hmenu words")
@@ -3234,6 +3236,7 @@ def test_the_menu_copy_action_carries_the_selection(screen, qt):
     copy_action.trigger()
     qt.app.processEvents()
     assert qt.QtWidgets.QApplication.clipboard().text() == "menu"
+    assert select.selection(screen) is None
 
 
 def test_a_blank_word_select_answers_empty(screen, qt):

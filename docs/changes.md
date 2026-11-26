@@ -68,6 +68,11 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **The GUI terminal's copy drops the selection (#1182).**
+  Ctrl+Shift+C and the right-click menu's Copy action now clear
+  the selection after the copy. The highlight used to stay
+  until the next click.
+
 - **The version-skew notice gives the Linux remedy on Linux (#1174).**
   A client newer than the daemon used to send every operator to
   `msks-setup-macos-host`, including a Linux host where the daemon
