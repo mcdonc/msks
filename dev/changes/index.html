@@ -2522,6 +2522,17 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Terminal-only mode: the page's top margin stands at zero
+  (#1189).</strong> The blank band the mode kept above the shell tab
+  strip is gone. With no egress hold waiting, the strip is the
+  window's first row, flush under the title bar. The restore
+  button keeps the right edge the terminal-only button stood at
+  and rides the tab row. Leaving the mode by mouse may take one
+  move of the pointer, and <code>Ctrl+Shift+M</code> still leaves the mode
+  from anywhere on the page. See
+  <a href="../gui/#terminal-only-mode">docs/gui.md</a>.</p>
+</li>
+<li>
 <p><strong>The workspaces list under a heading, the picker in the
   bottom bar (#1177).</strong> The list's table sits under a
   <strong>Workspaces</strong> heading like the Images and Secrets tables, so
