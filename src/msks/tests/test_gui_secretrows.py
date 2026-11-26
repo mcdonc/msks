@@ -1,6 +1,7 @@
 """The GUI secrets presenter (#965): placeholder and
 audit fakes in, row models out — the coverage label, the TTL
-countdown, the TTL choices, and the audit
+countdown and the deadline clock beside it (#1165), the TTL
+choices, and the audit
 rows. The presenter holds no Qt import, so these tests drive it
 as plain Python, the same way the coverage gate does.
 """
@@ -27,6 +28,18 @@ NOW = datetime(2030, 1, 2, 3, 4, 5).astimezone()
 #: stamp's epoch, the domain the audit rows sort in.
 NAIVE_STAMP = "2030-01-02T03:04:05"
 NAIVE_EPOCH = datetime(2030, 1, 2, 3, 4, 5, tzinfo=UTC).timestamp()
+
+
+#: The deadline stamps the EXPIRES cell carries beside the
+#: countdown (#1165's reads): the host's own local spelling,
+#: computed the way the presenter computes it, so the labels
+#: land deterministically on every host's timezone.
+def clock(expires_ts: float) -> str:
+    return time.strftime("%H:%M", time.localtime(expires_ts))
+
+
+def stamp(expires_ts: float) -> str:
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(expires_ts))
 
 
 def placeholder(
@@ -101,9 +114,9 @@ def test_the_placeholder_rows_build_models() -> None:
         gui_secrets.SecretRow(
             id=7,
             name="github_api",
-            coverage="ws1,ws2",
+            coverage="scoped: ws1,ws2",
             dests="api.github.com",
-            ttl="2h",
+            ttl=f"2h · {clock((NOW + timedelta(hours=2)).timestamp())}",
             expires_ts=(NOW + timedelta(hours=2)).timestamp(),
             created="3d ago",
             created_ts=(NOW - timedelta(days=3)).timestamp(),
@@ -112,7 +125,7 @@ def test_the_placeholder_rows_build_models() -> None:
         gui_secrets.SecretRow(
             id=8,
             name="second",
-            coverage="*",
+            coverage="daemon-wide",
             dests="-",
             ttl="never",
             expires_ts=None,
@@ -123,9 +136,9 @@ def test_the_placeholder_rows_build_models() -> None:
         gui_secrets.SecretRow(
             id=9,
             name="github_api",
-            coverage="ws1",
+            coverage="scoped: ws1",
             dests="api.github.com",
-            ttl="expired",
+            ttl=f"expired · {clock((NOW - timedelta(seconds=1)).timestamp())}",
             expires_ts=(NOW - timedelta(seconds=1)).timestamp(),
             created="yesterday",
             created_ts=(NOW - timedelta(days=1)).timestamp(),
@@ -150,7 +163,7 @@ def test_one_placeholder_model_carries_what_the_widget_renders() -> None:
     assert model == gui_secrets.SecretRow(
         id=1,
         name="-",
-        coverage="*",
+        coverage="daemon-wide",
         dests="api.github.com",
         ttl="-",
         expires_ts=None,
@@ -161,22 +174,22 @@ def test_one_placeholder_model_carries_what_the_widget_renders() -> None:
 
 
 def test_the_ttl_cell_counts_the_remaining_lifetime() -> None:
-    """The TTL countdown (#390's arithmetic, #965's read): a
-    bounded row counts down compactly, an unbounded row reads
-    ``never``, a past deadline reads ``expired``, a stamp that
-    does not parse reads its dash — and the unpinned call reads
-    the wall clock the shared leaf owns."""
+    """The TTL countdown (#390's arithmetic, #965's read, with
+    the deadline's clock beside it #1165): a bounded row counts
+    down compactly, an unbounded row reads ``never``, a past
+    deadline reads ``expired``, a stamp that does not parse
+    reads its dash — and the unpinned call reads the wall clock
+    the shared leaf owns."""
     assert (
         gui_secrets.ttl_text(
             placeholder(expires_at=(NOW + timedelta(hours=2)).isoformat()),
             NOW,
         )
-        == "2h"
+        == f"2h · {clock((NOW + timedelta(hours=2)).timestamp())}"
     )
-    assert (
-        gui_secrets.ttl_text(placeholder(expires_at=NOW.isoformat()), NOW)
-        == "expired"
-    )
+    assert gui_secrets.ttl_text(
+        placeholder(expires_at=NOW.isoformat()), NOW
+    ) == (f"expired · {clock(NOW.timestamp())}")
     assert gui_secrets.ttl_text(placeholder(expires_at=None), NOW) == "never"
     assert gui_secrets.ttl_text(placeholder(expires_at=""), NOW) == "never"
     assert gui_secrets.ttl_text(placeholder(expires_at="junk"), NOW) == "-"
@@ -202,9 +215,44 @@ def test_the_countdown_reads_the_deadline_epoch() -> None:
     )
     for offset in (timedelta(hours=2), timedelta(seconds=45)):
         row = placeholder(expires_at=(NOW + offset).isoformat())
-        assert gui_secrets.countdown(
+        assert gui_secrets.expires_text(
             gui_secrets.secret_row(row, NOW).expires_ts, NOW
         ) == gui_secrets.ttl_text(row, NOW)
+
+
+def test_the_expires_cell_stamps_the_deadline_clock() -> None:
+    """The EXPIRES cell's stamp (#1165): the countdown, the
+    middle dot, the deadline's clock in the operator's own zone
+    — a deadline at 14:20 local reads ``2h · 14:20`` two hours
+    out and ``expired · 14:20`` past it — the full local date
+    and time beside it for the cell's tooltip."""
+    deadline = datetime(2030, 1, 2, 14, 20).astimezone()
+    assert gui_secrets.deadline_clock(deadline.timestamp()) == "14:20"
+    assert (
+        gui_secrets.deadline_stamp(deadline.timestamp()) == "2030-01-02 14:20"
+    )
+    assert (
+        gui_secrets.expires_text(
+            deadline.timestamp(), deadline - timedelta(hours=2)
+        )
+        == "2h · 14:20"
+    )
+    assert (
+        gui_secrets.expires_text(
+            deadline.timestamp(), deadline + timedelta(seconds=1)
+        )
+        == "expired · 14:20"
+    )
+    # A multi-day countdown still reads the deadline's own
+    # clock, and the stamp beside it carries the date.
+    week = deadline + timedelta(days=7, minutes=5)
+    assert (
+        gui_secrets.expires_text(week.timestamp(), deadline)
+        == f"7d · {clock(week.timestamp())}"
+    )
+    assert gui_secrets.deadline_stamp(week.timestamp()) == (
+        stamp(week.timestamp())
+    )
 
 
 def test_the_duration_ladder_reads_compactly() -> None:
@@ -225,15 +273,35 @@ def test_the_duration_ladder_reads_compactly() -> None:
 
 
 def test_the_coverage_label_reads_the_row() -> None:
-    """The coverage label (#390, the GUI's read): the daemon-wide
-    row reads ``*``; a scoped row reads its workspace ids joined
-    — sorted, deduplicated, whatever order the row carried."""
-    assert gui_secrets.coverage_text(placeholder()) == "*"
-    assert gui_secrets.coverage_text(placeholder(workspaces=[])) == "*"
+    """The coverage label (#390, the GUI's read, #1165): the
+    daemon-wide row reads the mint form's own word; a scoped
+    row reads ``scoped:`` and its workspace ids joined —
+    sorted, deduplicated, whatever order the row carried — the
+    words the form's picker names, so the listing reads back as
+    the choice the operator made."""
+    assert gui_secrets.coverage_text(placeholder()) == "daemon-wide"
+    assert (
+        gui_secrets.coverage_text(placeholder(workspaces=[])) == "daemon-wide"
+    )
     assert (
         gui_secrets.coverage_text(placeholder(workspaces=["b", "a", "b"]))
-        == "a,b"
+        == "scoped: a,b"
     )
+    assert gui_secrets.COVERAGE_WIDE == "daemon-wide"
+    assert gui_secrets.COVERAGE_SCOPED == "scoped"
+
+
+def test_the_coverage_words_read_in_a_sentence() -> None:
+    """The coverage as a question or a flash reads it (#1165):
+    the listing's ``scoped:`` prefix drops off and the ids join
+    straight onto the name; the daemon-wide word stands as it
+    is — the ``*`` never shows in the GUI's sentences."""
+    scoped = gui_secrets.coverage_text(placeholder(workspaces=["b", "a"]))
+    assert scoped == "scoped: a,b"
+    assert gui_secrets.coverage_words(scoped) == "a,b"
+    wide = gui_secrets.coverage_text(placeholder())
+    assert gui_secrets.coverage_words(wide) == "daemon-wide"
+    assert gui_secrets.coverage_words("scoped") == "scoped"
 
 
 def test_the_dests_and_state_cells_read_their_floors() -> None:
@@ -418,10 +486,15 @@ def test_the_row_fields_read_their_tuples() -> None:
 def test_the_placeholder_helpers_match_the_tui_page() -> None:
     """The mirrored placeholder helpers keep behavior parity with
     the TUI's cells (#965): over the same placeholder fakes, both
-    clients read the same coverage labels, TTL countdowns,
+    clients read the same coverage sets, TTL countdowns,
     destinations cells, renew defaults, and choice vocabulary —
     a formatting change on one side must fail here rather than
-    drift the two pages apart."""
+    drift the two pages apart. The GUI's two cells carry a
+    deliberate addition each (#1165), stated here: the coverage
+    cell spells the TUI's ``*`` as the mint form's ``daemon-wide``
+    and prefixes the scoped set, and the EXPIRES cell appends the
+    deadline's local clock to the TUI's countdown — so a drift on
+    the TUI's side still fails the pin."""
     rows = [
         placeholder(),
         placeholder(
@@ -433,9 +506,19 @@ def test_the_placeholder_helpers_match_the_tui_page() -> None:
         placeholder(expires_at="junk", locked=True),
     ]
     for row in rows:
-        assert gui_secrets.coverage_text(row) == tui_cells.coverage_text(row)
+        tui_coverage = tui_cells.coverage_text(row)
+        gui_coverage = gui_secrets.coverage_text(row)
+        if tui_coverage == "*":
+            assert gui_coverage == "daemon-wide"
+        else:
+            assert gui_coverage == f"scoped: {tui_coverage}"
         assert gui_secrets.dests_cell(row) == tui_cells.dests_cell(row)
-        assert gui_secrets.ttl_text(row, NOW) == tui_cells.ttl_text(row, NOW)
+        tui_ttl = tui_cells.ttl_text(row, NOW)
+        stamp = ages_mod.parse_stamp(row.get("expires_at") or "")
+        expected = (
+            f"{tui_ttl} · {clock(stamp.timestamp())}" if stamp else tui_ttl
+        )
+        assert gui_secrets.ttl_text(row, NOW) == expected
         assert gui_secrets.ttl_default(row) == tui_cells.ttl_default(row)
     assert gui_secrets.SECRET_TTLS == tui_cells.SECRET_TTLS
     assert gui_secrets.SECRET_TTL_SECONDS == tui_cells.SECRET_TTL_SECONDS

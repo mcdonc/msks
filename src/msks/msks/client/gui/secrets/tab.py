@@ -22,9 +22,12 @@ The TTL column counts down from the deadline epoch the presenter lands
 per tick. Mint opens the form (:mod:`.mint`), Unlock hands
 the ask to the window's own flow (:mod:`msks.client.gui.unlock`,
 #1147 — the prompt and the flights are the flow's, the outcome
-lands on this tab's status line), renew opens the
-TTL picker, and revoke asks first — each action landing
-through the bridge with the listing refreshed behind it. The
+lands on this tab's status line), and Renew and Revoke sit on
+the bar beside them, enabled on a held placeholder row and dark
+otherwise (#1165), the right-click menu carrying the same two
+flights — renew opens the TTL picker, and revoke asks first —
+each action landing through the bridge with the listing
+refreshed behind it. The
 sentinel pane is gone (#997): the page renders the two tables
 alone, the sentinel stays the CLI's and the TUI's own surface,
 and activating a row sends nothing. Refusals and failures
@@ -51,7 +54,9 @@ from ..listtable import (
 from ..secretrows import (
     SECRET_TTL_SECONDS,
     SECRET_TTLS,
-    countdown,
+    coverage_words,
+    deadline_stamp,
+    expires_text,
     expiry_kind,
     state_kind,
     ttl_default,
@@ -179,11 +184,21 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         bridge.feed_dropped.connect(self.feed_dropped)
         self.table = RowTable(0, len(cells.LIST_COLUMNS), self)
         self.table.setHorizontalHeaderLabels(cells.LIST_COLUMNS)
+        cells.coverage_tip(self.table)  # the mint form's own words (#1165)
         self.build_table(self.table)
         self.table.setContextMenuPolicy(
             QtCore.Qt.ContextMenuPolicy.CustomContextMenu
         )
         self.table.customContextMenuRequested.connect(self.menu_requested)
+        # The held row drives the bar's Renew and Revoke (#1165):
+        # every move of the hold — a pick, a rebuild's carry, the
+        # restore's clear — lands on the selection model's
+        # current row, and that change is the one source for the
+        # buttons; the gate re-reads the hold by hand at its own
+        # turns.
+        self.table.selectionModel().currentChanged.connect(
+            lambda *_: self.sync_buttons()
+        )
         self.list_empty = QtWidgets.QLabel(cells.list_empty_text(), self)
         # The listing's empty state wraps (#966): its advice
         # line must not price the tab's minimum past the
@@ -194,7 +209,6 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         # cross, its Up bridge alone the edges it needs.
         self.audit_table = ListTable(0, len(cells.AUDIT_COLUMNS), self)
         self.audit_table.setHorizontalHeaderLabels(cells.AUDIT_COLUMNS)
-        cells.marker_tip(self.audit_table)  # the ! column's own words (#1064)
         self.build_table(self.audit_table, sortable=False)
         self.audit_empty = QtWidgets.QLabel(cells.audit_empty_text(), self)
         # The audit empty state wraps too (#966), for the same
@@ -207,6 +221,23 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         self.unlock_button = QtWidgets.QPushButton("Unlock…", self)
         self.unlock_button.clicked.connect(self.unlock_asked)
         self.unlock_button.installEventFilter(self)
+        # The row's two actions on the bar (#1165): dark until a
+        # placeholder row is held, the same flights the menu
+        # items run.
+        self.renew_button = QtWidgets.QPushButton("Renew…", self)
+        self.renew_button.clicked.connect(self.renew_selected)
+        self.renew_button.setEnabled(False)
+        self.renew_button.installEventFilter(self)
+        self.revoke_button = QtWidgets.QPushButton("Revoke…", self)
+        self.revoke_button.clicked.connect(self.revoke_selected)
+        self.revoke_button.setEnabled(False)
+        self.revoke_button.installEventFilter(self)
+        self.bar_buttons = (
+            self.mint_button,
+            self.unlock_button,
+            self.renew_button,
+            self.revoke_button,
+        )
         self.counts = QtWidgets.QLabel("", self)
         self.counts.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
@@ -225,14 +256,18 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         self.layout_widgets()
 
     def layout_widgets(self) -> None:
-        """The tab's panes (#997, #1011, #1060): the placeholder
-        listing and the audit group stacked full width — each
-        spanning the window's whole width — the Mint and Unlock
-        buttons and the flash line in a row at the bottom of the
-        page, and the standing counts on the bottom line."""
+        """The tab's panes (#997, #1011, #1060, #1165): the
+        placeholder listing and the audit group stacked full
+        width — each spanning the window's whole width — the
+        Mint, Unlock, Renew, and Revoke buttons and the flash
+        line in a row at the bottom of the page, the buttons in
+        the reading order the focus chain follows, and the
+        standing counts on the bottom line."""
         bar = QtWidgets.QHBoxLayout()
         bar.addWidget(self.mint_button)
         bar.addWidget(self.unlock_button)
+        bar.addWidget(self.renew_button)
+        bar.addWidget(self.revoke_button)
         bar.addWidget(self.status, stretch=1)
         listing = QtWidgets.QGroupBox(cells.LIST_GROUP, self)
         listing_rows = QtWidgets.QVBoxLayout(listing)
@@ -389,10 +424,14 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         fill_columns(self.audit_table)
 
     def fill_list(self, models: list) -> None:
-        """The listing's rows (#966): one per model, the
+        """The listing's rows (#966, #1165): one per model, the
         selection carried by the row's id across the rebuild,
-        the empty state named beside an empty table, the
-        columns filling the pane's whole width (#997)."""
+        the empty state named beside an empty table, the columns
+        filling the pane's whole width (#997) — a bounded row's
+        EXPIRES cell carrying its deadline's full date and time
+        as the tooltip. The bar's Renew and Revoke answer the
+        hold the rebuild leaves through the selection model's
+        current-row signal alone."""
         held = self.held_first(self.table)
         was_empty = self.table.rowCount() == 0
         self.table.setSortingEnabled(False)
@@ -405,6 +444,10 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
             self.table.setItem(index, 0, first)
             for column, (cell, rank) in enumerate(rendered[1:], start=1):
                 item = cells.ranked_item(cell, rank)
+                if column == cells.EXPIRES_COLUMN and (
+                    model.expires_ts is not None
+                ):
+                    item.setToolTip(deadline_stamp(model.expires_ts))
                 self.table.setItem(index, column, item)
             self.tint_row(index, model)
         self.secret_models = models
@@ -495,20 +538,18 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
 
     @QtCore.Slot()
     def on_tick(self) -> None:
-        """The per-second repaint (#966): the TTL cells' live
-        countdown, paint-time math over the cached models — the
-        daemon is asked nothing. A row without a deadline epoch
-        keeps its frozen cell (``never``, the unparsable
-        dash)."""
+        """The per-second repaint (#966, #1165): the EXPIRES cells'
+        live countdown beside its deadline's clock, paint-time
+        math over the cached models — the daemon is asked
+        nothing. A row without a deadline epoch keeps its frozen
+        cell (``never``, the unparsable dash)."""
         for row in range(self.table.rowCount()):
             item = self.table.item(row, cells.EXPIRES_COLUMN)
-            first = self.table.item(row, 0)
-            if item is None or first is None:
+            model = self.row_model(row)
+            if item is None or model is None or model.expires_ts is None:
                 continue
-            model = self.secret_models[first.data(cells.ROW_INDEX_ROLE)]
-            if model.expires_ts is not None:
-                item.setText(countdown(model.expires_ts))
-                item.setData(SEMANTIC_ROLE, expiry_kind(model.expires_ts))
+            item.setText(expires_text(model.expires_ts))
+            item.setData(SEMANTIC_ROLE, expiry_kind(model.expires_ts))
 
     def tint_row(self, index: int, model) -> None:
         """The row's tints (#1160): the state word by its lock,
@@ -524,12 +565,59 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
     # -- the focused row into actions ---------------------------------------
 
     def row_model(self, row: int):
-        """The model a table row carries (#966), or None when
-        the row holds no first cell."""
+        """The model a table row carries (#966), or None when the
+        row holds no first cell or the cell carries no model
+        index (a row the table counts but a fill has not
+        reached)."""
         item = self.table.item(row, 0)
         if item is None:
             return None
-        return self.secret_models[item.data(cells.ROW_INDEX_ROLE)]
+        index = item.data(cells.ROW_INDEX_ROLE)
+        return self.secret_models[index] if index is not None else None
+
+    def selected_model(self):
+        """The held placeholder row's model (#1165): the row the
+        bar's Renew and Revoke act on — None with no row held."""
+        return self.row_model(self.table.currentRow())
+
+    @QtCore.Slot()
+    def sync_buttons(self) -> None:
+        """The bar's row buttons (#1165, the mounts tab's own
+        rule): Renew and Revoke answer the held placeholder row
+        — the table's current row — beside the one-flight gate: a
+        pick lights them, a cleared or vanished hold darkens them,
+        a flight out darkens both until its landing."""
+        live = self.selected_model() is not None and not self.action_pending
+        self.renew_button.setEnabled(live)
+        self.revoke_button.setEnabled(live)
+
+    @QtCore.Slot()
+    def renew_selected(self) -> None:
+        """The Renew button (#1165): the held row's renew, the
+        menu item's own flight; a press with no row held — a
+        dark button's click — sends nothing."""
+        model = self.selected_model()
+        if model is not None:
+            self.renew_row(model)
+
+    @QtCore.Slot()
+    def revoke_selected(self) -> None:
+        """The Revoke button (#1165): the held row's revoke behind
+        its confirmation, the menu item's own flight; a press
+        with no row held sends nothing."""
+        model = self.selected_model()
+        if model is not None:
+            self.revoke_row(model)
+
+    def gate(self, model, choice: str | None) -> None:
+        """The action gate closes (#966, #1165): the flight's row
+        and choice remembered, and the bar's Renew and Revoke
+        dark until the landing opens the gate — one action at a
+        time, on the row the operator picked."""
+        self.action_pending = True
+        self.action_model = model
+        self.action_choice = choice
+        self.sync_buttons()
 
     def raw_row(self, model) -> dict | None:
         """The raw daemon row behind a listing model (#966):
@@ -549,9 +637,7 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         choice = self.pick_ttl(model)
         if choice is None:
             return
-        self.action_pending = True
-        self.action_model = model
-        self.action_choice = choice
+        self.gate(model, choice)
         self.bridge.call(
             RENEW_KEY, "renew_secret", model.id, SECRET_TTL_SECONDS[choice]
         )
@@ -566,7 +652,7 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         return pick_item(
             self,
             "Renew",
-            f"renew {model.coverage}/{model.name} for",
+            f"renew {coverage_words(model.coverage)}/{model.name} for",
             list(SECRET_TTLS),
             default,
         )
@@ -580,9 +666,7 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
             return
         if not self.confirm_revoke(model):
             return
-        self.action_pending = True
-        self.action_model = model
-        self.action_choice = None
+        self.gate(model, None)
         self.bridge.call(REVOKE_KEY, "revoke_secret", model.id)
 
     def confirm_revoke(self, model) -> bool:
@@ -608,11 +692,13 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         self.take_flight()
 
     def action_landed(self) -> None:
-        """An action flight's end (#966): the gate opens and the
-        flight's row clears."""
+        """An action flight's end (#966): the gate opens, the
+        flight's row clears, and the bar's Renew and Revoke
+        answer the hold again (#1165)."""
         self.action_pending = False
         self.action_model = None
         self.action_choice = None
+        self.sync_buttons()
 
     @QtCore.Slot()
     def open_mint(self) -> None:
@@ -628,22 +714,35 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
     @QtCore.Slot(QtCore.QPoint)
     def menu_requested(self, pos: QtCore.QPoint) -> None:
         """A right-click on a placeholder row opens its menu
-        (#966): the renew and the revoke behind its
-        confirmation. A press on no row opens nothing."""
-        menu = self.row_menu(self.table.rowAt(pos.y()))
+        (#966, #1165): the clicked row takes the selection first
+        — the Mounts tab's own rule (#1098) — so the entries,
+        which read the bar's state, answer the row under the
+        pointer even from an empty hold, and the renew and the
+        revoke behind its confirmation follow. A press on no row
+        opens nothing."""
+        row = self.table.rowAt(pos.y())
+        if row < 0:
+            return
+        self.table.selectRow(row)
+        menu = self.row_menu(row)
         if menu is None:
             return
         menu.popup(self.table.viewport().mapToGlobal(pos))
 
     def row_menu(self, row: int) -> QtWidgets.QMenu | None:
-        """The placeholder row's menu (#966, #997) — ``None``
-        for a row the table does not hold."""
+        """The placeholder row's menu (#966, #997, #1165) — ``None``
+        for a row the table does not hold. Its entries read the
+        bar's own state: a flight already out darkens both here
+        as it does on the bar, the mounts tab's own rule
+        (#1098)."""
         model = self.row_model(row)
         if model is None:
             return None
         menu = QtWidgets.QMenu(self.table)
-        menu.addAction("Renew…", lambda: self.renew_row(model))
-        menu.addAction("Revoke…", lambda: self.revoke_row(model))
+        renew = menu.addAction("Renew…", lambda: self.renew_row(model))
+        revoke = menu.addAction("Revoke…", lambda: self.revoke_row(model))
+        renew.setEnabled(self.renew_button.isEnabled())
+        revoke.setEnabled(self.revoke_button.isEnabled())
         return menu
 
     # -- the status line ----------------------------------------------------
@@ -701,7 +800,8 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
     def eventFilter(
         self, watched: QtCore.QObject, event: QtCore.QEvent
     ) -> bool:
-        """The bar buttons' arrow bridges (#962's rule) beside a
+        """The bar buttons' arrow bridges (#962's rule, every bar
+        button — Mint, Unlock, Renew, and Revoke, #1165) beside a
         pane's own resize (#997): Up from a bottom button climbs
         the reading order — the audit group above it — and Down
         hands the keyboard out of the page, onward down the chain
@@ -710,7 +810,7 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         resize re-flows its columns.
         """
         self.pane_resized(watched, event)
-        if watched not in (self.mint_button, self.unlock_button) or (
+        if watched not in self.bar_buttons or (
             event.type() != QtCore.QEvent.Type.KeyPress
         ):
             return super().eventFilter(watched, event)
