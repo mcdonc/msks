@@ -1677,21 +1677,31 @@ recovery line.</p>
 <p><img alt="The Secrets tab: the placeholder listing above the audit group" src="../screens/gui-secrets.png" /></p>
 <p>The third top-level tab manages the daemon's secret
 placeholders. The <strong>Placeholders</strong> group lists every row with its
-coverage (the owner-wide <code>*</code> or its workspace ids), name,
-destinations, remaining lifetime, created label, and lock state.
-The lifetime cell is a live countdown, repainted every second.
-An unbounded row reads <code>never</code>.</p>
-<p>A right-click on a row opens Renew…, with the TTL choices (<code>1h</code>
-to <code>30d</code>, the one nearest the row's remaining lifetime
-pre-selected), and Revoke…, which asks first. A revoked row
-retires everywhere at once.</p>
+coverage, name, destinations, expiry, created label, and lock
+state. The COVERAGE cell uses the words the mint form's coverage
+picker uses. A row that every accepting workspace honors reads
+<code>daemon-wide</code>. A row that serves picked workspaces reads
+<code>scoped: ws-a, ws-b</code>. The COVERAGE header carries both meanings
+as its tooltip. The EXPIRES cell is a live countdown with the
+deadline's clock beside it. <code>2h · 14:20</code> means the row expires in
+two hours, at 14:20 local time. The countdown repaints every
+second and the clock stands still. The cell's tooltip shows the
+full local date and time of the deadline. An unbounded row reads
+<code>never</code>.</p>
+<p><strong>Renew…</strong> and <strong>Revoke…</strong> sit on the button row beside Mint and
+Unlock. Both stay disabled until a placeholder row is selected,
+and both stay disabled while a renew or a revoke is in flight.
+Renew… opens the TTL picker (<code>1h</code> to <code>30d</code>, with the choice
+nearest the row's remaining lifetime pre-selected). Revoke… asks
+first. A revoked row retires everywhere at once. A right-click
+on a row opens a menu with the same two actions.</p>
 <p><strong>Mint</strong> opens the mint form: name, comma-separated destinations,
-coverage (owner-wide, or scoped to a workspace multi-select),
-the TTL choice, and the value. A landed mint closes the form and
-the listing refreshes. The GUI shows no sentinel panel: the flash
-reports the minted row, and the sentinel itself reads back
-through the CLI or the TUI. The <a href="../secrets/">secrets chapter</a>
-explains placeholders and sentinels.</p>
+coverage (<code>daemon-wide</code>, or <code>scoped</code> with a workspace
+multi-select), the TTL choice, and the value. A landed mint
+closes the form and the listing refreshes. The GUI shows no
+sentinel panel: the flash reports the minted row, and the
+sentinel itself reads back through the CLI or the TUI. The
+<a href="../secrets/">secrets chapter</a> explains placeholders and sentinels.</p>
 <p><strong>Unlock</strong> runs the secrets unlock against the daemon's locked rows,
 the TUI's <code>u</code> action as a button. An encrypted key file opens a
 masked passphrase dialog centered on the window. The typed
@@ -1703,16 +1713,16 @@ pick. The prompt is the window's one per session. The outcome lands
 on the workspaces list's status line, and the button asks again by
 hand. See the <a href="../secrets/#the-clients-half">secrets chapter</a>.</p>
 <p>The <strong>Audit</strong> group beneath lists the daemon's recorded secret
-events, newest first: mint, revoke, expiry, and unlock rows. A
-renew changes a row's deadline without recording an audit row.
-The TIME cell shows the row's local clock. A row from an
-earlier day carries its date beside the clock. The <code>!</code> column
-marks a sighting: a placeholder token that reached a host its
-mint did not allow, the exfiltration signal. The daemon's
-recorded rows are the four lifecycle kinds, so this table's
-marker column stays blank. A sighting streams into the TUI's
-audit view live. The column's header carries that meaning as
-its tooltip.</p>
+events, newest first. The daemon records four kinds of rows:
+mint, revoke, expiry, and unlock. A renew changes a row's
+deadline without recording an audit row. The table has four
+columns: TIME, KIND, PLACEHOLDER, and DEST. The TIME cell shows
+the row's local clock. A row from an earlier day carries its
+date beside the clock. PLACEHOLDER reads <code>*/name</code> for a
+daemon-wide row and <code>ws-a/name</code> for a scoped one. A sighting (a
+placeholder token that reached a host its mint did not allow) is
+a live event. It streams into the TUI's audit view and does not
+appear in this table.</p>
 <p>The page re-reads itself. It re-reads at every show and behind
 every action, and the daemon's pushed secret frames re-read it
 while the tab is open: a mint, revoke, unlock, or expiry from
