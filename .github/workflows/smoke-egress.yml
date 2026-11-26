@@ -27,7 +27,7 @@ name: Smoke (egress)
 
 on:
   push:
-    branches: [main, pyside-gui] # pyside-gui: GUI integration branch (#924); drop when it merges to main
+    branches: [main]
     paths:
       - .github/workflows/smoke-egress.yml
       - devenv.nix

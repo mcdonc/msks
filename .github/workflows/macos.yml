@@ -39,7 +39,7 @@ on:
       - ".github/workflows/macos.yml"
       - "pyproject.toml"
   push:
-    branches: [main, pyside-gui] # pyside-gui: GUI integration branch (#924); drop when it merges to main
+    branches: [main]
     paths:
       - "src/msks/msks/client/**"
       - "src/msks/msks/server/hostsetup/**"
