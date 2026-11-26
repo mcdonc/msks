@@ -2546,6 +2546,16 @@ tagged <code>vX.Y.Z</code>.</p>
   leave the key unhandled on macOS, so the tables answer it
   themselves.</p>
 </li>
+<li>
+<p><strong>The <code>virtiofsd-as</code> helper resets the signal handlers and the
+  signal mask before it execs virtiofsd (#1176).</strong> The helper
+  ends a share's virtiofsd when the daemon dies, and that signal
+  is <code>SIGTERM</code>. An ignored disposition and a blocked mask both
+  survive an exec. A daemon that ignored or blocked <code>SIGTERM</code>
+  in the thread that spawned the share would have left every
+  such share running after a daemon restart. The share now dies
+  with the daemon whatever the daemon's signal state.</p>
+</li>
 </ul>
 <h2 id="v0102-2026-11-25">[v0.10.2] - 2026-11-25<a class="headerlink" href="#v0102-2026-11-25" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
