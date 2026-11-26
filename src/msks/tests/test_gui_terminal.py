@@ -623,6 +623,119 @@ def test_one_typed_character_repaints_its_row_alone(screen, qt):
     assert screen.painted_rows == [1]
 
 
+# --- the synchronized-output hold (#1193) -------------------------------
+
+
+def echo_read(widget, data: bytes, done, timeout: float = 5.0) -> None:
+    """Write to the child and drive the widget's own read path
+    over the echo (#1193): the echoer answers the bytes back on
+    the master, and ``read_master`` takes them exactly as the
+    notifier would — no event loop runs, so this loop is the
+    master's only reader. ``done`` names the state the read
+    path is expected to reach; the loop reads at least once
+    before it checks, so a state already standing counts only
+    after a read."""
+    widget.write(data)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        widget.read_master()
+        if done():
+            return
+        time.sleep(0.02)
+
+
+def test_read_master_holds_an_open_block_and_presents_its_close(screen, qt):
+    """The read path owns the synchronized-output hold (#1193):
+    a read that ends inside an open block holds presentation —
+    the widget keeps the pixels it already shows — and the read
+    that closes the block presents the block's whole change in
+    one paint. A transcript replay arrives as exactly this
+    shape: one block, many reads, one paint."""
+    vt(screen, b"\x1b[2J\x1b[Hbefore")
+    before = screen.grab().toImage()
+    echo_read(
+        screen, b"\x1b[?2026h\x1b[2J\x1b[Hduring", lambda: screen.sync_hold
+    )
+    assert screen.sync_hold is True
+    assert screen.sync_release.isActive()
+    assert screen.grab().toImage() == before  # presentation held
+    echo_read(screen, b"more\x1b[?2026l", lambda: not screen.sync_hold)
+    assert screen.sync_hold is False
+    assert not screen.sync_release.isActive()
+    assert screen.grab().toImage() != before  # the block presented
+
+
+def test_the_cap_releases_a_block_stuck_open(screen, qt):
+    """A block that never closes still presents (#1193): the
+    cap's own release ends the hold and refreshes, so a program
+    wedged or dead inside its block leaves the terminal live.
+    A read that arrives while the hold already stands re-arms
+    nothing — the cap keeps its own countdown, not a fresh one
+    per read."""
+    from msks.client.gui.terminal.screen import SYNC_HOLD_MAX_S
+
+    vt(screen, b"\x1b[2J\x1b[Hbefore")
+    before = screen.grab().toImage()
+    screen.lib.vt_write(screen.terminal, b"\x1b[?2026h\x1b[2J\x1b[Hduring")
+    screen.hold_presentation()
+    assert screen.sync_release.isActive()
+    time.sleep(0.05)  # let the cap's countdown run down a little
+    screen.hold_presentation()  # a read inside the standing hold
+    assert screen.sync_release.remainingTime() < SYNC_HOLD_MAX_S * 1000
+    screen.sync_release_due()  # the cap's own slot, driven directly
+    assert screen.sync_hold is False
+    assert not screen.sync_release.isActive()
+    assert screen.grab().toImage() != before
+
+
+def test_a_closed_block_presents_at_once(screen, qt):
+    """A block that opens and closes inside one read presents
+    immediately (#1193): the hold is the open block alone, and
+    a program's ordinary per-frame blocks — pi's streaming
+    updates — never wait on it. The BEL at the write's end is
+    the arrival marker: the echo carries it last, so the read
+    path has taken the whole block once it flashes."""
+    vt(screen, b"\x1b[2J\x1b[Hbefore")
+    before = screen.grab().toImage()
+    echo_read(
+        screen,
+        b"\x1b[?2026h\x1b[2J\x1b[Hduring\x1b[?2026l\x07",
+        lambda: screen.bell_flash,
+    )
+    assert screen.sync_hold is False
+    assert not screen.sync_release.isActive()
+    screen.bell_off()  # the marker's flash clears; the content stays
+    assert screen.grab().toImage() != before
+
+
+def test_a_child_dying_inside_its_block_presents(qt):
+    """A child that dies inside its own block releases the hold
+    on its way out (#1193): the exit path presents the block's
+    standing state with the exit banner above it."""
+    from msks.client.gui.terminal import TerminalWidget
+
+    block = (
+        "import sys\n"
+        "sys.stdout.write('\\x1b[?2026h\\x1b[2J\\x1b[Hduring')\n"
+        "sys.stdout.flush()\n"
+    )
+    widget = TerminalWidget([sys.executable, "-c", block])
+    try:
+        blank = widget.grab().toImage()  # before any read runs
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not widget.session.exited:
+            widget.read_master()
+            time.sleep(0.02)
+        assert widget.session.exited
+        assert widget.sync_hold is False
+        assert not widget.sync_release.isActive()
+        final = widget.grab().toImage()
+        assert final.size() == widget.size()
+        assert final != blank  # the held content and the banner present
+    finally:
+        shutdown(widget)
+
+
 def test_the_cursor_move_repaints_the_row_it_covers(screen, qt):
     """A cursor move flags no rows (probed); the plan names
     the rows the translucent cursor covers — the one it left

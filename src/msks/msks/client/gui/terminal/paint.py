@@ -29,7 +29,7 @@ from PySide6.QtCore import QPointF, QRect, Qt
 from PySide6.QtGui import QColor, QPainter, QRegion
 
 from .. import ghostty as gt
-from . import find, links
+from . import find, links, select
 from .fonts import font_key
 
 # The scrollbar's lane, reserved right of the grid: the thumb
@@ -314,6 +314,48 @@ def paint_overlays(screen, painter, colors, cursor) -> None:
         paint_bell_flash(screen, painter)
 
 
+class CellScratch:
+    """The per-walk scratch the cell reader reuses (#1193): the
+    buffers the per-cell reads write into, the pointers to
+    them, and the walk's Qt-color cache — one paint's walk
+    allocates once, not once per cell. The reads call the
+    library's typed prototypes directly with the prebuilt
+    pointers, so a cell's answers arrive without the wrapper's
+    per-call buffer and tuple. The cached colors hand the
+    same object back for the same triple; a caller that
+    changes one (the faint pen's alpha) copies first."""
+
+    def __init__(self, codepoints, selection_active: bool) -> None:
+        self.length = ctypes.c_uint32()
+        self.foreground = gt.ColorRgb()
+        self.background = gt.ColorRgb()
+        self.selected = ctypes.c_bool()
+        self.style = gt.Style()
+        self.style.size = ctypes.sizeof(self.style)
+        self.codepoints = codepoints
+        self.len_ref = ctypes.byref(self.length)
+        self.fg_ref = ctypes.byref(self.foreground)
+        self.bg_ref = ctypes.byref(self.background)
+        self.sel_ref = ctypes.byref(self.selected)
+        self.style_ref = ctypes.byref(self.style)
+        self.codepoints_ptr = ctypes.cast(codepoints, ctypes.c_void_p)
+        self.qcolors: dict[tuple[int, int, int], QColor] = {}
+        #: Whether a selection stands at all (#1193): with none,
+        #: the per-cell selection read is skipped — no cell can
+        #: carry the flag the absent selection would set.
+        self.selection_active = selection_active
+
+    def qcolor(self, color: gt.ColorRgb) -> QColor:
+        """The library's RGB triple as a Qt color, cached per
+        walk: a paint's cells repeat few colors."""
+        key = (color.r, color.g, color.b)
+        cached = self.qcolors.get(key)
+        if cached is None:
+            cached = QColor(color.r, color.g, color.b)
+            self.qcolors[key] = cached
+        return cached
+
+
 def paint_cells(
     screen, painter, colors, rects_by_row, region, full, rows
 ) -> None:
@@ -335,15 +377,13 @@ def paint_cells(
     # answers both). # pragma: no branch — the no-iterator arm
     # has no state that reaches it.
     if ok and iterator.value:  # pragma: no branch
-        style = gt.Style()
-        style.size = ctypes.sizeof(style)
         codepoints = (ctypes.c_uint32 * CLUSTER_CAP)()
+        scratch = CellScratch(codepoints, select.selection(screen) is not None)
         screen.link_spans = walk_rows(
             screen,
             painter,
             colors,
-            style,
-            codepoints,
+            scratch,
             iterator,
             rects_by_row,
             region,
@@ -356,8 +396,7 @@ def walk_rows(
     screen,
     painter,
     colors,
-    style,
-    codepoints,
+    scratch,
     iterator,
     rects_by_row,
     region,
@@ -391,8 +430,7 @@ def walk_rows(
                 screen,
                 painter,
                 colors,
-                style,
-                codepoints,
+                scratch,
                 cells,
                 rows_text,
                 rects_by_row,
@@ -410,8 +448,7 @@ def paint_damaged_row(
     screen,
     painter,
     colors,
-    style,
-    codepoints,
+    scratch,
     cells,
     rows,
     rects_by_row,
@@ -435,9 +472,7 @@ def paint_damaged_row(
     paint_underlays(screen, painter, rects_by_row.get(count, []), y)
     while len(rows) <= count:
         rows.append([])
-    rows[count] = paint_row(
-        screen, painter, colors, style, codepoints, cells, y
-    )
+    rows[count] = paint_row(screen, painter, colors, scratch, cells, y)
     screen.painted_rows.append(count)
 
 
@@ -476,78 +511,111 @@ def paint_underlays(screen, painter: QPainter, rects, y: int) -> None:
         )
 
 
-def paint_row(screen, painter, colors, style, codepoints, cells, y):
+def cell_selected(lib, cells, scratch, selection_possible) -> bool:
+    """Whether the library flags the cell as inside the active
+    selection — the whole read skipped when no selection
+    stands, for no cell can carry the flag an absent selection
+    would set."""
+    if not selection_possible:
+        return False
+    ok = (
+        lib.row_cells_get(cells, gt.CELLS_SELECTED, scratch.sel_ref)
+        == gt.SUCCESS
+    )
+    return bool(ok and scratch.selected.value)
+
+
+def cell_read(lib, cells, scratch, selection_possible):
+    """One cell's answers, read into the scratch's reused
+    buffers through the library's typed prototypes: the
+    cluster's length, whether the cell carries its own
+    background, its selection flag, and — only where a use
+    stands — its foreground and its style. A blank cell that no
+    selection covers leaves the foreground and the style
+    unread: nothing uses either."""
+    ok_len = (
+        lib.row_cells_get(cells, gt.CELLS_GRAPHEMES_LEN, scratch.len_ref)
+        == gt.SUCCESS
+    )
+    n = scratch.length.value if ok_len else 0
+    has_bg = (
+        lib.row_cells_get(cells, gt.CELLS_BG_COLOR, scratch.bg_ref)
+        == gt.SUCCESS
+    )
+    selected = cell_selected(lib, cells, scratch, selection_possible)
+    has_fg = (selected or n) and (
+        lib.row_cells_get(cells, gt.CELLS_FG_COLOR, scratch.fg_ref)
+        == gt.SUCCESS
+    )
+    if n:
+        lib.row_cells_get(cells, gt.CELLS_STYLE, scratch.style_ref)
+    return n, has_bg, has_fg, selected
+
+
+def cell_swap(scratch, colors, n, has_bg, has_fg, selected):
+    """The cell's foreground and background — the render
+    state's defaults where the cell carries none — with the
+    selection's and the inverse style's swap applied, and the
+    verdict on the cell's own background fill. Each of the two
+    swaps alone trades the colors; a cell carrying both swaps
+    twice and reads as neither, while the fill follows any of
+    the three causes."""
+    foreground = scratch.foreground if has_fg else colors.foreground
+    background = scratch.background if has_bg else colors.background
+    inverse = bool(n) and scratch.style.inverse
+    swap = selected != inverse
+    if swap:
+        foreground, background = background, foreground
+    return foreground, background, any((has_bg, selected, inverse))
+
+
+def draw_cell(screen, painter, scratch, foreground, text, x, y, drawn) -> None:
+    """The cell's glyphs, baseline-anchored at the cell's left
+    edge in the style's variant of the one face and its
+    faintness. The painter's font and pen move only when the
+    cell's style or color changes — ``drawn`` carries the pair
+    the last cell drew with, and answers the pair this one
+    did."""
+    style = scratch.style
+    key = font_key(style.bold, style.italic)
+    pen = scratch.qcolor(foreground)
+    if style.faint:
+        pen = QColor(pen)
+        pen.setAlpha(120)
+    if key != drawn[0] or pen is not drawn[1]:
+        painter.setFont(screen.fonts[key])
+        painter.setPen(pen)
+        drawn[0], drawn[1] = key, pen
+    painter.drawText(QPointF(x, y + screen.metrics.ascent), text)
+
+
+def paint_row(screen, painter, colors, scratch, cells, y):
     """One row's cells left to right; answers the row's
-    per-cell text for the URL scan."""
-    x = 0
+    per-cell text for the URL scan. Each cell's reads and
+    glyphs go through the helpers above, and the loop-invariant
+    lookups — the prototypes, the selectors, the scratch's
+    pointers and buffers — are hoisted, because a lookup per
+    cell costs more than the read it names."""
+    cell_w = screen.metrics.cell_width
     row_chars: list[str] = []
-    while screen.lib.row_cells_next(cells.value):
-        paint_cell(screen, painter, colors, style, codepoints, x, y, row_chars)
-        x += screen.metrics.cell_width
+    drawn = [None, None]
+    x = 0
+    next_cells = screen.lib.row_cells_next
+    handle = cells.value
+    while next_cells(handle):
+        n, has_bg, has_fg, selected = cell_read(
+            screen.lib, cells, scratch, scratch.selection_active
+        )
+        foreground, background, fill = cell_swap(
+            scratch, colors, n, has_bg, has_fg, selected
+        )
+        fill_cell(screen, painter, x, y, scratch.qcolor(background), fill)
+        text = cluster_text(screen.lib, cells, scratch, n)
+        row_chars.append(text or " ")
+        if text:
+            draw_cell(screen, painter, scratch, foreground, text, x, y, drawn)
+        x += cell_w
     return row_chars
-
-
-def cell_colors(screen, colors, cells):
-    """A cell's foreground and background as Qt colors, with
-    whether the cell carries a paint of its own — a set
-    background, the inverse style, or a library-flagged
-    selection each make one."""
-    lib = screen.lib
-    ok_fg, fg = lib.get(
-        lib.row_cells_get, cells, gt.CELLS_FG_COLOR, gt.ColorRgb()
-    )
-    ok_bg, bg = lib.get(
-        lib.row_cells_get, cells, gt.CELLS_BG_COLOR, gt.ColorRgb()
-    )
-    foreground = rgb(fg if ok_fg else colors.foreground)
-    background = rgb(bg if ok_bg else colors.background)
-    selected = cell_selected(lib, cells)
-    if selected:
-        foreground, background = background, foreground
-    return foreground, background, ok_bg or selected
-
-
-def cell_selected(lib, cells) -> bool:
-    """Whether the library flags the cell as inside the
-    active selection."""
-    ok, selected = lib.get(
-        lib.row_cells_get, cells, gt.CELLS_SELECTED, ctypes.c_bool()
-    )
-    return bool(ok and selected.value)
-
-
-def paint_cell(
-    screen,
-    painter: QPainter,
-    colors,
-    style,
-    codepoints,
-    x: int,
-    y: int,
-    row_chars: list[str],
-) -> None:
-    """One cell: its background fill, then the cluster's
-    glyphs baseline-anchored at the cell's left edge in the
-    style's variant of the one face. The inverse style and
-    the selection each swap the cell's foreground and
-    background."""
-    lib = screen.lib
-    cells = screen.row_cells
-    ok, length = lib.get(
-        lib.row_cells_get, cells, gt.CELLS_GRAPHEMES_LEN, ctypes.c_uint32()
-    )
-    foreground, background, has_bg = cell_colors(screen, colors, cells)
-    if not ok or length.value == 0:
-        fill_cell(screen, painter, x, y, background, has_bg)
-        row_chars.append(" ")
-        return
-    cell_style = read_style(lib, cells, style)
-    if cell_style.inverse:
-        foreground, background = background, foreground
-        has_bg = True
-    fill_cell(screen, painter, x, y, background, has_bg)
-    row_chars.append(cluster_text(lib, cells, codepoints) or " ")
-    draw_cluster(screen, painter, foreground, cell_style, codepoints, x, y)
 
 
 def fill_cell(
@@ -562,44 +630,19 @@ def fill_cell(
     )
 
 
-def read_style(lib, cells, style):
-    """The cell's style flags, read into the reused struct."""
-    style.size = ctypes.sizeof(style)
-    lib.row_cells_get(cells, gt.CELLS_STYLE, ctypes.byref(style))
-    return style
-
-
-def draw_cluster(
-    screen, painter, foreground, style, codepoints, x: int, y: int
-) -> None:
-    """The cluster's glyphs, in the style's variant of the one
-    face and its faintness."""
-    lib = screen.lib
-    cells = screen.row_cells
-    text = cluster_text(lib, cells, codepoints)
-    if style.faint:
-        foreground.setAlpha(120)
-    painter.setFont(screen.fonts[font_key(style.bold, style.italic)])
-    painter.setPen(foreground)
-    painter.drawText(QPointF(x, y + screen.metrics.ascent), text)
-
-
-def cluster_text(lib, cells, codepoints) -> str:
-    """The cell's cluster as text: the graphemes the buffer
-    carries, or the empty string for a cluster longer than
-    the 16-codepoint buffer (a combining-mark run — it draws
-    blank, the buffer cannot carry it)."""
-    ok, length = lib.get(
-        lib.row_cells_get, cells, gt.CELLS_GRAPHEMES_LEN, ctypes.c_uint32()
-    )
-    if not ok or length.value == 0 or length.value > CLUSTER_CAP:
+def cluster_text(lib, cells, scratch, length: int) -> str:
+    """The cell's cluster as text, from the length the caller
+    read: the graphemes the buffer carries, or the empty
+    string for a cluster longer than the 16-codepoint buffer
+    (a combining-mark run — it draws blank, the buffer cannot
+    carry it)."""
+    if length == 0 or length > CLUSTER_CAP:
         return ""
-    lib.row_cells_get(
-        cells,
-        gt.CELLS_GRAPHEMES_BUF,
-        ctypes.cast(codepoints, ctypes.c_void_p),
-    )
-    return "".join(chr(codepoints[index]) for index in range(length.value))
+    lib.row_cells_get(cells, gt.CELLS_GRAPHEMES_BUF, scratch.codepoints_ptr)
+    codepoints = scratch.codepoints
+    if length == 1:
+        return chr(codepoints[0])
+    return "".join(chr(codepoints[index]) for index in range(length))
 
 
 def cursor_rect(screen, colors, cell: tuple[int, int]):

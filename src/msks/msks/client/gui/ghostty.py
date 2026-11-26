@@ -188,6 +188,11 @@ MOPT_TRACK_LAST_CELL = 4
 # value | ansi << 15.
 MODE_FOCUS_EVENT = 1004
 MODE_BRACKETED_PASTE = 2004
+#: DEC private mode 2026, synchronized output (#1193): the
+#: program's begin/end pair holds terminal presentation until
+#: the block closes — the mode the replay writes pi's exit
+#: transcript in.
+MODE_SYNCHRONIZED_OUTPUT = 2026
 
 # Device attributes reported for DA1/DA2/DA3 queries (VT220,
 # the answer the spike's terminal gives).
