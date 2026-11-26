@@ -1855,6 +1855,29 @@ tab in realtime:</p>
 <code>docs/</code>; the TUI chapter's screen renderings regenerate with
 <code>RENDER_DOCS_SCREENS=1 pytest -q
 src/msks/tests/test_render_docs_screens.py</code>.</p>
+<p>The GUI chapter's screenshots, <code>docs/screens/gui-*.png</code>, come
+from <code>scripts/gui_screens.py</code>. Run it from the devenv shell on a
+Linux host (#1172):</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>devenv<span class="w"> </span>--quiet<span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>python<span class="w"> </span>scripts/gui_screens.py
+</span></code></pre></div>
+<p>The script writes its own fontconfig file and points
+<code>FONTCONFIG_FILE</code> at it. The file lists one directory,
+<code>GUI_SCREENS_FONT_DIR</code>, which <code>devenv.nix</code> exports as the DejaVu
+package the devenv lock pins. The window's chrome resolves to
+DejaVu Sans from that directory. The terminal keeps the wheel's
+bundled JetBrains Mono. The host's own fonts take no part, and a
+Linux host needs no font package or system setting beyond the
+shell. The script stops with one line when the variable is unset.
+A second run on the same host reproduces the committed pixels,
+except the events tab's clock stamps and the terminal child's
+output, which may differ between runs. The session's platform
+theme, style engine, scaling, and plugin path stay out of the
+capture. Once the application stands, the script checks that the
+font database holds the DejaVu faces alone and that the chrome
+resolved to DejaVu Sans. A directory without the face, a
+fontconfig file that did not parse, and a macOS host all stop the
+run there. Qt reads CoreText on macOS. The committed captures come
+from a Linux host. Re-render them from one too.</p>
 <h3 id="the-workspace-llm-proxy">The workspace LLM proxy<a class="headerlink" href="#the-workspace-llm-proxy" title="Permanent link">&para;</a></h3>
 <p>Each workspace's tap carries its own proxy service when the daemon
 is configured for it: an OpenAI-shaped proxy (<code>/v1/models</code>,
@@ -1873,9 +1896,9 @@ into an msks development environment over the workspace's own
 egress NIC. One create with the seed and egress is the whole of
 the setup: the image catalog serves the pristine Debian base
 unchanged:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>msks<span class="w"> </span>create<span class="w"> </span>dev<span class="w"> </span>--egress<span class="w"> </span>--user-data<span class="w"> </span>scripts/dev-workspace.sh<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span>--mem-mib<span class="w"> </span><span class="m">8192</span><span class="w"> </span>--root-mib<span class="w"> </span><span class="m">20480</span><span class="w">   </span><span class="c1"># the in-guest suite's budget</span>
-</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>msks<span class="w"> </span>start<span class="w"> </span>dev<span class="w">   </span><span class="c1"># first boot provisions; later boots resume</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>msks<span class="w"> </span>create<span class="w"> </span>dev<span class="w"> </span>--egress<span class="w"> </span>--user-data<span class="w"> </span>scripts/dev-workspace.sh<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w">  </span>--mem-mib<span class="w"> </span><span class="m">8192</span><span class="w"> </span>--root-mib<span class="w"> </span><span class="m">20480</span><span class="w">   </span><span class="c1"># the in-guest suite's budget</span>
+</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>msks<span class="w"> </span>start<span class="w"> </span>dev<span class="w">   </span><span class="c1"># first boot provisions; later boots resume</span>
 </span></code></pre></div>
 <p>Cloud-init runs the seed once per overlay lifetime: it installs
 uv (which fetches its own Python 3.14), clones the repo, and runs
@@ -1887,8 +1910,8 @@ a no-op. Progress is guest-observable in
 so <code>msks console</code> into a booting workspace shows where setup
 stands. The suite runs inside the guest the way the <code>unit-tests</code>
 task runs it: the task's exec line, from the venv uv built:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>msks<span class="w"> </span>console<span class="w"> </span>dev
-</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>pytest<span class="w"> </span>src/msks/tests<span class="w"> </span>-v<span class="w"> </span>-n<span class="w"> </span>auto
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>msks<span class="w"> </span>console<span class="w"> </span>dev
+</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>pytest<span class="w"> </span>src/msks/tests<span class="w"> </span>-v<span class="w"> </span>-n<span class="w"> </span>auto
 </span></code></pre></div>
 <p>devenv and nix remain an optional developer comfort inside the
 guest, off the seed's critical path: building them there exercises
@@ -1904,8 +1927,8 @@ top of the seed, not a prerequisite.</p>
 <code>msks home export dev</code> streams the volume to the client's machine
 (backup, or migration to another daemon), and <code>msks home import</code>
 restores or seeds one from an exported image:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>msks<span class="w"> </span>stop<span class="w"> </span>dev
-</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>dev<span class="w"> </span>-<span class="w"> </span><span class="p">|</span><span class="w"> </span>gzip<span class="w"> </span>&gt;<span class="w"> </span>dev-home.ext4.gz<span class="w">   </span><span class="c1"># whole-home backup</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>msks<span class="w"> </span>stop<span class="w"> </span>dev
+</span><span id="__span-24-2"><a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>dev<span class="w"> </span>-<span class="w"> </span><span class="p">|</span><span class="w"> </span>gzip<span class="w"> </span>&gt;<span class="w"> </span>dev-home.ext4.gz<span class="w">   </span><span class="c1"># whole-home backup</span>
 </span></code></pre></div>
 <p>Day-to-day code in and out travels the workspace's own egress
 (git remotes, substitutes) and the forward seam (<code>msks ssh</code>, and
@@ -1922,7 +1945,7 @@ contract.</p>
 <h3 id="the-workspace-console-msks-console">The workspace console (<code>msks console</code>)<a class="headerlink" href="#the-workspace-console-msks-console" title="Permanent link">&para;</a></h3>
 <p>An interactive shell in a running workspace, from any host that can
 reach the daemon:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>devenv<span class="w"> </span>--quiet<span class="w"> </span>-O<span class="w"> </span>dotenv.enable:bool<span class="w"> </span><span class="nb">false</span><span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>msks<span class="w"> </span>console<span class="w"> </span>my-workspace
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>devenv<span class="w"> </span>--quiet<span class="w"> </span>-O<span class="w"> </span>dotenv.enable:bool<span class="w"> </span><span class="nb">false</span><span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>msks<span class="w"> </span>console<span class="w"> </span>my-workspace
 </span></code></pre></div>
 <p>A devenv shell presets <code>MSKSC_URL</code>/<code>MSKSC_TOKEN</code>/<code>MSKSC_CAFILE</code>
 from the worktree's dev-daemon state; an outside shell exports the
