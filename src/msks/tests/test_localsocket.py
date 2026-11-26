@@ -1158,3 +1158,104 @@ def test_bind_leaves_the_callers_umask_alone(
             localsocket.unlink(path)
     finally:
         os.umask(was)
+
+
+# --- the socket-alone daemon (#799) --------------------------------------
+
+
+async def test_serve_listeners_refuses_both_listeners_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """host empty and socket empty serves nothing: one refusal
+    line, before anything binds."""
+    app = fake_listener_app(monkeypatch, 0, "")
+    app.state.settings.server.host = ""
+    with pytest.raises(OSError, match="refusing to serve nothing"):
+        await main.serve_listeners(app)
+
+
+@needs_peercred
+async def test_serve_socket_only_owns_the_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty host serves the socket alone: the socket answers
+    peer-credential requests, the app's lifespan runs (the socket
+    server owns it), and the socket file leaves on shutdown."""
+    api = FastAPI()
+    api.state.msks_app = fake_msks_app(os.getgid())
+
+    @api.get("/who")
+    async def who(request: Request):
+        return {"client": list(request.scope.get("client") or [])}
+
+    # The share needs the default path's shape (#1080): a
+    # directory named msks that the daemon's own account owns.
+    path = tmp_path / "msks" / "msksd.sock"
+    app = fake_listener_app(monkeypatch, 0, str(path))
+    app.state.settings.server.host = ""
+    group = grp.getgrgid(os.getgid()).gr_name
+    app.state.settings.server.socket_group = group
+    monkeypatch.setattr(main, "build_api", lambda app: api)
+    task = asyncio.create_task(main.serve_listeners(app))
+    deadline = asyncio.get_event_loop().time() + 10
+    while not path.exists() and asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(0.05)
+    assert path.exists(), "the socket-alone listener never bound"
+    assert path.stat().st_gid == os.getgid(), "the share never landed"
+    async with httpx.AsyncClient(
+        base_url="http://unix",
+        transport=httpx.AsyncHTTPTransport(uds=str(path)),
+    ) as client:
+        row = (await client.get("/who")).json()
+    assert row["client"] == ["unix", os.geteuid()]
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=10)
+    assert not path.exists()
+
+
+def test_a_bind_the_kernel_refused_leaves_the_winners_socket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EADDRINUSE from bind means the name belongs to someone else
+    (the race window after refuse_taken_path): the cleanup must
+    leave the winner's file alone — the loser destroys no
+    listener it failed to take."""
+    winner_path = tmp_path / "msksd.sock"
+    winner = localsocket.bind(winner_path)
+    try:
+        # The race: the winner's bind lands after the loser's
+        # refuse_taken_path saw an empty name, so that check
+        # passes and the kernel's bind is what refuses.
+        monkeypatch.setattr(
+            localsocket, "refuse_taken_path", lambda path: None
+        )
+
+        def losing_bind(self, *args, **kwargs):
+            raise OSError(98, "Address already in use")
+
+        monkeypatch.setattr(localsocket.socket.socket, "bind", losing_bind)
+        with pytest.raises(OSError):
+            localsocket.bind(winner_path)
+        assert winner_path.exists(), "the loser deleted the winner's socket"
+    finally:
+        winner.close()
+        localsocket.unlink(winner_path)
+
+
+def test_a_failed_listen_leaves_no_file_behind(
+    shallow_socket_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A listen the kernel refuses comes after a bind that made
+    the file: the cleanup removes the socket this bind created,
+    so the next start binds cleanly instead of replacing what
+    this one left."""
+    path = shallow_socket_dir / "msksd.sock"
+
+    def refuse(self, *args, **kwargs):
+        raise OSError(24, "Too many open files")
+
+    monkeypatch.setattr(localsocket.socket.socket, "listen", refuse)
+    with pytest.raises(OSError):
+        localsocket.bind(path)
+    assert not path.exists()

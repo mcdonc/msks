@@ -51,6 +51,22 @@ tagged `vX.Y.Z`.
   disabled until one is selected. The right-click menus stay
   beside them. See [docs/gui.md](gui.md#the-images-tab).
 
+- **The NixOS module's socket listener (#799).**
+  `services.msksd.socket.enable = true` has the module's daemon
+  serve a unix socket at `/run/msks/msksd.sock` beside the TCP
+  listener, and `services.msksd.socket.group` names the group
+  whose members connect with no token: the module creates the
+  group and adds it to the unit's `SupplementaryGroups`. The TCP
+  listener stays the module's default, and
+  `services.msksd.tcp.enable = false` leaves the socket alone. An
+  unconfigured `msks` on the host finds the socket on its own.
+  See [docs/installation.md](installation.md#nixos-hosts).
+
+- **An empty `host` turns the TCP listener off (#799).** Setting
+  `host` to the empty string (`host: ""` / `MSKSD_HOST=""`)
+  serves the unix socket alone: no TLS material resolves, no CA
+  is generated, and both listeners off refuses at startup.
+
 ### Changed
 
 - **The workspaces list under a heading, the picker in the
