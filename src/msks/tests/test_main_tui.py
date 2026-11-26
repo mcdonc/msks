@@ -775,10 +775,19 @@ def listing_settled(app) -> bool:
     — the focused row the screen's rows imply — is not None. The
     status line alone cannot gate a single-shot read or press:
     its 0.5s timer reads ``len(self.rows)``, which the rebuild
-    sets before it mounts the fresh list, so under a descheduled
-    runner the count stands on the line while no list does, and
-    a click fired there no-ops into the no-focus flash."""
+    sets before it mounts the fresh list. Since #1179 the swap
+    window answers the read too (``swap_focus`` stands in for the
+    row), so this gate passes inside the window as well — a click
+    or press fired there lands on the row the swap returns to.
+    A test that needs the window closed reads ``swap_focus``
+    directly."""
     return app.screen.focused_row() is not None
+
+
+def swap_closed(app) -> bool:
+    """Whether no rebuild's swap stands open (#1179): the screen
+    holds no stand-in row."""
+    return app.screen.swap_focus is None
 
 
 def action_rows(app):
@@ -1170,6 +1179,45 @@ async def test_the_detail_strip_hides_on_an_empty_list() -> None:
             )
         )
         assert not app.query_one("#detail", Static).display
+
+
+async def test_the_empty_state_never_stands_over_a_visible_strip() -> None:
+    """#1179 (the fourth flake's shape): the strip starts hidden.
+    The status line paints the empty state on its own timer and
+    on a failing refresh, both before any paint of the strip — a
+    strip visible beside ``No workspaces`` was a blank two-line
+    box, and the bare assert after the wait read it. The timer's
+    paint stands before the first flight lands, and neither the
+    landing nor a failing refresh shows the strip: no row stands
+    focused on either side."""
+    gate = asyncio.Event()
+
+    class GatedData(FakeData):
+        async def workspaces(self) -> list[dict]:
+            await gate.wait()
+            return await super().workspaces()
+
+    data = GatedData([])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: on_main(app))
+        screen = app.screen
+        strip = app.query_one("#detail", Static)
+        assert not strip.display
+        screen.sync_status()  # the status timer's paint, before the landing
+        assert "No workspaces" in str(app.query_one("#empty", Static).content)
+        assert not strip.display
+        gate.set()
+        await wait_for(lambda: screen.rows_widget() is not None)
+        await startup_quiet(pilot, app)
+        assert not strip.display
+        # A failing refresh paints the status line alone: the strip
+        # stays hidden behind the empty state.
+        data.fail.add("workspaces")
+        screen.action_refresh()
+        await wait_for(lambda: "listing failed" in status_text(app))
+        await startup_quiet(pilot, app)
+        assert not strip.display
 
 
 async def startup_quiet(pilot, app) -> None:
@@ -6808,6 +6856,92 @@ async def test_a_row_selection_waits_out_the_listing_swap_window(
         await wait_for(lambda: on_page(app))
 
 
+async def test_a_press_inside_the_swap_window_reaches_the_row(
+    monkeypatch,
+) -> None:
+    """#1179: a key pressed inside a rebuild's swap window reaches
+    the row the swap returns to. Between the old list's removal and
+    the fresh one's focus no widget holds the focus — a bare press
+    there lands on the screen's binding, and the screen used to
+    answer ``no workspace focused`` with the row on its way. The
+    mount seam holds the window open the way a descheduled runner
+    does; the press starts the focused row — not the top one —
+    and the fresh list lands on that same row."""
+    original = Vertical.mount
+    window = asyncio.Event()
+
+    async def stalled_mount(self, *widgets, **kwargs):
+        if any(getattr(widget, "id", None) == "rows" for widget in widgets):
+            window.set()
+            await asyncio.sleep(0.7)  # the deschedule the CI lane rides
+        return await original(self, *widgets, **kwargs)
+
+    monkeypatch.setattr(Vertical, "mount", stalled_mount)
+    scripted_listing(monkeypatch, [])
+    data = FakeData(
+        [row(status="running"), row(id="ws-b", name="beta", status="stopped")]
+    )
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: list_children(app) == 2)
+        await startup_quiet(pilot, app)
+        screen = app.screen
+        screen.rows_widget().index = 1  # beta, the row the swap keeps
+        await pilot.pause()
+        window.clear()  # the first build's mount set it
+        # A poke with a row changed: the listing swaps.
+        data.rows[0]["status"] = "stopped"
+        screen.action_refresh()
+        await wait_for(window.is_set)
+        # The window stands: no list answers, nothing holds the
+        # focus, and the screen still knows its row.
+        assert list_children(app) == -1
+        assert app.focused is None
+        assert screen.focused_row()["id"] == "ws-b"
+        await pilot.press("s")
+        await wait_for(lambda: data.calls == [("start", "ws-b")])
+        await wait_for(lambda: swap_closed(app))
+        await wait_for(lambda: screen.rows_widget() is not None)
+        assert screen.rows_widget().highlighted_child.workspace_id == "ws-b"
+        assert "beta running" in status_text(app)
+
+
+async def test_a_first_builds_window_answers_its_top_row(monkeypatch) -> None:
+    """#1179: the first build's window answers too — the status
+    line can read the count while the first list still mounts, and
+    the press there takes the row the fresh list is about to
+    highlight."""
+    original = Vertical.mount
+    window = asyncio.Event()
+
+    async def stalled_mount(self, *widgets, **kwargs):
+        if any(getattr(widget, "id", None) == "rows" for widget in widgets):
+            window.set()
+            await asyncio.sleep(0.7)
+        return await original(self, *widgets, **kwargs)
+
+    monkeypatch.setattr(Vertical, "mount", stalled_mount)
+    scripted_listing(monkeypatch, [])
+    data = FakeData([row(status="running")])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(window.is_set)
+        assert app.focused is None
+        # The status timer's paint, by hand: the count stands on
+        # the line while the first list still mounts.
+        app.screen.sync_status()
+        assert "1 workspace" in status_text(app)
+        assert app.screen.focused_row()["id"] == WS
+        await pilot.press("s")
+        await wait_for(
+            lambda: "Start skipped: workspace is running" in status_text(app)
+        )
+        await wait_for(lambda: swap_closed(app))
+        await wait_for(lambda: app.screen.rows_widget() is not None)
+        assert app.screen.rows_widget().highlighted_child.workspace_id == WS
+        assert data.calls == []
+
+
 async def test_a_stale_child_skips_in_the_repaint(monkeypatch) -> None:
     """#470 S3: the repaint walk skips a child whose row left the
     data under it before the rebuild lands — the walk stops
@@ -9942,12 +10076,140 @@ async def test_a_refresh_in_flight_skips_instead_of_cancelling(
         await wait_for(lambda: fetches == 1)
         screen.refresh_rows()
         assert fetches == 1  # the gated flight alone
+        assert screen.rows_pending  # the skip armed the landing flight
         gate.set()
         await wait_for(lambda: list_children(app) == 1)
         # The armed poke served: the landing flight re-reads — the
         # skip never lost the frame, and the tree never stranded.
         await wait_for(lambda: fetches == 2)
         assert screen.rows_widget() is not None
+
+
+async def test_a_power_key_does_not_cancel_the_refresh_in_flight(
+    monkeypatch,
+) -> None:
+    """#1179: the power keys' exclusive workers used to share the
+    screen's default group with the listing's flights, and an
+    exclusive worker cancels every worker its node started in its
+    group — so ``s`` pressed while the first refresh stood in its
+    fetch cancelled the flight: no rows landed, the armed poke had
+    no flight left to serve it, and a cancel inside a swap would
+    have stranded the tree (#776's shape by another door). The
+    flights run in their own group: the press answers with the
+    empty listing's own note, the gated flight still lands, and
+    the armed poke is served."""
+    import asyncio as _asyncio
+
+    gate = _asyncio.Event()
+    fetches = 0
+
+    class GatedData(FakeData):
+        async def workspaces(self) -> list[dict]:
+            nonlocal fetches
+            fetches += 1
+            if fetches == 1:
+                await gate.wait()
+            return self.rows
+
+    data = GatedData([row(status="running")])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: on_main(app))
+        screen = app.screen
+        while not screen.rows_loading:
+            await pilot.pause()
+        await wait_for(lambda: fetches == 1)
+        screen.refresh_rows()  # a poke armed behind the gated flight
+        assert screen.rows_pending
+        # The key lands with the listing still empty and the first
+        # flight in its fetch: the screen's binding answers (no
+        # row stands yet), and the flight keeps standing — the
+        # exclusive worker cancelled nothing.
+        await pilot.press("s")
+        await wait_for(lambda: "no workspace focused" in status_text(app))
+        assert screen.rows_loading
+        assert screen.rows_pending
+        gate.set()
+        await wait_for(lambda: list_children(app) == 1)
+        await wait_for(lambda: fetches == 2)  # the armed poke served
+        await startup_quiet(pilot, app)
+        assert screen.rows_widget() is not None
+        assert data.calls == []
+
+
+async def test_a_listing_wait_timeout_names_its_in_flight_marks(
+    capfd,
+) -> None:
+    """#1179: a wait that gives up on the listing prints the
+    in-flight marks and the worker count beside the screen — the
+    triage key for a wait that ran its whole budget with an empty
+    queue (a flight that holds the mark and lands nothing, an
+    armed poke no flight will serve)."""
+    data = FakeData([])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await startup_quiet(pilot, app)  # no real flight stands
+        screen = app.screen
+        screen.rows_loading = True
+        screen.rows_pending = True
+        with pytest.raises(AssertionError, match="never landed"):
+            await wait_for(lambda: False, timeout=0.1)
+        line = capfd.readouterr().err
+    assert "screen=MainScreen" in line
+    assert "focused=" in line
+    assert "queue=" in line
+    assert "loading=True pending=True" in line
+    assert "workers=" in line
+
+
+async def test_a_power_key_keeps_the_earlier_keys_refresh_alive(
+    monkeypatch,
+) -> None:
+    """#1179 (the third flake, reproduced under load): ``s`` lands
+    its start and refreshes the listing; ``S`` pressed while that
+    re-read stands used to cancel it — the exclusive worker's
+    group — so the row kept reading ``stopped``, every later ``S``
+    skipped client-side against the stale row, and the stop never
+    reached the daemon. The re-read lands despite the press: the
+    skip the stale row earns stands only until it does, and the
+    next ``S`` reaches the daemon."""
+    gate = asyncio.Event()
+    hold = [0]
+    fetches = 0
+
+    class GatedData(FakeData):
+        async def workspaces(self) -> list[dict]:
+            nonlocal fetches
+            fetches += 1
+            if hold[0] and fetches == hold[0]:
+                await gate.wait()
+            return await super().workspaces()
+
+    data = GatedData([row(status="stopped")])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: listing_settled(app))
+        await startup_quiet(pilot, app)
+        screen = app.screen
+        # The start's own refresh is the gated flight.
+        hold[0] = fetches + 1
+        await pilot.press("s")
+        await wait_for(lambda: data.calls == [("start", WS)])
+        await wait_for(lambda: fetches == hold[0])  # inside its fetch
+        assert screen.rows_loading
+        # S lands while the re-read stands: the standing row still
+        # reads stopped, so the verb skips client-side — and the
+        # flight keeps standing.
+        await pilot.press("S")
+        await wait_for(
+            lambda: "Stop skipped: workspace is stopped" in status_text(app)
+        )
+        assert screen.rows_loading
+        gate.set()
+        await wait_for(lambda: screen.focused_row()["status"] == "running")
+        await pilot.press("S")
+        await wait_for(lambda: ("stop", WS) in data.calls)
+        await wait_for(lambda: "alpha stopped" in status_text(app))
 
 
 def bridge_cause_rows(ws: str = WS) -> list[dict]:

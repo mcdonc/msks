@@ -555,7 +555,28 @@ def wait_diagnostics(cycles: int, credited: float, budget: float) -> None:
     next flake names its mechanism (a starved runner credits its
     parks; a stalled pump shows a deep queue) instead of guessing
     from the assertion alone. Every read is best-effort: the
-    diagnostics never outrank the failure they describe."""
+    diagnostics never outrank the failure they describe.
+
+    A listing screen adds its in-flight marks (#1179),
+    ``loading=`` and ``pending=``, and every app its worker count
+    — the triage key for a listing wait that ran its whole budget
+    with an empty queue (#1179's Nov 25 flakes):
+
+    - ``focused=NoneType``: the press or read landed in a
+      rebuild's swap window — no widget held the focus.
+    - ``loading=True`` with ``workers=0``: no task runs for the
+      flight that holds the mark — one cancelled before its
+      first step never ran the ``finally`` that clears it, and
+      nothing will.
+    - ``loading=True`` with a worker still counted: the flight runs
+      — a read or a mount that has not answered.
+    - ``loading=False pending=True``: an armed poke no flight will
+      serve — the flight that owed the serve was cancelled inside
+      its read or swap; the ``finally`` cleared the mark, and the
+      serve after it never ran.
+    - ``loading=False pending=False``: the poke the test waited on
+      never armed — the test's own ordering, not the listing's.
+    """
     parts = [
         f"cycles={cycles}",
         f"credited={credited:.2f}s",
@@ -569,6 +590,11 @@ def wait_diagnostics(cycles: int, credited: float, budget: float) -> None:
             parts.append(f"screen={type(app.screen).__name__}")
             parts.append(f"focused={type(app.focused).__name__}")
             parts.append(f"queue={app._message_queue.qsize()}")
+            for mark in ("rows_loading", "rows_pending"):
+                value = getattr(app.screen, mark, None)
+                if value is not None:
+                    parts.append(f"{mark.removeprefix('rows_')}={value}")
+            parts.append(f"workers={len(app.workers)}")
     # fd 2, not sys.stderr: Textual's run_test replaces the
     # stream object for the app's lifetime, and the line exists
     # for timeouts that fire inside one — the descriptor write
