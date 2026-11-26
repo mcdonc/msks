@@ -30,7 +30,7 @@ name: Nix flake
 
 on:
   push:
-    branches: [main, pyside-gui] # pyside-gui: GUI integration branch (#924); drop when it merges to main
+    branches: [main]
     paths:
       - .github/workflows/nix.yml
       - flake.nix
