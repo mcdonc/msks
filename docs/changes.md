@@ -106,9 +106,9 @@ tagged `vX.Y.Z`.
   the listing returns to.
 
 - **The TUI's detail strip stays hidden until a row has focus
-  (#1179).** The status line paints the empty state on its own
-  timer, and the strip used to show as a blank two-line box under
-  `No workspaces — c creates one.` until the first row landed.
+  (#1179).** The strip used to show as a blank two-line box under
+  `No workspaces — c creates one.` while the listing was empty or
+  still loading. It now appears when the first row has focus.
 
 ## \[v0.10.2] - 2026-11-25
 
