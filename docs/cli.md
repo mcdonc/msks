@@ -33,7 +33,8 @@ Lima VM separate from the client. Rerun `msks-setup-macos-host` on the Mac to
 update the daemon in the VM. On Linux the daemon most often runs on the host
 itself. Rerun the host setup script (`msks-setup-debian-host` or
 `msks-setup-fedora-host`) on the daemon's host to update the daemon. A NixOS
-module host or the dev daemon updates through its own configuration instead.
+module host updates through its configuration, and the dev daemon through its
+tree.
 
 ## Machine-readable output
 
