@@ -529,6 +529,33 @@ msks-docs              # serves http://127.0.0.1:8923/ live
 `RENDER_DOCS_SCREENS=1 pytest -q
 src/msks/tests/test_render_docs_screens.py`.
 
+The GUI chapter's screenshots, `docs/screens/gui-*.png`, come
+from `scripts/gui_screens.py`. Run it from the devenv shell on a
+Linux host (#1172):
+
+```bash
+devenv --quiet shell -- python scripts/gui_screens.py
+```
+
+The script writes its own fontconfig file and points
+`FONTCONFIG_FILE` at it. The file lists one directory,
+`GUI_SCREENS_FONT_DIR`, which `devenv.nix` exports as the DejaVu
+package the devenv lock pins. The window's chrome resolves to
+DejaVu Sans from that directory. The terminal keeps the wheel's
+bundled JetBrains Mono. The host's own fonts take no part, and a
+Linux host needs no font package or system setting beyond the
+shell. The script stops with one line when the variable is unset.
+A second run on the same host reproduces the committed pixels,
+except the events tab's clock stamps and the terminal child's
+output, which may differ between runs. The session's platform
+theme, style engine, scaling, and plugin path stay out of the
+capture. Once the application stands, the script checks that the
+font database holds the DejaVu faces alone and that the chrome
+resolved to DejaVu Sans. A directory without the face, a
+fontconfig file that did not parse, and a macOS host all stop the
+run there. Qt reads CoreText on macOS. The committed captures come
+from a Linux host. Re-render them from one too.
+
 ### The workspace LLM proxy
 
 Each workspace's tap carries its own proxy service when the daemon
