@@ -191,16 +191,18 @@ LINUX_SETUP_TOOLS = "msks-setup-debian-host or msks-setup-fedora-host"
 def host_setup_remedy(dev: bool) -> str:
     """The remedy for a daemon behind this client (#715, #1174):
     the setup tool that re-installs the daemon, named for where
-    the daemon lives. That follows the client's own host, the one
-    side of the pair the notice can see: the daemon's ``/health``
-    cannot say, since the Lima VM and a Linux host both report a
-    Linux daemon. On a Mac the daemon lives in the Lima VM and
-    ``msks-setup-macos-host`` updates it. On Linux the daemon runs
-    on the host itself, and the host setup scripts re-run
-    idempotently. ``dev`` names a dev-marked client word: its
-    wheel reaches the daemon through the same tool, run from the
-    tree (the tool refuses a wheel whose version disagrees with
-    its own)."""
+    the daemon lives. That follows the client's own host: this
+    arm fires on an older daemon, so a ``/health`` field a newer
+    daemon might carry is absent exactly here, and the Lima VM
+    and a Linux host both report a Linux daemon anyway. On a Mac
+    the daemon lives in the Lima VM and ``msks-setup-macos-host``
+    updates it. On Linux the daemon runs on the host itself, and
+    the host setup scripts re-run idempotently (a NixOS module
+    host and the dev daemon update through their own
+    configuration; the scripts refuse those hosts by name).
+    ``dev`` names a dev-marked client word: its wheel reaches the
+    daemon through the same tool, run from the tree (the tool
+    refuses a wheel whose version disagrees with its own)."""
     if sys.platform == "darwin":
         if dev:
             return (

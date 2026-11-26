@@ -171,8 +171,10 @@ def test_a_release_clients_skew_notice_names_the_rerun(
     monkeypatch.setattr(workspaces.listing, "__version__", "0.6.0")
     notice = workspaces.version_skew_notice({"version": "0.1.0"})
     assert "rerun msks-setup-macos-host" in notice
+    assert "fedora" not in notice
     equal_base = workspaces.version_skew_notice({"version": "0.6.0.dev0"})
     assert "rerun msks-setup-macos-host" in equal_base
+    assert "fedora" not in equal_base
 
 
 def test_the_rerun_remedy_names_the_clients_host(

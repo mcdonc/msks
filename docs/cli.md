@@ -28,11 +28,12 @@ may not be in sync, which may cause problems. To cope with this, every command
 makes one best-effort `/health` roundtrip by the client to the daemon to do a
 version compatibility check. If the daemon is a different version than the
 client, the invocation prints one stderr line giving both and a remedy. The
-remedy names the tool for the host the client runs on. On macOS the daemon
-lives in a Lima VM separate from the client: rerun `msks-setup-macos-host` on
-the Mac to update the daemon in the VM. On Linux the daemon runs on the host
-itself: rerun the host setup script (`msks-setup-debian-host` or
-`msks-setup-fedora-host`) on the daemon's host to update it.
+remedy follows the host the client runs on. On macOS the daemon lives in a
+Lima VM separate from the client. Rerun `msks-setup-macos-host` on the Mac to
+update the daemon in the VM. On Linux the daemon most often runs on the host
+itself. Rerun the host setup script (`msks-setup-debian-host` or
+`msks-setup-fedora-host`) on the daemon's host to update the daemon. A NixOS
+module host or the dev daemon updates through its own configuration instead.
 
 ## Machine-readable output
 

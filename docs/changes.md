@@ -59,10 +59,10 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
-- **The version-skew notice names the Linux setup scripts on Linux
-  (#1174).** A client newer than the daemon used to send every
-  operator to `msks-setup-macos-host`, including a Linux host where
-  the daemon runs on the host itself. The notice now names
+- **The version-skew notice gives the Linux remedy on Linux (#1174).**
+  A client newer than the daemon used to send every operator to
+  `msks-setup-macos-host`, including a Linux host where the daemon
+  runs on the host itself. The notice now points to
   `msks-setup-debian-host` or `msks-setup-fedora-host` when the
   client runs on Linux, and keeps the Mac tool on macOS. See
   [docs/cli.md](cli.md#the-cli-client).
