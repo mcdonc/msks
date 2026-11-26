@@ -72,86 +72,118 @@
       # evaluate, the unit exists, and the capability grant follows
       # the branch. #796 adds the PATH semantics: enabling puts the
       # daemon package on the system PATH, and the disabled module
-      # contributes nothing to it. Evaluated at flake-eval time,
-      # asserted in the check's build.
+      # contributes nothing to it. #801 adds the client half of the
+      # module (programs.msks): a host that runs the client alone,
+      # and the listener a daemon host feeds its own client. The
+      # harness takes the whole module configuration, both
+      # namespaces. Evaluated at flake-eval time, asserted in the
+      # check's build.
       evalConfig =
-        msksd-config:
+        module-config:
         (import (pkgs.path + "/nixos") {
           system = system;
           configuration =
             { ... }:
             {
               imports = [ ./nix/module.nix ];
-              services.msksd = msksd-config;
               fileSystems."/".device = "nodev";
               fileSystems."/".fsType = "ext4";
               boot.loader.grub.device = "nodev";
-            };
+            }
+            // module-config;
         }).config;
-      on = evalConfig {
+      daemon = {
         enable = true;
         egress.uplink = "eno4";
       };
+      on = evalConfig { services.msksd = daemon; };
       off = evalConfig {
-        enable = true;
-        egress = {
-          enable = false;
-          uplink = null;
+        services.msksd = {
+          enable = true;
+          egress = {
+            enable = false;
+            uplink = null;
+          };
         };
       };
-      inert = evalConfig { enable = false; };
+      inert = evalConfig { services.msksd.enable = false; };
       # #799: the socketed shape — socket alone (tcp off) with
       # the shared group, and the both-on shape beside it.
       socketed = evalConfig {
-        enable = true;
-        socket = {
+        services.msksd = {
           enable = true;
-          group = "msksops";
-        };
-        tcp.enable = false;
-        egress = {
-          enable = false;
-          uplink = null;
+          socket = {
+            enable = true;
+            group = "msksops";
+          };
+          tcp.enable = false;
+          egress = {
+            enable = false;
+            uplink = null;
+          };
         };
       };
       both = evalConfig {
-        enable = true;
-        socket.enable = true;
-        tcp.enable = true;
-        egress.uplink = "eno4";
+        services.msksd = {
+          enable = true;
+          socket.enable = true;
+          tcp.enable = true;
+          egress.uplink = "eno4";
+        };
       };
       # #801: the settings layers — a server.settings list and a
       # list of mappings (the two shapes the scalar-only type
-      # refused), an int, a float, and a bool beside them, and a
-      # client.settings file rendered through environment.etc.
+      # refused), an int, a float, and a bool beside them, and the
+      # client layer: the operator's keys over the listener the
+      # daemon host feeds in.
       layered = evalConfig {
-        enable = true;
-        egress.uplink = "eno4";
-        server.settings = {
-          seed_images = [ "/var/lib/msksd/seeds/debian-trixie.tar" ];
-          llm_models = [
-            {
-              model_name = "gpt-4o";
-              litellm_params.model = "openai/gpt-4o";
-            }
-          ];
-          storage_warn_pct = 85;
-          egress_dns_timeout_s = 2.5;
-          nested = true;
+        services.msksd = daemon // {
+          server.settings = {
+            seed_images = [ "/var/lib/msksd/seeds/debian-trixie.tar" ];
+            llm_models = [
+              {
+                model_name = "gpt-4o";
+                litellm_params.model = "openai/gpt-4o";
+              }
+            ];
+            storage_warn_pct = 85;
+            egress_dns_timeout_s = 2.5;
+            nested = true;
+          };
         };
-        client.settings = {
-          url = "https://127.0.0.1:8660";
+        programs.msks.settings = {
           token_file = "/etc/msks/token";
+          daemons.lab.url = "https://hv-1.lab.example.com:8660";
         };
+      };
+      # #801: a host that runs the client alone — programs.msks, no
+      # daemon: the client on PATH, its file and variable in place,
+      # and no unit.
+      clientOnly = evalConfig {
+        programs.msks = {
+          enable = true;
+          settings = {
+            url = "https://hv-1.lab.example.com:8660";
+            cafile = "/etc/msks/hv-1-ca.pem";
+            token_file = "/etc/msks/token";
+          };
+        };
+      };
+      # #801: the client layer opted out under a daemon — the unit
+      # serves, and the client file, the variable, and the PATH
+      # entry go.
+      optedOut = evalConfig {
+        services.msksd = daemon;
+        programs.msks.enable = false;
       };
       # The renamed option (#801): services.msksd.settings, the
       # v0.10.x spelling, still flows into server.settings — the
       # file carries the key, and the eval records the rename
       # warning (config.warnings; nixos-rebuild prints it).
       renamed = evalConfig {
-        enable = true;
-        egress.uplink = "eno4";
-        settings.storage_warn_pct = 90;
+        services.msksd = daemon // {
+          settings.storage_warn_pct = 90;
+        };
       };
       renameWarned = pkgs.lib.any (
         w: pkgs.lib.hasInfix "has been renamed to" w
@@ -163,26 +195,34 @@
       # each refused message, so a message that throws fails here.
       refused = pkgs.lib.any (a: !a.assertion && builtins.isString a.message) (
         (evalConfig {
-          enable = true;
-          egress.uplink = "eno4";
-          settings.port = 1;
+          services.msksd = daemon // {
+            settings.port = 1;
+          };
         }).assertions
       );
       pathRefused = pkgs.lib.any (a: !a.assertion && builtins.isString a.message) (
         (evalConfig {
-          enable = true;
-          egress.uplink = "eno4";
-          client.settings.token_file = ./flake.nix;
+          programs.msks = {
+            enable = true;
+            settings.token_file = ./flake.nix;
+          };
         }).assertions
       );
       # A null layer (#801): the yaml type admits null, and the
       # module reads it as an unset layer — the generated keys stay,
-      # and the client file still renders.
+      # and the client file still renders. (A null programs.msks
+      # settings under a daemon is the type's own refusal: the
+      # listener defaults are definitions of the same option.)
       nulled = evalConfig {
-        enable = true;
-        egress.uplink = "eno4";
-        server.settings = null;
-        client.settings = null;
+        services.msksd = daemon // {
+          server.settings = null;
+        };
+      };
+      clientNulled = evalConfig {
+        programs.msks = {
+          enable = true;
+          settings = null;
+        };
       };
       hasTun = c: builtins.any (m: m == "tun") c.boot.kernelModules;
       # Package names compared as strings in the check's build:
@@ -251,6 +291,32 @@
             renameWarned = pkgs.lib.boolToString renameWarned;
             oldNameRefused = pkgs.lib.boolToString refused;
             pathRefused = pkgs.lib.boolToString pathRefused;
+            # #801: the listener a daemon host feeds its client, per
+            # branch; the client-only branch (its own file, the
+            # package on PATH, no unit); and the opt-out under a
+            # daemon (no file, no variable, no PATH entry).
+            clientCfgSocketed = toString socketed.environment.etc."msks/msks.yaml".source;
+            clientCfgClientOnly =
+              toString
+                clientOnly.environment.etc."msks/msks.yaml".source;
+            clientCfgClientNulled =
+              toString
+                clientNulled.environment.etc."msks/msks.yaml".source;
+            cfgDirClientOnly =
+              clientOnly.environment.sessionVariables.MSKSC_CONFIG_DIR or "";
+            execClientOnly =
+              clientOnly.systemd.services.msksd.serviceConfig.ExecStart or "";
+            pathClientOnly = pkgs.lib.concatStringsSep " " (
+              map (p: p.name) clientOnly.environment.systemPackages
+            );
+            execOptedOut = optedOut.systemd.services.msksd.serviceConfig.ExecStart;
+            clientCfgOptedOut = toString (
+              optedOut.environment.etc."msks/msks.yaml".source or ""
+            );
+            cfgDirOptedOut = optedOut.environment.sessionVariables.MSKSC_CONFIG_DIR or "";
+            pathOptedOut = pkgs.lib.concatStringsSep " " (
+              map (p: p.name) optedOut.environment.systemPackages
+            );
             runtimeDir = on.systemd.services.msksd.serviceConfig.RuntimeDirectory or "";
             socketRuntimeDir =
               socketed.systemd.services.msksd.serviceConfig.RuntimeDirectory or "";
@@ -406,26 +472,109 @@
               echo "fail: server.settings dropped a module-generated key from msksd.yaml"
               exit 1
             }
+            # #801: the client layer under the daemon — the listener
+            # fed in as defaults (url and cafile under TCP, the
+            # socket alone under the socketed branch), the operator's
+            # keys merging over them (the layered branch keeps the
+            # default url and cafile beside its own token_file and
+            # alias), and the variable pointing at /etc/msks.
             test -s "$clientCfgOn" || {
-              echo "fail: the enabled branch renders no /etc/msks/msks.yaml with client.settings empty"
+              echo "fail: the enabled branch renders no /etc/msks/msks.yaml"
               exit 1
             }
+            grep -qxF 'url: https://127.0.0.1:8660' "$clientCfgOn" || {
+              echo "fail: the daemon's TCP listener never reached /etc/msks/msks.yaml as the url default"
+              exit 1
+            }
+            grep -qxF 'cafile: /var/lib/msksd/msks-ca.pem' "$clientCfgOn" || {
+              echo "fail: the daemon's CA never reached /etc/msks/msks.yaml as the cafile default"
+              exit 1
+            }
+            grep -qxF 'socket: /run/msks/msksd.sock' "$clientCfgSocketed" || {
+              echo "fail: the socketed branch's client file lost the socket path"
+              exit 1
+            }
+            if grep -qxE 'url: .*' "$clientCfgSocketed"; then
+              echo "fail: the socketed branch's client file dials TCP"
+              exit 1
+            fi
             test -s "$clientCfgLayered" || {
-              echo "fail: client.settings rendered no /etc/msks/msks.yaml"
+              echo "fail: programs.msks.settings rendered no /etc/msks/msks.yaml"
               exit 1
             }
             grep -qxF 'url: https://127.0.0.1:8660' "$clientCfgLayered" || {
-              echo "fail: client.settings.url never reached /etc/msks/msks.yaml"
+              echo "fail: the operator's programs.msks.settings dropped the listener's url default"
+              exit 1
+            }
+            grep -qxF 'cafile: /var/lib/msksd/msks-ca.pem' "$clientCfgLayered" || {
+              echo "fail: the operator's programs.msks.settings dropped the listener's cafile default"
               exit 1
             }
             grep -qxF 'token_file: /etc/msks/token' "$clientCfgLayered" || {
-              echo "fail: client.settings.token_file never reached /etc/msks/msks.yaml"
+              echo "fail: programs.msks.settings.token_file never reached /etc/msks/msks.yaml"
+              exit 1
+            }
+            grep -qxF '    url: https://hv-1.lab.example.com:8660' "$clientCfgLayered" || {
+              echo "fail: programs.msks.settings.daemons never reached /etc/msks/msks.yaml"
               exit 1
             }
             test "$cfgDir" = "/etc/msks" || {
               echo "fail: the enabled branch lost MSKSC_CONFIG_DIR in the session variables"
               exit 1
             }
+            test -s "$clientCfgClientNulled" || {
+              echo "fail: a null programs.msks.settings rendered no /etc/msks/msks.yaml"
+              exit 1
+            }
+            # A host that runs the client alone: the package on
+            # PATH, its own keys in the file, the variable, and no
+            # daemon unit.
+            test -z "$execClientOnly" || {
+              echo "fail: the client-only branch grew an msksd unit"
+              exit 1
+            }
+            case " $pathClientOnly " in
+              *" $pkgOn "*) ;;
+              *)
+                echo "fail: the client-only branch lost the msks package on the system PATH"
+                exit 1
+                ;;
+            esac
+            grep -qxF 'url: https://hv-1.lab.example.com:8660' "$clientCfgClientOnly" || {
+              echo "fail: the client-only branch's url never reached /etc/msks/msks.yaml"
+              exit 1
+            }
+            grep -qxF 'token_file: /etc/msks/token' "$clientCfgClientOnly" || {
+              echo "fail: the client-only branch's token_file never reached /etc/msks/msks.yaml"
+              exit 1
+            }
+            test "$cfgDirClientOnly" = "/etc/msks" || {
+              echo "fail: the client-only branch lost MSKSC_CONFIG_DIR in the session variables"
+              exit 1
+            }
+            # programs.msks.enable = false under a daemon: the unit
+            # serves, and the client file, the variable, and the
+            # PATH entry are gone.
+            test -n "$execOptedOut" || {
+              echo "fail: the opted-out branch lost the msksd unit"
+              exit 1
+            }
+            test -z "$clientCfgOptedOut" || {
+              echo "fail: the opted-out branch contributed /etc/msks/msks.yaml"
+              exit 1
+            }
+            test -z "$cfgDirOptedOut" || {
+              echo "fail: the opted-out branch contributed MSKSC_CONFIG_DIR"
+              exit 1
+            }
+            case " $pathOptedOut " in
+              *-msks-*)
+                echo "fail: the opted-out branch put the msks package on the system PATH"
+                exit 1
+                ;;
+            esac
+            # The inert branch (nothing enabled) contributes neither
+            # the file nor the variable.
             test -z "$clientCfgInert" || {
               echo "fail: the inert branch contributed /etc/msks/msks.yaml"
               exit 1

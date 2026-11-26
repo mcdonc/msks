@@ -69,12 +69,14 @@ tagged `vX.Y.Z`.
 
 - **The NixOS module's settings layers (#801).**
   `services.msksd.server.settings` holds every `msksd.yaml` key the
-  module does not generate, in the file's own spelling. Lists and
-  mappings pass, so `seed_images` and `llm_models` are expressible in
-  Nix now. `services.msksd.client.settings` generates the host's
-  client config at `/etc/msks/msks.yaml`, and the module sets
-  `MSKSC_CONFIG_DIR=/etc/msks` for every user, so a bare `msks` reads
-  it. See
+  module does not generate, in the file's own spelling, and lists and
+  mappings pass: `seed_images` and `llm_models` are expressible in Nix
+  now. The client has its own half, `programs.msks`:
+  `programs.msks.enable` puts the client on the host with
+  `/etc/msks/msks.yaml` generated from `programs.msks.settings`, and a
+  daemon host turns it on by default with its listener filled in. A
+  host that runs the client alone sets `programs.msks.enable` without
+  the daemon. See
   [docs/installation.md](installation.md#every-daemon-key-and-the-hosts-client-config).
 
 ### Changed
@@ -133,7 +135,8 @@ tagged `vX.Y.Z`.
   user, so `~/.config/msks/msks.yaml` is no longer read by default. A
   user with a config of their own exports `MSKSC_CONFIG_DIR` in their
   shell to keep it. A host that needs another value sets it in
-  `environment.sessionVariables`.
+  `environment.sessionVariables`, and a daemon host that wants no
+  client layer sets `programs.msks.enable = false`.
 
 ### Fixed
 
