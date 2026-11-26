@@ -621,9 +621,9 @@ class TerminalWidget(QWidget):
         return True
 
     def clipboard_shortcut(self, event: QKeyEvent) -> bool:
-        """Ctrl+Shift+C copies the selection (a terminal cannot
-        cut, so X copies too); Ctrl+Shift+V pastes the
-        clipboard."""
+        """Ctrl+Shift+C copies the selection and drops it (a
+        terminal cannot cut, so X copies too); Ctrl+Shift+V
+        pastes the clipboard."""
         if not (
             event.modifiers() & Qt.KeyboardModifier.ControlModifier
             and event.modifiers() & Qt.KeyboardModifier.ShiftModifier

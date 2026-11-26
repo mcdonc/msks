@@ -83,7 +83,7 @@ def apply(screen, selection) -> None:
 
 
 def clear(screen) -> None:
-    """Drop the selection (a click without a drag)."""
+    """Drop the selection (a click without a drag, or a copy)."""
     screen.lib.terminal_set(screen.terminal, gt.OPT_SELECTION, None)
     screen.refresh()
 
@@ -293,10 +293,14 @@ def text(screen) -> str:
 
 
 def copy(screen) -> None:
-    """Ctrl+Shift+C: the selection to the clipboard."""
+    """Ctrl+Shift+C and the menu's Copy: the selection to the
+    clipboard, then dropped, so the highlight leaves with the
+    text (#1182). The keyboard and the menu both come here,
+    and both leave no selection behind."""
     picked = text(screen)
     if picked:
         QApplication.clipboard().setText(picked)
+    clear(screen)
 
 
 def primary_mode(clipboard) -> int:
