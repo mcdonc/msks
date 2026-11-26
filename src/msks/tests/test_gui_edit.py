@@ -131,17 +131,28 @@ def fill(dialog, values: dict) -> None:
 
 
 def test_the_seeds_read_the_row() -> None:
-    """The seeded values (#986, the TUI edit's own arithmetic):
-    every field's current value as its own text, a row that
-    predates a fact seeding its blank."""
+    """The seeded values (#986, #1164, the TUI edit's own
+    arithmetic): every field's current value as its own text —
+    the sizes in the human unit the field reads (`8G`), a size
+    that spelling rounds in plain MiB (`8193M`, never a `8G`
+    that would hide a MiB) — and a row that predates a fact
+    seeding its blank."""
     seeds = edit_seeds(daemon_row())
     assert seeds == {
         "name": "alpha",
         "cpus": "2",
-        "mem_mib": "8192",
-        "root_mib": "8192",
-        "home_mib": "16384",
+        "mem_mib": "8G",
+        "root_mib": "8G",
+        "home_mib": "16G",
     }
+    odd = edit_seeds(
+        {**daemon_row(), "mem_mib": 8193, "root_mib": 1536, "home_mib": 1000}
+    )
+    assert (odd["mem_mib"], odd["root_mib"], odd["home_mib"]) == (
+        "8193M",
+        "1.5G",
+        "1000M",
+    )
     bare = daemon_row()
     bare.update(name=None, cpus=None, mem_mib=None, root_mib=None)
     assert edit_seeds(bare)["name"] == ""
@@ -164,10 +175,11 @@ def test_the_body_moves_only_changed_fields() -> None:
     """The resize body's arithmetic (#986, the TUI edit's own):
     a field left at its seed rides nothing — the resize moves
     what the operator changed, a re-spelled seed the same number
-    rides nothing either, so the daemon sees no no-op — whole
-    numbers land as integers, and a body with nothing moved
-    refuses locally, the daemon's nothing-to-resize refusal said
-    where the operator can still edit."""
+    (`8192` against a seed of `8G`) rides nothing either, so the
+    daemon sees no no-op — sizes land as their MiB counts in
+    every form the fields read (#1164), and a body with nothing
+    moved refuses locally, the daemon's nothing-to-resize
+    refusal said where the operator can still edit."""
     seeds = edit_seeds(daemon_row())
     body, error = resize_body({"cpus": " 4 ", "mem_mib": "8192"}, seeds)
     assert (body, error) == ({"cpus": 4}, "")
@@ -175,7 +187,15 @@ def test_the_body_moves_only_changed_fields() -> None:
         {"home_mib": 8192},
         "",
     )
+    assert resize_body({"mem_mib": "4G", "home_mib": "2GiB"}, seeds) == (
+        {"mem_mib": 4096, "home_mib": 2048},
+        "",
+    )
     assert resize_body({"root_mib": "08192"}, seeds) == (
+        None,
+        "nothing to resize — change a size, or cancel",
+    )
+    assert resize_body({"root_mib": "8GiB"}, seeds) == (
         None,
         "nothing to resize — change a size, or cancel",
     )
@@ -187,21 +207,35 @@ def test_the_body_moves_only_changed_fields() -> None:
         None,
         "cpus: a whole number",
     )
+    for refused in ("8GB", "eight", "-1", "1.5", "0.3G"):
+        assert resize_body({"mem_mib": refused}, seeds) == (
+            None,
+            "mem_mib: sizes read as MiB, or with a G or M suffix: 8G, 512M",
+        ), refused
 
 
 def test_the_root_only_grows() -> None:
     """The root's grow-only rule (#986, the daemon's own #187
     said locally): a smaller root is refused with the current
-    size named, a larger one lands, and a row without a root
-    fact has no local floor — the daemon owns that one. A blank
-    field keeps the current value, whatever the operator meant
-    by clearing it."""
+    size named in the unit the field reads (#1164), a larger
+    one lands in any of the field's forms, and a row without a
+    root fact has no local floor — the daemon owns that one. A
+    blank field keeps the current value, whatever the operator
+    meant by clearing it."""
     seeds = edit_seeds(daemon_row())
     assert resize_body({"root_mib": "4096"}, seeds) == (
         None,
-        "the root only grows — it is 8192 MiB",
+        "the root only grows — it is 8G",
+    )
+    assert resize_body({"root_mib": "4G"}, seeds) == (
+        None,
+        "the root only grows — it is 8G",
     )
     assert resize_body({"root_mib": "16384"}, seeds) == (
+        {"root_mib": 16384},
+        "",
+    )
+    assert resize_body({"root_mib": "16G"}, seeds) == (
         {"root_mib": 16384},
         "",
     )
@@ -210,6 +244,11 @@ def test_the_root_only_grows() -> None:
     assert resize_body({"root_mib": "1024"}, bare) == (
         {"root_mib": 1024},
         "",
+    )
+    plain = edit_seeds({**daemon_row(), "root_mib": 8193})
+    assert resize_body({"root_mib": "8G"}, plain) == (
+        None,
+        "the root only grows — it is 8193M",
     )
 
 
@@ -241,19 +280,30 @@ def test_the_names_constraints() -> None:
 
 
 def test_the_dialog_opens_seeded_and_submits_a_resize(qt) -> None:
-    """The dialog over the row (#986): the fields open carrying
-    the row's current values, the changed ones send as one body
-    through the resize route with the apply button held, and the
-    daemon's answer closes the dialog."""
+    """The dialog over the row (#986, #1164): the fields open
+    carrying the row's current values in the human units, under
+    the names people think in, the changed ones send as one body
+    of MiB counts through the resize route with the apply button
+    held, and the daemon's answer closes the dialog."""
     dialog, bridge = make_dialog(qt)
     assert dialog.note.text() == "Edit alpha"
+    assert [label for _field, label in editor_fields()] == [
+        "VCPUs",
+        "Memory",
+        "Root disk",
+        "Home disk",
+    ]
     assert dialog.fields["cpus"].text() == "2"
-    assert dialog.fields["root_mib"].text() == "8192"
+    assert dialog.fields["root_mib"].text() == "8G"
     assert "name" not in dialog.fields  # the route is not there yet
-    fill(dialog, {"cpus": "4", "root_mib": "16384"})
+    fill(dialog, {"cpus": "4", "root_mib": "16G", "mem_mib": "1.5G"})
     dialog.submit()
     assert bridge.calls == [
-        (EDIT_KEY, "resize", ("ws-1", {"cpus": 4, "root_mib": 16384}))
+        (
+            EDIT_KEY,
+            "resize",
+            ("ws-1", {"cpus": 4, "mem_mib": 1536, "root_mib": 16384}),
+        )
     ]
     assert not dialog.apply_button.isEnabled()
     closed: list[bool] = []
@@ -270,12 +320,18 @@ def test_a_local_refusal_sends_nothing(qt) -> None:
     dialog, bridge = make_dialog(qt)
     fill(dialog, {"root_mib": "1024"})
     dialog.submit()
-    assert dialog.note.text() == "the root only grows — it is 8192 MiB"
+    assert dialog.note.text() == "the root only grows — it is 8G"
     assert bridge.calls == []
-    fill(dialog, {"root_mib": "8192"})
+    fill(dialog, {"root_mib": "8G"})
     dialog.submit()
     assert dialog.note.text() == (
         "nothing to resize — change a size, or cancel"
+    )
+    assert bridge.calls == []
+    fill(dialog, {"root_mib": "8GB"})
+    dialog.submit()
+    assert dialog.note.text() == (
+        "root_mib: sizes read as MiB, or with a G or M suffix: 8G, 512M"
     )
     assert bridge.calls == []
 

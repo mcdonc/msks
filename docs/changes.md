@@ -57,6 +57,15 @@ tagged `vX.Y.Z`.
   PLACEHOLDER, and DEST, and the `!` column is gone. See
   [docs/gui.md](gui.md#the-secrets-tab).
 
+- **The GUI's create and edit dialogs take sizes in human units
+  (#1164).** `8G`, `8GiB`, and `8192M` all mean 8192 MiB,
+  `0.5G` means 512 MiB, and a bare number is still MiB. The
+  create dialog's fields read `Memory`, `Root disk`, and
+  `Home disk`, with a line under them that restates the four
+  sizes as you type. The edit dialog opens with the workspace's
+  sizes in the same spelling (`8G`). See
+  [docs/gui.md](gui.md#creating-a-workspace).
+
 ### Fixed
 
 - **Enter in the GUI's lists on macOS (#1161).** Enter on the

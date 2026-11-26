@@ -88,25 +88,35 @@ an empty list blanks it.
 
 ## Creating a workspace
 
-![The create dialog: the fields, the image picker, the size placeholders](screens/gui-create.png)
+![The create dialog: the fields, the image picker, the size placeholders, the summary line](screens/gui-create.png)
 
 **Add** opens the create dialog over the list, centered on the
 window. Name is the only required field. The image picker offers
-the daemon's default first, then every catalog ref. The size
-fields show the daemon's defaults in their placeholders, and a
-blank field takes that default. The user field's placeholder is
-your own account name. A create the daemon refuses keeps the
-dialog standing with the reason on its note line. A landed
-create closes the dialog and refreshes the list, which holds the
-new workspace on its first row.
+the daemon's default first, then every catalog ref. Each size
+field takes a whole number of MiB. It also takes a size with a
+`G`, `GiB`, `M`, or `MiB` suffix: `8G`, `8GiB`, and `8192M` all
+mean 8192 MiB, and `0.5G` means 512 MiB. Their placeholders show
+the defaults (`default 4G`), and a blank field takes that
+default. The user field's placeholder is your own account name.
+A line under the fields restates the four sizes as you type, with
+the defaults filling the blanks:
+`4 vCPU · 8 GiB RAM · 4 GiB root · 8 GiB home`. A decimal entry
+shows its resolved size there: `0.5G` shows `512 MiB`. A create
+the daemon refuses keeps the dialog standing with the reason on
+its note line. A landed create closes the dialog and refreshes
+the list, which holds the new workspace on its first row.
 
 You may need to [import an
 image](first-run.md#importing-a-guest-vm-image) before the first
 create.
 
 **Edit** opens a dialog seeded with the workspace's sizes and
-topology: VCPUs, memory, and the root and home volumes. Apply
-posts to the same endpoint `msks resize` uses.
+topology: VCPUs, memory, and the root and home volumes. The size
+fields take the same forms as the create dialog. Each one opens
+with the workspace's current size. `8G`, `1.5G`, and `1000M` are
+the usual spellings, and a size those spellings would round opens
+in plain MiB (`8193M`). Apply posts to the same endpoint
+`msks resize` uses, with the sizes as MiB counts.
 
 ## The workspace page
 
