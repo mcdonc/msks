@@ -293,7 +293,8 @@ def text(screen) -> str:
 
 
 def copy(screen) -> None:
-    """Ctrl+Shift+C and the menu's Copy: the selection's text
+    """The copy key (Ctrl+Shift+C, Cmd+C on macOS) and the
+    menu's Copy: the selection's text
     to the clipboard, then the selection dropped, so the
     highlight leaves with the text (#1182). A selection over
     blank cells formats to nothing and still drops."""
@@ -343,7 +344,8 @@ def paste_text(screen, text: str) -> None:
 
 
 def paste_clipboard(screen) -> None:
-    """Ctrl+Shift+V: the clipboard to the program."""
+    """The paste key (Ctrl+Shift+V, Cmd+V on macOS): the
+    clipboard to the program."""
     paste_text(screen, QApplication.clipboard().text())
 
 

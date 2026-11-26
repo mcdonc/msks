@@ -103,6 +103,25 @@ def qt(tmp_path: Path):
     )
 
 
+@pytest.fixture(autouse=True)
+def linux_shaped_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This module's key events carry the Linux spelling of the
+    modifier keys (#1184).
+
+    The tests build ``QKeyEvent`` objects by hand, and they name
+    the Linux keys: ``ControlModifier`` for Ctrl and
+    ``MetaModifier`` for Command. macOS Qt reports the two the
+    other way round (Command as Control, Control as Meta), and
+    the terminal's shortcuts and key encoder follow the keyboard
+    there, so a run on a Mac host would read every Ctrl+C these
+    tests send as Cmd+C. The offscreen platform has no keyboard
+    of its own, so the module names the platform its keys are
+    shaped for. A test of the Mac keys patches the platform to
+    darwin itself; its patch wins, being later.
+    """
+    monkeypatch.setattr(sys, "platform", "linux")
+
+
 @pytest.fixture()
 def screen(qt):
     from msks.client.gui.terminal import TerminalWidget
@@ -1319,6 +1338,27 @@ def test_modifiers_ride_the_mask(screen, qt):
         qt.QtCore.Qt.KeyboardModifier.MetaModifier,
     )
     assert qt.input.mods(metaed.modifiers()) == gt.MOD_SUPER
+
+
+def test_the_mask_follows_the_mac_keyboard(qt, monkeypatch):
+    """On macOS the mask follows the keyboard, not Qt's bits
+    (#1184): Qt reports Command as Control and the physical
+    Control as Meta, so the two trade places in the mask. The
+    Mac's Ctrl+C reaches the program as its interrupt."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    command = qt.input.mods(mac_modifiers(qt, MAC_COMMAND))
+    assert command == gt.MOD_SUPER
+    control = qt.input.mods(mac_modifiers(qt, MAC_CONTROL))
+    assert control == gt.MOD_CTRL
+    both = qt.input.mods(
+        mac_modifiers(qt, MAC_COMMAND, MAC_CONTROL, "ShiftModifier")
+    )
+    assert both == gt.MOD_CTRL | gt.MOD_SUPER | gt.MOD_SHIFT
+    alt = qt.input.mods(mac_modifiers(qt, MAC_COMMAND, "AltModifier"))
+    assert alt == gt.MOD_ALT | gt.MOD_SUPER
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert qt.input.mods(mac_modifiers(qt, MAC_COMMAND)) == gt.MOD_CTRL
+    assert qt.input.mods(mac_modifiers(qt, MAC_CONTROL)) == gt.MOD_SUPER
 
 
 def test_button_for_maps_the_three_buttons(qt):
@@ -2549,6 +2589,251 @@ def test_ctrl_shift_v_pastes_the_clipboard(screen, qt):
     assert drain_until(screen, b"pasted").endswith(b"pasted")
 
 
+#: How Qt reports the Mac's modifier keys (#1184): with the
+#: platform's default mapping, Command arrives as ControlModifier
+#: and the physical Control as MetaModifier. The Mac tests feed
+#: these bits, the shapes the Cocoa key mapper delivers, so the
+#: macOS paths are pinned on every host.
+MAC_COMMAND = "ControlModifier"
+MAC_CONTROL = "MetaModifier"
+
+
+def mac_modifiers(qt, *names):
+    """Qt modifier flags for the Mac keys as Qt reports them."""
+    Qt = qt.QtCore.Qt
+    return _flags(Qt, *names)
+
+
+def _flags(Qt, *names):
+    flags = Qt.KeyboardModifier.NoModifier
+    for name in names:
+        flags |= getattr(Qt.KeyboardModifier, name)
+    return flags
+
+
+def test_command_copies_and_pastes_on_macos(screen, qt, monkeypatch):
+    """On macOS the clipboard keys answer Command, the spelling
+    of Terminal.app and iTerm2: Cmd+C copies and drops the
+    selection (#1182), Cmd+V pastes. The physical Ctrl+Shift keys
+    keep working there, and the Mac's Control key alone is no
+    shortcut (#1184)."""
+    from msks.client.gui.terminal import select
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    command = mac_modifiers(qt, MAC_COMMAND)
+    control_shift = mac_modifiers(qt, MAC_CONTROL, "ShiftModifier")
+    clipboard = qt.QtWidgets.QApplication.clipboard()
+    vt(screen, b"\x1b[2J\x1b[Hmac words")
+    for key, modifiers in (
+        (qt.QtCore.Qt.Key.Key_C, command),
+        (qt.QtCore.Qt.Key.Key_C, control_shift),
+    ):
+        clipboard.clear()
+        select.word_at(screen, qt.QtCore.QPointF(4, 2))
+        screen.keyPressEvent(key_event(qt, key, modifiers=modifiers))
+        assert clipboard.text() == "mac"
+        assert select.selection(screen) is None  # the copy drops it
+    clipboard.clear()
+    select.word_at(screen, qt.QtCore.QPointF(4, 2))
+    # No modifier at all: the program's key, and the copy
+    # leaves the clipboard alone.
+    screen.keyPressEvent(key_event(qt, qt.QtCore.Qt.Key.Key_C, "c"))
+    assert clipboard.text() == ""
+    assert drain_until(screen, b"c").endswith(b"c")
+    clipboard.setText("from mac")
+    screen.keyPressEvent(
+        key_event(qt, qt.QtCore.Qt.Key.Key_V, modifiers=command)
+    )
+    assert drain_until(screen, b"from mac").endswith(b"from mac")
+    # The Mac's Control key alone is no shortcut either. The key
+    # reaches the program as its interrupt and ends the echo
+    # child, so it goes last (the mask test pins the byte).
+    select.word_at(screen, qt.QtCore.QPointF(4, 2))
+    screen.keyPressEvent(
+        key_event(
+            qt,
+            qt.QtCore.Qt.Key.Key_C,
+            "\x03",
+            modifiers=mac_modifiers(qt, MAC_CONTROL),
+        )
+    )
+    assert clipboard.text() == "from mac"  # untouched: no copy happened
+    assert drain_until(screen, b"KeyboardInterrupt", timeout=1.0) != b""
+
+
+def test_cmd_x_on_macos_is_the_programs_key(screen, qt, monkeypatch):
+    """Cmd+X is not a copy key on macOS: Terminal.app leaves it
+    to the program, and so does the terminal. The Linux habit,
+    Ctrl+Shift+X, copies there (#1184)."""
+    from msks.client.gui.terminal import select
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    clipboard = qt.QtWidgets.QApplication.clipboard()
+    vt(screen, b"\x1b[2J\x1b[Hmac words")
+    clipboard.clear()
+    select.word_at(screen, qt.QtCore.QPointF(4, 2))
+    screen.keyPressEvent(
+        key_event(
+            qt,
+            qt.QtCore.Qt.Key.Key_X,
+            modifiers=mac_modifiers(qt, MAC_COMMAND),
+        )
+    )
+    assert clipboard.text() == ""
+    assert select.selection(screen) is not None  # nothing consumed it
+    screen.keyPressEvent(
+        key_event(
+            qt,
+            qt.QtCore.Qt.Key.Key_X,
+            modifiers=mac_modifiers(qt, MAC_CONTROL, "ShiftModifier"),
+        )
+    )
+    assert clipboard.text() == "mac"
+
+
+def test_a_stray_modifier_is_no_shortcut(screen, qt, monkeypatch):
+    """Command with another key held is not the shortcut: on
+    macOS Cmd+Shift+C and Cmd+Option+C go to the program, and
+    Ctrl+Shift+C with Alt goes to the program everywhere. The
+    clipboard keeps its text (#1184)."""
+    from msks.client.gui.terminal import select
+
+    clipboard = qt.QtWidgets.QApplication.clipboard()
+    vt(screen, b"\x1b[2J\x1b[Hstray words")
+    select.word_at(screen, qt.QtCore.QPointF(4, 2))
+    clipboard.setText("before")
+    monkeypatch.setattr(sys, "platform", "darwin")
+    for modifiers in (
+        mac_modifiers(qt, MAC_COMMAND, "ShiftModifier"),
+        mac_modifiers(qt, MAC_COMMAND, "AltModifier"),
+        mac_modifiers(qt, MAC_CONTROL, "ShiftModifier", "AltModifier"),
+    ):
+        screen.keyPressEvent(
+            key_event(qt, qt.QtCore.Qt.Key.Key_C, modifiers=modifiers)
+        )
+        assert clipboard.text() == "before"
+    monkeypatch.setattr(sys, "platform", "linux")
+    screen.keyPressEvent(
+        key_event(
+            qt,
+            qt.QtCore.Qt.Key.Key_C,
+            modifiers=_flags(
+                qt.QtCore.Qt, "ControlModifier", "ShiftModifier", "AltModifier"
+            ),
+        )
+    )
+    assert clipboard.text() == "before"
+
+
+def release_event(qt, key, modifiers):
+    """A synthetic key release, offscreen."""
+    return qt.QtGui.QKeyEvent(
+        qt.QtCore.QEvent.Type.KeyRelease,
+        int(key),
+        modifiers or qt.QtCore.Qt.KeyboardModifier.NoModifier,
+        "",
+    )
+
+
+def test_a_consumed_key_drops_its_release(screen, qt, monkeypatch):
+    """Under the Kitty keyboard protocol a shortcut's release
+    must not reach the program alone (#1184). The release is
+    matched on its key, because the hand lets the modifier go
+    before the key: each release here arrives with the modifiers
+    gone or fewer. A paste sends the clipboard's text on the
+    press, which is the paste's own doing."""
+
+    Qt = qt.QtCore.Qt
+    vt(screen, b"\x1b[>3u")  # disambiguate + report event types
+    control_shift = _flags(Qt, "ControlModifier", "ShiftModifier")
+    command = mac_modifiers(qt, MAC_COMMAND)
+    qt.QtWidgets.QApplication.clipboard().setText("pasted")
+    cases = {
+        "darwin": (
+            (Qt.Key.Key_C, command, None),
+            (Qt.Key.Key_F, command, mac_modifiers(qt, MAC_CONTROL)),
+            (Qt.Key.Key_PageUp, _flags(Qt, "ShiftModifier"), None),
+        ),
+        "linux": (
+            (Qt.Key.Key_C, control_shift, _flags(Qt, "ControlModifier")),
+            (Qt.Key.Key_V, control_shift, None),
+            (Qt.Key.Key_F, control_shift, None),
+            (Qt.Key.Key_PageUp, _flags(Qt, "ShiftModifier"), None),
+        ),
+    }
+    for platform, presses in cases.items():
+        monkeypatch.setattr(sys, "platform", platform)
+        for key, pressed, released in presses:
+            screen.keyPressEvent(key_event(qt, key, modifiers=pressed))
+            screen.keyReleaseEvent(release_event(qt, key, released))
+            seen = drain_until(screen, b"u", timeout=0.3)
+            # The paste's own text went out on the press; what must
+            # not follow is a key release.
+            assert b":3u" not in seen, seen
+
+
+def test_a_taken_key_keeps_its_release_after_a_consumed_one(
+    screen, qt, monkeypatch
+):
+    """A press the shortcuts do not take keeps its release, even
+    when it is the key a consumed press held before: the note is
+    cleared on every press that goes to the program (#1184)."""
+    Qt = qt.QtCore.Qt
+    vt(screen, b"\x1b[>3u")
+    monkeypatch.setattr(sys, "platform", "linux")
+    control_shift = _flags(Qt, "ControlModifier", "ShiftModifier")
+    screen.keyPressEvent(
+        key_event(qt, Qt.Key.Key_C, modifiers=control_shift)
+    )  # consumed
+    screen.keyPressEvent(
+        key_event(qt, Qt.Key.Key_C, "\x03", _flags(Qt, "ControlModifier"))
+    )  # Ctrl+C: the program's interrupt
+    screen.keyReleaseEvent(
+        release_event(qt, Qt.Key.Key_C, _flags(Qt, "ControlModifier"))
+    )
+    seen = drain_until(screen, b":3")
+    assert seen == b"\x1b[99;5u\x1b[99;5:3u", seen  # the press, the release
+
+
+def test_the_shortcut_modifier_ignores_qts_bookkeeping_bits(qt, monkeypatch):
+    """The shortcut modifier matches whole, after Qt's own noise
+    is off: AltGr adds GroupSwitchModifier on X11 and a keypad
+    key adds KeypadModifier, and neither turns Ctrl+Shift+C
+    into the program's key (#1184)."""
+    Qt = qt.QtCore.Qt
+    control_shift = _flags(Qt, "ControlModifier", "ShiftModifier")
+    assert qt.input.command_held(control_shift)
+    assert not qt.input.command_held(control_shift | _flags(Qt, "AltModifier"))
+    assert qt.input.command_held(
+        control_shift | Qt.KeyboardModifier.GroupSwitchModifier
+    )
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert qt.input.command_held(
+        mac_modifiers(qt, MAC_COMMAND) | Qt.KeyboardModifier.KeypadModifier
+    )
+    assert not qt.input.command_held(
+        mac_modifiers(qt, MAC_COMMAND, "ShiftModifier")
+    )
+
+
+def test_command_alone_is_no_shortcut_elsewhere(screen, qt, monkeypatch):
+    """Off macOS, Command+C and Command+F are no shortcut: the
+    clipboard keeps its text and the find bar stays closed. The
+    keys go to the program (#1184)."""
+    from msks.client.gui.terminal import select
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    clipboard = qt.QtWidgets.QApplication.clipboard()
+    vt(screen, b"\x1b[2J\x1b[Hkeep words")
+    select.word_at(screen, qt.QtCore.QPointF(4, 2))
+    clipboard.setText("before")
+    meta = mac_modifiers(qt, MAC_CONTROL)
+    screen.keyPressEvent(key_event(qt, qt.QtCore.Qt.Key.Key_C, modifiers=meta))
+    assert clipboard.text() == "before"
+    screen.keyPressEvent(key_event(qt, qt.QtCore.Qt.Key.Key_F, modifiers=meta))
+    assert not screen.search
+
+
 def test_paste_wraps_in_bracketed_mode(screen, qt):
     """A program that enabled mode 2004 receives its paste
     wrapped in the bracket markers, newlines intact."""
@@ -2728,14 +3013,42 @@ def test_the_context_menu_offers_copy_paste_and_links(screen, qt):
     qt.QtWidgets.QApplication.clipboard().clear()
     menu = screen.build_context_menu(None)
     labels = [action.text() for action in menu.actions()]
-    assert "Copy\tCtrl+Shift+C" in labels
+    copy_keys, _ = qt.input.clipboard_keys()
+    spelled = qt.QtGui.QKeySequence(copy_keys).toString(
+        qt.QtGui.QKeySequence.SequenceFormat.NativeText
+    )
+    assert f"Copy\t{spelled}" in labels
     assert not menu.actions()[0].isEnabled()  # nothing selected
     link_pos = qt.QtCore.QPointF(screen.metrics.cell_width * 6, 2)
     menu = screen.build_context_menu(link_pos)
     assert menu.actions()[0].text() == "Copy Link Address"
 
 
-# --- hyperlinks (#953) ----------------------------------------------------
+def test_the_menu_spells_the_keys_per_platform(screen, qt, monkeypatch):
+    """The menu's Copy and Paste labels carry the platform's
+    keys (#1184): Command's on macOS, Ctrl+Shift elsewhere. The
+    keys are read back from ``input.clipboard_keys`` and rendered
+    through the same native renderer the menu uses, because the
+    glyph is the host theme's: a macOS host draws ⌘ for Ctrl
+    whichever platform the test names."""
+    QtGui = qt.QtGui
+
+    def rendered(keys):
+        return QtGui.QKeySequence(keys).toString(
+            QtGui.QKeySequence.SequenceFormat.NativeText
+        )
+
+    def labels():
+        return [
+            action.text()
+            for action in screen.build_context_menu(None).actions()
+        ]
+
+    for platform in ("darwin", "linux"):
+        monkeypatch.setattr(sys, "platform", platform)
+        copy_keys, paste_keys = qt.input.clipboard_keys()
+        assert f"Copy\t{rendered(copy_keys)}" in labels()
+        assert f"Paste\t{rendered(paste_keys)}" in labels()
 
 
 def test_plain_text_urls_record_spans(screen, qt):
@@ -2955,6 +3268,25 @@ def test_the_find_shortcut_toggles(screen, qt):
     assert not screen.search
 
 
+def test_command_f_toggles_find_on_macos(screen, qt, monkeypatch):
+    """On macOS Cmd+F opens and closes the find bar, and the
+    physical Ctrl+Shift+F does too (#1184)."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    for modifiers in (
+        mac_modifiers(qt, MAC_COMMAND),
+        mac_modifiers(qt, MAC_CONTROL, "ShiftModifier"),
+    ):
+        command = key_event(
+            qt,
+            qt.QtCore.Qt.Key.Key_F,
+            modifiers=modifiers,
+        )
+        screen.keyPressEvent(command)
+        assert screen.search
+        screen.keyPressEvent(command)
+        assert not screen.search
+
+
 def test_autoscroll_extends_the_selection(screen, qt):
     """A drag held at the viewport's top edge scrolls the
     buffer and extends the selection into the revealed
@@ -3155,6 +3487,50 @@ def test_ctrl_click_on_a_link_opens_and_consumes(screen, qt, monkeypatch):
     )
     assert opened == ["https://example.com/click"]
     assert screen.press_count == 0  # no selection began
+
+
+def test_command_click_opens_a_link_on_macos(screen, qt, monkeypatch):
+    """On macOS a Cmd+Click opens the link under it, through the
+    same bit Qt reports for Ctrl+Click elsewhere, and no
+    selection begins. The Mac's physical Control key (Meta to
+    Qt) opens nothing: Qt delivers that click as a right button
+    and the context menu's path takes it (#1184)."""
+    from msks.client.gui.terminal import links
+
+    Qt = qt.QtCore.Qt
+    vt(screen, b"\x1b[2J\x1b[Hhttps://example.com/click")
+    screen.grab().toImage()  # the paint pass fills the URL scan
+    opened = []
+    monkeypatch.setattr(
+        links.QDesktopServices,
+        "openUrl",
+        lambda url: opened.append(url.toString()) or True,
+    )
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+
+    def press(modifiers, button=Qt.MouseButton.LeftButton):
+        screen.mousePressEvent(
+            mouse_event(
+                qt,
+                qt.QtGui.QMouseEvent.Type.MouseButtonPress,
+                (cw * 2, ch // 2),
+                button,
+                button,
+                modifiers,
+            )
+        )
+
+    for platform in ("darwin", "linux"):
+        monkeypatch.setattr(sys, "platform", platform)
+        opened.clear()
+        press(mac_modifiers(qt, MAC_COMMAND))  # ⌘ on a Mac, Ctrl elsewhere
+        assert opened == ["https://example.com/click"]
+    assert screen.press_count == 0  # no selection began
+    monkeypatch.setattr(sys, "platform", "darwin")
+    opened.clear()
+    press(mac_modifiers(qt, MAC_CONTROL))
+    assert opened == []
+    assert screen.press_count == 1  # the gesture began: the key is Ctrl's
 
 
 def test_a_drag_turns_the_hand_off(screen, qt):

@@ -3,13 +3,17 @@
 Keys, mouse buttons, the wheel, and focus changes encode
 through the library's encoders — legacy sequences, application
 cursor keys, the Kitty keyboard protocol — and what the child
-reads comes back from the library, never spelled here.
+reads comes back from the library, never spelled here. The
+terminal's own shortcuts read their modifier here too: the
+platform's spelling of the clipboard, find, and link keys
+(#1184) decides which presses stay in the widget.
 """
 
 from __future__ import annotations
 
 import ctypes
 import string
+import sys
 
 from PySide6.QtCore import QPointF, Qt
 
@@ -143,18 +147,145 @@ QT_TO_LIB_BUTTON = {
 }
 
 
+#: The terminal's shortcut modifier on Linux and Windows, the
+#: convention of Konsole and GNOME Terminal: Ctrl+Shift. Plain
+#: Ctrl+C is the program's interrupt there, so the clipboard
+#: keys stand one shift over.
+CONTROL_SHIFT = (
+    Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+)
+
+#: The same keys pressed on a Mac keyboard, as Qt reports them
+#: there. macOS Qt maps Command to ControlModifier and the
+#: physical Control to MetaModifier. The attribute
+#: ``AA_MacDontSwapCtrlAndMeta`` is off, so every other shortcut
+#: in the client already spells ⌘ as Ctrl. Command alone is the
+#: terminal's modifier, as in Terminal.app and iTerm2, and the
+#: Ctrl+Shift habit carries over as Meta+Shift. Meta alone is
+#: never a shortcut. It is the Mac's Control key, and ``mods``
+#: encodes it as the program's Ctrl.
+MAC_COMMAND = Qt.KeyboardModifier.ControlModifier
+MAC_CONTROL_SHIFT = (
+    Qt.KeyboardModifier.MetaModifier | Qt.KeyboardModifier.ShiftModifier
+)
+
+#: Each platform's complete modifier sets that mean "shortcut"
+#: (#1184). A press with any other modifier beside these (Alt,
+#: or Shift with Command) is the program's key: the set must
+#: match whole, so a superset check cannot let Ctrl+Shift+Alt
+#: copy on a platform where Ctrl+Shift alone already does.
+LINUX_SHORTCUT_MODIFIERS = (CONTROL_SHIFT,)
+MAC_SHORTCUT_MODIFIERS = (MAC_COMMAND, MAC_CONTROL_SHIFT)
+
+
+def on_macos() -> bool:
+    """Whether this process runs on macOS. Read at each press
+    and click: the suite patches the platform."""
+    return sys.platform == "darwin"
+
+
+def shortcut_modifiers(modifiers):
+    """The modifier flags that decide a shortcut: Shift,
+    Control, Alt, and Meta, with Qt's bookkeeping bits off. The
+    platform plugins add ``GroupSwitchModifier`` while AltGr is
+    held and ``KeypadModifier`` on a keypad key, and Qt's own
+    shortcut matcher strips both before it compares."""
+    return modifiers & (
+        Qt.KeyboardModifier.ShiftModifier
+        | Qt.KeyboardModifier.ControlModifier
+        | Qt.KeyboardModifier.AltModifier
+        | Qt.KeyboardModifier.MetaModifier
+    )
+
+
+#: Qt modifier flags to the library's modifier bits, in the
+#: keyboard's own terms: Control is the Control key and Meta is
+#: Command once the Mac's swap is undone.
+QT_TO_LIB_MODS = (
+    (Qt.KeyboardModifier.ShiftModifier, gt.MOD_SHIFT),
+    (Qt.KeyboardModifier.ControlModifier, gt.MOD_CTRL),
+    (Qt.KeyboardModifier.AltModifier, gt.MOD_ALT),
+    (Qt.KeyboardModifier.MetaModifier, gt.MOD_SUPER),
+)
+
+
+def unswap_mac_modifiers(modifiers):
+    """The modifier flags with the Mac's two keys put back where
+    the keyboard has them (#1184): Qt reports Command as Control
+    and the physical Control as Meta. After this, Control means
+    the Control key on every platform, and Meta is Command."""
+    control = Qt.KeyboardModifier.ControlModifier
+    meta = Qt.KeyboardModifier.MetaModifier
+    from_control_key = (
+        control if modifiers & meta else Qt.KeyboardModifier.NoModifier
+    )
+    from_command = (
+        meta if modifiers & control else Qt.KeyboardModifier.NoModifier
+    )
+    return (modifiers & ~(control | meta)) | from_control_key | from_command
+
+
 def mods(modifiers) -> int:
-    """Qt modifier flags as the library's modifier mask."""
+    """Qt modifier flags as the library's modifier mask. On a
+    Mac the mask follows the keyboard, as Terminal.app does:
+    Command encodes as Super and the Control key as Ctrl."""
+    if on_macos():
+        modifiers = unswap_mac_modifiers(modifiers)
     mask = 0
-    if modifiers & Qt.KeyboardModifier.ShiftModifier:
-        mask |= gt.MOD_SHIFT
-    if modifiers & Qt.KeyboardModifier.ControlModifier:
-        mask |= gt.MOD_CTRL
-    if modifiers & Qt.KeyboardModifier.AltModifier:
-        mask |= gt.MOD_ALT
-    if modifiers & Qt.KeyboardModifier.MetaModifier:
-        mask |= gt.MOD_SUPER
+    for qt_flag, lib_bit in QT_TO_LIB_MODS:
+        if modifiers & qt_flag:
+            mask |= lib_bit
     return mask
+
+
+def command_held(modifiers) -> bool:
+    """Whether a key press carries exactly the terminal's
+    shortcut modifier (#1184): Ctrl+Shift on every platform, and
+    on macOS also Command (``Cmd+C``, ``Cmd+V``, ``Cmd+F``) and the
+    physical Ctrl+Shift. A modifier set with a stray extra
+    (Alt, or Shift beside Command) is not a shortcut: the key
+    goes to the program inside."""
+    modifiers = shortcut_modifiers(modifiers)
+    if on_macos():
+        return modifiers in MAC_SHORTCUT_MODIFIERS
+    return modifiers in LINUX_SHORTCUT_MODIFIERS
+
+
+def clipboard_action(key, modifiers) -> str | None:
+    """The clipboard action a shortcut-modifier key means
+    (#1184): ``"copy"`` for C, ``"paste"`` for V, ``None`` for
+    any other key. X copies too, the Linux terminal's habit
+    (Ctrl+Shift+X); under Command it is not a copy key, so a
+    Mac's Cmd+X stays the program's key, as in Terminal.app."""
+    if key == Qt.Key.Key_C:
+        return "copy"
+    if key == Qt.Key.Key_V:
+        return "paste"
+    if key == Qt.Key.Key_X and shortcut_modifiers(modifiers) != MAC_COMMAND:
+        return "copy"
+    return None
+
+
+def link_modifier_held(modifiers) -> bool:
+    """Whether a left click carries the modifier that opens
+    the link under it (#1184): Control on every platform. On macOS
+    Qt reports Command as Control, so ``Cmd+Click`` opens the
+    link through the same bit, the terminal convention there. The
+    Mac's physical Ctrl+click is the system's secondary click:
+    Qt delivers it as a right button, which opens the menu."""
+    return bool(modifiers & Qt.KeyboardModifier.ControlModifier)
+
+
+def clipboard_keys() -> tuple[str, str]:
+    """The context menu's spellings of the copy and paste
+    keys (#1184), as portable ``QKeySequence`` text: a menu
+    renders them in the platform's own form, ``⌘C`` on macOS
+    and ``Ctrl+Shift+C`` elsewhere. The portable ``Ctrl`` is
+    Command on macOS, so the macOS spelling is plain
+    ``Ctrl+C``."""
+    if sys.platform == "darwin":
+        return "Ctrl+C", "Ctrl+V"
+    return "Ctrl+Shift+C", "Ctrl+Shift+V"
 
 
 def button_for(event) -> int | None:

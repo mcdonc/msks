@@ -8,6 +8,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Command keys in the GUI terminal on macOS (#1184).** On
+  macOS, `Cmd+C` copies the selection, `Cmd+V` pastes, `Cmd+F`
+  opens and closes the find bar, and `Cmd+Click` opens a link, as
+  Terminal.app and iTerm2 do. The `Ctrl+Shift` keys keep working
+  there, the Control key stays the program's `Ctrl`, and Linux and
+  Windows keep today's keys. The right-click menu shows the keys
+  of the platform. See [docs/gui.md](gui.md#the-shells-tab).
+
 - **The GUI's opening settle (#1177).** The window's content
   appears once it stands in its final shape: the first
   refreshes have landed and the layout is quiet, so a page never

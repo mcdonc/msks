@@ -28,7 +28,8 @@ BAR_INSET = 8
 
 
 def open(screen) -> None:
-    """Ctrl+Shift+F: create the search handle and the overlay
+    """The find key (Ctrl+Shift+F, Cmd+F on macOS): create
+    the search handle and the overlay
     widgets, or refocus the bar when it is already open."""
     if screen.search:
         screen.find_edit.setFocus()

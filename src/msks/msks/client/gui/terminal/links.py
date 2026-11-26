@@ -1,6 +1,7 @@
 """Hyperlinks over the grid (phase 4.5 of #924, #953).
 
-Two sources feed the pointing hand and Ctrl+Click: OSC 8
+Two sources feed the pointing hand and the link click
+(Ctrl+Click, Cmd+Click on macOS): OSC 8
 URIs the program inside set on cells through the grid API,
 and plain-text URLs the painter's scan recorded in
 ``screen.link_spans`` at the last paint — soft-wrapped rows
@@ -188,7 +189,8 @@ def openable(url: str) -> str | None:
 
 
 def open_at(screen, position: QPointF) -> bool:
-    """Ctrl+Click: open the link under the position in the
+    """The link click (Ctrl+Click, Cmd+Click on macOS): open
+    the link under the position in the
     desktop browser. Answers whether a link opened."""
     url = under(screen, position)
     if not url:
