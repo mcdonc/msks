@@ -126,10 +126,12 @@ Setting `enable = true` does five things:
 - **The TCP listener.** The daemon serves its API on HTTPS + WSS at
   `listenAddress:port` (the default `127.0.0.1:8660`), with TLS and
   bearer tokens.
-- **The settings file.** The module generates `msksd.yaml` into the nix
-  store at build time, with every tool path pointing into the store. The
-  [Configuration](config.md) chapter documents the keys the module
-  generates.
+- **The settings files.** The module generates `msksd.yaml` into the nix
+  store at build time, with every tool path pointing into the store, and
+  the host's client config at `/etc/msks/msks.yaml`. Both take more
+  keys through `services.msksd.server.settings` and
+  `services.msksd.client.settings`. See [Every daemon key, and the
+  host's client config](#every-daemon-key-and-the-hosts-client-config).
 - **The egress stack.** With egress enabled the unit carries ambient
   `CAP_NET_ADMIN` and `CAP_NET_BIND_SERVICE`, loads the tun and nftables
   kernel modules, and sets `net.ipv4.ip_forward = 1`. With
@@ -180,6 +182,11 @@ environment](cli.md#client-environment) table documents each variable,
 and the [API](api.md) chapter documents token minting past the
 bootstrap credential.
 
+Under the module, `services.msksd.client.settings` writes the address,
+the CA file, and the token's file into `/etc/msks/msks.yaml`, and every
+user's `msks` reads that file. See [Every daemon key, and the host's
+client config](#every-daemon-key-and-the-hosts-client-config).
+
 A client on another host needs the listener reachable. Set
 `listenAddress` off loopback and `openFirewall = true`:
 
@@ -206,6 +213,56 @@ the module creates the group, adds it to the unit's
 `SupplementaryGroups`, and the daemon moves the socket file into it
 at bind. Members of the group run `msks` with no configuration — the
 unconfigured client probes that path on its own.
+
+### Every daemon key, and the host's client config
+
+The module writes two config files from Nix values: the daemon's
+`msksd.yaml`, and the host's client config `/etc/msks/msks.yaml`. Each
+settings layer takes the keys of the file it writes, spelled as the file
+spells them: `state_dir`, `seed_images`, `url`, `token_file`.
+
+`services.msksd.server.settings` holds the `msksd.yaml` keys the module
+does not generate. Every key in the [Configuration](config.md) chapter
+passes. Lists and mappings pass too:
+
+```nix
+services.msksd.server.settings = {
+  seed_images = [ "/var/lib/msksd/seeds/debian-trixie.tar" ];
+  egress_dns_upstream = "1.1.1.1";
+  llm_models = [
+    { model_name = "gpt-4o"; litellm_params.model = "openai/gpt-4o"; }
+  ];
+};
+```
+
+A key the module generates, such as `state_dir`, `port`, `socket`, or a
+tool path, fails evaluation when set here. The error gives the
+first-class option to use instead. The generated file is world-readable
+in the store. Pass secrets through `services.msksd.environmentFile`,
+and spell file paths as strings: a Nix path value such as `./cert.pem`
+copies the file into the store.
+
+`services.msksd.client.settings` holds the host's client config. The
+module writes it to `/etc/msks/msks.yaml` and sets
+`MSKSC_CONFIG_DIR=/etc/msks` for every user. A bare `msks` on the host
+reads this file. The keys are the ones the [client config
+file](cli.md#the-client-config-file) takes:
+
+```nix
+services.msksd.client.settings = {
+  url = "https://127.0.0.1:8660";
+  token_file = "/etc/msks/token";
+  cafile = "/var/lib/msksd/msks-ca.pem";
+};
+```
+
+The file holds paths and addresses, never a token: `token_file` points
+at the file that holds the token. Write that path as a string. A Nix
+path value (`./token`) copies the token file into the store. The client
+refuses an unknown key at load, and the error gives the key and the
+valid ones. A user with a
+config of their own exports `MSKSC_CONFIG_DIR` in their shell. That
+export wins over the value the module sets.
 
 ## What the setup lands
 

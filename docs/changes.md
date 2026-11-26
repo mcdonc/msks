@@ -67,6 +67,18 @@ tagged `vX.Y.Z`.
   serves the unix socket alone: no TLS material resolves, no CA
   is generated, and both listeners off refuses at startup.
 
+- **The NixOS module's settings layers (#801).**
+  `services.msksd.server.settings` holds every `msksd.yaml` key the
+  module does not generate, in the file's own spelling, and lists and
+  mappings pass: `seed_images` and `llm_models` are expressible in Nix
+  now, where the scalar-only `services.msksd.settings` option could
+  not carry them. That option is renamed to
+  `services.msksd.server.settings`. `services.msksd.client.settings`
+  generates the host's client config at `/etc/msks/msks.yaml`, and the
+  module sets `MSKSC_CONFIG_DIR=/etc/msks` for every user, so a bare
+  `msks` reads it. See
+  [docs/installation.md](installation.md#every-daemon-key-and-the-hosts-client-config).
+
 ### Changed
 
 - **The workspaces list under a heading, the picker in the

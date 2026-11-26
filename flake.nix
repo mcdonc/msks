@@ -120,6 +120,30 @@
         tcp.enable = true;
         egress.uplink = "eno4";
       };
+      # #801: the settings layers — a server.settings list and a
+      # list of mappings (the two shapes the scalar-only type
+      # refused), an int, a float, and a bool beside them, and a
+      # client.settings file rendered through environment.etc.
+      layered = evalConfig {
+        enable = true;
+        egress.uplink = "eno4";
+        server.settings = {
+          seed_images = [ "/var/lib/msksd/seeds/debian-trixie.tar" ];
+          llm_models = [
+            {
+              model_name = "gpt-4o";
+              litellm_params.model = "openai/gpt-4o";
+            }
+          ];
+          storage_warn_pct = 85;
+          egress_dns_timeout_s = 2.5;
+          nested = true;
+        };
+        client.settings = {
+          url = "https://127.0.0.1:8660";
+          token_file = "/etc/msks/token";
+        };
+      };
       hasTun = c: builtins.any (m: m == "tun") c.boot.kernelModules;
       # Package names compared as strings in the check's build:
       # the enabled eval's PATH must carry the exact package the
@@ -169,6 +193,14 @@
             # listener wiring per branch.
             execSocketed = socketed.systemd.services.msksd.serviceConfig.ExecStart;
             execBoth = both.systemd.services.msksd.serviceConfig.ExecStart;
+            execLayered = layered.systemd.services.msksd.serviceConfig.ExecStart;
+            # #801: the host's client config — the enabled branch's
+            # file (empty client.settings) and the layered branch's,
+            # both read from the store through environment.etc, and
+            # the session variable pointing every user's msks at it.
+            clientCfgOn = toString on.environment.etc."msks/msks.yaml".source;
+            clientCfgLayered = toString layered.environment.etc."msks/msks.yaml".source;
+            cfgDir = on.environment.sessionVariables.MSKSC_CONFIG_DIR or "";
             runtimeDir = on.systemd.services.msksd.serviceConfig.RuntimeDirectory or "";
             socketRuntimeDir =
               socketed.systemd.services.msksd.serviceConfig.RuntimeDirectory or "";
@@ -228,13 +260,16 @@
             # RuntimeDirectory; the socketed branch flips both
             # (the socket path, the empty host, the share, and
             # /run/msks), and the both branch carries the two
-            # listeners together.
+            # listeners together. The file is pkgs.formats.yaml's
+            # block style (#801): one `key: value` line per key, an
+            # empty string as two single quotes — spelled ''' here,
+            # the escape a Nix indented string needs for them.
             cfg_on=''${execOn##* --config }
-            grep -qF '"host":"127.0.0.1"' "$cfg_on" || {
+            grep -qxF 'host: 127.0.0.1' "$cfg_on" || {
               echo "fail: default branch lost the listen address in msksd.yaml"
               exit 1
             }
-            grep -qF '"socket":""' "$cfg_on" || {
+            grep -qxF "socket: '''" "$cfg_on" || {
               echo "fail: default branch bound the socket — socket must be empty in msksd.yaml"
               exit 1
             }
@@ -243,11 +278,11 @@
               exit 1
             }
             cfg_socketed=''${execSocketed##* --config }
-            grep -qF '"host":""' "$cfg_socketed" || {
+            grep -qxF "host: '''" "$cfg_socketed" || {
               echo "fail: socketed branch serves TCP — host must be empty in msksd.yaml"
               exit 1
             }
-            grep -qF '"socket":"/run/msks/msksd.sock"' "$cfg_socketed" || {
+            grep -qxF 'socket: /run/msks/msksd.sock' "$cfg_socketed" || {
               echo "fail: socketed branch lost the socket path in msksd.yaml"
               exit 1
             }
@@ -263,17 +298,81 @@
               *" msksops "*) ;;
               *) echo "fail: the unit lost the socket group in SupplementaryGroups"; exit 1 ;;
             esac
-            grep -qF '"socket_group":"msksops"' "$cfg_socketed" || {
+            grep -qxF 'socket_group: msksops' "$cfg_socketed" || {
               echo "fail: socketed branch lost socket_group in msksd.yaml"
               exit 1
             }
             cfg_both=''${execBoth##* --config }
-            grep -qF '"host":"127.0.0.1"' "$cfg_both" || {
+            grep -qxF 'host: 127.0.0.1' "$cfg_both" || {
               echo "fail: both branch lost the listen address in msksd.yaml"
               exit 1
             }
-            grep -qF '"socket":"/run/msks/msksd.sock"' "$cfg_both" || {
+            grep -qxF 'socket: /run/msks/msksd.sock' "$cfg_both" || {
               echo "fail: both branch lost the socket path in msksd.yaml"
+              exit 1
+            }
+            # #801: the yaml-typed layers. The server file carries
+            # the list, the list of mappings, the int, the float,
+            # and the bool, under the yaml's own spellings, beside
+            # the module's generated keys. The client file carries
+            # its keys through environment.etc in both the empty and
+            # the layered branch, and the session variable points at
+            # /etc/msks.
+            cfg_layered=''${execLayered##* --config }
+            grep -qxF 'seed_images:' "$cfg_layered" || {
+              echo "fail: server.settings.seed_images never reached msksd.yaml"
+              exit 1
+            }
+            grep -qxF -- '- /var/lib/msksd/seeds/debian-trixie.tar' "$cfg_layered" || {
+              echo "fail: seed_images lost its list entry in msksd.yaml"
+              exit 1
+            }
+            grep -qxF 'llm_models:' "$cfg_layered" || {
+              echo "fail: server.settings.llm_models never reached msksd.yaml"
+              exit 1
+            }
+            grep -qxF -- '- litellm_params:' "$cfg_layered" || {
+              echo "fail: llm_models lost its mapping entries in msksd.yaml"
+              exit 1
+            }
+            grep -qxF '    model: openai/gpt-4o' "$cfg_layered" || {
+              echo "fail: llm_models lost its nested mapping in msksd.yaml"
+              exit 1
+            }
+            grep -qxF 'storage_warn_pct: 85' "$cfg_layered" || {
+              echo "fail: server.settings int never reached msksd.yaml"
+              exit 1
+            }
+            grep -qxF 'egress_dns_timeout_s: 2.5' "$cfg_layered" || {
+              echo "fail: server.settings float never reached msksd.yaml"
+              exit 1
+            }
+            grep -qxF 'nested: true' "$cfg_layered" || {
+              echo "fail: server.settings bool never reached msksd.yaml"
+              exit 1
+            }
+            grep -qxF 'host: 127.0.0.1' "$cfg_layered" || {
+              echo "fail: server.settings dropped a module-generated key from msksd.yaml"
+              exit 1
+            }
+            test -s "$clientCfgOn" || {
+              echo "fail: the enabled branch renders no /etc/msks/msks.yaml with client.settings empty"
+              exit 1
+            }
+            test -s "$clientCfgLayered" || {
+              echo "fail: client.settings rendered no /etc/msks/msks.yaml"
+              exit 1
+            }
+            grep -qxF 'url: https://127.0.0.1:8660' "$clientCfgLayered" || {
+              echo "fail: client.settings.url never reached /etc/msks/msks.yaml"
+              exit 1
+            }
+            grep -qxF 'token_file: /etc/msks/token' "$clientCfgLayered" || {
+              echo "fail: client.settings.token_file never reached /etc/msks/msks.yaml"
+              exit 1
+            }
+            test "$cfgDir" = "/etc/msks" || {
+              echo "fail: the enabled branch lost MSKSC_CONFIG_DIR in the session variables"
               exit 1
             }
             touch "$out"

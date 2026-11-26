@@ -18,7 +18,10 @@
 #     configuration's pkgs, and every tool the daemon execs by
 #     settings default — the resize pair, the conntrack revocation
 #     tool, the volume formatter), generated here at build time into
-#     the store;
+#     the store through pkgs.formats.yaml (#801) — the format
+#     services.msksd.server.settings is typed with, and the one the
+#     host's client config (/etc/msks/msks.yaml, from
+#     services.msksd.client.settings) is generated through;
 #   - the egress prerequisites: the kernel modules the daemon's
 #     rulesets and taps need, and host IP forwarding.
 #
@@ -40,8 +43,15 @@
 let
   cfg = config.services.msksd;
 
+  # The yaml format both generated files are written through
+  # (#801): the type of services.msksd.server.settings and
+  # services.msksd.client.settings, so a list, a mapping, a float,
+  # and every scalar pass from Nix into the file under the yaml's
+  # own key spelling.
+  yamlFormat = pkgs.formats.yaml { };
+
   # The keys this module generates: every settings key with a
-  # first-class option. Rejected in services.msksd.settings — the
+  # first-class option. Rejected in services.msksd.server.settings — the
   # option owns them, and a settings-layer override would desync the
   # unit contract (state_dir from StateDirectory, port from the
   # firewall rule).
@@ -102,38 +112,49 @@ let
   # the appliance's msks-boot file, minus the appliance paths, plus
   # the tools that file's PATH carried (the #184 resize pair, the
   # consent-revocation conntrack tool) — pinned to store paths so no
-  # host package set is assumed.
-  settingsFile = pkgs.writeText "msksd.yaml" (
-    lib.generators.toYAML { } (
-      {
-        state_dir = cfg.stateDir;
-        # #799: TCP is the module's default listener; the socket
-        # joins when socket.enable names it (and tcp.enable off
-        # leaves it alone — an empty host keeps TCP off, the
-        # daemon's mirror of the socket setting's empty string).
-        host = lib.optionalString cfg.tcp.enable cfg.listenAddress;
-        port = cfg.port;
-        socket = lib.optionalString cfg.socket.enable "/run/msks/msksd.sock";
-        cloud_hypervisor = "${cfg.cloudHypervisor}/bin/cloud-hypervisor";
-        qemu_img = "${pkgs.qemu-utils}/bin/qemu-img";
-        mkfs_ext4 = "${pkgs.e2fsprogs}/sbin/mkfs.ext4";
-        resize2fs = "${pkgs.e2fsprogs}/sbin/resize2fs";
-        e2fsck = "${pkgs.e2fsprogs}/sbin/e2fsck";
-        mkisofs = "${pkgs.cdrtools}/bin/mkisofs";
-        conntrack_tool = "${pkgs.conntrack-tools}/bin/conntrack";
-        egress_enabled = cfg.egress.enable;
-        ip_tool = "${pkgs.iproute2}/sbin/ip";
-        nft_tool = "${pkgs.nftables}/sbin/nft";
-      }
-      // (lib.optionalAttrs (cfg.egress.uplink != null) {
-        egress_uplink = cfg.egress.uplink;
-      })
-      // (lib.optionalAttrs (cfg.socket.group != null) {
-        socket_group = cfg.socket.group;
-      })
-      // cfg.settings
-    )
+  # host package set is assumed. The operator's server.settings
+  # layer merges over it: the format admits null (an unset layer),
+  # and `//` takes a set alone.
+  serverSettings =
+    if cfg.server.settings == null then { } else cfg.server.settings;
+  settingsFile = yamlFormat.generate "msksd.yaml" (
+    {
+      state_dir = cfg.stateDir;
+      # #799: TCP is the module's default listener; the socket
+      # joins when socket.enable names it (and tcp.enable off
+      # leaves it alone — an empty host keeps TCP off, the
+      # daemon's mirror of the socket setting's empty string).
+      host = lib.optionalString cfg.tcp.enable cfg.listenAddress;
+      port = cfg.port;
+      socket = lib.optionalString cfg.socket.enable "/run/msks/msksd.sock";
+      cloud_hypervisor = "${cfg.cloudHypervisor}/bin/cloud-hypervisor";
+      qemu_img = "${pkgs.qemu-utils}/bin/qemu-img";
+      mkfs_ext4 = "${pkgs.e2fsprogs}/sbin/mkfs.ext4";
+      resize2fs = "${pkgs.e2fsprogs}/sbin/resize2fs";
+      e2fsck = "${pkgs.e2fsprogs}/sbin/e2fsck";
+      mkisofs = "${pkgs.cdrtools}/bin/mkisofs";
+      conntrack_tool = "${pkgs.conntrack-tools}/bin/conntrack";
+      egress_enabled = cfg.egress.enable;
+      ip_tool = "${pkgs.iproute2}/sbin/ip";
+      nft_tool = "${pkgs.nftables}/sbin/nft";
+    }
+    // (lib.optionalAttrs (cfg.egress.uplink != null) {
+      egress_uplink = cfg.egress.uplink;
+    })
+    // (lib.optionalAttrs (cfg.socket.group != null) {
+      socket_group = cfg.socket.group;
+    })
+    // serverSettings
   );
+
+  # The host's client config (#801): the file a bare `msks` reads
+  # once MSKSC_CONFIG_DIR points at /etc/msks (environment.etc and
+  # environment.sessionVariables below). Keys are the client file's
+  # own (docs/cli.md, the client config file): paths and addresses,
+  # token_file among them — never a token. The format renders an
+  # empty layer as an empty document, which the client reads as all
+  # defaults.
+  clientSettingsFile = yamlFormat.generate "msks.yaml" cfg.client.settings;
 
   # The capability set per enabled path: egress work keeps
   # CAP_NET_ADMIN (taps, per-VM nftables chains, NAT) and
@@ -263,23 +284,42 @@ in
       description = "Open the TCP listener's port in the host firewall (requires tcp.enable; only relevant once listenAddress is not loopback).";
     };
 
-    settings = lib.mkOption {
-      type = lib.types.attrsOf (
-        lib.types.oneOf [
-          lib.types.bool
-          lib.types.int
-          lib.types.float
-          lib.types.str
-        ]
-      );
+    server.settings = lib.mkOption {
+      type = yamlFormat.type;
       default = { };
       description = ''
-        Extra msksd.yaml keys (docs/config.md) the module does not
-        generate — the escape hatch for daemon settings without a
-        first-class option. A generated key set here fails evaluation
-        naming the first-class option to use instead. The generated
-        file lands in the store world-readable: pass secrets through
-        environmentFile, never through settings.
+        The daemon's msksd.yaml keys the module does not generate
+        (docs/config.md), written into the generated file verbatim
+        under the file's own snake_case spelling: seed_images (a
+        list of image tars), llm_models (a string, a list of
+        strings, or a list of LiteLLM mappings), egress_dns_upstream,
+        and every other documented key — lists and mappings pass as
+        the yaml types them. A key the module generates, set here,
+        fails evaluation naming the first-class option to use
+        instead. The generated file lands in the store
+        world-readable: pass secrets through environmentFile, never
+        through server.settings, and spell file paths as strings — a
+        path value copies its file into the store.
+      '';
+    };
+
+    client.settings = lib.mkOption {
+      type = yamlFormat.type;
+      default = { };
+      description = ''
+        The host's client config, generated as /etc/msks/msks.yaml —
+        the file a bare msks reads (docs/cli.md, the client config
+        file), under the file's own spelling: url, token_file, cafile,
+        socket, identity_file, pubkey_file, ssh_options, and the
+        daemons aliases. The module points every user's
+        MSKSC_CONFIG_DIR at /etc/msks, so a bare msks on the host
+        reads this file; a user with a config of their own exports
+        MSKSC_CONFIG_DIR elsewhere. The file holds paths and
+        addresses, never a secret: token_file names the file that
+        holds the token. Spell file paths as strings — a path value
+        copies its file into the store, token file included. The
+        client refuses an unknown key at load, naming the key and the
+        valid ones.
       '';
     };
 
@@ -321,6 +361,19 @@ in
     # branches.
     environment.systemPackages = [ cfg.package ];
 
+    # The host's client config (#801): /etc/msks/msks.yaml, the file
+    # a bare `msks` reads once MSKSC_CONFIG_DIR points at /etc/msks
+    # (sessionVariables reaches every login session; a user's own
+    # export in their shell wins over it). Generated even with an
+    # empty client.settings: the client writes a first-run template
+    # when the file is missing, /etc/msks is root's to write, and an
+    # absent file would make every bare `msks` on the host refuse.
+    # World-readable by design: the client file holds paths and
+    # addresses (token_file is a path), and the client's closed key
+    # list refuses anything else.
+    environment.etc."msks/msks.yaml".source = clientSettingsFile;
+    environment.sessionVariables.MSKSC_CONFIG_DIR = "/etc/msks";
+
     assertions = [
       {
         assertion = cfg.stateDir == "/var/lib/msksd";
@@ -348,8 +401,8 @@ in
       }
     ]
     ++ map (key: {
-      assertion = !builtins.hasAttr key cfg.settings;
-      message = "services.msksd.settings.${key} is generated by the module — set its first-class option under services.msksd instead.";
+      assertion = !builtins.hasAttr key serverSettings;
+      message = "services.msksd.server.settings.${key} is generated by the module — set its first-class option under services.msksd instead.";
     }) generatedKeys;
 
     # The service identity (#101, verbatim from the appliance): a
