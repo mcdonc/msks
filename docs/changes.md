@@ -62,8 +62,8 @@ tagged `vX.Y.Z`.
 - **Synchronized output in the GUI terminal (#1193).** The
   terminal follows synchronized-output blocks (mode 2026): a
   program's open block holds presentation until it closes, and
-  the block's whole change paints once at its end, so quitting
-  pi in a GUI shell no longer repaints its whole session
+  the block's whole change paints once at its end. Quitting pi
+  in a GUI shell no longer repaints its whole session
   transcript chunk by chunk. A block stuck open past half a
   second presents anyway. The cell painter also runs about
   twice as fast, with identical pixels. See
