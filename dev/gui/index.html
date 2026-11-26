@@ -1372,8 +1372,9 @@ directly: every page uses the API.</p>
 <p><code>msks gui</code> opens the window.</p>
 <h2 id="the-connection-picker">The connection picker<a class="headerlink" href="#the-connection-picker" title="Permanent link">&para;</a></h2>
 <p><img alt="The connection picker's menu: two aliases and the dev daemon, the standing one checked" src="../screens/gui-connection.png" /></p>
-<p>The status row's right end carries the connection picker: the
-standing daemon's name beside a menu. The menu lists the config
+<p>The list's bottom bar carries the connection picker at its
+right end, beside the buttons: the standing daemon's name beside a
+menu. The menu lists the config
 file's <a href="../cli/#daemon-aliases">daemon aliases</a> in file order, the
 dev daemon's state dir, and the environment's own exports when
 they carry an address.</p>
@@ -1384,11 +1385,21 @@ it.</p>
 <h2 id="the-main-window">The main window<a class="headerlink" href="#the-main-window" title="Permanent link">&para;</a></h2>
 <p>The window opens on three top-level tabs: <strong>Workspaces</strong>,
 <strong>Images</strong>, and <strong>Secrets</strong>.</p>
+<p>The content appears once it is final. At open and on every tab
+change, the page holds clear until its refresh has landed and the
+layout is quiet. It then shows at once, and the rows of its tables
+rise into place from the top down. The workspace page's own tabs
+(Mounts, Proxies, Egress, Events) give their tables the same rise.
+A page's live terminals blank for the same spell and repaint when it
+shows.</p>
 <h2 id="the-workspace-list">The workspace list<a class="headerlink" href="#the-workspace-list" title="Permanent link">&para;</a></h2>
-<p><img alt="The workspaces list: three rows, the action buttons at each row's end, the connection picker at the status row's right" src="../screens/gui-list.png" /></p>
+<p><img alt="The workspaces list: three rows, the action buttons at each row's end, the connection picker at the bottom bar's right end" src="../screens/gui-list.png" /></p>
 <p>The <strong>Workspaces</strong> tab opens on the list: one row per workspace,
 newest first, in five columns. NAME, STATUS, ID, IMAGE, and
-CREATED. A start/stop toggle and a shell button close each row.</p>
+CREATED. A start/stop toggle and a shell button close each row.
+The list sits under a <strong>Workspaces</strong> heading, the shape the Images
+and Secrets pages use, so the first table of every tab starts at
+the same height.</p>
 <p>The list re-reads the daemon when the daemon publishes a websocket
 event: a workspace changed from another surface (the CLI, another
 operator) appears without a click, and a daemon at rest receives
@@ -1410,14 +1421,15 @@ opens the workspace's page with a shell in it. A right-click
 opens the row's menu: Edit, Start or Stop, Open a shell, Clone,
 and Delete. Clone asks for the new workspace's name. Delete asks
 for confirmation, and the workspace's data goes with it.</p>
-<p>The page's bottom row carries <strong>Add</strong>, <strong>Edit</strong>, <strong>Clone</strong>, and
-<strong>Remove</strong>. Add opens the create dialog. Edit, Clone, and Remove
+<p>The page's bottom bar carries <strong>Add</strong>, <strong>Edit</strong>, <strong>Clone</strong>, and
+<strong>Remove</strong>, then the status line, then the connection picker at the
+right end. Add opens the create dialog. Edit, Clone, and Remove
 act on the selected row. Clone asks for the new workspace's name
 there too, and the clone takes the same route the <code>msks clone</code>
 command takes: both disks copy under the source's egress mode.
 A stopped workspace clones; a running one answers a refusal that
 flashes on the status line.</p>
-<p>A failed refresh flashes the status line at the top of the page.
+<p>A failed refresh flashes the status line in the bottom bar.
 A refusal clears itself after four seconds. A daemon outage
 stands on the line until an answer resolves it, and the rows
 already on screen stand the whole time. While the daemon is
