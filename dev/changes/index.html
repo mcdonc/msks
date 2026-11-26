@@ -486,6 +486,32 @@
   
   
     <li class="md-nav__item">
+      <a href="../screenshot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The Screenshot Pipe
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../egress-consent/" class="md-nav__link">
         
   
@@ -2461,6 +2487,19 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>The screenshot pipe (#1194).</strong> A skill running inside a
+  workspace guest can capture one of the client's screens through a
+  loopback port in the guest (default <code>127.0.0.1:8662</code>) that reaches,
+  through the bridge holder's ssh reverse forward, the capture command
+  the client runs. The new <code>screenshot_command</code> client setting enables
+  the pipe by its presence and carries that command; <code>screenshot_port</code>
+  overrides the port, and <code>msks screenshot hold</code> holds the pipe on
+  demand. The client runs at most four captures at once (a fifth request
+  answers <code>503</code>), and one JSONL line per capture under the client state
+  root is the audit trail. See
+  <a href="../screenshot/">docs/screenshot.md</a>.</p>
+</li>
 <li>
 <p><strong>Command keys in the GUI terminal on macOS (#1184).</strong> On
   macOS, <code>Cmd+C</code> copies the selection, <code>Cmd+V</code> pastes, <code>Cmd+F</code>
