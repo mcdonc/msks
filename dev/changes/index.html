@@ -2609,6 +2609,15 @@ tagged <code>vX.Y.Z</code>.</p>
   <code>No workspaces — c creates one.</code> while the listing was empty or
   still loading. It now appears when the first row has focus.</p>
 </li>
+<li>
+<p><strong>The TUI listing's power keys read the daemon's answer
+  (#1187).</strong> <code>s</code> on a stopped workspace flashes <code>alpha running</code>.
+  <code>S</code> pressed before the listing re-read landed answered
+  <code>Stop skipped: workspace is stopped</code> and sent nothing to the
+  daemon. The row now takes the reply's status before the re-read
+  flies, and the next power key reaches the daemon. The same
+  holds for <code>s</code> after <code>S</code>.</p>
+</li>
 </ul>
 <h2 id="v0102-2026-11-25">[v0.10.2] - 2026-11-25<a class="headerlink" href="#v0102-2026-11-25" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
