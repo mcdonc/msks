@@ -78,7 +78,7 @@ tagged `vX.Y.Z`.
   signal mask before it execs virtiofsd (#1176).** The helper
   ends a share's virtiofsd when the daemon dies, and that signal
   is `SIGTERM`. An ignored disposition and a blocked mask both
-  survive an exec, so a daemon that ignored or blocked `SIGTERM`
+  survive an exec. A daemon that ignored or blocked `SIGTERM`
   in the thread that spawned the share would have left every
   such share running after a daemon restart. The share now dies
   with the daemon whatever the daemon's signal state.
