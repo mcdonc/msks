@@ -400,6 +400,9 @@ let
           'PasswordAuthentication no' \
           'KbdInteractiveAuthentication no' \
           'PermitRootLogin prohibit-password' \
+          '# #1194: the screenshot pipe asks sshd to bind a loopback' \
+          '# listener; the default says yes, this pins the contract.' \
+          'AllowTcpForwarding yes' \
           > $out/etc/ssh/sshd_config.d/00-msks.conf
 
         # The admin group's sudo (#169, #248): passwordless root for

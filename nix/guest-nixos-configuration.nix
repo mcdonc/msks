@@ -407,6 +407,9 @@ in
         PasswordAuthentication = false;
         KbdInteractiveAuthentication = false;
         PermitRootLogin = "prohibit-password";
+        # #1194: the screenshot pipe asks sshd to bind a loopback
+        # listener; the default says yes, this pins the contract.
+        AllowTcpForwarding = true;
       };
     };
 

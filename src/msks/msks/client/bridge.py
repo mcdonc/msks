@@ -28,6 +28,7 @@ surfaces share.
 import asyncio
 import contextlib
 import json
+import signal
 import sys
 import time
 from urllib.parse import quote
@@ -42,6 +43,7 @@ from .forwarding import config_quote
 from .hold import holder_due, spawn_holder  # noqa: F401  (spawn re-export)
 from .identity import cache_key, known_hosts_path
 from .rest import fetch_ssh_key
+from .screenshot import pipe_from_env
 from .ssh import proxy_command, session_identity, workspace_user
 from .wsdial import ws_url
 
@@ -311,11 +313,19 @@ async def hold(
         # and seed epochs rotate the directory the guest's fresh
         # host keys re-pin under (#1158).
         cache_ref, instance = cache_key(key, workspace_id)
-        server = Holder(
-            socket,
+        user = workspace_user(key)
+        hosts = known_hosts_path(cache_ref, instance=instance)
+        server = Holder(socket, workspace_id, user, hosts)
+        # The pipe rides the holder (#1194): the same identity and
+        # the same known_hosts its channels pin under, serving the
+        # guest's capture listener while this websocket lives.
+        pipe = pipe_from_env(
             workspace_id,
-            workspace_user(key),
-            known_hosts_path(cache_ref, instance=instance),
+            holder.server_address,
+            holder.identity_path,
+            user,
+            hosts,
+            key.get("name"),
         )
         try:
             await serve(
@@ -327,12 +337,19 @@ async def hold(
                 raise SystemExit(message) from None
         finally:
             await server.sweep()
+            if pipe is not None:
+                pipe.stop()
 
 
 def run_hold(workspace_id: str, transport=None) -> int:
     """Hold the workspace's bridge from this client: resolve the
     identity exactly as a session would, serve the rows'
-    connections until the websocket ends."""
+    connections until the websocket ends. A stop signal — SIGTERM,
+    or the terminal a manual holder runs in closing — answers
+    through the loop's own teardown: the cancellation runs
+    hold()'s finally blocks, the bridge sweeps its channels, and
+    the screenshot pipe stops with its forward child (#1194),
+    instead of orphaning them on a killed holder."""
     token = env_token()
     url = env_url()
     ssl_ctx = None if is_unix(url) else ssl_context()
@@ -340,8 +357,34 @@ def run_hold(workspace_id: str, transport=None) -> int:
         fetch_ssh_key(url, token, workspace_id, transport=transport)
     )
     with session_identity(key, workspace_id) as resolved:
-        asyncio.run(hold(workspace_id, url, token, ssl_ctx, key, resolved))
+        with holder_sigterm():
+            asyncio.run(hold(workspace_id, url, token, ssl_ctx, key, resolved))
     return 0
+
+
+def terminating_exit(signum, frame) -> None:
+    """The SIGTERM answer inside a holder: SystemExit, so the event
+    loop's teardown unwinds the session instead of killing the
+    process where it stands."""
+    raise SystemExit(128 + signum)
+
+
+@contextlib.contextmanager
+def holder_sigterm():
+    """One holder's stop signals, restored when the session leaves:
+    SIGTERM (a kill, a shell's job control) and SIGHUP (the
+    terminal a manual holder runs in closing) both answer through
+    the loop's teardown, and the shell's own settings are not the
+    holder's to keep."""
+    previous = {
+        signum: signal.signal(signum, terminating_exit)
+        for signum in (signal.SIGTERM, signal.SIGHUP)
+    }
+    try:
+        yield
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
 
 
 #: The stable opening of the cause a failed forward row carries

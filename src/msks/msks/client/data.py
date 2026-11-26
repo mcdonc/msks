@@ -19,7 +19,7 @@ import sys
 from .bridge import ReHolder
 from .create import create_workspace_core, invoking_user
 from .env import env_token, env_url, shared_ssl
-from .hold import holder_due, spawn_holder
+from .hold import holder_due, pipe_due, spawn_holder
 from .jsonio import ApiExit
 from .rest import api_call, fetch_health
 
@@ -221,7 +221,7 @@ class RestData:
             rows = await self.rest(
                 "GET", f"/api/v1/workspaces/{workspace_id}/proxies"
             )
-            if holder_due(rows):
+            if holder_due(rows) or pipe_due():
                 spawn_holder(workspace_id)
                 # The spawn this start leaves opens the outcome
                 # window too (#1127): a failure under it defers,

@@ -103,6 +103,30 @@ def render_template() -> str:
 #   - -A
 #   - -o
 #   - ServerAliveInterval=30
+# screenshot_command: import -window root -crop 3840x2160+0+0
+#                                # the capture command a workspace's
+#                                # screenshot pipe runs on THIS client's
+#                                # desktop (#1194); the command's argv
+#                                # comes from this value alone, its
+#                                # stdout is the image the guest
+#                                # receives, and its presence alone
+#                                # enables the pipe — unset, no pipe.
+#                                # The requested monitor arrives as the
+#                                # MSKS_SCREENSHOT_MONITOR variable, a
+#                                # whole number 0 or greater; never in
+#                                # the argv. String form shown; a list
+#                                # form (tokens stay whole) works too.
+#                                # MSKSC_SCREENSHOT_COMMAND is the
+#                                # one-shell form. Global-only: a
+#                                # per-alias screenshot_command is
+#                                # refused — the screen the pipe
+#                                # captures is this desktop's, not a
+#                                # daemon connection's
+# screenshot_port: 8662         # the loopback port the guest's sshd
+#                                # binds for the pipe; 8662 is the
+#                                # default. MSKSC_SCREENSHOT_PORT is the
+#                                # one-shell form. Global-only, like
+#                                # screenshot_command
 #
 # --- Named daemon aliases ---
 # One entry per daemon you talk to; exactly one of url and socket

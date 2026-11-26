@@ -91,18 +91,19 @@ def validated_pair(key: str, spelling: str, value: object, path: str) -> dict:
 
 
 def sectioned_pair(key: str, value: object, path: str) -> dict | None:
-    """The structural and list-valued keys' checked pairs — None
+    """The structural and typed-value keys' checked pairs — None
     when the key is none of them, handing the scalar globals and
-    the refusal back to :func:`validated_pair`."""
+    the refusal back to :func:`validated_pair`. The typed-value
+    keys dispatch through :data:`SECTIONED_VALUE_KEYS`, one reader
+    per key."""
     if key == "daemons":
         return {key: daemons_section(value, path)}
     if key == "active_daemon":
         return {key: active_value(value, path)}
-    if key == "terminal_open_cmd":
-        return optional_pair(key, terminal_value(value, path))
-    if key == "ssh_options":
-        return optional_pair(key, ssh_options_value(value, path))
-    return None
+    reader = SECTIONED_VALUE_KEYS.get(key)
+    if reader is None:
+        return None
+    return optional_pair(key, reader(value, path))
 
 
 def optional_pair(key: str, value) -> dict:
@@ -335,3 +336,83 @@ def split_words(value: str, key: str, path: str) -> list[str]:
         return shlex.split(value)
     except ValueError as exc:
         raise ValueError(f"{path}: config key {key!r}: {exc}") from None
+
+
+def screenshot_command_value(value: object, path: str) -> list[str] | None:
+    """``screenshot_command`` (#1194): the capture command the
+    client holder runs per guest request, string or list form —
+    the command's own argv exactly as the operator writes it.
+
+    The string form is shell-split (the operator writes it the
+    way the shell would take it); the list form is taken
+    verbatim. The empty form is the unset one: the pipe stays
+    down. A ``--`` token is legitimate command argv (an
+    end-of-options marker the command itself reads), so unlike
+    ``ssh_options`` it is not refused.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return screenshot_command_string(value, path)
+    if isinstance(value, list):
+        return nonempty_words(value, "screenshot_command", path) or None
+    kind = type(value).__name__
+    raise ValueError(
+        f"{path}: screenshot_command must be a string or a list of "
+        f"strings, got {kind}"
+    )
+
+
+def screenshot_command_string(value: str, path: str) -> list[str] | None:
+    """The string form: shell-split, blank meaning unset."""
+    if not value.strip():
+        return None
+    return split_words(value, "screenshot_command", path)
+
+
+def screenshot_port_value(value: object, path: str) -> int | None:
+    """``screenshot_port`` (#1194): the loopback TCP port the
+    guest's sshd binds for the pipe, 1-65535 — a whole number
+    in YAML's native int or digit-string form. The unset form is
+    the built-in default.
+    """
+    if value is None or value == "":
+        return None
+    if not port_value_shape(value):
+        kind = type(value).__name__
+        raise ValueError(
+            f"{path}: screenshot_port must be a port number, got {kind}"
+        )
+    return port_in_range(int(value), path)
+
+
+def port_value_shape(value: object) -> bool:
+    """Whether the value spells a whole port number: YAML's native
+    int or a digit string. A boolean is not one — it spells an
+    integer but answers a different question."""
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, int) or (
+        isinstance(value, str) and value.strip().isdigit()
+    )
+
+
+def port_in_range(port: int, path: str) -> int:
+    """The 1-65535 check, naming the key on the refusal."""
+    if 1 <= port <= 65535:
+        return port
+    raise ValueError(
+        f"{path}: screenshot_port {port} is out of range (1-65535)"
+    )
+
+
+#: The typed-value keys' readers (#314's shapes beside #1194's): a
+#: command prefix, ssh option tokens, a capture command, and a port.
+#: Defined after its readers (each is a plain function above) —
+#: :func:`sectioned_pair` reads it at call time.
+SECTIONED_VALUE_KEYS = {
+    "terminal_open_cmd": terminal_value,
+    "ssh_options": ssh_options_value,
+    "screenshot_command": screenshot_command_value,
+    "screenshot_port": screenshot_port_value,
+}

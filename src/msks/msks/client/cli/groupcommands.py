@@ -20,7 +20,10 @@ from ...conformance_args import (
     CHECK_UPLINK_HELP,
     CheckOptions,
 )
+from .. import bridge as bridge_flow
+from ..config_keys import SCREENSHOT_COMMAND_ENV
 from ..create import read_pubkey  # noqa: F401 — the tests' seam
+from ..hold import pipe_due
 from ..images import (  # noqa: F401
     cmd_image_check,
     cmd_image_default,
@@ -108,9 +111,34 @@ from .cliapp import (
     home_app,
     image_app,
     one_line_interrupts,
+    screenshot_app,
     secret_app,
     set_json_mode,
 )
+
+
+@screenshot_app.command("hold")
+def cmd_screenshot_hold(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(
+        ..., help="the workspace whose screenshot pipe is held (name or id)"
+    ),
+) -> int:
+    """Hold the workspace's screenshot pipe: serve its guest-side
+    capture listener from this client until the workspace stops.
+
+    Runs the same holder the start path leaves — the bridge and
+    the pipe serve together, through one ssh session held by this
+    client — and refuses first when this client carries no
+    screenshot command configured.
+    """
+    if not pipe_due():
+        raise SystemExit(
+            "msks: no screenshot command is configured on this client; "
+            "set screenshot_command in the client config, or export "
+            f"{SCREENSHOT_COMMAND_ENV} for one shell"
+        )
+    return bridge_flow.run_hold(workspace_id, ctx.obj)
 
 
 @egress_app.command("rules")
