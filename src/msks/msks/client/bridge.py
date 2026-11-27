@@ -454,6 +454,23 @@ def became_running(frame: dict) -> str | None:
     return frame_id(data)
 
 
+def boot_announced(frame: dict) -> str | None:
+    """The workspace one events frame names as booting
+    (#1198): the watcher's ``workspace.status`` frame reading
+    ``starting`` — the daemon's first word on a start, published
+    before the launch — or ``running``, its last. Either opens
+    the watch's window for that workspace (:meth:`ReHolder.note_boot`),
+    and the second one extends it past the boot. Every other
+    transition (a stop, a pause) and every other frame decides
+    nothing."""
+    if frame.get("event") != "workspace.status":
+        return None
+    data = frame.get("data") or {}
+    if data.get("status") == "starting":
+        return frame_id(data)
+    return became_running(frame)
+
+
 def bridge_serving(frame: dict) -> str | None:
     """The workspace one events frame names as bridge-served
     (#1127): a ``proxy.listening`` transition — the hub's own
@@ -479,12 +496,14 @@ class ReHolder:
     command by hand.
 
     One instance per client session; the shared data seam
-    (:class:`~msks.client.data.RestData`) owns it, and the start
-    path marks it (:meth:`note_start`). The surfaces feed it the
-    frames their subscriptions land and the rows their reads
-    serve, and poll :meth:`take_due` on their own cadence; it
-    owns the rest — when to retry, how often, and when to give
-    the workspace up to the row's own cause for the session.
+    (:class:`~msks.client.data.RestData`) owns it, the start
+    path marks it (:meth:`note_start`), and a boot another
+    client makes opens the same window (:meth:`note_boot`). The
+    surfaces feed it the frames their subscriptions land and the
+    rows their reads serve, and poll :meth:`take_due` on their
+    own cadence; it owns the rest — when to retry, how often,
+    and when to give the workspace up to the row's own cause for
+    the session.
     The spawn is the same detached child ``msks start`` leaves
     (:func:`spawn_holder`); no key material moves anywhere
     new.
@@ -548,6 +567,21 @@ class ReHolder:
         listener that follows is that spawn's, and a failure
         under it defers exactly as the watch's own would."""
         self.awaited[workspace_id] = self.clock()
+
+    def note_boot(self, workspace_id: str) -> None:
+        """A boot this client did not make (#1198): the daemon's
+        own ``starting`` or ``running`` transition opens the
+        backoff window, the one :meth:`note_start` opens before
+        its POST flies. The booting client's start path — a
+        session child's ``hold_if_due``, the CLI start's hook —
+        spawns its holder after the ``running`` frame, and the
+        holder registers inside the window. The signals the boot
+        publishes defer, and :meth:`take_due` reads the rows at
+        the close, when a listening row owes nothing; a watch
+        that read them at once stacked a standby beside the
+        holder on its way. A start that left no holder (a raw
+        API call) is re-held one window late."""
+        self.open_window(workspace_id)
 
     def open_window(self, workspace_id: str) -> None:
         """Start the backoff window now."""

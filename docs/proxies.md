@@ -96,7 +96,12 @@ An open TUI or GUI re-holds by itself (#1127). When a holder dies while
 the workspace keeps running, or a start leaves none behind, the client
 spawns a fresh holder: the same detached one a start leaves. One line on
 the screen it is showing says the bridge came back. It tries three times
-per workspace per session, waiting 30 seconds between tries. A client
+per workspace per session, waiting 30 seconds between tries. A start
+that another client makes (a shell the GUI opens, `msks ssh` in a
+terminal) gets the same 30 seconds before the client reads the rows
+(#1198). The client that made the start leaves the holder, and the
+holder needs that time to connect. A read that finds the rows
+`listening` spawns nothing. A client
 that cannot resolve the workspace identity stops there and leaves the
 row's cause visible. The CLI never does this: a one-shot command is not
 a session, and `msks proxy hold <workspace>` remains the by-hand path.

@@ -129,6 +129,17 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **The TUI and the GUI stack no second bridge holder on a start
+  another client makes (#1198).** The open client read the rows the
+  moment the daemon announced `running` and spawned its own holder
+  beside the one the starting client leaves. The second holder's
+  screenshot pipe could not bind the guest port and retried every 30
+  seconds, and each retry showed in the events tab as a
+  `forward.opened` and `forward.closed` pair on port 22. The watch now
+  waits 30 seconds after the announcement before it reads the rows, and
+  rows that read `listening` spawn nothing. See
+  [docs/proxies.md](proxies.md#the-bridge).
+
 - **The GUI terminal's copy drops the selection (#1182).**
   Ctrl+Shift+C and the right-click menu's Copy action now clear
   the selection after the copy. The highlight used to stay

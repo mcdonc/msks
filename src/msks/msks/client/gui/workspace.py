@@ -24,7 +24,13 @@ its guards (#927), the reachability the gate counts.
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from ..bridge import GAVE_UP, became_running, bridge_serving, holder_lost
+from ..bridge import (
+    GAVE_UP,
+    became_running,
+    boot_announced,
+    bridge_serving,
+    holder_lost,
+)
 from ..data import RestFailure
 from ..frames import listing_frame, row_frame
 from .arrival import stagger_on_change
@@ -807,11 +813,18 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         holder died, or a running start left none) goes to the
         policy for its ruling: a weigh is one rows read over the
         bridge, and the give-up line names the remedy the row's
-        cause already carries."""
+        cause already carries. A boot another client makes opens
+        the policy's window first (#1198): the running frame is a
+        signal like any other, and the window holds it until the
+        holder the booting client's start path leaves has had
+        its time to connect."""
         serving = bridge_serving(frame)
         if serving is not None:
             self.note_reheld(serving)
             return
+        booting = boot_announced(frame)
+        if booting is not None:
+            self.bridge.reholder.note_boot(booting)
         lost = holder_lost(frame) or became_running(frame)
         if lost is not None:
             self.weigh_bridge_signal(lost)

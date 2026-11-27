@@ -518,6 +518,25 @@ def failed_rows(reason: str | None = bridge.NO_HOLDER_CAUSE) -> list[dict]:
     ]
 
 
+def held_rows() -> list[dict]:
+    """The same rows as a read serves them once a holder stands
+    (#1198): listening, no cause."""
+    return [
+        {
+            "id": 7,
+            "direction": "forward",
+            "status": "listening",
+            "reason": None,
+        }
+    ]
+
+
+def status_frame(status: str, ws: str = "ws-a") -> dict:
+    """The watcher's status transition, the shape the daemon
+    publishes (#1198)."""
+    return {"event": "workspace.status", "data": {"id": ws, "status": status}}
+
+
 class FakeClock:
     """The monotonic stand-in: the tests advance it by hand."""
 
@@ -816,6 +835,89 @@ def test_reholder_takes_the_starts_window() -> None:
     assert holder.signal("ws-a") is None
     clock.now += bridge.ReHolder.RETRY_AFTER_S
     assert holder.signal("ws-a") == bridge.WEIGH
+
+
+def test_boot_announced_names_the_booting_workspace() -> None:
+    """#1198: the daemon's two words on a start — ``starting``
+    before the launch, ``running`` at its end — name the
+    workspace booting; a stop, a pause, a frame without the
+    word, and every other event decide nothing."""
+    assert bridge.boot_announced(status_frame("starting")) == "ws-a"
+    assert bridge.boot_announced(status_frame("running")) == "ws-a"
+    assert bridge.boot_announced(status_frame("stopped")) is None
+    assert bridge.boot_announced(status_frame("paused")) is None
+    assert (
+        bridge.boot_announced(
+            {"event": "workspace.status", "data": {"id": "ws-a"}}
+        )
+        is None
+    )
+    assert (
+        bridge.boot_announced(
+            {"event": "proxy.listening", "data": {"id": "ws-a"}}
+        )
+        is None
+    )
+
+
+def test_a_foreign_boots_running_frame_waits_for_its_holder() -> None:
+    """#1198: a boot another client makes announces itself, and
+    the watch holds the boot's signals until the window closes —
+    the booting client's start path spawns its holder after the
+    running frame, and a read at once found the rows still
+    failed and stacked a standby. At the close the rows read
+    listening, owe nothing, and spend nothing."""
+    holder, clock = make_reholder()
+    holder.note_boot("ws-a")  # the starting frame
+    assert holder.signal("ws-a") is None  # the running frame
+    assert holder.take_due() == []
+    clock.now += bridge.ReHolder.RETRY_AFTER_S - 1
+    assert holder.take_due() == []
+    clock.now += 1
+    assert holder.take_due() == [("ws-a", bridge.WEIGH)]
+    assert holder.rehold("ws-a", held_rows()) is False
+    assert holder.spent == {}
+    assert holder.awaited == {}
+
+
+def test_the_boots_last_word_extends_the_window_past_the_boot() -> None:
+    """#1198: ``running`` re-opens the window ``starting`` opened,
+    so the holder's time counts from the boot's end, not its
+    start — a boot longer than the window still gives its
+    holder the whole window to connect."""
+    holder, clock = make_reholder()
+    holder.note_boot("ws-a")
+    clock.now += bridge.ReHolder.RETRY_AFTER_S - 5
+    holder.note_boot("ws-a")
+    assert holder.signal("ws-a") is None
+    clock.now += bridge.ReHolder.RETRY_AFTER_S - 1
+    assert holder.take_due() == []
+    clock.now += 1
+    assert holder.take_due() == [("ws-a", bridge.WEIGH)]
+
+
+def test_a_foreign_start_that_left_no_holder_is_reheld_a_window_late() -> None:
+    """#1198: the raw-API start keeps its re-hold — one window
+    after the running frame, the read finds the rows failed
+    with the missing-holder cause and takes the spawn the
+    start itself would have left."""
+    holder, clock = make_reholder()
+    holder.note_boot("ws-a")
+    assert holder.signal("ws-a") is None
+    clock.now += bridge.ReHolder.RETRY_AFTER_S
+    assert holder.take_due() == [("ws-a", bridge.WEIGH)]
+    assert holder.rehold("ws-a", failed_rows()) is True
+    assert holder.spent == {"ws-a": 1}
+
+
+def test_a_holder_lost_without_a_boot_is_weighed_at_once() -> None:
+    """#1198: only a boot opens the window — a holder that dies
+    under a running workspace publishes its failure with no
+    transition before it, and the watch reads the rows at once,
+    the pace #1127 gave it."""
+    holder, _clock = make_reholder()
+    assert holder.signal("ws-a") == bridge.WEIGH
+    assert holder.rehold("ws-a", failed_rows()) is True
 
 
 def test_reholder_names_a_failed_spawn() -> None:
