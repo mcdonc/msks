@@ -6,6 +6,8 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.11.1] - 2026-11-27
+
 ### Added
 
 - **Tearing shell tabs off into windows in the GUI (#1203).** A
