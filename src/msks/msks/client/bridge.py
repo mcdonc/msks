@@ -458,7 +458,11 @@ def bridge_serving(frame: dict) -> str | None:
     """The workspace one events frame names as bridge-served
     (#1127): a ``proxy.listening`` transition — the hub's own
     up-publish among the binds' own. The watch reads it as its
-    spawn's outcome alone (:meth:`ReHolder.serving`)."""
+    spawn's outcome alone (:meth:`ReHolder.serving`). The binds'
+    own frames are safe only because the attach publishes them
+    before the ``running`` word: a bind landing after it would
+    resolve a boot's deferred signal (:meth:`ReHolder.note_boot`)
+    the way a holder would."""
     if frame.get("event") != "proxy.listening":
         return None
     return frame_id(frame.get("data") or {})
@@ -479,12 +483,14 @@ class ReHolder:
     command by hand.
 
     One instance per client session; the shared data seam
-    (:class:`~msks.client.data.RestData`) owns it, and the start
-    path marks it (:meth:`note_start`). The surfaces feed it the
-    frames their subscriptions land and the rows their reads
-    serve, and poll :meth:`take_due` on their own cadence; it
-    owns the rest — when to retry, how often, and when to give
-    the workspace up to the row's own cause for the session.
+    (:class:`~msks.client.data.RestData`) owns it, the start
+    path marks it (:meth:`note_start`), and a boot another
+    client makes opens the same window (:meth:`note_boot`). The
+    surfaces feed it the frames their subscriptions land and the
+    rows their reads serve, and poll :meth:`take_due` on their
+    own cadence; it owns the rest — when to retry, how often,
+    and when to give the workspace up to the row's own cause for
+    the session.
     The spawn is the same detached child ``msks start`` leaves
     (:func:`spawn_holder`); no key material moves anywhere
     new.
@@ -548,6 +554,21 @@ class ReHolder:
         listener that follows is that spawn's, and a failure
         under it defers exactly as the watch's own would."""
         self.awaited[workspace_id] = self.clock()
+
+    def note_boot(self, workspace_id: str) -> None:
+        """A boot this client did not make (#1198): the daemon's
+        ``running`` transition opens the backoff window, the one
+        :meth:`note_start` opens before its POST flies. The booting
+        client's start path — a session child's ``hold_if_due``,
+        the CLI start's hook — spawns its holder after that frame,
+        and the holder registers inside the window: its listener
+        resolves the deferred signal (:meth:`serving`), and a
+        signal the window outlives is read at the close
+        (:meth:`take_due`), when a listening row owes nothing. A
+        watch that read the rows at the frame stacked a standby
+        beside the holder on its way. A start that left no holder
+        (a raw API call) is re-held one window late."""
+        self.open_window(workspace_id)
 
     def open_window(self, workspace_id: str) -> None:
         """Start the backoff window now."""

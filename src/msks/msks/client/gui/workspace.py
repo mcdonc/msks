@@ -807,12 +807,19 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         holder died, or a running start left none) goes to the
         policy for its ruling: a weigh is one rows read over the
         bridge, and the give-up line names the remedy the row's
-        cause already carries."""
+        cause already carries. A boot another client makes opens
+        the policy's window first (#1198): the running frame is a
+        signal like any other, and the window holds it until the
+        holder the booting client's start path leaves has had
+        its time to connect."""
         serving = bridge_serving(frame)
         if serving is not None:
             self.note_reheld(serving)
             return
-        lost = holder_lost(frame) or became_running(frame)
+        running = became_running(frame)
+        if running is not None:
+            self.bridge.reholder.note_boot(running)
+        lost = holder_lost(frame) or running
         if lost is not None:
             self.weigh_bridge_signal(lost)
 

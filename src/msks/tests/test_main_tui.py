@@ -10456,6 +10456,14 @@ def lost_frame(ws: str = WS) -> dict:
     }
 
 
+def running_frame() -> dict:
+    """The watcher's running transition (#1127, #1198)."""
+    return {
+        "event": "workspace.status",
+        "data": {"id": WS, "status": "running"},
+    }
+
+
 async def test_the_listing_reholds_a_lost_bridge(monkeypatch) -> None:
     """#1127: a holder's death publishes its rows' failure; the
     listing's watch reads the rows, spawns the detached holder,
@@ -10484,23 +10492,95 @@ async def test_the_listing_reholds_a_lost_bridge(monkeypatch) -> None:
 async def test_the_listing_reholds_a_start_that_left_no_holder(
     monkeypatch,
 ) -> None:
-    """#1127: a start over the raw API leaves no holder; the
-    running transition it publishes weighs the rows and takes the
-    holder the start itself would have left."""
+    """#1127, #1198: a start over the raw API leaves no holder;
+    the running transition it publishes opens the watch's
+    window, the tick's drain weighs the rows once it closes, and
+    the read takes the holder the start itself would have left."""
     data = FakeData([row(status="stopped")])
     data.proxy_rows = bridge_cause_rows()
     factory = scripted_listing(monkeypatch, [])
     app, _ = make_app(data)
     async with app.run_test():
         await wait_for(lambda: "1 workspace" in status_text(app))
+        pushed(factory, running_frame())
+        # The boot's window stands (#1198): no read, no spawn.
+        await asyncio.sleep(0.3)
+        assert data.proxies_fetches == 0
+        assert data.holder_spawns == []
+        data.holder_clock.past_windows()
+        await wait_for(lambda: data.holder_spawns == [WS])
+        assert "bridge" not in status_text(app)
+
+
+async def test_the_listing_stacks_no_holder_on_a_boot_another_client_makes(
+    monkeypatch,
+) -> None:
+    """#1198: a boot another client makes — `msks ssh` in a
+    terminal, a start from the CLI — announces itself with its
+    binds and the running word, and the booting client's start
+    path leaves the holder. The running word opens the watch's
+    window and reads nothing on its own; the holder's own
+    listener ends the wait, so the watch reads no rows, spawns
+    nothing, and spends nothing."""
+    data = FakeData([row(status="stopped")])
+    data.proxy_rows = bridge_cause_rows()
+    factory = scripted_listing(monkeypatch, [])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "1 workspace" in status_text(app))
+        # The boot's binds publish their listeners before the
+        # running word: they answer no spawn of this session.
         pushed(
             factory,
-            {
-                "event": "workspace.status",
-                "data": {"id": WS, "status": "running"},
-            },
+            {"event": "proxy.listening", "data": {"id": WS, "proxy": 7}},
         )
-        await wait_for(lambda: data.holder_spawns == [WS])
+        pushed(factory, running_frame())
+        await wait_for(lambda: data.reholder.pending == {WS})
+        assert data.proxies_fetches == 0
+        # The booting client's holder registers: the hub's
+        # listener resolves the deferred running signal.
+        pushed(
+            factory,
+            {"event": "proxy.listening", "data": {"id": WS, "proxy": 7}},
+        )
+        await wait_for(lambda: data.reholder.pending == set())
+        # The window closes with nothing pending: a forced drain
+        # reads nothing.
+        data.holder_clock.past_windows()
+        app.screen.watch_rehold()
+        await asyncio.sleep(0.3)
+        assert data.proxies_fetches == 0
+        assert data.holder_spawns == []
+        assert data.reholder.spent == {}
+        assert "bridge" not in status_text(app)
+
+
+async def test_the_listing_reads_once_when_the_boots_listener_is_missed(
+    monkeypatch,
+) -> None:
+    """#1198: a running word whose holder's listener never
+    reached this client is read when the window closes, and rows
+    that then read listening spawn nothing and spend nothing."""
+    data = FakeData([row(status="stopped")])
+    data.proxy_rows = bridge_cause_rows()
+    factory = scripted_listing(monkeypatch, [])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "1 workspace" in status_text(app))
+        pushed(factory, running_frame())
+        await asyncio.sleep(0.3)
+        assert data.proxies_fetches == 0
+        assert data.holder_spawns == []
+        # The window closes with the booting client's holder
+        # standing: the read finds the rows listening.
+        data.proxy_rows = [
+            {**bridge_cause_rows()[0], "status": "listening", "reason": None}
+        ]
+        data.holder_clock.past_windows()
+        await wait_for(lambda: data.proxies_fetches == 1)
+        await asyncio.sleep(0.3)
+        assert data.holder_spawns == []
+        assert data.reholder.spent == {}
         assert "bridge" not in status_text(app)
 
 

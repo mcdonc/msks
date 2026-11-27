@@ -8,9 +8,11 @@ own rows read (:meth:`weigh_rehold`, the daemon call the screen
 keeps beside its other reads) that gates the spawn, and the
 give-up line names the remedy the row's cause already carries.
 The deferrals the policy's windows swallow drain on the host's
-tick. The mixin reads its host the way ``HelpKeys`` does — the
-app, the standing rows, the connection — and owns no state of
-its own.
+tick. A boot another client makes opens the policy's window
+first (#1198), so the running frame waits for the holder the
+booting client's start path leaves. The mixin reads its host the
+way ``HelpKeys`` does — the app, the standing rows, the
+connection — and owns no state of its own.
 """
 
 from ..bridge import GAVE_UP, became_running, bridge_serving, holder_lost
@@ -33,12 +35,19 @@ class ReholdWatch:
         holder died, or a running start left none) goes to the
         policy for its ruling — a weigh runs the rows read, and
         the give-up line names the remedy the row's cause
-        already carries."""
+        already carries. A boot another client makes opens the
+        window first (#1198): its running frame is a signal like
+        any other, and the window holds it until the holder the
+        booting client's start path leaves has had its time to
+        connect."""
         serving = bridge_serving(msg)
         if serving is not None:
             self.note_reheld(serving)
             return
-        lost = holder_lost(msg) or became_running(msg)
+        running = became_running(msg)
+        if running is not None:
+            self.app.data.reholder.note_boot(running)
+        lost = holder_lost(msg) or running
         if lost is not None:
             self.weigh_bridge_signal(lost)
 

@@ -518,6 +518,19 @@ def failed_rows(reason: str | None = bridge.NO_HOLDER_CAUSE) -> list[dict]:
     ]
 
 
+def held_rows() -> list[dict]:
+    """The same rows as a read serves them once a holder stands
+    (#1198): listening, no cause."""
+    return [
+        {
+            "id": 7,
+            "direction": "forward",
+            "status": "listening",
+            "reason": None,
+        }
+    ]
+
+
 class FakeClock:
     """The monotonic stand-in: the tests advance it by hand."""
 
@@ -816,6 +829,67 @@ def test_reholder_takes_the_starts_window() -> None:
     assert holder.signal("ws-a") is None
     clock.now += bridge.ReHolder.RETRY_AFTER_S
     assert holder.signal("ws-a") == bridge.WEIGH
+
+
+def test_a_foreign_boots_running_frame_waits_for_its_holder() -> None:
+    """#1198: a boot another client makes announces itself with
+    the running frame, and the watch holds that signal until the
+    window closes — the booting client's start path spawns its
+    holder after the frame, and a read at once found the rows
+    still failed and stacked a standby. At the close the rows read
+    listening, owe nothing, and spend nothing."""
+    holder, clock = make_reholder()
+    holder.note_boot("ws-a")
+    assert holder.signal("ws-a") is None
+    assert holder.take_due() == []
+    clock.now += bridge.ReHolder.RETRY_AFTER_S - 1
+    assert holder.take_due() == []
+    clock.now += 1
+    assert holder.take_due() == [("ws-a", bridge.WEIGH)]
+    assert holder.rehold("ws-a", held_rows()) is False
+    assert holder.spent == {}
+    assert holder.awaited == {}
+
+
+def test_the_boots_own_holder_ends_the_wait_without_a_read() -> None:
+    """#1198: the holder the booting client leaves registers
+    inside the window, and its listener resolves the deferred
+    signal — no spawn of this session is answered, no recovery
+    is said, and the drain finds nothing to read. The common
+    path reads no rows at all."""
+    holder, clock = make_reholder()
+    holder.note_boot("ws-a")
+    assert holder.signal("ws-a") is None
+    assert holder.pending == {"ws-a"}
+    assert holder.serving("ws-a") is False
+    assert holder.pending == set()
+    clock.now += bridge.ReHolder.RETRY_AFTER_S
+    assert holder.take_due() == []
+    assert holder.spent == {}
+
+
+def test_a_foreign_start_that_left_no_holder_is_reheld_a_window_late() -> None:
+    """#1198: the raw-API start keeps its re-hold — one window
+    after the running frame, the read finds the rows failed
+    with the missing-holder cause and takes the spawn the
+    start itself would have left."""
+    holder, clock = make_reholder()
+    holder.note_boot("ws-a")
+    assert holder.signal("ws-a") is None
+    clock.now += bridge.ReHolder.RETRY_AFTER_S
+    assert holder.take_due() == [("ws-a", bridge.WEIGH)]
+    assert holder.rehold("ws-a", failed_rows()) is True
+    assert holder.spent == {"ws-a": 1}
+
+
+def test_a_holder_lost_without_a_boot_is_weighed_at_once() -> None:
+    """#1198: only a boot opens the window — a holder that dies
+    under a running workspace publishes its failure with no
+    transition before it, and the watch reads the rows at once,
+    the pace #1127 gave it."""
+    holder, _clock = make_reholder()
+    assert holder.signal("ws-a") == bridge.WEIGH
+    assert holder.rehold("ws-a", failed_rows()) is True
 
 
 def test_reholder_names_a_failed_spawn() -> None:

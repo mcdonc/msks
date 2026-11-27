@@ -1464,37 +1464,110 @@ def force_rehold_windows(bridge) -> None:
     bridge.reholder.awaited.clear()
 
 
+def running_frame(ws: str = "ws-a") -> dict:
+    """The watcher's running transition (#1127, #1198)."""
+    return {
+        "event": "workspace.status",
+        "data": {"id": ws, "status": "running"},
+    }
+
+
+def rehold_reads(bridge) -> list[tuple]:
+    """The rows reads the re-hold watch asked of the stub
+    bridge, in order."""
+    return [call for call in bridge.calls if call[0].startswith("rehold:")]
+
+
 def test_the_shell_reholds_a_start_that_left_no_holder(qt) -> None:
-    """#1127: a start over the raw API leaves no holder; the
-    running transition it publishes weighs the rows the same
-    way, a failure over the spawn it made defers to the poll's
-    drain, and a standing holder's listening rows spawn
-    nothing."""
+    """#1127, #1198: a start over the raw API leaves no holder;
+    the running transition it publishes opens the watch's
+    window, the poll's drain weighs the rows once it closes, a
+    failure over the spawn it made defers to the drain again,
+    and a standing holder's listening rows spawn nothing."""
     shell, window, bridge = make_shell(qt)
     bridge.calls.clear()
-    shell.frame_landed(
-        {
-            "event": "workspace.status",
-            "data": {"id": "ws-a", "status": "running"},
-        }
-    )
-    assert ("rehold:ws-a", "workspace_proxies", ("ws-a",)) in bridge.calls
+    shell.frame_landed(running_frame())
+    # The boot's window stands (#1198): no read yet, the holder
+    # a booting client's start path leaves gets its time.
+    assert rehold_reads(bridge) == []
+    force_rehold_windows(bridge)
+    shell.drain_rehold()
+    assert rehold_reads(bridge) == [
+        ("rehold:ws-a", "workspace_proxies", ("ws-a",))
+    ]
     bridge.succeeded.emit("rehold:ws-a", gui_failed_rows())
     assert bridge.holder_spawns == ["ws-a"]
     # A failure over the spawn's outcome window defers: no
     # second read until the poll's drain re-rules it.
     shell.frame_landed(gui_lost_frame())
-    reads = [call for call in bridge.calls if call[0].startswith("rehold:")]
-    assert len(reads) == 1
+    assert len(rehold_reads(bridge)) == 1
     force_rehold_windows(bridge)
     shell.drain_rehold()
-    reads = [call for call in bridge.calls if call[0].startswith("rehold:")]
-    assert len(reads) == 2
+    assert len(rehold_reads(bridge)) == 2
     listening = [
         {**gui_failed_rows()[0], "status": "listening", "reason": None}
     ]
     bridge.succeeded.emit("rehold:ws-a", listening)
     assert bridge.holder_spawns == ["ws-a"]
+
+
+def test_the_shell_stacks_no_holder_on_a_boot_another_client_makes(
+    qt,
+) -> None:
+    """#1198: a shell the GUI opens boots a stopped workspace
+    through a session child, whose own start path leaves the
+    holder. The running frame opens the watch's window and reads
+    nothing on its own; the holder's own listener ends the wait,
+    so the watch reads no rows, spawns nothing, and spends
+    nothing."""
+    shell, window, bridge = make_shell(qt)
+    bridge.calls.clear()
+    # The boot's binds publish their listeners before the running
+    # word: they answer no spawn of this session.
+    shell.frame_landed(
+        {"event": "proxy.listening", "data": {"id": "ws-a", "proxy": 7}}
+    )
+    shell.frame_landed(running_frame())
+    assert rehold_reads(bridge) == []
+    assert bridge.reholder.pending == {"ws-a"}
+    # The booting client's holder registers: the hub's listener
+    # resolves the deferred running signal.
+    shell.frame_landed(
+        {"event": "proxy.listening", "data": {"id": "ws-a", "proxy": 7}}
+    )
+    assert bridge.reholder.pending == set()
+    force_rehold_windows(bridge)
+    shell.drain_rehold()
+    assert rehold_reads(bridge) == []
+    assert bridge.holder_spawns == []
+    assert bridge.reholder.spent == {}
+    # No spawn of this session: the listener says no recovery.
+    assert "bridge" not in shell.listing.status.text()
+
+
+def test_the_shell_reads_the_rows_once_when_the_boots_listener_is_missed(
+    qt,
+) -> None:
+    """#1198: a running frame whose holder's listener never
+    reached this client is read when the window closes, and rows
+    that then read listening spawn nothing and spend nothing."""
+    shell, window, bridge = make_shell(qt)
+    bridge.calls.clear()
+    shell.frame_landed(running_frame())
+    assert rehold_reads(bridge) == []
+    assert bridge.holder_spawns == []
+    force_rehold_windows(bridge)
+    shell.drain_rehold()
+    assert rehold_reads(bridge) == [
+        ("rehold:ws-a", "workspace_proxies", ("ws-a",))
+    ]
+    listening = [
+        {**gui_failed_rows()[0], "status": "listening", "reason": None}
+    ]
+    bridge.succeeded.emit("rehold:ws-a", listening)
+    assert bridge.holder_spawns == []
+    assert bridge.reholder.spent == {}
+    assert "bridge" not in shell.listing.status.text()
 
 
 def test_the_shell_names_the_watchs_give_up(qt) -> None:
