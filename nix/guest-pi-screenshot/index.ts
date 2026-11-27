@@ -513,6 +513,15 @@ export default function screenshotExtension(pi: ExtensionAPI): void {
     description:
       "Capture the client's screen: /screenshot [monitor], or /screenshot model to pick the vision model",
     getArgumentCompletions(prefix: string): AutocompleteItem[] | null {
+      // A complete word closes the popup. pi's editor gives Enter to a
+      // visible completion: it applies the item over the prefix and
+      // returns without submitting, and applying `model` over `model`
+      // changes nothing, so a popup still showing `model` swallowed the
+      // Enter that should have run the command (a second Enter ran
+      // it). pi's own /thinking <level> completes the same way.
+      if (prefix === "model") {
+        return null;
+      }
       const items: AutocompleteItem[] =
         prefix === "" || "model".startsWith(prefix)
           ? [
