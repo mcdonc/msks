@@ -457,7 +457,10 @@ class TerminalOnly(QtCore.QObject):
         page.bar.setCurrentIndex(page.stack.indexOf(page.shells_tab))
         for widget in self.row:
             widget.hide()
-        page.footer.hide()
+        # The footer row (#1214) carries the facts and the seated
+        # dictate pill: both go, and the window's floating pill
+        # takes the tab row's corner for the mode.
+        page.footer_row.hide()
         page.escape.setEnabled(False)
         # The status line's seat moves (#1152): the standing
         # text — a flash mid-span, an outage — comes along, and
@@ -591,6 +594,6 @@ class TerminalOnly(QtCore.QObject):
         self.corner_row.setContentsMargins(0, 0, 0, 0)
         for widget in self.row:
             widget.show()
-        page.footer.show()
+        page.footer_row.show()
         page.escape.setEnabled(True)
         self.chrome_hidden.emit(False)

@@ -32,6 +32,7 @@ from .bridge import Bridge
 from .consent import ConsentPresenter
 from .create import CreateDialog
 from .detail import frame_names
+from .dictatepill import seat_pill
 from .egress import EgressTab
 from .events import EventsTab
 from .mounts import MountsTab
@@ -155,10 +156,15 @@ class WorkspaceDetail(StatusFlash, QtWidgets.QWidget):
     #: wires it to the top-level strip's bar.
     chrome_hidden = QtCore.Signal(bool)
 
-    def __init__(self, bridge: Bridge, hub: ShellHub) -> None:
+    def __init__(self, bridge: Bridge, hub: ShellHub, dictation=None) -> None:
         super().__init__()
         self.bridge = bridge
         self.hub = hub
+        #: The dictate controller (#1214): with one, the footer row
+        #: carries the pill at its right end; the terminal-only mode
+        #: hides the footer with it, and the window's floating pill
+        #: serves at the tab row's corner instead.
+        self.dictation = dictation
         self.workspace_id = ""
         #: The workspace's label (#1152): the list's stand-in at
         #: the open, the row's own name once its answer lands —
@@ -244,7 +250,7 @@ class WorkspaceDetail(StatusFlash, QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(self.chrome)  # the arrow's own row
         layout.addWidget(self.stack, stretch=1)
-        layout.addWidget(self.footer)
+        layout.addWidget(seat_pill(self, self.dictation, self.footer))
         self.setLayout(layout)
         # The Back shortcut stands as the mode's own handle
         # (#1152): the terminal-only mode disarms it while the
@@ -653,19 +659,20 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         bridge: Bridge,
         terminal_cmd: list[str] | None = None,
         hub: ShellHub | None = None,
+        dictation=None,
     ) -> None:
         super().__init__()
         self.bridge = bridge
         self.terminal_cmd = terminal_cmd
         self.hub = hub if hub is not None else ShellHub()
-        self.listing = WorkspaceList(bridge)
+        self.listing = WorkspaceList(bridge, dictation)
         self.listing.opened.connect(self.open_detail)
         self.listing.shell_requested.connect(self.open_shell)
         # The listing's Add button (#1011): the create ask lands
         # here — the shell owns the bridge, so the create dialog
         # is the shell's own surface.
         self.listing.create_requested.connect(self.open_create)
-        self.detail = WorkspaceDetail(bridge, self.hub)
+        self.detail = WorkspaceDetail(bridge, self.hub, dictation)
         self.detail.back.connect(self.show_listing)
         self.detail.removed.connect(self.listing_removed)
         self.detail.shell_wanted.connect(self.open_shell)

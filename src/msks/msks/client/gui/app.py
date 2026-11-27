@@ -500,10 +500,16 @@ class Landing:
         bridge = Bridge(GuiData(), feed_factory=EventsFeed)
         bridge.start()
         self.app.aboutToQuit.connect(bridge.stop)
-        shell = WorkspaceShell(bridge, terminal_cmd=terminal_command(conf))
+        shell = WorkspaceShell(
+            bridge,
+            terminal_cmd=terminal_command(conf),
+            dictation=self.dictation,
+        )
         tabs = MainTabs(shell, bridge)
-        tabs.addTab(ImagesTab(bridge, channel_url(conf)), IMAGES_LABEL)
-        secrets = SecretsTab(bridge)
+        tabs.addTab(
+            ImagesTab(bridge, channel_url(conf), self.dictation), IMAGES_LABEL
+        )
+        secrets = SecretsTab(bridge, self.dictation)
         tabs.addTab(secrets, SECRETS_LABEL)
         operator = conf.doc if conf is not None else {}
         seat_settings(tabs, self.dictation, operator, self.tree)

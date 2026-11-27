@@ -531,10 +531,36 @@ def capture() -> None:
     app.setFont(font)
     require_chrome_face(app)
 
+    # --- the dictation (#1214) ---------------------------------------
+    # The controller and the pill host stand before the first
+    # window, the way open_window stands them, so every figure
+    # shows the pill the way the real window does: the list seats
+    # it in its quick-facts row, the other pages float it at the
+    # corner. The cache root is a temporary tree with a model
+    # written into it, so the settings page reads "present".
+    from msks.client.gui import settingspage as settings_mod
+    from msks.client.gui.dictatekeys import DictateSettings
+    from msks.client.gui.dictatepill import PillHost
+    from msks.client.gui.dictation import Dictation
+
+    cache = Path(tempfile.mkdtemp(prefix="gui-screens-dictate-"))
+    model = cache / "whisper" / "ggml-small.bin"
+    model.parent.mkdir(parents=True)
+    model.write_bytes(b"ggml" * (466 << 10))
+    dictation = Dictation(
+        DictateSettings(model="small", device=FIXED_SOURCES[0][0]),
+        cache,
+        transcriber=lambda wav, s: "",
+        tone=lambda hz: None,
+        notifier=lambda text: None,
+        clipboard=lambda text: None,
+    )
+    host = PillHost(dictation, app)
+
     list_bridge = StubBridge()
 
     # --- the workspaces list ---------------------------------------
-    listing = workspaces_mod.WorkspaceList(list_bridge)
+    listing = workspaces_mod.WorkspaceList(list_bridge, dictation)
     window = QtWidgets.QMainWindow()
     window.setWindowTitle("msks")
     window.setCentralWidget(listing)
@@ -813,37 +839,8 @@ def capture() -> None:
     shot(secrets_window, "gui-secrets.png")
     secrets_window.close()
 
-    # --- the settings tab and the dictate pill (#1214) -----------
-    # The settings page over a real controller whose model is
-    # present, with the device list from the fixed pair above (no
-    # pw-dump on a capture host) and no download in flight. The
-    # cache root is a temporary tree the run writes the model
-    # into, so the page reads "present" and the button stands
-    # dark, the shape an operator with the model sees. The host
-    # goes on after the earlier figures: every window it shows
-    # from here carries the pill, as the real window does.
-    from msks.client.gui import settingspage as settings_mod
-    from msks.client.gui.dictatekeys import DictateSettings
-    from msks.client.gui.dictatepill import PillHost
-    from msks.client.gui.dictation import Dictation
-
-    cache = Path(tempfile.mkdtemp(prefix="gui-screens-dictate-"))
-    model = cache / "whisper" / "ggml-small.bin"
-    model.parent.mkdir(parents=True)
-    model.write_bytes(b"ggml" * (466 << 10))
-    dictation = Dictation(
-        DictateSettings(
-            model="small",
-            device=FIXED_SOURCES[0][0],
-        ),
-        cache,
-        transcriber=lambda wav, s: "",
-        tone=lambda hz: None,
-        notifier=lambda text: None,
-        clipboard=lambda text: None,
-    )
+    # --- the settings tab and the pill in a recording (#1214) -----
     settings_window = QtWidgets.QMainWindow()
-    host = PillHost(dictation, app)
     settings_window.setWindowTitle("msks")
     page = settings_mod.SettingsPage(
         dictation, {}, sources=lambda: FIXED_SOURCES
@@ -858,11 +855,11 @@ def capture() -> None:
     settings_window.close()
 
     # The pill in a recording over the list window: the red mic,
-    # the timer at twelve seconds, the discard button, at the
-    # corner over the page's chrome — the same list rows the
-    # chapter's first figure shows.
+    # the timer at twelve seconds, the discard button, in the
+    # quick-facts row under the connection picker — the same list
+    # rows the chapter's first figure shows.
     pill_bridge = StubBridge()
-    pill_listing = workspaces_mod.WorkspaceList(pill_bridge)
+    pill_listing = workspaces_mod.WorkspaceList(pill_bridge, dictation)
     pill_window = QtWidgets.QMainWindow()
     pill_window.setWindowTitle("msks")
     pill_window.setCentralWidget(pill_listing)

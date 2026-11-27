@@ -564,7 +564,7 @@ def test_the_childs_own_end_finishes_or_fails(qt):
     said fails with the reason; a state past recording ignores
     the news."""
     controller, fake = dictation(qt, "q10 l*")
-    controller.detector = controller.settings.gate.detector()
+    controller.detector = dictate.Detector()
     controller.show("recording")
     controller.died("pw-record exited 2")  # nothing said yet
     assert controller.state == "failed"
@@ -574,7 +574,7 @@ def test_the_childs_own_end_finishes_or_fails(qt):
     assert controller.state == "done"
     # Speech in the clip: the end finishes it into the transcription.
     controller.show("idle")
-    controller.detector = controller.settings.gate.detector()
+    controller.detector = dictate.Detector()
     quiet = dictate.frame_db(QUIET)
     loud = dictate.frame_db(LOUD)
     for _ in range(10):  # the floor calibrates on silence
@@ -626,7 +626,7 @@ def test_heard_ignores_bytes_with_no_detector_or_a_finishing_gate(qt):
     stopped — the bytes feed nothing."""
     controller, _fake = dictation(qt)
     controller.heard(LOUD.tobytes())  # no detector
-    controller.detector = controller.settings.gate.detector()
+    controller.detector = dictate.Detector()
     controller.finishing = True
     controller.heard(LOUD.tobytes())
     assert controller.detector.elapsed == 0.0

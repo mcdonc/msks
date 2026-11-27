@@ -40,7 +40,6 @@ DICTATE_VARS = (
     "MSKSC_DICTATE_DEVICE",
     "MSKSC_DICTATE_THRESHOLD",
     "MSKSC_DICTATE_MARGIN",
-    "MSKSC_DICTATE_SILENCE",
     "MSKSC_DICTATE_PROMPT",
 )
 
@@ -154,13 +153,19 @@ def spin(qt, ms: int = 50) -> None:
 # --- the pill and the host -----------------------------------------------
 
 
-def test_the_host_equips_the_main_windows_and_no_dialog(qt):
-    """One pill on the main window and on a torn-off shell window
-    (#1214) — identical widgets, one controller behind them, the
-    main window's at the top-right corner — and none on a dialog,
-    a message box, a progress box, or a popup: a dialog is a
-    question or a form in flight, and the recording toggle belongs
-    to the window the operator works in."""
+def test_every_page_seats_its_pill_and_the_floating_one_serves_terminal_only(
+    qt,
+):
+    """The pill's placings (#1214): every main page seats the pill in
+    its own bottom row at the right end — the list's quick facts,
+    the detail page's footer, the Images and Secrets counts, the
+    Settings status — in the column the connection picker stands
+    in; the main window floats one too, standing down while a
+    seated pill shows, and the terminal-only page, which hides its
+    footer, brings the floating one back at the tab row's corner. A
+    page built without a controller seats none. A shell window torn
+    off the strip floats one; no dialog, message box, progress box,
+    or popup carries one."""
     from msks.client.gui.dictatepill import (
         MARGIN,
         PILL_NAME,
@@ -168,33 +173,87 @@ def test_the_host_equips_the_main_windows_and_no_dialog(qt):
         pill_in,
     )
     from msks.client.gui.shellwindow import ShellWindow
+    from msks.client.gui.workspaces import WorkspaceList
     from PySide6 import QtWidgets
+    from test_gui_workspaces import StubBridge
 
     held, _fake = controller(qt)
     host = PillHost(held, qt.app)
     window = QtWidgets.QMainWindow()
+    strip = QtWidgets.QStackedWidget()
+    listing = WorkspaceList(StubBridge(), held)
+    other = QtWidgets.QWidget()
+    strip.addWidget(listing)
+    strip.addWidget(other)
+    window.setCentralWidget(strip)
     window.resize(600, 400)
     window.show()
     spin(qt)
-    pills = window.findChildren(QtWidgets.QFrame, PILL_NAME)
-    assert len(pills) == 1
-    pill = pills[0]
-    assert pill_in(window) is pill
-    assert pill.dictation is held
-    assert pill.x() + pill.width() == 600 - MARGIN
-    assert pill.y() == MARGIN
-    # A torn-off shell window (#1203) takes one too.
+    floating = pill_in(window)
+    assert floating is not None and floating.floating is True
+    # The list's pill: in the detail row, under the picker, laid out.
+    pill = listing.pill
+    assert pill.floating is False and pill.isVisible()
+    assert pill.geometry().bottom() <= listing.height()
+    assert pill.y() >= listing.detail.y() - 2
+    # The picker's and the pill's right edges, both mapped to the
+    # page: the same column.
+    picker = listing.connection
+    picker_right = (
+        picker.mapTo(listing, qt.QtCore.QPoint(0, 0)).x() + picker.width()
+    )
+    pill_right = pill.mapTo(listing, qt.QtCore.QPoint(0, 0)).x() + pill.width()
+    assert abs(picker_right - pill_right) <= 1
+    # The list shows its own: the floating pill stands down.
+    assert not floating.isVisible()
+    # Another page without a seated pill: the floating one returns.
+    strip.setCurrentIndex(1)
+    spin(qt, 50)
+    assert floating.isVisible()
+    assert floating.x() + floating.width() == 600 - MARGIN
+    assert floating.y() == MARGIN
+    strip.setCurrentIndex(0)
+    spin(qt, 50)
+    assert not floating.isVisible()
+    # Linked once: a re-show asks the link no more.
+    assert pill.linked
+    # A page without a controller seats none.
+    bare = WorkspaceList(StubBridge())
+    assert bare.pill is None
+    bare.show()
+    # A controller, but under a window the host never equips (a
+    # plain top-level widget, not a main window): the seated pill's
+    # show finds no floating pill and links nothing.
+    unlinked = WorkspaceList(StubBridge(), held)
+    plain = QtWidgets.QWidget(None, qt.QtCore.Qt.WindowType.Window)
+    plain.setLayout(QtWidgets.QVBoxLayout())
+    plain.layout().addWidget(unlinked)
+    plain.show()
+    spin(qt, 20)
+    assert unlinked.pill.isVisible() and not getattr(
+        unlinked.pill, "linked", False
+    )
+    plain.close()
+    spin(qt, 20)
+    # A seated pill under another window is not this floating
+    # pill's to stand down for: the link refuses.
+    other_window = QtWidgets.QMainWindow()
+    other_list = WorkspaceList(StubBridge(), held)
+    other_window.setCentralWidget(other_list)
+    other_window.show()
+    spin(qt, 20)
+    assert floating.stands_down_for(other_list.pill) is False
+    other_window.close()
+    # A torn-off shell window floats one at the corner.
     torn = ShellWindow(None, "ws")
     torn.resize(500, 300)
     torn.show()
     spin(qt)
-    assert pill_in(torn).dictation is held
-    # Polishing or showing again equips nothing twice.
-    spin(qt)
-    assert pill_in(window) is pill
-    assert len(window.findChildren(QtWidgets.QFrame, PILL_NAME)) == 1
-    # A dialog, a message box, a progress box, and a popup carry
-    # none, whatever their parent.
+    shell_pill = pill_in(torn)
+    assert shell_pill is not None and shell_pill.floating is True
+    assert shell_pill.dictation is held
+    assert shell_pill.x() + shell_pill.width() == 500 - MARGIN
+    # Dialogs, boxes, and popups carry none, whatever their parent.
     dialog = QtWidgets.QDialog(window)
     dialog.show()
     box = QtWidgets.QMessageBox(window)
@@ -203,9 +262,9 @@ def test_the_host_equips_the_main_windows_and_no_dialog(qt):
     popup = QtWidgets.QFrame(None, qt.QtCore.Qt.WindowType.Popup)
     popup.show()
     spin(qt)
-    assert pill_in(dialog) is None and pill_in(box) is None
-    assert pill_in(progress) is None and pill_in(popup) is None
-    assert len(window.findChildren(QtWidgets.QFrame, PILL_NAME)) == 1
+    for bare_window in (dialog, box, progress, popup):
+        assert pill_in(bare_window) is None
+    assert len(window.findChildren(QtWidgets.QFrame, PILL_NAME)) == 2
     host.remove()
 
 
@@ -287,7 +346,7 @@ def test_a_click_on_any_pill_toggles_the_one_recording(qt):
     held, fake = controller(qt)
     host = PillHost(held, qt.app)
     window = QtWidgets.QMainWindow()
-    window.show()
+    window.show()  # no page seats one here: the floating pill serves
     torn = ShellWindow(None, "ws")
     torn.show()
     spin(qt)
@@ -415,37 +474,32 @@ def test_the_page_seeds_from_the_effective_settings_and_saves_gui_yaml(qt):
     and the controller takes the new settings."""
     from msks.client.gui.settingspage import SettingsPage
 
-    operator = {"dictate_model": "base.en", "dictate_silence": 2.0}
-    save_prefs({"dictate_margin": 10.0})
+    operator = {"dictate_model": "base.en", "dictate_device": "mic-a"}
+    save_prefs({"dictate_device": "mic-b"})
     held, _fake = controller(qt, operator)
     assert held.settings.model == "base.en"  # the operator's file
-    assert held.settings.gate.margin == 10.0  # gui.yaml wins over it
+    assert held.settings.device == "mic-b"  # gui.yaml wins over it
     page = SettingsPage(held, operator)
     assert page.model.currentText() == "base.en (142 MB)"  # its label
     assert page.model_value() == "base.en"
-    assert page.margin.value() == 10.0
-    assert "dictate_silence" not in page.fields  # no field (#1214)
+    assert page.device_value() == "mic-b"  # gui.yaml's, over the file's
     # Edit, apply: gui.yaml carries the fields, the operator's
-    # dict stands as it was, the controller re-resolves. The
-    # operator's pause window is carried through, not dropped.
+    # dict stands as it was, the controller re-resolves.
     page.pick_model("small")  # a listed name: its label shows
     assert page.model.currentText() == "small (466 MB)"
-    page.threshold.setValue(-55.0)
+    page.device.setEditText("mic-c")
     page.prompt.setText("msks, devenv")
     page.apply()
     assert page.status.text() == "saved to gui.yaml"
     saved = load_prefs()
     assert saved == {
         "dictate_model": "small",
-        "dictate_threshold": -55.0,
-        "dictate_margin": 10.0,
-        "dictate_silence": 2.0,
+        "dictate_device": "mic-c",
         "dictate_prompt": "msks, devenv",
     }
-    assert held.settings.gate.silence == 2.0
-    assert operator == {"dictate_model": "base.en", "dictate_silence": 2.0}
+    assert operator == {"dictate_model": "base.en", "dictate_device": "mic-a"}
     assert held.settings.model == "small"
-    assert held.settings.gate.threshold == -55.0
+    assert held.settings.device == "mic-c"
     assert held.settings.prompt == "msks, devenv"
     assert prefs_path() == qt.tmp / "config" / "gui.yaml"
 
@@ -454,47 +508,41 @@ def test_a_pinned_key_reads_read_only_and_apply_leaves_it(qt, monkeypatch):
     """A key the environment pins (#1214): its field shows the
     variable's value, stands read-only with the variable named,
     and Apply leaves it out of gui.yaml — the variable wins it
-    anyway. A refused value anywhere shows its message and reads
-    as the default."""
+    anyway. A blank variable is the unset form, not a pin."""
     from msks.client.gui.settingspage import SettingsPage
 
     monkeypatch.setenv("MSKSC_DICTATE_MODEL", "large-v3-turbo")
-    monkeypatch.setenv("MSKSC_DICTATE_SILENCE", "nonsense")
+    monkeypatch.setenv("MSKSC_DICTATE_DEVICE", "  ")  # blank: unset
     held, _fake = controller(qt)
     assert held.settings.model == "large-v3-turbo"
     assert held.state == "nomodel"  # the pinned name is not on disk
     assert held.settings.pinned == frozenset({"dictate_model"})
-    assert held.settings.gate.silence == dictate.DEFAULT_SILENCE
-    assert len(held.settings.problems) == 1
+    assert held.settings.problems == ()
     page = SettingsPage(held, {})
     assert page.model.isEnabled() is False
     assert page.model.toolTip().endswith(
         "MSKSC_DICTATE_MODEL pins this setting; the page cannot change it."
     )
     assert page.model.toolTip().startswith("The whisper.cpp speech model")
-    assert page.margin.isEnabled() is True
-    note = page.pinned_note.text()
-    assert "MSKSC_DICTATE_MODEL pins this setting" in note
-    assert "MSKSC_DICTATE_SILENCE" in note and "nonsense" in note
-    page.margin.setValue(9.0)
+    assert page.device.isEnabled() is True
+    assert "MSKSC_DICTATE_MODEL pins this setting" in page.pinned_note.text()
+    page.device.setEditText("mic-z")
     page.apply()
     assert "dictate_model" not in load_prefs()
-    assert load_prefs()["dictate_margin"] == 9.0
+    assert load_prefs()["dictate_device"] == "mic-z"
     assert held.settings.model == "large-v3-turbo"
-    # The refused variable still stands over gui.yaml: the key
-    # reads its default — the bad pin is never masked by the
-    # layer under it — and the page shows the refusal still.
-    assert held.settings.gate.silence == dictate.DEFAULT_SILENCE
-    assert "MSKSC_DICTATE_SILENCE" in page.pinned_note.text()
-    # Clear the bad pin: the operator file's value takes effect at
-    # the next resolve, which the page's Revert runs.
-    monkeypatch.delenv("MSKSC_DICTATE_SILENCE")
+    # A pinned device: read-only, the variable named on both the
+    # field and its label.
+    monkeypatch.setenv("MSKSC_DICTATE_DEVICE", "mic-env")
     page.revert()
-    assert held.settings.gate.silence == dictate.DEFAULT_SILENCE
-    # A save over a refused pin drops nothing: the pause window's
-    # resolved value is the default, so the file carries none.
-    page.apply()
-    assert "dictate_silence" not in load_prefs()
+    assert held.settings.device == "mic-env"
+    assert page.device.isEnabled() is False
+    notice = "MSKSC_DICTATE_DEVICE pins this setting"
+    assert page.device.toolTip().endswith(
+        notice + "; the page cannot change it."
+    )
+    assert page.labels["dictate_device"].toolTip() == page.device.toolTip()
+    assert notice in page.pinned_note.text()
 
 
 def test_the_model_download_shows_progress_and_lands(qt):
@@ -619,18 +667,18 @@ def test_apply_and_revert_light_only_while_a_field_differs(qt):
     page = SettingsPage(held, {})
     assert not page.apply_button.isEnabled()
     assert not page.reload_button.isEnabled()
-    page.threshold.setValue(-55.0)  # a spin
+    page.device.setEditText("mic-a")  # a typed edit
     assert page.dirty and page.apply_button.isEnabled()
     page.revert()
     assert page.dirty is False and not page.apply_button.isEnabled()
     page.pick_model("base.en")  # a pick
     assert page.apply_button.isEnabled()
-    page.prompt.setText("msks")  # a text edit
+    page.prompt.setText("msks")  # another field
     page.apply()
     assert not page.apply_button.isEnabled()
     assert load_prefs()["dictate_model"] == "base.en"
     # A save that cannot land leaves the fields unsaved: lit.
-    page.margin.setValue(9.0)
+    page.device.setEditText("mic-b")
     (qt.tmp / "config" / "gui.yaml").unlink()
     (qt.tmp / "config").chmod(0o500)
     try:
@@ -647,34 +695,36 @@ def test_every_field_carries_its_description_and_the_pin_notice(
     qt, monkeypatch
 ):
     """Each field's tooltip (#1214) is the setting's long
-    description, and a key the environment pins appends its
-    variable's notice."""
+    description, its label carries the same, and a key the
+    environment pins appends its variable's notice to both."""
     from msks.client.gui import settingspage as page_mod
+    from msks.client.gui.dictatekeys import resolve
     from msks.client.gui.settingspage import SettingsPage
 
     held, _fake = controller(qt)
     page = SettingsPage(held, {})
-
+    assert sorted(page.fields) == [
+        "dictate_device",
+        "dictate_model",
+        "dictate_prompt",
+    ]
     for key, field in page.fields.items():
         assert field.toolTip() == page_mod.TIPS[key]
         assert len(page_mod.TIPS[key]) > 80  # a description, not a label
-        # The row's label carries the same text: a reader hovers the
-        # setting's name.
         assert page.labels[key].toolTip() == page_mod.TIPS[key]
-        assert page.labels[key].text()  # the name itself
-    assert "noise floor" in page.margin.toolTip()
+    assert "PipeWire" in page.device.toolTip()
     assert "~/.cache/msks/whisper/" in page.model.toolTip()
-    assert page.labels["dictate_margin"].text() == "Speech margin"
+    assert page.labels["dictate_device"].text() == "Device"
     assert page.refresh_sources.toolTip() == page_mod.REFRESH_TIP
-    # A pinned key: the variable's notice follows on the label too.
-    monkeypatch.setenv("MSKSC_DICTATE_MARGIN", "9")
+    # A pinned key: the variable's notice follows on both.
+    monkeypatch.setenv("MSKSC_DICTATE_DEVICE", "mic-env")
     held.reload(resolve(os.environ, load_prefs(), {}))
     page.load(held.settings)
-    notice = "MSKSC_DICTATE_MARGIN pins this setting"
-    assert page.margin.toolTip().endswith(
+    notice = "MSKSC_DICTATE_DEVICE pins this setting"
+    assert page.device.toolTip().endswith(
         notice + "; the page cannot change it."
     )
-    assert page.labels["dictate_margin"].toolTip() == page.margin.toolTip()
+    assert page.labels["dictate_device"].toolTip() == page.device.toolTip()
 
 
 def test_the_picker_drives_the_model_line_live(qt):
@@ -758,25 +808,22 @@ def test_the_device_list_comes_from_pw_dump(qt):
 
 def test_the_keys_resolve_under_the_precedence(qt):
     """``MSKSC_DICTATE_*`` > gui.yaml > the operator's file > the
-    defaults (#1214), each value through the validator's reader,
-    a blank at a layer the unset form, and a refusal recording a
-    problem with the key defaulting."""
+    defaults (#1214), each value through the reader, a blank at a
+    layer the unset form, and a refusal recording a problem with
+    the key defaulting."""
     environ = {
-        "MSKSC_DICTATE_MARGIN": "12",
         "MSKSC_DICTATE_PROMPT": "  msks  ",
-        "MSKSC_DICTATE_SILENCE": "",
+        "MSKSC_DICTATE_DEVICE": "",
     }
-    prefs = {"dictate_silence": 2.5, "dictate_prompt": "from prefs"}
-    operator = {"dictate_model": "base.en", "dictate_silence": 3.0}
+    prefs = {"dictate_device": "mic-prefs", "dictate_prompt": "from prefs"}
+    operator = {"dictate_model": "base.en", "dictate_device": "mic-file"}
     settings = resolve(environ, prefs, operator)
-    assert settings.gate.margin == 12.0
     assert settings.prompt == "msks"
-    assert settings.gate.silence == 2.5  # the blank variable is unset
+    assert settings.device == "mic-prefs"  # the blank variable is unset
     assert settings.model == "base.en"
-    assert settings.device == ""
-    assert settings.pinned == frozenset({"dictate_margin", "dictate_prompt"})
+    assert settings.pinned == frozenset({"dictate_prompt"})
     assert settings.problems == ()
-    assert settings.value("dictate_margin") == 12.0
+    assert settings.value("dictate_prompt") == "msks"
     assert settings.value("dictate_model") == "base.en"
     # Defaults alone.
     bare = resolve({}, {}, {})
@@ -785,19 +832,19 @@ def test_the_keys_resolve_under_the_precedence(qt):
         "/cache/whisper/ggml-small.bin"
     )
     # A refusal at the top layer: the problem names the variable.
-    bad = resolve({"MSKSC_DICTATE_THRESHOLD": "-200"}, {}, {})
-    assert bad.gate.threshold == dictate.DEFAULT_THRESHOLD
+    bad = resolve({"MSKSC_DICTATE_PROMPT": 7}, {}, {})
+    assert bad.prompt == ""
     assert bad.problems == (
         (
-            "dictate_threshold",
-            "MSKSC_DICTATE_THRESHOLD: config key 'dictate_threshold' must "
-            "be a number between -99 and 0, got '-200'",
+            "dictate_prompt",
+            "MSKSC_DICTATE_PROMPT: config key 'dictate_prompt' must be "
+            "a string, got int",
         ),
     )
     # A refusal lower down names the file, and the layer under it
     # does not fill in behind the bad pin.
-    worse = resolve({}, {"dictate_margin": "loud"}, {"dictate_margin": 5})
-    assert worse.gate.margin == dictate.DEFAULT_MARGIN
+    worse = resolve({}, {"dictate_device": ["x"]}, {"dictate_device": "y"})
+    assert worse.device == ""
     assert worse.problems[0][1].startswith("gui.yaml: config key")
 
 
@@ -807,15 +854,18 @@ def test_the_preferences_file_round_trips(qt):
     unset forms dropped, and the atomic write over a standing
     file."""
     doc = parse_prefs(
-        "dictate-model: small\ndictate_silence: 1.5\n", "gui.yaml"
+        "dictate-model: small\ndictate_device: mic-a\n", "gui.yaml"
     )
-    assert doc == {"dictate_model": "small", "dictate_silence": 1.5}
+    assert doc == {"dictate_model": "small", "dictate_device": "mic-a"}
     assert parse_prefs("# nothing\n", "gui.yaml") == {}
-    assert parse_prefs("dictate_margin:\n", "gui.yaml") == {}
+    assert parse_prefs("dictate_device:\n", "gui.yaml") == {}
+    # The gate's numbers are not preferences keys (#1214).
+    for key in ("dictate_silence", "dictate_threshold", "dictate_margin"):
+        with pytest.raises(ValueError, match="unknown preferences key"):
+            parse_prefs(f"{key}: 1.5\n", "gui.yaml")
     for text, message in (
         ("dictate_model: a\ndictate-model: b\n", "duplicate"),
         ("url: https://x\n", "unknown preferences key 'url'"),
-        ("dictate_margin: -3\n", "between 0 and 60"),
         ("- a\n- b\n", "must be a mapping"),
         ("dictate_model: [a]\n", "must be a string"),
     ):
@@ -824,20 +874,16 @@ def test_the_preferences_file_round_trips(qt):
     assert (
         dump_prefs(
             {
-                "dictate_silence": 1.5,
+                "dictate_device": "mic-a",
                 "dictate_model": "small",
-                "dictate_device": "",
                 "dictate_prompt": None,
             }
         )
-        == "dictate_model: small\ndictate_silence: 1.5\n"
+        == "dictate_model: small\ndictate_device: mic-a\n"
     )
     assert load_prefs() == {}  # nothing saved yet
-    save_prefs({"dictate_model": "small", "dictate_threshold": -50.0})
-    assert load_prefs() == {
-        "dictate_model": "small",
-        "dictate_threshold": -50.0,
-    }
+    save_prefs({"dictate_model": "small", "dictate_prompt": "msks"})
+    assert load_prefs() == {"dictate_model": "small", "dictate_prompt": "msks"}
     save_prefs({"dictate_model": "base.en"})
     assert load_prefs() == {"dictate_model": "base.en"}  # whole, not merged
     assert [p.name for p in prefs_path().parent.iterdir()] == ["gui.yaml"]

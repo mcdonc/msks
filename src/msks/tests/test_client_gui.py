@@ -379,8 +379,10 @@ def test_the_gui_window_opens_offscreen(
             (w.x(), w.y(), w.width(), w.height()) for w in windows
         ]
         # The strip's shape read while the window stands (#962,
-        # #1011): the tabs, their labels, the current one, and
-        # the Workspaces tab's side staying buttonless.
+        # #1011): the window frame holds the strip (#1214), and the
+        # strip the tabs, their labels, the current one, and the
+        # Workspaces tab's side staying buttonless. The frame's
+        # footer band carries the seated pill at its right end.
         opened["tabs"] = [
             (
                 type(w.centralWidget()).__name__,
@@ -410,6 +412,19 @@ def test_the_gui_window_opens_offscreen(
             (
                 type(w.centralWidget().widget(0).listing.connection).__name__,
                 w.centralWidget().widget(0).listing.connection.text(),
+            )
+            for w in windows
+        ]
+        # Every page seats the pill in its bottom row (#1214): the
+        # list, Images, Secrets, Settings; the shell's detail page
+        # and the floating one for terminal-only are pinned in
+        # their own suites.
+        opened["seated"] = [
+            (
+                w.centralWidget().widget(0).listing.pill is not None,
+                w.centralWidget().widget(1).pill is not None,
+                w.centralWidget().widget(2).pill is not None,
+                w.centralWidget().widget(3).pill is not None,
             )
             for w in windows
         ]
@@ -472,6 +487,7 @@ def test_the_gui_window_opens_offscreen(
         WORKSPACES_LABEL,
     )
 
+    assert opened["seated"][0] == (True, True, True, True)
     assert opened["tabs"][0] == (
         "MainTabs",
         [WORKSPACES_LABEL, IMAGES_LABEL, SECRETS_LABEL, SETTINGS_LABEL],
@@ -634,6 +650,7 @@ def test_open_window_reuses_an_existing_app(
     built: list[object] = []
     settles: list[tuple[object, object]] = []
     screens: list[object] = []
+    shell_dictations: list[object] = []
     images: list[tuple[object, str]] = []
     zooms: list[tuple[object, object]] = []
     schemes: list[tuple[object, object]] = []
@@ -779,11 +796,15 @@ def test_open_window_reuses_an_existing_app(
         built over."""
 
         def __init__(
-            self, bridge: object, terminal_cmd: object = None
+            self,
+            bridge: object,
+            terminal_cmd: object = None,
+            dictation: object = None,
         ) -> None:
             built.append(bridge)
             screens.append(self)
             self.terminal_cmd = terminal_cmd
+            shell_dictations.append(dictation)  # its pages seat the pill
             self.hub = FakeShellHub()  # the zoom's handoff (#976)
             self.listing = FakeListing()  # the picker's row (#1009)
             self.detail = FakeDetail()  # the page's mode ask (#1152)
@@ -813,22 +834,24 @@ def test_open_window_reuses_an_existing_app(
         it over the same bridge the shell reads, under the
         strip's second tab — the recording pins both."""
 
-        def __init__(self, bridge: object, url: str) -> None:
-            images.append((bridge, url))
+        def __init__(self, bridge: object, url: str, dictation=None) -> None:
+            images.append((bridge, url, dictation))
 
     monkeypatch.setattr(images_tab_mod, "ImagesTab", FakeImagesTab)
 
     secrets_built: list[object] = []
     secrets_tabs: list[object] = []
+    secrets_dictations: list[object] = []
 
     class FakeSecretsTab:
         """The Secrets tab's stub (#966): the window path builds
         it over the same bridge, under the strip's third tab —
         the recording pins it."""
 
-        def __init__(self, bridge: object) -> None:
+        def __init__(self, bridge: object, dictation=None) -> None:
             secrets_built.append(bridge)
             secrets_tabs.append(self)
+            secrets_dictations.append(dictation)
 
     monkeypatch.setattr(secrets_tab_mod, "SecretsTab", FakeSecretsTab)
 
@@ -1150,7 +1173,7 @@ def test_open_window_reuses_an_existing_app(
     # config in the run.
     from msks.client.gui.images import channel_url
 
-    assert images[:1] == [(started[0], channel_url(None))]
+    assert images[:1] == [(started[0], channel_url(None), dictations[0])]
     assert secrets_built[:1] == [started[0]]  # the same bridge (#966)
     # The unlock flow (#1147): one flow over the window, built
     # before the first tree landed, and each landing's own
@@ -1178,6 +1201,14 @@ def test_open_window_reuses_an_existing_app(
     assert len(dictations) == 1
     assert isinstance(dictations[0].settings, DictateSettings)
     assert settings_pages == [(dictations[0], {}), (dictations[0], {})]
+    # Every page of each landed tree takes the controller and
+    # seats the pill in its own bottom row (#1214): the shell (its
+    # list and its detail page), the Images tab, the Secrets tab,
+    # and the settings page; the window floats one through the
+    # host, for the terminal-only page.
+    assert len(pill_hosts) == 1 and pill_hosts[0] == (dictations[0], existing)
+    assert shell_dictations == [dictations[0], dictations[0]]
+    assert secrets_dictations == [dictations[0], dictations[0]]
     assert len(pill_hosts) == 1 and pill_hosts[0] == (dictations[0], existing)
     assert len(dictations[0].settings_requested.slots) == 1
     assert dictations[0].shut == 1  # the return path's own call
@@ -1354,7 +1385,7 @@ def test_open_window_keeps_a_user_style_choice(
     class FakeImagesTab:
         """The Images tab stub (#964): built, never read."""
 
-        def __init__(self, bridge: object, url: str) -> None:
+        def __init__(self, bridge: object, url: str, dictation=None) -> None:
             pass
 
     class FakeWindow:
@@ -1405,7 +1436,10 @@ def test_open_window_keeps_a_user_style_choice(
 
     class FakeScreen:
         def __init__(
-            self, bridge: object, terminal_cmd: object = None
+            self,
+            bridge: object,
+            terminal_cmd: object = None,
+            dictation: object = None,
         ) -> None:
             self.hub = object()  # the zoom's handoff (#976)
             self.listing = FakeListing()  # the picker's row (#1009)
@@ -1453,7 +1487,7 @@ def test_open_window_keeps_a_user_style_choice(
         it over the same bridge, under the strip's third tab —
         the recording pins it."""
 
-        def __init__(self, bridge: object) -> None:
+        def __init__(self, bridge: object, dictation=None) -> None:
             secrets_built.append(bridge)
 
     monkeypatch.setattr(secrets_tab_mod, "SecretsTab", FakeSecretsTab)
@@ -1604,7 +1638,7 @@ def test_the_dictation_composition_survives_a_bad_preferences_file(
     )
     assert "msks: " in capsys.readouterr().err
     assert built[0][0].model == "base.en"  # the operator's file stood
-    assert built[0][0].gate.margin == 14.0  # the default, nothing pinned
+    assert built[0][0].device == ""  # the default, nothing pinned
     assert built[1] == "host"
 
     # The opener: a tree with the page shows it; without, only the

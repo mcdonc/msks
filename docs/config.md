@@ -274,7 +274,7 @@ value to its default.
 beside the client config, `~/.config/msks/gui.yaml`, and its
 **Settings** tab writes that file. The GUI never edits the
 operator's `msks.yaml`: a NixOS host's generated, read-only config
-stays declarative. For the six `dictate_*` keys the order is
+stays declarative. For the three `dictate_*` keys the order is
 `MSKSC_DICTATE_*` variables, then `gui.yaml`, then `msks.yaml`, then
 the defaults. The [CLI chapter](cli.md#the-gui-preferences-file)
 documents the file, the keys, and the precedence, and the

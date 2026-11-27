@@ -64,11 +64,14 @@ FLOOR_SECONDS = 3.0
 FLOOR_PERCENT = 0.10
 
 #: The gate's defaults (#1210's findings): the lowest level that
-#: can count as speech, the margin over the tracked floor, and the
-#: quiet that ends a clip. The three are the operator's settings.
+#: can count as speech, and the margin over the tracked floor. The
+#: two are the operator's settings.
 DEFAULT_THRESHOLD = -60.0
 DEFAULT_MARGIN = 14.0
-DEFAULT_SILENCE = 1.0
+#: The quiet window the gate reads a pause by (#1210's finding): the
+#: GUI ends a recording on the click, and the window shapes how the
+#: gate reads the room — not a setting.
+PAUSE_SECONDS = 1.0
 #: Seconds to wait for speech before the clip ends with nothing
 #: said; the hard cap on one clip; the air kept before speech
 #: starts and after the last voiced frame.
@@ -133,30 +136,6 @@ def frame_db(frame: array.array) -> float:
     return 20.0 * math.log10(rms / 32768.0)
 
 
-@dataclass(frozen=True)
-class Gate:
-    """The gate's three numbers (#1214), the settings page's own:
-    the lowest level that can count as speech, the dB over the
-    tracked floor that counts, and the seconds of quiet that end
-    a clip. :meth:`detector` builds one collector per
-    recording."""
-
-    threshold: float = DEFAULT_THRESHOLD
-    margin: float = DEFAULT_MARGIN
-    silence: float = DEFAULT_SILENCE
-
-    def detector(self) -> Detector:
-        return Detector(
-            threshold=self.threshold,
-            margin=self.margin,
-            silence=self.silence,
-            timeout=WAIT_SECONDS,
-            max_seconds=CAP_SECONDS,
-            preroll=PREROLL_SECONDS,
-            pad=PAD_SECONDS,
-        )
-
-
 @dataclass
 class Detector:
     """A silence-gated clip collector (#1210).
@@ -169,13 +148,15 @@ class Detector:
     loud frames inside the quiet window.
     """
 
-    threshold: float
-    margin: float
-    silence: float
-    timeout: float
-    max_seconds: float
-    preroll: float
-    pad: float
+    #: The gate's numbers, the leaf's own (#1214) by default —
+    #: the spike's findings; the suite overrides them.
+    threshold: float = DEFAULT_THRESHOLD
+    margin: float = DEFAULT_MARGIN
+    silence: float = PAUSE_SECONDS
+    timeout: float = WAIT_SECONDS
+    max_seconds: float = CAP_SECONDS
+    preroll: float = PREROLL_SECONDS
+    pad: float = PAD_SECONDS
 
     state: str = "waiting"
     elapsed: float = 0.0

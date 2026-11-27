@@ -1247,11 +1247,7 @@ def test_resolve_refuses_an_invalid_port_variable(
                 "dictate_prompt": "msks, devenv",
             },
         ),
-        ("dictate_threshold: -60\n", {"dictate_threshold": -60.0}),
-        ("dictate_threshold: '-55.5'\n", {"dictate_threshold": -55.5}),
-        ("dictate_margin: 14\n", {"dictate_margin": 14.0}),
-        ("dictate_silence: 1.5\n", {"dictate_silence": 1.5}),
-        ("dictate-margin: 12\n", {"dictate_margin": 12.0}),
+        ("dictate-model: base.en\n", {"dictate_model": "base.en"}),
     ],
 )
 def test_dictation_keys_read_both_spellings(
@@ -1263,17 +1259,12 @@ def test_dictation_keys_read_both_spellings(
 @pytest.mark.parametrize(
     ("body", "message"),
     [
-        ("dictate_threshold: -100\n", "between -99 and 0"),
-        ("dictate_threshold: 1\n", "between -99 and 0"),
-        ("dictate_margin: -1\n", "between 0 and 60"),
-        ("dictate_silence: 0\n", "above 0 and at most 30"),
-        ("dictate_silence: 31\n", "above 0 and at most 30"),
-        ("dictate_margin: true\n", "got bool"),
-        ("dictate_margin: loud\n", "must be a number"),
-        ("dictate_margin: .nan\n", "between 0 and 60"),
-        ("dictate_margin: [1]\n", "must be a number"),
         ("dictate_model: 7\n", "must be a string"),
         ("dictate_prompt: [a, b]\n", "must be a string"),
+        # The gate's numbers are not keys (#1214): the leaf's own.
+        ("dictate_threshold: -60\n", "unknown config key 'dictate_threshold'"),
+        ("dictate_margin: 14\n", "unknown config key 'dictate_margin'"),
+        ("dictate_silence: 1\n", "unknown config key 'dictate_silence'"),
     ],
 )
 def test_dictation_keys_refuse_bad_values(
@@ -1284,7 +1275,7 @@ def test_dictation_keys_refuse_bad_values(
 
 
 def test_dictation_keys_unset_forms_drop_out(tmp_path: Path) -> None:
-    for key in ("dictate_model", "dictate_silence"):
+    for key in ("dictate_model", "dictate_device"):
         for body in (f"{key}:\n", f"{key}: ''\n"):
             assert config.load_config(write_config(tmp_path, body)) == {}
 
@@ -1311,9 +1302,9 @@ def test_resolve_carries_the_validated_file_keys(
     materialize nowhere, the GUI reads them off the doc itself."""
     conf = config.resolve(
         config=write_config(
-            tmp_path, "url: https://daemon\ndictate_silence: 2\n"
+            tmp_path, "url: https://daemon\ndictate_model: base.en\n"
         )
     )
-    assert conf.doc == {"url": "https://daemon", "dictate_silence": 2.0}
+    assert conf.doc == {"url": "https://daemon", "dictate_model": "base.en"}
     assert conf.env_layer == {}
     assert config.resolve(config="none").doc == {}

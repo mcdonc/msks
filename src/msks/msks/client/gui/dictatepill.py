@@ -72,12 +72,28 @@ MIC = "mic"
 DOWNLOAD = "download"
 
 
-def pill_room(font: QtGui.QFont) -> int:
-    """The room a page keeps clear of the pill (#1214): its width
-    plus the margin, for a page whose own controls run under the
-    top-right corner — the settings form's picker arrow, for
-    one."""
-    return DictationPill.widest(font) + MARGIN
+def seat_pill(page, dictation, line: QtWidgets.QWidget) -> QtWidgets.QWidget:
+    """A page's bottom row with the pill at its right end (#1214):
+    the page's own info line — the selected row's facts, the
+    counts, the status — on the left taking the spare width, and
+    the seated pill pinned right, in the column the connection
+    picker stands in on the workspace list. The row is a widget of
+    its own (``page.footer_row``), so a mode that hides the page's
+    footer hides the pill with it: the terminal-only mode does, and
+    the window's floating pill serves at the tab row's corner
+    meanwhile (:meth:`DictationPill.yields_to`). Without a
+    controller (the suites' pages) the line fills the row and no
+    pill is built; ``page.pill`` tells which."""
+    box = QtWidgets.QWidget(page)
+    row = QtWidgets.QHBoxLayout(box)
+    row.setContentsMargins(0, 0, 0, 0)
+    row.addWidget(line, stretch=1)
+    page.pill = None
+    if dictation is not None:
+        page.pill = DictationPill(dictation, box, floating=False)
+        row.addWidget(page.pill)
+    page.footer_row = box
+    return box
 
 
 def pill_in(window: QtWidgets.QWidget) -> DictationPill | None:
@@ -135,17 +151,31 @@ class Glyph(QtWidgets.QWidget):
 
 
 class DictationPill(QtWidgets.QFrame):
-    """The floating pill on one window (#1214): a rounded panel
-    in the palette's base color, the glyph, the text, and the
-    discard button. A click on the panel toggles the recording
-    through the shared controller: once to start, once to finish.
-    ``x`` discards. The pill takes no focus and joins no tab chain
-    (mouse only)."""
+    """The dictate pill (#1214): a rounded panel in the palette's
+    base color, the glyph, the text, and the discard button. A
+    click on the panel toggles the recording through the shared
+    controller: once to start, once to finish. ``x`` discards. The
+    pill takes no focus and joins no tab chain (mouse only).
 
-    def __init__(self, dictation, window: QtWidgets.QWidget) -> None:
-        super().__init__(window)
+    Two placings. Floating (``parent`` the window): the pill anchors
+    itself at the window's top-right corner, over the content, and
+    follows the window's resizes — a torn-off shell window's, whose
+    tab row it shares. Laid out (``floating=False``): a page's own
+    layout seats it, as the workspaces list seats it in its
+    quick-facts row at the right end, under the connection picker;
+    the layout sets its place and the pill anchors nothing.
+    """
+
+    def __init__(
+        self, dictation, parent: QtWidgets.QWidget, *, floating: bool = True
+    ) -> None:
+        super().__init__(parent)
         self.setObjectName(PILL_NAME)
         self.dictation = dictation
+        self.floating = floating
+        #: The seated pill this floating one stands down for
+        #: (#1214), set by :meth:`yields_to`; None until then.
+        self.seated = None
         self.setFixedHeight(HEIGHT)
         self.setFixedWidth(self.widest(self.font()))
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
@@ -169,9 +199,11 @@ class DictationPill(QtWidgets.QFrame):
         self.discard_button.clicked.connect(self.dictation.discard)
         self.layout_pill()
         self.pressed = False
-        window.installEventFilter(self)
         dictation.changed.connect(self.refresh)
         self.refresh(dictation.state, dictation.elapsed, dictation.note)
+        if not floating:
+            return
+        parent.installEventFilter(self)
         # Shown at once (#1214): a child built under a window
         # already on screen stays hidden until it is shown by
         # hand — the host's polish pass runs before the window
@@ -208,11 +240,30 @@ class DictationPill(QtWidgets.QFrame):
 
     # --- the anchor -----------------------------------------------------
 
+    def showEvent(self, event) -> None:  # noqa: N802
+        """A laid-out pill's first show (#1214): the window and its
+        floating pill both stand by then, so the seated one links
+        itself — the floating pill stands down while this one
+        shows. A window floating no pill (the suites' bare windows)
+        links nothing, and the next show asks again."""
+        super().showEvent(event)
+        if self.floating or getattr(self, "linked", False):
+            return
+        floating = pill_in(self.window())
+        if floating is not None:
+            self.linked = floating.stands_down_for(self)
+
     def eventFilter(self, watched, event) -> bool:
         """The window's resizes and shows re-anchor the pill
         (#1214): the corner is fixed relative to the window, and
-        the pill stays above the content."""
-        if watched is self.parentWidget() and event.type() in (
+        the pill stays above the content. The seated pill's show
+        and hide stand the floating one down and bring it back."""
+        if watched is self.seated and event.type() in (
+            QtCore.QEvent.Type.Show,
+            QtCore.QEvent.Type.Hide,
+        ):
+            self.follow(watched)
+        elif watched is self.parentWidget() and event.type() in (
             QtCore.QEvent.Type.Resize,
             QtCore.QEvent.Type.Show,
         ):
@@ -230,6 +281,33 @@ class DictationPill(QtWidgets.QFrame):
             MARGIN,
         )
         self.raise_()
+
+    def yields_to(self, seated) -> None:
+        """Stand down while ``seated`` shows (#1214): the workspaces
+        list seats its own pill in its quick-facts row, and while
+        that page is the one showing, the window's floating pill
+        hides — one pill at a time, both reading the one controller.
+        The seated pill's own show and hide events drive it, and the
+        page's change delivers them."""
+        self.seated = seated
+        seated.installEventFilter(self)
+        self.follow(seated)
+
+    def follow(self, seated) -> None:
+        """The floating pill's visibility after the seated one's, as
+        the window sees it: a seated pill hidden with its page's
+        footer (the terminal-only mode) still reads ``isVisible()``
+        of itself, so the window is asked."""
+        self.setVisible(not seated.isVisibleTo(self.window()))
+
+    def stands_down_for(self, seated) -> bool:
+        """Link this floating pill to a seated one (#1214) when they
+        share a window; True once linked. A floating pill on another
+        window ignores the call."""
+        if seated.window() is not self.window():
+            return False
+        self.yields_to(seated)
+        return True
 
     # --- the faces ------------------------------------------------------
 
@@ -306,13 +384,16 @@ class DictationPill(QtWidgets.QFrame):
 
 
 class PillHost(QtCore.QObject):
-    """One pill on every main window the application shows
-    (#1214): an application event filter that equips each
-    ``QMainWindow`` when it is polished or shown — the main window
-    itself, and a shell window torn off the strip. Dialogs, popups,
-    and tooltips stay bare: a dialog is a question or a form in
-    flight, and the recording toggle belongs to the window the
-    operator works in. The host comes off the application at the
+    """A floating pill on every main window (#1214): an application
+    event filter that equips each ``QMainWindow`` when it is polished
+    or shown — the main window itself, on every page, and a shell
+    window torn off the strip. Dialogs, popups, and tooltips stay
+    bare: a dialog is a question or a form in flight, and the
+    recording toggle belongs to the window the operator works in.
+    The workspaces list seats a pill of its own in its quick-facts
+    row; while that page shows, it stands the main window's floating
+    pill down (:meth:`DictationPill.yields_to`), so one pill shows
+    at a time. The host comes off the application at the
     controller's shutdown (:meth:`remove`)."""
 
     def __init__(self, dictation, app) -> None:
@@ -331,7 +412,7 @@ class PillHost(QtCore.QObject):
 
     @staticmethod
     def equips(watched) -> bool:
-        """Whether a window takes a pill (#1214): a top-level
+        """Whether a window takes a floating pill (#1214): a top-level
         ``QMainWindow`` carrying none yet. A dialog never is one,
         whatever its parent."""
         return (

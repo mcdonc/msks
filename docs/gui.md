@@ -530,10 +530,12 @@ recovery line.
 ![The dictate pill in a recording: the red mic, the timer, and the
 discard button at the window's top-right corner](screens/gui-dictate.png)
 
-A small pill sits at the top-right corner of every main window the
-GUI shows: the main window on every tab, and each torn-off shell
-window. It is the same control everywhere, and one recording runs
-behind all of them. Dialogs carry no pill. Click it to start
+A small pill sits on every page of the main window and on each
+torn-off shell window. It is the same control everywhere, and one
+recording runs behind all of them. On the workspace list it sits in
+the quick-facts row at the right end, directly under the connection
+picker; on every other page it floats at the window's top-right
+corner. Dialogs carry no pill. Click it to start
 talking. Click it again to finish. Nothing ends a recording on your
 behalf: a pause inside a sentence is not the end of one. A
 three-minute cap ends a clip that nobody stopped.
@@ -594,16 +596,6 @@ settings in effect now, and every field takes a change.
   and **Refresh** reads the list again. The default input follows
   the desktop's own choice. A node name or serial typed free
   selects one the list does not carry.
-- **Speech floor**: the lowest level that can count as speech, in
-  dBFS. The gate tracks the room's noise floor, and this floor
-  keeps a very quiet room from making a whisper into speech. The
-  default, -60, is near digital silence.
-- **Speech margin**: how many decibels above the tracked noise
-  floor a level must sit to count as speech. The floor is the
-  quiet tenth of the last three seconds, learned while you are
-  silent. A speakerphone lifts a quiet room's floor to about -33
-  dBFS, and the default of 14 keeps its hiss out of the clip. A
-  closer microphone in a quiet room can take a lower margin.
 - **Vocabulary prompt**: the words whisper-cli biases its spelling
   toward, such as `msks, devenv, NixOS, pi`. Leave it empty for
   plain dictation.

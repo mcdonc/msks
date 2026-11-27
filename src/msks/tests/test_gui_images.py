@@ -1709,7 +1709,11 @@ def test_the_flash_line_sits_below_the_groups(qt) -> None:
     assert layout.itemAt(0).widget().title() == cells.CATALOG_GROUP
     assert layout.itemAt(1).widget().title() == cells.PUBLISHED_GROUP
     assert layout.itemAt(2).widget() is tab.status
-    assert layout.itemAt(3).widget() is tab.counts
+    # The counts line shares its row with the dictate pill at the
+    # right end (#1214); this tab has no controller, so the line
+    # fills the row.
+    assert layout.itemAt(3).widget().layout().itemAt(0).widget() is tab.counts
+    assert tab.pill is None
     window.close()
 
 
@@ -1822,7 +1826,11 @@ def test_the_groups_carry_their_button_rows(qt) -> None:
     assert layout.itemAt(0).widget().title() == cells.CATALOG_GROUP
     assert layout.itemAt(1).widget().title() == cells.PUBLISHED_GROUP
     assert layout.itemAt(2).widget() is tab.status
-    assert layout.itemAt(3).widget() is tab.counts
+    # The counts line shares its row with the dictate pill at the
+    # right end (#1214); this tab has no controller, so the line
+    # fills the row.
+    assert layout.itemAt(3).widget().layout().itemAt(0).widget() is tab.counts
+    assert tab.pill is None
     window.close()
 
 

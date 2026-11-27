@@ -45,6 +45,7 @@ from PySide6 import QtCore, QtGui
 from ..dictate import (
     DONE_TONE_HZ,
     START_TONE_HZ,
+    Detector,
     DictateFailure,
     Framer,
     capture_command,
@@ -272,7 +273,7 @@ class Dictation(QtCore.QObject):
             self.stream.stop()
             self.release_stream()
         self.elapsed = 0.0
-        self.detector = self.settings.gate.detector()
+        self.detector = Detector()
         self.framer = Framer()
         try:
             self.tone(START_TONE_HZ)

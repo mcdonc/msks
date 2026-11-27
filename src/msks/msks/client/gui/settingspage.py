@@ -35,16 +35,14 @@ from PySide6 import QtCore, QtWidgets
 from ..config_keys import DICTATE_KEYS, GLOBAL_ENV_VARS
 from ..dictate import (
     DEFAULT_MODEL,
-    DEFAULT_SILENCE,
     MODEL_SIZES,
     DictateFailure,
     download_model,
     list_sources,
     model_path,
 )
-from ..validate import DICTATE_RANGES
 from .dictatekeys import DictateSettings, resolve
-from .dictatepill import pill_room
+from .dictatepill import seat_pill
 from .guiprefs import load_prefs, save_prefs
 from .statusflash import StatusFlash
 from .tintedlabel import TintedLabel
@@ -82,21 +80,6 @@ TIPS = {
         "(Refresh reads the list again); the default input follows "
         "the desktop's own choice. A node name or serial typed free "
         "selects one the list does not carry."
-    ),
-    "dictate_threshold": (
-        "The lowest level that can count as speech, in dBFS. The gate "
-        "tracks the room's noise floor and counts as speech whatever "
-        "sits the margin above it; this floor keeps a very quiet room "
-        "from making a whisper into speech. The default, -60, is "
-        "near digital silence."
-    ),
-    "dictate_margin": (
-        "How many decibels above the tracked noise floor a level must "
-        "sit to count as speech. The floor is the quiet tenth of the "
-        "last three seconds, learned while you are silent. A "
-        "speakerphone lifts the room's floor to about -33 dBFS, and "
-        "the default of 14 keeps its hiss out of the clip; a closer "
-        "microphone in a quiet room can take a lower margin."
     ),
     "dictate_prompt": (
         "The vocabulary whisper-cli biases its spelling toward: the "
@@ -152,15 +135,12 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
     # --- the form -------------------------------------------------------
 
     def build_form(self) -> None:
-        """The five fields (#1214): the model as an editable picker
+        """The three fields (#1214): the model as an editable picker
         over the known names (a path typed free), the device as an
-        editable picker over the listed sources, the gate's floor
-        and margin in their validated ranges, and the prompt. The
+        editable picker over the listed sources, and the prompt. The
         picker drives the model line and the Download button as it
         changes, so a pick shows what a download would fetch before
-        anything is saved. The gate's pause window (``dictate_silence``)
-        has no field: the click ends a recording, and the window
-        only shapes how the gate reads the room."""
+        anything is saved."""
         self.model = QtWidgets.QComboBox(self)
         self.model.setEditable(True)
         self.model.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
@@ -174,12 +154,6 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         self.device.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
         self.device.addItem(DEFAULT_DEVICE, "")
         self.fields["dictate_device"] = self.device
-        low, high = DICTATE_RANGES["dictate_threshold"]
-        self.threshold = self.number(low, high, " dBFS")
-        self.fields["dictate_threshold"] = self.threshold
-        low, high = DICTATE_RANGES["dictate_margin"]
-        self.margin = self.number(low, high, " dB")
-        self.fields["dictate_margin"] = self.margin
         self.prompt = QtWidgets.QLineEdit(self)
         # No placeholder (#1214): the gray example text read as a
         # value already in effect. The tooltip carries the examples,
@@ -245,23 +219,6 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         self.labels[key] = label
         return label
 
-    def number(
-        self,
-        low: float,
-        high: float,
-        suffix: str,
-        step: float = 0.5,
-        floor: float | None = None,
-    ) -> QtWidgets.QDoubleSpinBox:
-        """One of the gate's numbers in its validated range, one
-        decimal."""
-        box = QtWidgets.QDoubleSpinBox(self)
-        box.setRange(floor if floor is not None else low, high)
-        box.setSingleStep(step)
-        box.setDecimals(1)
-        box.setSuffix(suffix)
-        return box
-
     def build_download(self) -> None:
         """The model download (#1214): where the model points and
         whether it stands, the download button, the bar, and the
@@ -299,10 +256,6 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         device_row.addWidget(self.refresh_sources)
         form.addRow(self.label("dictate_device", DEVICE_LABEL), device_row)
         form.addRow(
-            self.label("dictate_threshold", "Speech floor"), self.threshold
-        )
-        form.addRow(self.label("dictate_margin", "Speech margin"), self.margin)
-        form.addRow(
             self.label("dictate_prompt", "Vocabulary prompt"), self.prompt
         )
         form.addRow(self.pinned_note)
@@ -331,20 +284,13 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         bar_row.addWidget(self.bar)
         bar_row.addStretch(1)
         down.addLayout(bar_row)
-        # The page's own frame (#1214): the group boxes stop short
-        # of the dictate pill's corner. The pill floats over the
-        # window's top-right, and without the room the first
-        # render put the Model picker's arrow under it; the other
-        # tabs' tables run under the pill's band with their last
-        # column's header sort arrow, which the pill covers
-        # cleanly, while a form's control there would be
-        # unclickable.
         page = QtWidgets.QVBoxLayout(self)
-        page.setContentsMargins(0, 0, pill_room(self.font()), 0)
         page.addWidget(settings_box)
         page.addWidget(download_box)
         page.addStretch(1)
-        page.addWidget(self.status)
+        # The status line shares its row with the dictate pill
+        # (#1214), pinned right.
+        page.addWidget(seat_pill(self, self.dictation, self.status))
 
     # --- reading and writing the settings -------------------------------
 
@@ -352,15 +298,11 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         """One field's seed (#1214): the effective value in the
         field's own shape, and the field read-only with the
         variable named when the environment pins the key."""
-        if key == "dictate_silence":
-            return  # no field (#1214): the click ends a recording
         field = self.fields[key]
         if key == "dictate_model":
             self.pick_model(settings.model)
         elif key == "dictate_device":
             self.pick_device(settings.device)
-        elif isinstance(field, QtWidgets.QDoubleSpinBox):
-            field.setValue(float(settings.value(key)))
         else:
             field.setText(str(settings.value(key)))
         pinned = key in settings.pinned
@@ -446,26 +388,17 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         return {
             "dictate_model": self.model_value(),
             "dictate_device": self.device_value(),
-            "dictate_threshold": self.threshold.value(),
-            "dictate_margin": self.margin.value(),
             "dictate_prompt": self.prompt.text().strip(),
         }
 
     def file_values(self) -> dict:
         """What Apply writes (#1214): the fields' values, a pinned
-        key left out (the variable wins it anyway), and the pause
-        window — which has no field — carried at the value it
-        resolves to now, so a save never drops a value the operator
-        wrote by hand."""
-        values = {
+        key left out (the variable wins it anyway)."""
+        return {
             key: value
             for key, value in self.values().items()
             if key not in self.dictation.settings.pinned
         }
-        silence = self.dictation.settings.gate.silence
-        if silence != DEFAULT_SILENCE:
-            values["dictate_silence"] = silence
-        return values
 
     def effective(self) -> DictateSettings:
         """The settings as the layers resolve them right now

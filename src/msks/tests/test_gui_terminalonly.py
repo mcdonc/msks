@@ -342,7 +342,7 @@ def test_entering_hides_the_chrome_and_shows_the_corner(qt) -> None:
         page.external_button,
         mode.toggle,
     }
-    assert page.footer.isHidden()
+    assert page.footer_row.isHidden()  # the facts and the pill's row
     assert not page.escape.isEnabled()
     # The hidden row and footer leave their rows to the
     # terminals: the stack rises to the page's own margin and
@@ -733,7 +733,7 @@ def test_restoring_shows_the_chrome_back_and_keeps_the_shells(
     assert mode.margins is None
     for widget in mode.row:
         assert not widget.isHidden()
-    assert not page.footer.isHidden()
+    assert not page.footer_row.isHidden()
     assert page.escape.isEnabled()
     assert mode.corner.isHidden()
     assert page.shells.currentWidget() is second

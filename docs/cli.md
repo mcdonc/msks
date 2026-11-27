@@ -116,9 +116,6 @@ variables has a config-file equivalent.
 | `MSKSC_SCREENSHOT_PORT`    | `screenshot_port`    | The loopback port the guest's sshd binds for the [screenshot pipe](screenshot.md), when a configured client holds one. The holder writes it to `/tmp/msks-screenshot-port` in the guest for the guest's `screenshot` tool                                                                                                                                                    | `8662`                                                    |
 | `MSKSC_DICTATE_MODEL`      | `dictate_model`      | The GUI's dictation model: a whisper.cpp ggml name the Settings tab's **Download** button fetches into the cache, or a path to a `.bin` file (a NixOS store path, for one). Global-only, the rule `identity_file` carries. The [GUI chapter](gui.md#dictation) describes the feature; the [preferences file](#the-gui-preferences-file) sits between this and the config key | `small`                                                   |
 | `MSKSC_DICTATE_DEVICE`     | `dictate_device`     | The microphone the dictation captures from: a PipeWire node name or serial, the `pw-record --target` form. Unset takes the default source. Global-only                                                                                                                                                                                                                       | unset (the default source)                                |
-| `MSKSC_DICTATE_THRESHOLD`  | `dictate_threshold`  | The lowest level in dBFS that can count as speech, -99 to 0. Global-only                                                                                                                                                                                                                                                                                                     | `-60`                                                     |
-| `MSKSC_DICTATE_MARGIN`     | `dictate_margin`     | The dB above the tracked noise floor that count as speech, 0 to 60. Global-only                                                                                                                                                                                                                                                                                              | `14`                                                      |
-| `MSKSC_DICTATE_SILENCE`    | `dictate_silence`    | The seconds of quiet the dictation's speech gate treats as a pause while it learns the room's noise floor, above 0 and at most 30. The pill's click ends the recording, and the Settings tab has no field for this key. Global-only                                                                                                                                          | `1.0`                                                     |
 | `MSKSC_DICTATE_PROMPT`     | `dictate_prompt`     | The vocabulary whisper-cli biases its spelling toward (`msks, devenv, NixOS, pi`). Global-only                                                                                                                                                                                                                                                                               | unset                                                     |
 
 `MSKSC_CACHE_DIR` exists because the host-key cache is disposable: a swept
@@ -258,18 +255,17 @@ The GUI's dictation settings have a file of their own:
 (`MSKSC_CONFIG_DIR` relocates both). The **Settings** tab writes this
 file and never `msks.yaml`: on NixOS that file is generated into
 `/etc/msks.yaml`, it is read-only, and it stays declarative. The file
-carries the six `dictate_*` keys and nothing else, with the same
+carries the three `dictate_*` keys and nothing else, with the same
 grammar as `msks.yaml` (hyphens and underscores spell one key, a blank
 value is the unset form). An example:
 
 ```yaml
 dictate_model: small
 dictate_device: alsa_input.usb-Focusrite_Scarlett_2i2.mic1
-dictate_silence: 1.5
 dictate_prompt: msks, devenv, NixOS, pi
 ```
 
-For those six keys the precedence is, highest first:
+For those three keys the precedence is, highest first:
 
 ```text
 MSKSC_DICTATE_* environment > gui.yaml > msks.yaml > the defaults

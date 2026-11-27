@@ -85,15 +85,18 @@ def test_frame_db():
     assert dictate.frame_db(array.array("h")) == -99.0
 
 
-def test_the_gate_builds_its_detector():
-    gate = dictate.Gate(threshold=-50.0, margin=10.0, silence=1.5)
-    det = gate.detector()
-    assert (det.threshold, det.margin, det.silence) == (-50.0, 10.0, 1.5)
+def test_the_detector_carries_the_leaf_constants():
+    """The gate's numbers are the leaf's own (#1214): the detector's
+    defaults are the spike's findings, and the GUI builds one per
+    recording from them."""
+    det = dictate.Detector()
+    assert det.threshold == dictate.DEFAULT_THRESHOLD
+    assert det.margin == dictate.DEFAULT_MARGIN
+    assert det.silence == dictate.PAUSE_SECONDS
     assert det.timeout == dictate.WAIT_SECONDS
     assert det.max_seconds == dictate.CAP_SECONDS
     assert det.preroll == dictate.PREROLL_SECONDS
     assert det.pad == dictate.PAD_SECONDS
-    assert dictate.Gate().threshold == dictate.DEFAULT_THRESHOLD
 
 
 def test_speech_then_silence():

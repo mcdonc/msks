@@ -10,8 +10,8 @@ from __future__ import annotations
 #: The dictation keys (#1214): the GUI's dictate pill's settings —
 #: the model (a ggml name the cache fetches, or a path to a
 #: ``.bin``), the capture device (a ``pw-record`` target: a node
-#: name or serial), the gate's three numbers, and the vocabulary
-#: prompt whisper-cli biases its spelling with. Global-only, the
+#: name or serial), and the vocabulary prompt whisper-cli biases
+#: its spelling with. Global-only, the
 #: rule ``identity_file`` carries: the microphone and the models
 #: belong to the operator's desktop, not to a daemon connection.
 #: The GUI's own preferences file (``gui.yaml``) sits between the
@@ -22,9 +22,6 @@ from __future__ import annotations
 DICTATE_KEYS = (
     "dictate_model",
     "dictate_device",
-    "dictate_threshold",
-    "dictate_margin",
-    "dictate_silence",
     "dictate_prompt",
 )
 

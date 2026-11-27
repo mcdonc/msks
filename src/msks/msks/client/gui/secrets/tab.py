@@ -43,6 +43,7 @@ from PySide6 import QtCore, QtWidgets
 
 from ...data import RestFailure
 from ...frames import secrets_frame
+from ..dictatepill import seat_pill
 from ..feedpage import FeedPage
 from ..forms import confirm, pick_item
 from ..listtable import (
@@ -152,9 +153,12 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
     #: the outcome on this tab's status line.
     unlock_asked = QtCore.Signal()
 
-    def __init__(self, bridge) -> None:
+    def __init__(self, bridge, dictation=None) -> None:
         super().__init__()
         self.bridge = bridge
+        #: The dictate controller (#1214): with one, the counts line
+        #: shares its row with the pill at the right end.
+        self.dictation = dictation
         self.pending = False
         self.refresh_due = False
         self.action_pending = False
@@ -281,7 +285,9 @@ class SecretsTab(FeedPage, StatusFlash, QtWidgets.QWidget):
         columns.addWidget(listing, stretch=1)
         columns.addWidget(audit, stretch=1)
         columns.addLayout(bar)
-        columns.addWidget(self.counts)
+        # The counts line shares its row with the dictate pill
+        # (#1214), pinned right.
+        columns.addWidget(seat_pill(self, self.dictation, self.counts))
 
     def build_table(self, table: ListTable, sortable: bool = True) -> None:
         """A group table's standing shape (#966, #997):

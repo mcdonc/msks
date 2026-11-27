@@ -1,4 +1,4 @@
-"""The dictate pill's settings (#1214): the six keys' resolution
+"""The dictate pill's settings (#1214): the five keys' resolution
 and the record the pill, the settings page, and the transcription
 read. Plain data over the client's own config layer — no Qt in
 it.
@@ -17,10 +17,10 @@ stays declarative — so a value the page saves beats the operator's
 file, and the environment still pins a key above both, the way it
 does for every other client setting.
 
-A value that refuses (a threshold that is not a number, a silence
-of zero) is a *problem*: the key reads as its default, the
-refusal names the variable or file it came from, and the settings
-page shows it. A bad pin is never masked by the layer under it.
+A value that refuses (a key whose value is the wrong shape) is a
+*problem*: the key reads as its default, the refusal names the
+variable or file it came from, and the settings page shows it. A
+bad pin is never masked by the layer under it.
 """
 
 from __future__ import annotations
@@ -30,8 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..config_keys import DICTATE_KEYS, GLOBAL_ENV_VARS
-from ..dictate import DEFAULT_LANG, DEFAULT_MODEL, Gate, model_path
-from ..validate import dictate_number
+from ..dictate import DEFAULT_LANG, DEFAULT_MODEL, model_path
 
 #: The settings tab's label (#1214): the strip's fourth tab, the
 #: page that edits these keys. A plain word in this Qt-free leaf,
@@ -44,29 +43,18 @@ SETTINGS_TAB_LABEL = "Settings"
 #: vocabulary prompt. The empty string is their unset form.
 STRING_KEYS = ("dictate_model", "dictate_device", "dictate_prompt")
 
-#: The gate's numbers (#1214): the floor, the margin, and the
-#: quiet that ends a clip, read through the validator's own
-#: reader from every layer.
-NUMBER_KEYS = ("dictate_threshold", "dictate_margin", "dictate_silence")
-
-#: The gate number each key names on :class:`Gate`.
-GATE_FIELDS = {
-    "dictate_threshold": "threshold",
-    "dictate_margin": "margin",
-    "dictate_silence": "silence",
-}
-
 
 @dataclass(frozen=True)
 class DictateSettings:
-    """The resolved settings (#1214): the model, the device, the
-    gate, and the prompt — plus the two records the settings page
-    shows beside the fields: the keys the environment pinned, and
-    the keys whose value refused."""
+    """The resolved settings (#1214): the model, the device, and
+    the prompt — plus the two records the settings page shows
+    beside the fields: the keys the environment pinned, and the
+    keys whose value refused. The speech gate's floor and margin
+    are the leaf's own constants: nobody tunes them, and the
+    tracked floor was the spike's fix for a speakerphone."""
 
     model: str = DEFAULT_MODEL
     device: str = ""
-    gate: Gate = Gate()
     prompt: str = ""
     lang: str = DEFAULT_LANG
     #: The keys a variable pinned (#1214): the page shows their
@@ -83,17 +71,13 @@ class DictateSettings:
 
     def value(self, key: str):
         """One key's resolved value, for the page's fields."""
-        if key in GATE_FIELDS:
-            return getattr(self.gate, GATE_FIELDS[key])
         return getattr(self, key.removeprefix("dictate_"))
 
 
 def read_value(key: str, value, source: str):
-    """One key's value from one layer, validated: a float for the
-    gate's numbers, a stripped string for the rest, None for the
-    unset form (null, blank). The refusal names the source."""
-    if key in NUMBER_KEYS:
-        return dictate_number(key, value, source)
+    """One key's value from one layer, validated: a stripped
+    string, None for the unset form (null, blank). The refusal
+    names the source."""
     if value is None:
         return None
     if not isinstance(value, str):
@@ -200,18 +184,11 @@ def take_key(key: str, resolved: tuple, values: dict, pinned: set, problems):
 def settings_from(
     values: dict, pinned: frozenset, problems: tuple
 ) -> DictateSettings:
-    """The record from the resolved values (#1214): the gate's
-    numbers off their keys, the strings with their defaults for
-    the keys no layer carried."""
-    gate = Gate(
-        threshold=values.get("dictate_threshold", Gate.threshold),
-        margin=values.get("dictate_margin", Gate.margin),
-        silence=values.get("dictate_silence", Gate.silence),
-    )
+    """The record from the resolved values (#1214): the strings
+    with their defaults for the keys no layer carried."""
     return DictateSettings(
         model=values.get("dictate_model") or DEFAULT_MODEL,
         device=values.get("dictate_device") or "",
-        gate=gate,
         prompt=values.get("dictate_prompt") or "",
         pinned=pinned,
         problems=problems,
