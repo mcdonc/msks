@@ -286,18 +286,28 @@ def test_the_image_ships_the_screenshot_extension() -> None:
     assert "ctx.ui.select(" in index
     assert "modelRegistry.complete(" in index
     # The describe step runs behind a spinner in the TUI (#1201):
-    # ctx.ui.custom() hosts a CancellableLoader whose Escape aborts
-    # the nested call through its signal, and the component's blocked
-    # option makes OSC 7501 terminals report pi as blocked with the
-    # spinner's message. Elsewhere the call runs bare, since a custom
+    # ctx.ui.custom() hosts pi's BorderedLoader (a CancellableLoader
+    # with the cancel hint), whose Escape ends the wait at once and
+    # stops the agent's turn; the component's blocked option makes
+    # OSC 7501 terminals report pi as blocked with the spinner's
+    # message. Elsewhere the call runs bare, since a custom
     # component is terminal-only.
-    assert 'from "@earendil-works/pi-tui"' in index
-    assert "new CancellableLoader(" in index
+    assert (
+        'import { BorderedLoader } from "@earendil-works/pi-coding-agent"'
+        in index
+    )
+    assert "new BorderedLoader(tui, theme, DESCRIBING)" in index
     assert "ctx.ui.custom<Described>(" in index
     assert 'ctx.mode !== "tui"' in index
     assert 'const DESCRIBING = "Describing screenshot…";' in index
     assert '{ blocked: { kind: "question", message: DESCRIBING } }' in index
     assert "AbortSignal.any([signal, loader.signal])" in index
+    # A cancel closes the component before the turn is aborted, and
+    # the cancelled text carries no pick hint.
+    cancel_done = "done({ cancelled: true });"
+    assert cancel_done in index and "ctx.abort();" in index
+    assert index.index(cancel_done) < index.index("ctx.abort();")
+    assert "the description was cancelled; the capture is saved at" in index
     assert 'from "./capture.ts"' in index
     # The capture side: no pi import (plain node runs it), the
     # port file and the default, the refusal's both remedies, and

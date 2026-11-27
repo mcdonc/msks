@@ -31,6 +31,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { BorderedLoader } from "@earendil-works/pi-coding-agent";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -41,7 +42,6 @@ import type {
   TextContent,
   Usage,
 } from "@earendil-works/pi-ai";
-import { CancellableLoader } from "@earendil-works/pi-tui";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { capture, type Capture } from "./capture.ts";
@@ -224,26 +224,31 @@ function text(content: string): TextContent {
   return { type: "text", text: content };
 }
 
-/** The describe step's way out through `done()`: a rejection is
- * carried as a value, since the component's only exit is `done()`,
- * and thrown again for the caller's own error text. */
-type Described = { answer: AssistantMessage } | { failure: unknown };
+/** The describe step's way out through `done()`: the vision
+ * model's answer, the user's cancel, or a rejection carried as a
+ * value, since the component's only exit is `done()`, and thrown
+ * again for the caller's own error text. */
+type Described =
+  { answer: AssistantMessage } | { failure: unknown } | { cancelled: true };
 
 /** One request to the vision model: the capture and the prompt,
- * answered by its message. In the TUI the call runs behind a
- * spinner (#1201): `ctx.ui.custom()` hosts a CancellableLoader,
- * whose Escape aborts the call through its signal, and the
- * component's `blocked` option makes terminals that speak OSC
- * 7501 report pi as blocked, with the spinner's message, for as
- * long as the describe runs. Anywhere else the call runs bare: a
- * custom component is terminal-only. The run's own signal aborts
- * the call on both paths. */
+ * answered by its message, or by undefined when the user cancelled
+ * the wait. In the TUI the call runs behind a spinner (#1201):
+ * `ctx.ui.custom()` hosts pi's BorderedLoader, a CancellableLoader
+ * with a border and the cancel hint. Its Escape ends the wait at
+ * once, whatever the provider does with the signal, and in an
+ * agent turn it stops the turn as Escape does elsewhere in pi. The
+ * component's `blocked` option makes terminals that speak OSC 7501
+ * report pi as blocked, with the spinner's message, for as long as
+ * the describe runs. Anywhere else the call runs bare: a custom
+ * component is terminal-only. The run's own signal aborts the call
+ * on both paths. */
 async function describeCapture(
   ctx: ExtensionContext,
   model: CatalogModel,
   content: Content[],
   signal: AbortSignal | undefined,
-): Promise<AssistantMessage> {
+): Promise<AssistantMessage | undefined> {
   const complete = (abort: AbortSignal | undefined) =>
     ctx.modelRegistry.complete(
       model,
@@ -255,28 +260,40 @@ async function describeCapture(
   }
   const outcome = await ctx.ui.custom<Described>(
     (tui, theme, _keybindings, done) => {
-      const loader = new CancellableLoader(
-        tui,
-        (frame) => theme.fg("accent", frame),
-        (message) => theme.fg("dim", message),
-        DESCRIBING,
-      );
+      const loader = new BorderedLoader(tui, theme, DESCRIBING);
+      loader.onAbort = () => {
+        // done() first: it puts the editor back, and the abort then
+        // returns any queued messages into it, as the editor's own
+        // Escape does. A provider still running finishes unseen:
+        // pi drops a done() after the first.
+        done({ cancelled: true });
+        ctx.abort();
+      };
       const abort =
         signal === undefined
           ? loader.signal
           : AbortSignal.any([signal, loader.signal]);
-      complete(abort).then(
-        (answer) => done({ answer }),
-        (failure: unknown) => done({ failure }),
-      );
+      // The call starts in a microtask, after pi has queued the show
+      // of the component: a settle that came first would close the
+      // custom() before the show, and pi would never dispose the
+      // loader.
+      queueMicrotask(() => {
+        complete(abort).then(
+          (answer) => done({ answer }),
+          (failure: unknown) => done({ failure }),
+        );
+      });
       return loader;
     },
     { blocked: { kind: "question", message: DESCRIBING } },
   );
+  if ("answer" in outcome) {
+    return outcome.answer;
+  }
   if ("failure" in outcome) {
     throw outcome.failure;
   }
-  return outcome.answer;
+  return undefined;
 }
 
 /** One capture, seen by whoever the choice above picks. The
@@ -341,7 +358,7 @@ async function shoot(
     mime: shot.mime,
     viewer: who.ref,
   };
-  let answer: AssistantMessage;
+  let answer: AssistantMessage | undefined;
   try {
     answer = await describeCapture(
       ctx,
@@ -361,7 +378,19 @@ async function shoot(
       isError: true,
     };
   }
-  if (answer.stopReason === "error" || answer.stopReason === "aborted") {
+  if (answer === undefined || answer.stopReason === "aborted") {
+    return {
+      content: [
+        text(
+          `the description was cancelled; the capture is saved at ${shot.path}`,
+        ),
+      ],
+      details,
+      isError: true,
+      usage: answer?.usage,
+    };
+  }
+  if (answer.stopReason === "error") {
     return {
       content: [
         text(
