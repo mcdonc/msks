@@ -6,6 +6,14 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Fixed
+
+- **A stopped holder takes the screenshot pipe's ssh child with
+  it (#1209).** A holder that stopped while its ssh child was
+  starting left that child running, and the guest's screenshot port
+  stayed bound after the holder was gone. The stop now takes that
+  child with it like any other.
+
 ## \[v0.11.1] - 2026-11-27
 
 ### Added

@@ -331,15 +331,34 @@ class ScreenshotPipe:
         bind (OpenSSH's own line, stderr-piped here) is reported
         once as the pipe's start-time failure and retried at the
         slower :data:`BIND_RETRY_S` pace — the guest's holder of
-        the port must go away before a retry can land."""
+        the port must go away before a retry can land.
+
+        The stop path is checked twice, the way the port-file
+        writer checks it: a stop that lands while the child spawns
+        (after the loop's check, before the child is recorded)
+        misses :meth:`terminate_children`, so the fresh child is
+        taken here (#1209)."""
         while not self.stopping.is_set():
             child = self.start_forward_child()
             if child is None:
                 continue
+            if self.stopping.is_set():
+                self.end_forward_child(child)
+                return
             refused = self.watch_stderr(child)
             child.wait()
             if not self.stopping.is_set():
                 self.stopping.wait(self.retry_after(refused))
+
+    def end_forward_child(self, child) -> None:
+        """The stop path's view of a forward child that spawned under
+        it: SIGTERM, the exit waited out, and the record cleared.
+        The child never reaches the stderr watch, so a line it wrote
+        in its short life goes unread."""
+        with suppress(OSError):
+            child.terminate()
+        child.wait()
+        self.ssh = None
 
     def start_forward_child(self):
         """Spawn one forward child, or None when it cannot start
