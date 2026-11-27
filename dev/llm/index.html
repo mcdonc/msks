@@ -1231,6 +1231,24 @@ carries no modality data, and a text-only declaration would make pi drop
 an image for every model in the guest. A text-only upstream answers an
 image with an error. The <a href="../screenshot/#the-guests-pi">screenshot extension</a>
 beside <code>llm-models.ts</code> depends on the declaration.</p>
+<p><code>~/.pi/agent/settings.json</code> ships in <code>/etc/skel</code> and root's home as well. Every
+account the identity seed provisions copies the skeleton, so each login user
+ends up with the file in <code>~/.pi/agent/</code>. It starts pi with the model's thinking
+blocks hidden, with install telemetry off, and in regular mode (<code>tuiMode</code> set
+to <code>"regular"</code>). Regular mode keeps the transcript in the terminal's scrollback
+and leaves the mouse to the terminal. The terminal's own selection, search, and
+scrolling then work over the transcript the terminal keeps. pi's own default is
+fullscreen mode, which draws the transcript in its own viewport and handles the
+mouse itself. The file is copied once, and later edits belong to the user.</p>
+<p>Quitting returns to the prompt at once in regular mode. Fullscreen mode writes
+the whole transcript to the terminal on exit, and a GUI shell paints that write
+slowly enough to watch (#1192). A workspace built from an earlier image keeps
+the old file in <code>/etc/skel</code> and in every home, so its accounts stay in
+fullscreen mode until <code>"tuiMode": "regular"</code> is added to the account's
+<code>~/.pi/agent/settings.json</code> by hand. A user who wants fullscreen can instead
+set <code>fullscreenExitOutput</code> to <code>"resume-hint"</code>, and quitting then prints only
+the resume hint. <code>pi --continue</code> resumes the most recent session for the
+current directory in either mode.</p>
 <h2 id="sighup">SIGHUP<a class="headerlink" href="#sighup" title="Permanent link">&para;</a></h2>
 <p>A restart or <code>SIGHUP</code> of msksd is required in order to register changes to the
 LLM proxy settings.</p>
