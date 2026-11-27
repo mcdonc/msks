@@ -191,9 +191,13 @@ def test_the_unit_boots_under_the_account_with_native_caps(
     mask = ""
     for _ in range(150):
         active = sh(["systemctl", "is-active", "msksd.service"])
+        # The probe's redirect creates the file before sed writes
+        # it: wait for content, not for existence, or the read
+        # lands on the empty instant.
         if ambient.exists():
             mask = ambient.read_text().strip()
-            break
+            if mask:
+                break
         assert active.stdout.strip() != "failed", active.stdout
         time.sleep(0.2)
     assert mask not in ("", "0000000000000000")
