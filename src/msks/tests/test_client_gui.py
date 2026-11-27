@@ -1003,6 +1003,7 @@ def test_open_window_reuses_an_existing_app(
         # (#1211): a strip built ahead of the seat measures its
         # bar with the fallback face and keeps that size.
         assert shown.index("faces") < shown.index("window")
+        assert shown.count("faces") == 1  # the one seat, never a re-seat
         # One pick's re-dial (#1009): the presenter applies the
         # preset, the standing bridge stops, the shell hub's
         # terminals close with the connection they belonged to,

@@ -295,19 +295,26 @@ def test_the_bundled_faces_sit_in_the_database(qt, monkeypatch, tmp_path):
 def test_a_call_before_the_application_leaves_the_faces_pending(
     qt, monkeypatch
 ):
-    """A seat asked before an application exists does nothing
-    and marks nothing done (#1211): the database belongs to the
-    application. A window path that runs without one (a stub
-    QtWidgets in a worker that built no window yet) would
-    otherwise mark the faces seated, and every later call would
-    skip the seat. The next call with the application up seats
-    them."""
-    monkeypatch.setattr(
-        qt.QtGui.QGuiApplication, "instance", staticmethod(lambda: None)
-    )
+    """A seat asked before an application exists does nothing and
+    marks nothing done (#1211). Taken without an application, the
+    seat crashes the process, and the window path can run with
+    none in it: a stub QtWidgets in a worker that built no
+    window yet. A done mark there would keep every later call
+    from seating the faces. The call stays pending, and the next
+    call with the application up seats them."""
+    families = qt.QtGui.QFontDatabase.families
     monkeypatch.setattr(qt.fonts, "_FACES_SEATED", False)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            qt.QtGui.QGuiApplication, "instance", staticmethod(lambda: None)
+        )
+        before = len(families())
+        qt.fonts.register_faces()
+        assert qt.fonts._FACES_SEATED is False
+        assert len(families()) == before
+    # The application stands again: the pending seat runs.
     qt.fonts.register_faces()
-    assert qt.fonts._FACES_SEATED is False
+    assert qt.fonts._FACES_SEATED is True
 
 
 def test_the_face_resolves_and_measures_as_one(qt):
