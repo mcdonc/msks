@@ -49,7 +49,7 @@ from .statusflash import StatusFlash
 from .tabstyle import mark_active
 from .terminalonly import TerminalOnly
 from .termsession import shell_argv
-from .tints import TintedLabel
+from .tintedlabel import TintedLabel
 from .workspaces import WorkspaceList
 
 #: The row read's key (#945): the page answers only its own

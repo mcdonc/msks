@@ -52,7 +52,7 @@ from ..imagerows import (
 )
 from ..listtable import ListTable, resized_viewport
 from ..statusflash import StatusFlash
-from ..tints import TintedLabel
+from ..tintedlabel import TintedLabel
 from . import layout
 from .buttons import ButtonRows
 from .cells import (

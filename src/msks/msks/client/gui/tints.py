@@ -1,14 +1,14 @@
 """The state tints (#1160): the three semantic colors a state
-word wears beside its text, one set per desktop scheme, and the
-two painters that apply them. A table cell carries its kind
-under :data:`SEMANTIC_ROLE` and :class:`SemanticDelegate` writes
-the kind's color into the palette in hand at paint time, so no
-widget stores a color and a scheme switch repaints every tint
-with the chrome; a selected or disabled cell keeps the style's
-own text. :class:`TintedLabel` wears a kind with a palette whose
-resolve mask names the text roles alone, so it keeps following
-the application palette for everything else and takes its
-color again on its own ``PaletteChange``.
+word wears beside its text, one set per desktop scheme, the color
+math behind them, and the table cell's painter. A table cell
+carries its kind under :data:`SEMANTIC_ROLE` and
+:class:`SemanticDelegate` writes the kind's color into the
+palette in hand at paint time, so no widget stores a color and a
+scheme switch repaints every tint with the chrome; a selected or
+disabled cell keeps the style's own text. The label's painter,
+:class:`msks.client.gui.tintedlabel.TintedLabel`, lives in its
+own module since #1214 split it out at the fan-in ceiling: the
+status lines import that, the tables import this.
 
 The kind words live in the Qt-free leaf :mod:`msks.client.gui.kinds`;
 :mod:`msks.client.gui.scheme` is the desktop-scheme pairing the
@@ -47,16 +47,13 @@ _LIGHT_SEMANTIC = {
 #: every per-table role the cell layers define.
 SEMANTIC_ROLE = QtCore.Qt.ItemDataRole.UserRole + 32
 
-#: The roles a tinted label's palette carries: the text a QLabel
-#: draws with, and the text the chrome's own text reads as.
+
+#: The roles a tinted palette carries: the text a label draws
+#: with, and the text the chrome's own text reads as.
 TEXT_ROLES = (
     QtGui.QPalette.ColorRole.Text,
     QtGui.QPalette.ColorRole.WindowText,
 )
-
-#: The resolve mask for TEXT_ROLES: the one bit per role Qt's
-#: palette resolution reads (``1 << role``).
-_TEXT_MASK = sum(1 << role.value for role in TEXT_ROLES)
 
 
 def luminance(color: QtGui.QColor) -> float:
@@ -133,53 +130,3 @@ class SemanticDelegate(QtWidgets.QStyledItemDelegate):
         if kind is None or selected or disabled:
             return
         tinted(option.palette, kind, option.palette)
-
-
-class TintedLabel(QtWidgets.QLabel):
-    """A label whose text wears a kind (#1160): the status line
-    under a refusal or an outage, the consent row's last
-    seconds. The palette carries the text roles alone, so the
-    label keeps following the chrome's base and font; a scheme
-    switch arrives as ``PaletteChange`` and the label takes its
-    kind's color again on the new base."""
-
-    kind = None
-    retinting = False
-
-    def __init__(self, text: str = "", parent=None) -> None:
-        super().__init__(text, parent)
-
-    def set_kind(self, kind) -> None:
-        """Wear ``kind``; None wears the chrome's own text color."""
-        self.kind = kind
-        self.retint()
-
-    def say(self, text: str, kind=None) -> None:
-        """Stand ``text`` wearing ``kind``: the note lines' one
-        write — a refusal the error tint, anything else the
-        chrome's own text."""
-        self.setText(text)
-        self.set_kind(kind)
-
-    def retint(self) -> None:
-        """The palette rewritten for the kind on the base the
-        label now sits on. A palette whose mask names the text
-        roles alone resolves every other role from the
-        application's; one with no mask at all is the label that
-        never had a palette of its own."""
-        palette = QtGui.QPalette()
-        palette.setResolveMask(_TEXT_MASK if self.kind else 0)
-        tinted(palette, self.kind, self.palette())
-        self.retinting = True
-        try:
-            self.setPalette(palette)
-        finally:
-            self.retinting = False
-
-    def event(self, event) -> bool:
-        if (
-            event.type() == QtCore.QEvent.Type.PaletteChange
-            and not self.retinting
-        ):
-            self.retint()
-        return super().event(event)

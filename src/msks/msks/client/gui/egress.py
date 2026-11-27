@@ -45,7 +45,7 @@ from .egressaudit import BODY_ROW, FOOTER_ROW, HEADING_ROW, AuditTrail
 from .forms import ModePicker, confirm, muted_note, save_cancel_row
 from .kinds import ERROR
 from .listtable import bold_heading
-from .tints import TintedLabel
+from .tintedlabel import TintedLabel
 
 #: The rules read's key stem (#1042): each flight carries its own
 #: key off it, the per-flight rule the tabs share — a late answer

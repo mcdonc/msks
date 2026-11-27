@@ -338,6 +338,214 @@ def terminal_command(conf) -> list[str] | None:
     return list(conf.terminal_open_cmd)
 
 
+def compose_dictation(conf, app):
+    """The dictation's composition (#1214): the controller over
+    the resolved settings — the environment, ``gui.yaml``, and
+    the operator config's validated keys, in that precedence —
+    and the client's cache root, plus the pill host that equips
+    every top-level window the application shows. A preferences
+    file that will not read prints one stderr line, the client's
+    convention, and the window opens on the operator's file and
+    the defaults: the settings page shows the reason when it is
+    asked. The imports land here, on the window path, never at
+    CLI parse time: the Qt-free leaves first, then the two that
+    carry PySide6 at module scope (the screens' own contract).
+    """
+    # allow-deferred-import — the client's cache root (Qt-free):
+    # the speech models and the tones live under it.
+    from ..identity import cache_dir
+
+    # allow-deferred-import — Qt-free: the dictation keys'
+    # resolution and the preferences file.
+    from .dictatekeys import resolve
+
+    # allow-deferred-import — PySide6 at module scope there.
+    from .dictatepill import PillHost
+
+    # allow-deferred-import — PySide6 at module scope there, the
+    # screens' own contract.
+    from .dictation import Dictation
+
+    # allow-deferred-import — Qt-free: gui.yaml's reader.
+    from .guiprefs import load_prefs
+
+    try:
+        prefs = load_prefs()
+    except ValueError as exc:
+        print(f"msks: {exc}", file=sys.stderr)
+        prefs = {}
+    operator = conf.doc if conf is not None else {}
+    dictation = Dictation(resolve(os.environ, prefs, operator), cache_dir())
+    pills = PillHost(dictation, app)
+    return dictation, pills
+
+
+#: The settings tab's label (#1214), the strip's own constant
+#: re-spelled here: the tab module carries PySide6 at module
+#: scope, and this module stays Qt-free at parse time.
+SETTINGS_TAB_LABEL = "Settings"
+
+
+def seat_settings(tabs, dictation, operator: dict, tree: dict):
+    """The settings page under one landing's strip (#1214): the
+    page as the fourth tab over the controller and the operator's
+    file keys, kept under ``tree["settings"]`` for the no-model
+    click's opener to find."""
+    # allow-deferred-import — the settings page carries the
+    # screens' own contract: PySide6 at module scope, loaded only
+    # on the window path after the guards.
+    from .settingspage import SettingsPage
+
+    page = SettingsPage(dictation, operator)
+    tabs.addTab(page, SETTINGS_TAB_LABEL)
+    tree["settings"] = page
+
+
+def wire_tree(
+    shell, tabs, secrets, bridge, connections, reconnect, unlock, tree
+):
+    """A landed tree's wires (#1009, #1152, #1147): the picker's
+    menu hosts from the presenter's rows and its picks re-dial;
+    the page's terminal-only mode asks the strip to hide its bar
+    through this wire — the page's own hide ends the mode, so the
+    listing and the other tabs never show under a hidden strip;
+    the unlock follows the fresh tree, its outcome flashing on the
+    listing and the offer of the daemon's locked rows going out at
+    once; and the tree remembers its bridge and shell."""
+    shell.listing.host_presets(connections.presets())
+    shell.listing.connection_picked.connect(reconnect)
+    shell.detail.chrome_hidden.connect(tabs.set_bar_hidden)
+    unlock.retarget(bridge, shell.listing, secrets)
+    tree["bridge"] = bridge
+    tree["shell"] = shell
+
+
+class Landing:
+    """The window's content tree builder (#962, #1009): one call
+    lands the shell under the strip — the bridge behind it, the
+    Images and Secrets pages, the settings page (#1214) — and
+    wires the tree (#1009, #1152, #1147). The first build and every
+    re-dial share this one construction; the collaborators are the
+    window's own, standing past the trees."""
+
+    def __init__(
+        self, window, app, conf, connections, unlock, dictation, tree
+    ) -> None:
+        self.window = window
+        self.app = app
+        self.conf = conf
+        self.connections = connections
+        self.unlock = unlock
+        self.dictation = dictation
+        self.tree = tree
+        #: The re-dial's retargets (#976, #1006): each takes the
+        #: fresh tree's hub — the zoom and the scheme pairing join
+        #: once they stand.
+        self.followers: list = []
+
+    def reconnect(self, preset) -> None:
+        """One pick's re-dial (#1009): the preset applies to the
+        environment through the config layer's own resolution,
+        the standing tree closes — its bridge stopped, its shell
+        hub's terminals gone with the connection they belonged to
+        — and a fresh tree lands over the picked values, the
+        followers retargeted at the new hub. A pick the presenter
+        refused (the file changed under the menu) re-dials
+        nothing — the picker re-hosts on the standing truth
+        instead."""
+        if not self.connections.pick(preset):
+            refuse_pick(
+                self.tree["shell"].listing, self.connections, preset.name
+            )
+            return
+        self.tree["bridge"].stop()
+        self.tree["shell"].hub.shutdown()
+        shell = self.land()
+        for follow in self.followers:
+            follow(shell.hub)
+
+    def land(self):
+        """Land one tree (#1009): the bridge started, the shell and
+        its pages under the strip, the tree wired — the picker's
+        picks re-dialing through :meth:`reconnect` — and the strip
+        the window's central widget."""
+        # allow-deferred-import — the bridge brings PySide6 with
+        # it (module scope there); this module stays Qt-free at
+        # parse time, so the import lands only on the window path.
+        from .bridge import Bridge
+
+        # allow-deferred-import — Qt-free: the asyncio events feed
+        # riding the same window path.
+        from .feed import EventsFeed
+
+        # allow-deferred-import — the Images tab's cells (#964):
+        # the channel URL, plain data beside the Qt-bearing tab.
+        from .images.cells import channel_url
+
+        # allow-deferred-import — the Images tab (#964) carries
+        # the screens' contract: PySide6 at module scope, loaded
+        # only on the window path.
+        from .images.tab import ImagesTab
+
+        # allow-deferred-import — the Secrets tab (#966) carries
+        # the screens' contract: PySide6 at module scope, loaded
+        # only on the window path.
+        from .secrets.tab import SecretsTab
+
+        # allow-deferred-import — the strip carries the screens'
+        # own shape (#962): PySide6 at module scope there.
+        from .tabs import IMAGES_LABEL, SECRETS_LABEL, MainTabs
+
+        # allow-deferred-import — the screen module brings
+        # PySide6 with it (module scope there, like the bridge);
+        # the window path loads it after the guards.
+        from .workspace import WorkspaceShell
+
+        conf = self.conf
+        bridge = Bridge(GuiData(), feed_factory=EventsFeed)
+        bridge.start()
+        self.app.aboutToQuit.connect(bridge.stop)
+        shell = WorkspaceShell(bridge, terminal_cmd=terminal_command(conf))
+        tabs = MainTabs(shell, bridge)
+        tabs.addTab(ImagesTab(bridge, channel_url(conf)), IMAGES_LABEL)
+        secrets = SecretsTab(bridge)
+        tabs.addTab(secrets, SECRETS_LABEL)
+        operator = conf.doc if conf is not None else {}
+        seat_settings(tabs, self.dictation, operator, self.tree)
+        self.window.setCentralWidget(tabs)
+        wire_tree(
+            shell,
+            tabs,
+            secrets,
+            bridge,
+            self.connections,
+            self.reconnect,
+            self.unlock,
+            self.tree,
+        )
+        return shell
+
+
+def refuse_pick(listing, connections, name: str) -> None:
+    """A refused connection pick (#1009): the refusal shows where
+    every flash shows — the listing's own status line — and the
+    picker re-hosts on the standing truth beside it."""
+    listing.flash(f"the connection pick was refused — {name} did not resolve")
+    listing.host_presets(connections.presets())
+
+
+def show_settings_page(window, tree: dict) -> None:
+    """The no-model click's answer (#1214): the settings page
+    shows on the main window, whichever window's pill asked, and
+    the window comes forward."""
+    page = tree.get("settings")
+    if page is not None:
+        window.centralWidget().setCurrentWidget(page)
+    window.showNormal()
+    window.raise_()
+    window.activateWindow()
+
+
 def open_window(QtWidgets: ModuleType, conf=None) -> int:
     """Show the main-window shell and run the event loop.
 
@@ -365,15 +573,10 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     offering the unlock at every landing — the prompt is the
     session's one, whichever tree asked it.
     """
-    # allow-deferred-import — the bridge brings PySide6 with it
-    # (module scope there); this module stays Qt-free at parse
-    # time, so the import lands only on the window path.
-    from .bridge import Bridge
-
-    # allow-deferred-import — the feed is Qt-free but rides the
-    # same window path: nothing parses it before the guards.
-    from .feed import EventsFeed
-
+    # The dictation's composition (#1214) lands before the first
+    # tree: its Qt-free leaves and its two PySide6-bearing modules
+    # import there, never here — this module stays Qt-free at
+    # parse time, and the window path loads each piece once.
     # The style pin sits in the environment, before the
     # constructor: QApplication's own theme setup resolves the
     # session's style name (a Plasma portal answers "union"
@@ -443,41 +646,6 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     # Qt-free, plain data over the client's own config layer.
     from .connection import Connections
 
-    # allow-deferred-import — the Images tab's cells (#964):
-    # the channel URL, plain data beside the Qt-bearing tab.
-    from .images.cells import channel_url
-
-    # allow-deferred-import — the Images tab itself (#964)
-    # carries the screens' contract: PySide6 at module scope,
-    # loaded only on the window path — the package's init
-    # presents it lazily, and the import takes the defining
-    # submodule, not the package's presentation (the
-    # names-from-definers rule).
-    from .images.tab import ImagesTab
-
-    # allow-deferred-import — the Secrets tab itself (#966)
-    # carries the screens' contract: PySide6 at module scope,
-    # loaded only on the window path — the images package's
-    # own presentation.
-    from .secrets.tab import SecretsTab
-
-    # allow-deferred-import — the strip carries the screens'
-    # own shape (#962): the screens land under the Workspaces
-    # tab, the strip the phase 4.6 pages join.
-    from .tabs import IMAGES_LABEL, SECRETS_LABEL, MainTabs
-
-    # allow-deferred-import — the unlock flow (#1147) carries
-    # the screens' own contract: PySide6 at module scope, loaded
-    # only on the window path after the guards.
-    from .unlock import UnlockFlow
-
-    # allow-deferred-import — the screen module brings PySide6
-    # with it (module scope there, like the bridge); the window
-    # path loads it after the guards — the same reachability
-    # the gate counts, and the stub tests patch the name off
-    # the module.
-    from .workspace import WorkspaceShell
-
     # The connection picker and its re-dial (#1009, phase 5):
     # the picker rides the listing's status row below the flash
     # line (the presenter feeds it), never a pane of its own,
@@ -485,71 +653,33 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     # the picked values — the shell, the tabs, the bridge
     # behind them. The first build lands the same path a pick
     # re-runs, so the standing tree and every re-dial share one
-    # construction.
+    # construction (:class:`Landing`).
     connections = Connections(conf)
+    # The dictation (#1214): one controller over the window's
+    # whole life, standing past the strip's swaps the unlock
+    # does — every pill on every window reads it, and each
+    # landing's settings page writes its settings back into it.
+    dictation, pills = compose_dictation(conf, app)
+    app.aboutToQuit.connect(dictation.shutdown)
+    app.aboutToQuit.connect(pills.remove)
     tree: dict = {}
     # The unlock flow (#1147): one per window, before the first
     # tree lands — each landing retargets it at its own bridge,
     # listing, and Secrets tab, and the offer stands from there.
+    # allow-deferred-import — the unlock flow carries the screens'
+    # own contract: PySide6 at module scope there, loaded only on
+    # the window path after the guards.
+    from .unlock import UnlockFlow
+
     unlock = UnlockFlow(window)
-
-    def land() -> WorkspaceShell:
-        bridge = Bridge(GuiData(), feed_factory=EventsFeed)
-        bridge.start()
-        app.aboutToQuit.connect(bridge.stop)
-        shell = WorkspaceShell(bridge, terminal_cmd=terminal_command(conf))
-        tabs = MainTabs(shell, bridge)
-        tabs.addTab(ImagesTab(bridge, channel_url(conf)), IMAGES_LABEL)
-        secrets = SecretsTab(bridge)
-        tabs.addTab(secrets, SECRETS_LABEL)
-        window.setCentralWidget(tabs)
-        # The picker's menu hosts from the presenter's rows
-        # (#1009): the fresh listing's own button, fed here so
-        # the standing connection names itself on every build.
-        shell.listing.host_presets(connections.presets())
-        shell.listing.connection_picked.connect(reconnect)
-        # The page's terminal-only mode (#1152): the page hides
-        # its own controls and asks the strip to hide its bar
-        # through this wire; the page's own hide ends the mode,
-        # so the listing and the other tabs never show under a
-        # hidden strip.
-        shell.detail.chrome_hidden.connect(tabs.set_bar_hidden)
-        # The unlock follows the fresh tree (#1147): its outcome
-        # flashes on the listing, the Secrets tab's button asks
-        # by hand, and the offer of the daemon's locked rows goes
-        # out at once.
-        unlock.retarget(bridge, shell.listing, secrets)
-        tree["bridge"] = bridge
-        tree["shell"] = shell
-        return shell
-
-    def reconnect(preset) -> None:
-        """One pick's re-dial (#1009): the preset applies to the
-        environment through the config layer's own resolution,
-        the standing tree closes — its bridge stopped, its
-        shell hub's terminals gone with the connection they
-        belonged to — and a fresh tree lands over the picked
-        values, the zoom carrying its steps to the new hub. A
-        pick the presenter refused (the file changed under the
-        menu) re-dials nothing — the picker re-hosts on the
-        standing truth instead."""
-        if not connections.pick(preset):
-            # The refusal shows where every flash shows (#1009):
-            # the listing's own status line, the menu re-hosted
-            # on the standing truth beside it.
-            tree["shell"].listing.flash(
-                f"the connection pick was refused — {preset.name} "
-                "did not resolve"
-            )
-            tree["shell"].listing.host_presets(connections.presets())
-            return
-        tree["bridge"].stop()
-        tree["shell"].hub.shutdown()
-        shell = land()
-        zoom.retarget(shell.hub)
-        scheme.retarget(shell.hub)
-
-    shell = land()
+    # The no-model click (#1214) opens the settings page on the
+    # main window, whichever window's pill was clicked.
+    dictation.settings_requested.connect(
+        lambda: show_settings_page(window, tree)
+    )
+    landing = Landing(window, app, conf, connections, unlock, dictation, tree)
+    shell = landing.land()
+    # allow-deferred-import — the whole-client zoom (#976)
     # allow-deferred-import — the whole-client zoom (#976)
     # carries the screen modules' own contract: PySide6 at
     # module scope there, loaded only on the window path.
@@ -563,6 +693,9 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     # carries the operator's steps to each re-dialed tree's
     # hub.
     zoom = Zoom(shell.hub, window)
+    # Every re-dial (#1009) retargets the zoom and the scheme
+    # pairing at the fresh tree's hub.
+    landing.followers.append(lambda hub: zoom.retarget(hub))
     # allow-deferred-import — the desktop-scheme pairing
     # (#1006) carries the screens' own contract: PySide6 at
     # module scope there, loaded only on the window path.
@@ -576,6 +709,7 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     # retarget carries the standing scheme to each re-dialed
     # tree's hub.
     scheme = Scheme(shell.hub, app)
+    landing.followers.append(lambda hub: scheme.retarget(hub))
     # The opening geometry (#939): the last-closed rect wins —
     # a saved geometry the screens still show — and the fixed
     # 1280 by 720 is the first-open shape until a close
@@ -607,5 +741,7 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     settle = arm_sigint(app)
     code = app.exec()
     tree["bridge"].stop()
+    dictation.shutdown()
+    pills.remove()
     save_geometry(window)
     return settle(code)

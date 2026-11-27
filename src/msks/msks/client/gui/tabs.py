@@ -35,6 +35,10 @@ IMAGES_LABEL = "Images"
 #: (#997), the TUI secrets page's counterpart.
 SECRETS_LABEL = "Secrets"
 
+#: The fourth tab's label (#1214): the settings page — the
+#: dictate pill's settings and the speech model's download.
+SETTINGS_LABEL = "Settings"
+
 
 class MainTabs(QtWidgets.QTabWidget):
     """The window's top-level tabs (#962): the workspaces page

@@ -8,6 +8,7 @@ with the key and the reason.
 
 from __future__ import annotations
 
+import math
 import shlex
 
 import yaml
@@ -17,6 +18,27 @@ from .config_keys import (
     DAEMON_ENTRY_KEYS,
     GLOBAL_ENV_VARS,
 )
+
+
+def load_mapping(text: str, path: str, what: str = "config file") -> dict:
+    """The YAML text as a flat mapping (#1214 shares it with the
+    GUI's preferences file): an empty document is an empty
+    mapping, anything but a mapping is refused naming the file,
+    and duplicate keys are refused by the loader
+    (:class:`msks.configio.UniqueKeyLoader`), shared with msksd so
+    every file carries one duplicate-key story."""
+    try:
+        doc = yaml.load(text, Loader=UniqueKeyLoader)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{path}: invalid YAML: {exc}") from None
+    if doc is None:
+        return {}
+    if not isinstance(doc, dict):
+        kind = type(doc).__name__
+        raise ValueError(
+            f"{path}: the {what} must be a mapping of keys, got {kind}"
+        )
+    return doc
 
 
 def parse_config_doc(text: str, path: str) -> dict:
@@ -29,18 +51,7 @@ def parse_config_doc(text: str, path: str) -> dict:
     (:class:`msks.configio.UniqueKeyLoader`), shared with msksd so
     the two files carry one duplicate-key story.
     """
-    try:
-        doc = yaml.load(text, Loader=UniqueKeyLoader)
-    except yaml.YAMLError as exc:
-        raise ValueError(f"{path}: invalid YAML: {exc}") from None
-    if doc is None:
-        return {}
-    if not isinstance(doc, dict):
-        kind = type(doc).__name__
-        raise ValueError(
-            f"{path}: the config file must be a mapping of keys, got {kind}"
-        )
-    return validated_doc(doc, path)
+    return validated_doc(load_mapping(text, path), path)
 
 
 def normalized_key(key: str) -> str:
@@ -406,13 +417,109 @@ def port_in_range(port: int, path: str) -> int:
     )
 
 
-#: The typed-value keys' readers (#314's shapes beside #1194's): a
-#: command prefix, ssh option tokens, a capture command, and a port.
-#: Defined after its readers (each is a plain function above) —
+#: The dictation numbers' ranges (#1214): dBFS floors and
+#: margins, and seconds of quiet. A setting outside its range
+#: refuses wherever it came from — the operator's file, the
+#: GUI's own file, or the environment — naming the source.
+DICTATE_RANGES = {
+    "dictate_threshold": (-99.0, 0.0),
+    "dictate_margin": (0.0, 60.0),
+    "dictate_silence": (0.0, 30.0),
+}
+
+#: The numbers whose low end is out of range (#1214): a silence
+#: of zero would end a clip before it began, so the quiet setting
+#: reads above zero.
+DICTATE_EXCLUSIVE_LOW = frozenset({"dictate_silence"})
+
+
+def is_number_form(value: object) -> bool:
+    """Whether a value spells a number (#1214): YAML's native int
+    or float, or a string — the environment's form, or a quoted
+    number. A boolean spells one and is not one."""
+    return isinstance(value, (int, float, str)) and not isinstance(value, bool)
+
+
+def number_text(value: object) -> float:
+    """The number a value spells (#1214): YAML's native int or
+    float as a float, a string parsed — the environment's form,
+    or a quoted number — and NaN for a string that is no number
+    (the range check refuses it with the value shown)."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(value.strip())
+    except ValueError:
+        return math.nan
+
+
+def in_dictate_range(key: str, number: float) -> bool:
+    """Whether the number sits in the key's range (#1214): the
+    silence reads strictly above its floor, the others at it."""
+    low, high = DICTATE_RANGES[key]
+    if not math.isfinite(number):
+        return False
+    if key in DICTATE_EXCLUSIVE_LOW:
+        return low < number <= high
+    return low <= number <= high
+
+
+def dictate_span(key: str) -> str:
+    """The range as the refusal spells it (#1214)."""
+    low, high = DICTATE_RANGES[key]
+    if key in DICTATE_EXCLUSIVE_LOW:
+        return f"above {low:g} and at most {high:g}"
+    return f"between {low:g} and {high:g}"
+
+
+def dictate_number(key: str, value: object, source: str) -> float | None:
+    """One dictation number (#1214): the gate's threshold,
+    margin, or silence as a finite float in the key's range. YAML's
+    native int or float, a digit string (the environment's form),
+    and a quoted number all read the same; null and the empty
+    string are the unset form, the default applying. A boolean is
+    not a number (it spells one), and neither is anything else.
+    ``source`` is the file path or the variable the refusal
+    names."""
+    if value is None or value == "":
+        return None
+    if not is_number_form(value):
+        kind = type(value).__name__
+        raise ValueError(
+            f"{source}: config key {key!r} must be a number, got {kind}"
+        )
+    number = number_text(value)
+    if not in_dictate_range(key, number):
+        raise ValueError(
+            f"{source}: config key {key!r} must be a number "
+            f"{dictate_span(key)}, got {value!r}"
+        )
+    return number
+
+
+def dictate_threshold(value: object, path: str) -> float | None:
+    return dictate_number("dictate_threshold", value, path)
+
+
+def dictate_margin(value: object, path: str) -> float | None:
+    return dictate_number("dictate_margin", value, path)
+
+
+def dictate_silence(value: object, path: str) -> float | None:
+    return dictate_number("dictate_silence", value, path)
+
+
+#: The typed-value keys' readers (#314's shapes beside #1194's
+#: and #1214's): a command prefix, ssh option tokens, a capture
+#: command, a port, and the gate's three numbers. Defined after
+#: its readers (each is a plain function above) —
 #: :func:`sectioned_pair` reads it at call time.
 SECTIONED_VALUE_KEYS = {
     "terminal_open_cmd": terminal_value,
     "ssh_options": ssh_options_value,
     "screenshot_command": screenshot_command_value,
     "screenshot_port": screenshot_port_value,
+    "dictate_threshold": dictate_threshold,
+    "dictate_margin": dictate_margin,
+    "dictate_silence": dictate_silence,
 }

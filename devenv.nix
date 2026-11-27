@@ -175,6 +175,12 @@ let
     # the load at these store paths.
     libnetfilter_queue
     libnfnetlink
+    # The GUI's dictation (#1214): whisper-cli transcribes each
+    # clip once from the checkout's `msks gui`. The capture and
+    # the tones run through the host session's own PipeWire
+    # (pw-record, pw-cat), the notification through its libnotify,
+    # and the models land in the user's cache.
+    whisper-cpp
   ];
 in
 {

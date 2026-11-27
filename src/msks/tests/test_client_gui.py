@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 from msks.client import cli
@@ -468,12 +468,13 @@ def test_the_gui_window_opens_offscreen(
     from msks.client.gui.tabs import (
         IMAGES_LABEL,
         SECRETS_LABEL,
+        SETTINGS_LABEL,
         WORKSPACES_LABEL,
     )
 
     assert opened["tabs"][0] == (
         "MainTabs",
-        [WORKSPACES_LABEL, IMAGES_LABEL, SECRETS_LABEL],
+        [WORKSPACES_LABEL, IMAGES_LABEL, SECRETS_LABEL, SETTINGS_LABEL],
         0,
     )
     # The picker rides the listing's status row (#1009): a
@@ -609,9 +610,12 @@ def test_open_window_reuses_an_existing_app(
         pytest.skip("PySide6 is not installed on this host")
     from msks.client.gui import arrival as arrival_mod
     from msks.client.gui import connection as connection_mod
+    from msks.client.gui import dictatepill as pill_mod
+    from msks.client.gui import dictation as dictation_mod
     from msks.client.gui import interrupt as interrupt_mod
     from msks.client.gui import menubar as menubar_mod
     from msks.client.gui import scheme as scheme_mod
+    from msks.client.gui import settingspage as settings_mod
     from msks.client.gui import tabs as tabs_mod
     from msks.client.gui import unlock as unlock_mod
     from msks.client.gui import workspace as workspace_mod
@@ -828,6 +832,69 @@ def test_open_window_reuses_an_existing_app(
 
     monkeypatch.setattr(secrets_tab_mod, "SecretsTab", FakeSecretsTab)
 
+    dictations: list[tuple[object, object]] = []
+    settings_pages: list[tuple[object, object]] = []
+    pill_hosts: list[tuple[object, object]] = []
+    hosts: list[object] = []
+
+    class FakeDictation:
+        """The dictate controller's stub (#1214): the window path
+        builds one over the resolved settings and the cache root
+        before the first tree lands, connects its no-model ask to
+        the settings page's showing, and shuts it down on the way
+        out — the recording pins each; the controller's own suite
+        runs the real one."""
+
+        def __init__(self, settings: object, cache_root: object) -> None:
+            self.settings = settings
+            self.cache_root = cache_root
+            self.asks: list[object] = []
+            self.shut = 0
+
+        class _Ask:
+            def __init__(self) -> None:
+                self.slots: list[object] = []
+
+            def connect(self, slot: object) -> None:
+                self.slots.append(slot)
+
+        settings_requested = _Ask()
+
+        def shutdown(self) -> None:
+            self.shut += 1
+
+    def fake_dictation(settings: object, cache_root: object) -> FakeDictation:
+        held = FakeDictation(settings, cache_root)
+        dictations.append(held)
+        return held
+
+    monkeypatch.setattr(dictation_mod, "Dictation", fake_dictation)
+
+    class FakeSettingsPage:
+        """The settings page's stub (#1214): the window path lands
+        it under the strip's fourth tab, over the controller and
+        the operator's file keys — the recording pins both."""
+
+        def __init__(self, dictation: object, operator: dict) -> None:
+            self.dictation = dictation
+            settings_pages.append((dictation, operator))
+
+    monkeypatch.setattr(settings_mod, "SettingsPage", FakeSettingsPage)
+
+    class FakePillHost:
+        """The pill host's stub (#1214): one over the controller
+        and the app, its filter off the app on the way out."""
+
+        def __init__(self, dictation: object, qapp: object) -> None:
+            pill_hosts.append((dictation, qapp))
+            hosts.append(self)
+            self.removed = 0
+
+        def remove(self) -> None:
+            self.removed += 1
+
+    monkeypatch.setattr(pill_mod, "PillHost", FakePillHost)
+
     unlock_windows: list[object] = []
     unlock_retargets: list[tuple[object, object, object]] = []
 
@@ -942,11 +1009,22 @@ def test_open_window_reuses_an_existing_app(
             self.size = size
 
     class FakeApp:
+        # ``aboutToQuit`` carries the bridges' stops and, since
+        # #1214, the dictation's and the pill host's shutdowns
+        # too — all recorded in ``stops``; the close path's own
+        # two calls are pinned apart from the hook's below.
         aboutToQuit = FakeSignal()
         the_font = FakeFont(9.0)
 
         def __init__(self, argv: list[str]) -> None:
             shown.append("created")
+            self.filters: list[object] = []
+
+        def installEventFilter(self, filt: object) -> None:
+            self.filters.append(filt)
+
+        def removeEventFilter(self, filt: object) -> None:
+            self.filters.remove(filt)
 
         def setStyle(self, name: str) -> None:
             styles.append(name)
@@ -1013,7 +1091,10 @@ def test_open_window_reuses_an_existing_app(
         screens[0].listing.connection_picked.slots[0](preset)
         assert connections_holder[0].picked == [preset]
         assert len(started) == 2  # the fresh tree's own bridge
-        assert len(stops) == 2  # its aboutToQuit hook beside it
+        # its aboutToQuit hook beside it: the two bridges' stops
+        # and the dictation's and the pill host's shutdowns
+        # (#1214), the latter two hooked before the first tree.
+        assert len(stops) == 4
         assert shutdowns == [screens[0].hub]
         assert retargets == [screens[1].hub]
         assert scheme_retargets == [screens[1].hub]
@@ -1083,7 +1164,32 @@ def test_open_window_reuses_an_existing_app(
     assert [label for _page, label in central[0].pages] == [
         "Images",
         "Secrets",
+        "Settings",
     ]
+    # The dictation (#1214): one controller over the resolved
+    # settings and the client's cache root, built before the
+    # first tree lands; the pill host over it and the app; each
+    # landing's settings page over the controller and the
+    # operator's file keys (none here: no config was resolved);
+    # the no-model ask wired once; and the close path shuts the
+    # controller and takes the host's filter off the app.
+    from msks.client.gui.dictatekeys import DictateSettings
+
+    assert len(dictations) == 1
+    assert isinstance(dictations[0].settings, DictateSettings)
+    assert settings_pages == [(dictations[0], {}), (dictations[0], {})]
+    assert len(pill_hosts) == 1 and pill_hosts[0] == (dictations[0], existing)
+    assert len(dictations[0].settings_requested.slots) == 1
+    assert dictations[0].shut == 1  # the return path's own call
+    assert hosts[0].removed == 1
+    # The quit hook carries the dictation's shutdown and the
+    # host's removal (hooked before the first tree), then the
+    # two bridges' stops — the first tree's and the re-dial's.
+    assert stops[:2] == [
+        dictations[0].shutdown,
+        hosts[0].remove,
+    ]
+    assert existing.filters == []  # the host's filter is off the app
     # The strip carries the window's bridge (#1177): the page
     # settle gates each tab change's fade on its refreshes.
     assert central[0].bridge is started[0]
@@ -1141,8 +1247,10 @@ def test_open_window_keeps_a_user_style_choice(
         pytest.skip("PySide6 is not installed on this host")
     from msks.client.gui import arrival as arrival_mod
     from msks.client.gui import connection as connection_mod
+    from msks.client.gui import dictation as dictation_mod
     from msks.client.gui import menubar as menubar_mod
     from msks.client.gui import scheme as scheme_mod
+    from msks.client.gui import settingspage as settings_mod
     from msks.client.gui import tabs as tabs_mod
     from msks.client.gui import unlock as unlock_mod
     from msks.client.gui import workspace as workspace_mod
@@ -1155,6 +1263,48 @@ def test_open_window_keeps_a_user_style_choice(
     # install is stubbed the same way as the reuse test's, the
     # construction itself pinned in the bar's own suite.
     monkeypatch.setattr(menubar_mod, "install_bar", lambda window: None)
+
+    # The dictation's stubs (#1214): the controller and the
+    # settings page built, never read — the style test reads the
+    # environment and the app font only; the real controller
+    # runs in its own suite. The stubs are plain stand-ins whose
+    # one signal the window path wires.
+    class FakeSignal:
+        def __init__(self) -> None:
+            self.slots: list[object] = []
+
+        def connect(self, slot: object) -> None:
+            self.slots.append(slot)
+
+    class FakeDictation:
+        settings_requested = FakeSignal()
+
+        def __init__(self, settings: object, cache_root: object) -> None:
+            self.settings = settings
+
+        def shutdown(self) -> None:
+            pass
+
+    monkeypatch.setattr(dictation_mod, "Dictation", FakeDictation)
+
+    class FakeSettingsPage:
+        def __init__(self, dictation: object, operator: dict) -> None:
+            pass
+
+    monkeypatch.setattr(settings_mod, "SettingsPage", FakeSettingsPage)
+
+    # The pill host's stub (#1214): built over the stub app, its
+    # filter never installed — the stub app is no QApplication.
+    from msks.client.gui import dictatepill as pill_mod
+
+    class FakePillHost:
+        def __init__(self, dictation: object, qapp: object) -> None:
+            pass
+
+        def remove(self) -> None:
+            pass
+
+    monkeypatch.setattr(pill_mod, "PillHost", FakePillHost)
 
     # The unlock flow's stub (#1147): the style test reads the
     # environment and the app font only; the flow's retarget
@@ -1183,10 +1333,6 @@ def test_open_window_keeps_a_user_style_choice(
 
     styles: list[str] = []
     central: list[object] = []
-
-    class FakeSignal:
-        def connect(self, slot: object) -> None:
-            pass
 
     class FakeTabs:
         """The strip stub (#962): the shell lands under it, the
@@ -1414,3 +1560,96 @@ def test_open_window_keeps_a_user_style_choice(
     finally:
         Bridge.start, Bridge.stop = real_start, real_stop  # type: ignore[method-assign]
     assert styles == ["font 11.25", "font 13.5"]
+
+
+def test_the_dictation_composition_survives_a_bad_preferences_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    """``compose_dictation`` (#1214): a gui.yaml that will not
+    parse prints one stderr line — the client's convention — and
+    the window opens on the operator's file and the defaults;
+    the pill host's opener shows the settings page when the tree
+    holds one and brings the window forward either way."""
+    from msks.client.gui import app as gui_app
+    from msks.client.gui import dictatepill as pill_mod
+    from msks.client.gui import dictation as dictation_mod
+    from msks.client.gui.guiprefs import prefs_path
+    from msks.client.gui.tabs import SETTINGS_LABEL
+
+    monkeypatch.setenv("MSKSC_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.delenv("MSKSC_CACHE_DIR", raising=False)
+    prefs_path().parent.mkdir(parents=True)
+    prefs_path().write_text("dictate_model: [")
+    built: list = []
+
+    class FakeDictation:
+        def __init__(self, settings, cache_root) -> None:
+            built.append((settings, cache_root))
+
+        def shutdown(self) -> None:
+            pass
+
+    class FakePillHost:
+        def __init__(self, dictation, qapp) -> None:
+            built.append("host")
+
+        def remove(self) -> None:
+            pass
+
+    monkeypatch.setattr(dictation_mod, "Dictation", FakeDictation)
+    monkeypatch.setattr(pill_mod, "PillHost", FakePillHost)
+    dictation, _pills = gui_app.compose_dictation(
+        SimpleNamespace(doc={"dictate_model": "base.en"}), None
+    )
+    assert "msks: " in capsys.readouterr().err
+    assert built[0][0].model == "base.en"  # the operator's file stood
+    assert built[0][0].gate.margin == 14.0  # the default, nothing pinned
+    assert built[1] == "host"
+
+    # The opener: a tree with the page shows it; without, only the
+    # window's raise runs.
+    shown: list = []
+
+    class Strip:
+        def setCurrentWidget(self, page) -> None:  # noqa: N802
+            shown.append(page)
+
+    class Win:
+        def centralWidget(self):  # noqa: N802
+            return Strip()
+
+        def showNormal(self) -> None:  # noqa: N802
+            shown.append("normal")
+
+        def raise_(self) -> None:
+            shown.append("raise")
+
+        def activateWindow(self) -> None:  # noqa: N802
+            shown.append("activate")
+
+    gui_app.show_settings_page(Win(), {"settings": "page"})
+    gui_app.show_settings_page(Win(), {})
+    assert shown == [
+        "page",
+        "normal",
+        "raise",
+        "activate",
+        "normal",
+        "raise",
+        "activate",
+    ]
+    assert gui_app.SETTINGS_TAB_LABEL == SETTINGS_LABEL
+
+
+def test_terminal_command_lists_a_resolved_launcher() -> None:
+    """The external-terminal launcher's seam (#954): a resolved
+    string form arrives as a list, and no conf or no launcher as
+    None."""
+    assert app.terminal_command(
+        SimpleNamespace(terminal_open_cmd=["xterm", "-e"])
+    ) == ["xterm", "-e"]
+    assert (
+        app.terminal_command(SimpleNamespace(terminal_open_cmd=None)) is None
+    )
+    assert app.terminal_command(None) is None

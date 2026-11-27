@@ -34,7 +34,9 @@ contract: nothing imports it at CLI parse time.
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .tints import TintedLabel
+from .dictatepill import MARGIN as PILL_MARGIN
+from .dictatepill import pill_in
+from .tintedlabel import TintedLabel
 
 #: The toggle's tooltip (#1152): the words its glyph alone
 #: cannot carry — the maximize glyph stands for the terminal
@@ -534,11 +536,24 @@ class TerminalOnly(QtCore.QObject):
                 + (margins.right() - current.right())
             )
             target.setRight(max(0, margins.right() - right))
+        self.clear_the_pill(page, target)
         # A page already parked writes nothing: an unchanged
         # margin would relayout the row for no move, and the
         # corner's own resize would ask for the check again.
         if target != current:
             page.layout().setContentsMargins(target)
+
+    @staticmethod
+    def clear_the_pill(page, target: QtCore.QMargins) -> None:
+        """The dictate pill's room (#1214): the pill floats at the
+        window's top-right corner, the tab row's right end in the
+        mode, so the right margin grows by a pill's width and a
+        gap and the name, the status seat, and the restore button
+        stand clear of it. The pill keeps one width in every
+        state, so the park holds through a recording."""
+        pill = pill_in(page.window())
+        if pill is not None and pill.isVisibleTo(page.window()):
+            target.setRight(target.right() + pill.width() + PILL_MARGIN)
 
     @QtCore.Slot()
     def leave(self) -> None:

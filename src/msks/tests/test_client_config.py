@@ -1230,3 +1230,90 @@ def test_resolve_refuses_an_invalid_port_variable(
         monkeypatch.setenv("MSKSC_SCREENSHOT_PORT", raw)
         with pytest.raises(ValueError, match="MSKSC_SCREENSHOT_PORT"):
             config.resolve(config=path)
+
+
+# --- the dictation keys (#1214) ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("body", "doc"),
+    [
+        (
+            "dictate_model: small\ndictate_device: scarlett\n"
+            "dictate_prompt: msks, devenv\n",
+            {
+                "dictate_model": "small",
+                "dictate_device": "scarlett",
+                "dictate_prompt": "msks, devenv",
+            },
+        ),
+        ("dictate_threshold: -60\n", {"dictate_threshold": -60.0}),
+        ("dictate_threshold: '-55.5'\n", {"dictate_threshold": -55.5}),
+        ("dictate_margin: 14\n", {"dictate_margin": 14.0}),
+        ("dictate_silence: 1.5\n", {"dictate_silence": 1.5}),
+        ("dictate-margin: 12\n", {"dictate_margin": 12.0}),
+    ],
+)
+def test_dictation_keys_read_both_spellings(
+    tmp_path: Path, body: str, doc: dict
+) -> None:
+    assert config.load_config(write_config(tmp_path, body)) == doc
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ("dictate_threshold: -100\n", "between -99 and 0"),
+        ("dictate_threshold: 1\n", "between -99 and 0"),
+        ("dictate_margin: -1\n", "between 0 and 60"),
+        ("dictate_silence: 0\n", "above 0 and at most 30"),
+        ("dictate_silence: 31\n", "above 0 and at most 30"),
+        ("dictate_margin: true\n", "got bool"),
+        ("dictate_margin: loud\n", "must be a number"),
+        ("dictate_margin: .nan\n", "between 0 and 60"),
+        ("dictate_margin: [1]\n", "must be a number"),
+        ("dictate_model: 7\n", "must be a string"),
+        ("dictate_prompt: [a, b]\n", "must be a string"),
+    ],
+)
+def test_dictation_keys_refuse_bad_values(
+    tmp_path: Path, body: str, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        config.load_config(write_config(tmp_path, body))
+
+
+def test_dictation_keys_unset_forms_drop_out(tmp_path: Path) -> None:
+    for key in ("dictate_model", "dictate_silence"):
+        for body in (f"{key}:\n", f"{key}: ''\n"):
+            assert config.load_config(write_config(tmp_path, body)) == {}
+
+
+def test_a_daemon_entry_refuses_the_dictation_keys(tmp_path: Path) -> None:
+    """The keys are global-only: the microphone belongs to the
+    operator's desktop, not to a daemon connection."""
+    path = write_config(
+        tmp_path,
+        "daemons:\n  lab:\n    url: https://lab:8660\n"
+        "    dictate_model: small\n",
+    )
+    with pytest.raises(ValueError, match="dictate_model"):
+        config.load_config(path)
+
+
+def test_resolve_carries_the_validated_file_keys(
+    tmp_path: Path,
+) -> None:
+    """The resolution hands the GUI the file's validated keys
+    (#1214): the dictation settings resolve from them under their
+    own precedence, with gui.yaml between the environment and the
+    file. The environment wins nothing here — the dictation keys
+    materialize nowhere, the GUI reads them off the doc itself."""
+    conf = config.resolve(
+        config=write_config(
+            tmp_path, "url: https://daemon\ndictate_silence: 2\n"
+        )
+    )
+    assert conf.doc == {"url": "https://daemon", "dictate_silence": 2.0}
+    assert conf.env_layer == {}
+    assert config.resolve(config="none").doc == {}

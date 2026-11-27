@@ -114,6 +114,12 @@ variables has a config-file equivalent.
 | `MSKSC_IMAGE_MANIFEST_URL` | `image_manifest_url` | Where the TUI's Import image action (`i` on the workspace list) reads the published channel's manifest (a fork's or self-hoster's channel gives its own); the picker shows each row's ref, description, and size, and the pick POSTs the row's URL to the daemon's import endpoint                                                                               | this repository's latest release's `images.json`          |
 | `MSKSC_SCREENSHOT_COMMAND` | `screenshot_command` | The capture command the [screenshot pipe](screenshot.md) runs on this client per guest request; its presence enables the pipe, its stdout is the image the guest receives, and its argv is the config's alone (the requested monitor arrives as the `MSKS_SCREENSHOT_MONITOR` variable). String or list form; global-only, the same rule `identity_file` carries | unset (the pipe stays down)                               |
 | `MSKSC_SCREENSHOT_PORT`    | `screenshot_port`    | The loopback port the guest's sshd binds for the [screenshot pipe](screenshot.md), when a configured client holds one. The holder writes it to `/tmp/msks-screenshot-port` in the guest for the guest's `screenshot` tool                                                                                                                                        | `8662`                                                    |
+| `MSKSC_DICTATE_MODEL`      | `dictate_model`      | The GUI's dictation model: a whisper.cpp ggml name the GUI fetches into the cache on first use, or a path to a `.bin` file (a NixOS store path, for one). Global-only, the rule `identity_file` carries. The [GUI chapter](gui.md#dictation) describes the feature; the [preferences file](#the-gui-preferences-file) sits between this and the config key       | `small`                                                   |
+| `MSKSC_DICTATE_DEVICE`     | `dictate_device`     | The microphone the dictation captures from: a PipeWire node name or serial, the `pw-record --target` form. Unset takes the default source. Global-only                                                                                                                                                                                                           | unset (the default source)                                |
+| `MSKSC_DICTATE_THRESHOLD`  | `dictate_threshold`  | The lowest level in dBFS that can count as speech, -99 to 0. Global-only                                                                                                                                                                                                                                                                                         | `-60`                                                     |
+| `MSKSC_DICTATE_MARGIN`     | `dictate_margin`     | The dB above the tracked noise floor that count as speech, 0 to 60. Global-only                                                                                                                                                                                                                                                                                  | `14`                                                      |
+| `MSKSC_DICTATE_SILENCE`    | `dictate_silence`    | The seconds of quiet that end a recording, above 0 and at most 30. Global-only                                                                                                                                                                                                                                                                                   | `1.0`                                                     |
+| `MSKSC_DICTATE_PROMPT`     | `dictate_prompt`     | The vocabulary whisper-cli biases its spelling toward (`msks, devenv, NixOS, pi`). Global-only                                                                                                                                                                                                                                                                   | unset                                                     |
 
 `MSKSC_CACHE_DIR` exists because the host-key cache is disposable: a swept
 cache costs one trust-on-first-use re-pin. Pointing it at a per-project,
@@ -244,6 +250,36 @@ connection.
 Unknown keys and duplicate keys are refused at load, each error
 giving the key and the valid ones, the same fail-fast rules
 msksd's config file carries.
+
+### The GUI preferences file
+
+The GUI's dictation settings have a file of their own:
+`~/.config/msks/gui.yaml`, beside `msks.yaml` in the same directory
+(`MSKSC_CONFIG_DIR` relocates both). The **Settings** tab writes this
+file and never `msks.yaml`: on NixOS that file is generated into
+`/etc/msks.yaml`, it is read-only, and it stays declarative. The file
+carries the six `dictate_*` keys and nothing else, with the same
+grammar as `msks.yaml` (hyphens and underscores spell one key, a blank
+value is the unset form). An example:
+
+```yaml
+dictate_model: small
+dictate_device: alsa_input.usb-Focusrite_Scarlett_2i2.mic1
+dictate_silence: 1.5
+dictate_prompt: msks, devenv, NixOS, pi
+```
+
+For those six keys the precedence is, highest first:
+
+```text
+MSKSC_DICTATE_* environment > gui.yaml > msks.yaml > the defaults
+```
+
+A variable still pins a key above both files, the way it does for
+every other client setting, and the settings page shows the pin. The
+speech models live under `~/.cache/msks/whisper/` (`MSKSC_CACHE_DIR`
+relocates the root). The [GUI chapter](gui.md#dictation) describes
+the dictation itself.
 
 ### Daemon aliases
 

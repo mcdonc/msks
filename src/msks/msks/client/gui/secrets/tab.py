@@ -67,7 +67,8 @@ from ..secretrows import (
     secret_rows as build_secret_rows,
 )
 from ..statusflash import StatusFlash
-from ..tints import SEMANTIC_ROLE, TintedLabel
+from ..tintedlabel import TintedLabel
+from ..tints import SEMANTIC_ROLE
 from . import cells
 from .mint import MintDialog
 

@@ -6,6 +6,22 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Added
+
+- **Dictation in the GUI (#1214).** A small pill at the top-right
+  corner of every GUI window starts a recording, and a pause of about
+  one second ends it. The transcript goes to the clipboard and the
+  primary selection, with a tone at the start and at the end and a
+  desktop notification carrying the first line. A **Settings** tab
+  edits the model, the microphone, and the gate's numbers, and
+  downloads the whisper.cpp model with a progress bar. The settings
+  save to `~/.config/msks/gui.yaml`, a file the GUI owns beside the
+  client config, and `MSKSC_DICTATE_*` variables pin any of them. The
+  host needs PipeWire's `pw-record` and `pw-cat`, whisper.cpp's
+  `whisper-cli`, and optionally `notify-send`. See
+  [docs/gui.md](gui.md#dictation) and
+  [docs/cli.md](cli.md#the-gui-preferences-file).
+
 ### Fixed
 
 - **A stopped holder takes the screenshot pipe's ssh child with

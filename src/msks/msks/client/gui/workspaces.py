@@ -59,7 +59,7 @@ from .rows import (
     workspace_rows,
 )
 from .statusflash import StatusFlash
-from .tints import TintedLabel
+from .tintedlabel import TintedLabel
 
 #: The bridge call's key for a listing refresh (#939): the
 #: screen answers only its own key, whatever else shares the

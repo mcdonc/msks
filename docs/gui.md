@@ -25,8 +25,8 @@ it.
 
 ## The main window
 
-The window opens on three top-level tabs: **Workspaces**,
-**Images**, and **Secrets**.
+The window opens on four top-level tabs: **Workspaces**,
+**Images**, **Secrets**, and **Settings**.
 
 The content appears once it is final. At open and on every tab
 change, the page holds clear until its refresh has landed and the
@@ -522,6 +522,88 @@ retry flashes. The first answered read after it says
 the outage. The status line shows the action's result, not the
 recovery line.
 
+## Dictation
+
+![The dictate pill in a recording: the red mic, the timer, and the
+discard button at the window's top-right corner](screens/gui-dictate.png)
+
+A small pill sits at the top-right corner of every window the GUI
+shows: the main window on every tab, each torn-off shell window,
+and every dialog. It is the same control everywhere, and one
+recording runs behind all of them. Click it to start talking. Click
+it again to finish. A pause of about one second finishes the
+recording on its own, and so does the three-minute cap.
+
+The transcript goes to the clipboard and to the primary selection.
+You paste it where you want it. A tone plays when the recording
+starts and another when the text is on the clipboard. A desktop
+notification carries the first line of the transcript. When every
+window is minimized, the tones and the notification are the only
+sign that a recording is running.
+
+The pill changes with the recording:
+
+- Idle: a microphone glyph in the window's own text color.
+- Recording: the glyph in red, a timer (`● 0:12`), and a small
+  `x`. A click finishes. The `x` discards the clip.
+- Transcribing: an ellipsis in place of the timer. A click abandons
+  the transcript and starts a new recording. The `x` discards it.
+- Done: `copied` for two seconds. Failed: the reason for four
+  seconds, and the notification carries it too.
+- No model yet: a download glyph. A click opens the **Settings**
+  tab.
+
+The recorder finds speech against the room's noise floor. The level
+that counts as speech sits 14 dB above the tracked floor (the 10th
+percentile of the last three seconds) and never below -60 dBFS. The
+first 0.3 seconds calibrate the floor, so start talking after the
+tone. A speakerphone's floor in a quiet room sits near -33 dBFS,
+and a fixed level would start a recording at once and never stop
+it. One second of quiet ends the clip, and up to three loud frames
+inside that second are tolerated, so a click does not hold it open.
+
+Capture runs on the host because a workspace guest has no audio
+device. `pw-record` captures 16 kHz mono, and `whisper-cli` (from
+whisper.cpp) transcribes the clip once it ends. The model loads for
+each clip, which takes about one second with `small`. The model is
+fetched on first use into `~/.cache/msks/whisper/`. The
+[config chapter](config.md#the-gui-preferences-file) describes the
+settings, their file, and the precedence.
+
+## The Settings tab
+
+![The Settings tab: the dictation form, the model's state and its
+Download button, the status line](screens/gui-dictation-settings.png)
+
+The fourth tab edits the dictation settings. The form shows the
+settings in effect now, and every field takes a change.
+
+- **Model**: a whisper.cpp ggml model. The picker lists the known
+  names with their sizes, and a path to a `.bin` file types free.
+  A NixOS host can pin a model as a derivation and type its store
+  path.
+- **Device**: the microphone `pw-record` captures from. The picker
+  lists the sources PipeWire serves, and a node name or serial
+  types free. **Refresh** reads the list again.
+- **Speech floor** and **Speech margin**: the lowest level that can
+  count as speech, and the dB above the tracked floor that counts.
+- **Silence that ends a clip**: the seconds of quiet that finish a
+  recording.
+- **Vocabulary prompt**: the words whisper-cli biases its spelling
+  toward, such as `msks, devenv, NixOS, pi`.
+
+**Apply** saves the fields into `~/.config/msks/gui.yaml` and the
+next recording takes them. **Revert** reads the layers again and
+reseeds the fields. A key that an `MSKSC_DICTATE_*` variable pins
+shows the variable's value in a read-only field, with the variable
+named under the form. A value that refused anywhere shows its
+message there too, and the setting reads as its default.
+
+**Speech model** shows where the model points and whether it is on
+disk, with its size. **Download** fetches a missing model into the
+cache with a progress bar, and **Cancel** abandons the download. A
+path setting downloads nothing, and the line says so.
+
 ## The zoom keys
 
 Ctrl+Plus, Ctrl+=, and Ctrl+Shift++ (the plus key without a
@@ -588,7 +670,17 @@ colors with the rest of the window.
 The window needs a display. A Linux session provides one through
 `DISPLAY` or `WAYLAND_DISPLAY`, and `QT_QPA_PLATFORM=offscreen`
 also works. A start that finds no display prints one line on
-stderr and exits. A macOS session needs a desktop login. The
+stderr and exits. [Dictation](#dictation) needs four host tools
+the window itself does not: PipeWire's `pw-record` and `pw-cat`
+(capture and the tones), whisper.cpp's `whisper-cli` (the
+transcription), and `notify-send` for the desktop notification.
+The pill shows the missing tool's name when a recording fails
+without one, and the tones and the notification stay off on a host
+without theirs. The packages carry the tools under their own
+names: `pw-record` and `pw-cat` ship with PipeWire, `whisper-cli`
+with whisper.cpp (`whisper-cpp` on NixOS), and `notify-send` with
+libnotify. The transcript reaches the clipboard through Qt, so
+no clipboard helper is needed. A macOS session needs a desktop login. The
 window opens fine over ssh while one stands.
 
 The window plants its own desktop entry and taskbar icon on a

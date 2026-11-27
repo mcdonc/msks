@@ -451,6 +451,12 @@ class ClientConfig:
     # connection picker re-reads the same file its launch
     # resolved, ``--config`` and all.
     config_path: str = ""
+    #: The validated file keys (#1214): what the resolution read,
+    #: before the environment and the flag layered over them — for
+    #: the readers whose own precedence has a layer between the
+    #: environment and this file: the GUI's dictation keys, whose
+    #: ``gui.yaml`` stands there. Empty under ``--config=none``.
+    doc: dict = field(default_factory=dict)
 
 
 def resolve(
@@ -498,6 +504,7 @@ def resolve(
         screenshot_port=resolved_screenshot_port(doc, layer),
         env_layer=layer,
         config_path=path,
+        doc=doc,
     )
 
 

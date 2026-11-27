@@ -11,7 +11,7 @@ from PySide6 import QtCore, QtWidgets
 
 from .consent import DURATION_DEFAULT, DURATIONS, ConsentPresenter
 from .kinds import ERROR
-from .tints import TintedLabel
+from .tintedlabel import TintedLabel
 
 #: How long before a hold times out to deny its countdown reads
 #: in the error tint (#1160): the seconds left to answer.

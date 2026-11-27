@@ -2,10 +2,11 @@
 set per desktop scheme, each passing the contrast floor on every
 base it paints on; the kind read off the palette in hand; the
 delegate that tints an unselected, enabled cell and leaves the
-highlight and the dimmed text alone; and the tinted label that
-follows an application palette switch and takes its color again
-— offscreen, the same ``QApplication`` seam the pairing's suite
-uses."""
+highlight and the dimmed text alone; and the tinted label
+(:mod:`msks.client.gui.tintedlabel`, split out of the tints at the
+fan-in ceiling in #1214) that follows an application palette
+switch and takes its color again — offscreen, the same
+``QApplication`` seam the pairing's suite uses."""
 
 import os
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ def qt(tmp_path):
     handed palette restored at teardown."""
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     from msks.client.gui import scheme as scheme_mod
+    from msks.client.gui import tintedlabel as label_mod
     from msks.client.gui import tints as tints_mod
     from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -34,6 +36,7 @@ def qt(tmp_path):
         QtWidgets=QtWidgets,
         scheme=scheme_mod,
         tints=tints_mod,
+        labels=label_mod,
     )
     app.setPalette(handed)
     for widget in app.topLevelWidgets():
@@ -136,7 +139,7 @@ def test_a_tinted_label_follows_the_scheme_switch(qt):
     application palette's own text — the resolve mask names the
     text roles alone."""
     roles = qt.QtGui.QPalette.ColorRole
-    label = qt.tints.TintedLabel("daemon back")
+    label = qt.labels.TintedLabel("daemon back")
     label.show()
     qt.app.processEvents()
     label.set_kind(qt.tints.ERROR)

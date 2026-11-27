@@ -1,8 +1,10 @@
 """The msksd YAML config file: modes, precedence, reload (#46)."""
 
+import io
 import os
 import re
 import signal
+import stat
 from pathlib import Path
 
 import msks.server.main as main_mod
@@ -973,3 +975,43 @@ def test_the_socket_group_reads_env_and_file(
     monkeypatch.delenv("MSKSD_SOCKET_GROUP")
     path = dump_config(tmp_path, {"socket_group": "msks"})
     assert load_settings(path).server.socket_group == "msks"
+
+
+# --- the atomic replace (#1214) ------------------------------------------
+
+
+def test_write_atomic_replaces_a_standing_file(tmp_path: Path) -> None:
+    """The GUI's preferences writer: the new text lands whole over
+    the old, the tree is created owner-only when missing, the file
+    is written 0600 like the rest of the config tree, and no
+    temporary file is left behind."""
+    from msks.configio import write_atomic
+
+    path = tmp_path / "new" / "gui.yaml"
+    write_atomic(str(path), "dictate_model: small\n")
+    write_atomic(str(path), "dictate_model: base\n")
+    assert path.read_text() == "dictate_model: base\n"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+    assert [p.name for p in path.parent.iterdir()] == ["gui.yaml"]
+
+
+def test_write_atomic_leaves_no_debris_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A write that raises mid-way takes its temporary file with
+    it and leaves the standing file whole."""
+    from msks import configio
+
+    path = tmp_path / "gui.yaml"
+    path.write_text("old\n")
+
+    class Torn(io.StringIO):
+        def write(self, text: str) -> int:
+            raise OSError("disk full")
+
+    monkeypatch.setattr(configio.os, "fdopen", lambda fd, *a, **kw: Torn())
+    with pytest.raises(OSError, match="disk full"):
+        configio.write_atomic(str(path), "new\n")
+    assert path.read_text() == "old\n"
+    assert [p.name for p in tmp_path.iterdir()] == ["gui.yaml"]
