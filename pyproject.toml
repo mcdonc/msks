@@ -1,6 +1,6 @@
 [project]
 name = "msks"
-version = "0.10.2"
+version = "0.11.0"
 description = "Microvm workspace daemon (klangkd analogue on cloud-hypervisor)"
 readme = "README.md"
 license = "MIT"
