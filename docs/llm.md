@@ -244,6 +244,12 @@ discovers it. At every pi startup the extension makes one fetch of
 under the `msks` provider, so `/model` always shows the daemon's live model
 list.
 
+Every model registers with image input (#1197). The proxy's model list
+carries no modality data, and a text-only declaration would make pi drop
+an image for every model in the guest. A text-only upstream answers an
+image with an error. The [screenshot extension](screenshot.md#the-guests-pi)
+beside `llm-models.ts` depends on the declaration.
+
 ## SIGHUP
 
 A restart or `SIGHUP` of msksd is required in order to register changes to the

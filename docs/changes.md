@@ -8,6 +8,18 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The `screenshot` tool and `/screenshot` in the guest's pi
+  (#1197).** pi inside a workspace gains a `screenshot` tool that
+  captures the client's screen through the screenshot pipe and
+  returns it as an image in one call. The full-resolution file is
+  saved under `/tmp/msks-screenshots/` for crops. `/screenshot
+[monitor]` puts a capture in front of the agent, and
+  `/screenshot model` picks a vision model from the model list. A
+  picked model describes each capture in text when it is not the
+  active model; otherwise the active model sees the capture
+  directly. The images ship the extension beside `llm-models.ts`.
+  See [docs/screenshot.md](screenshot.md#the-guests-pi).
+
 - **The screenshot pipe (#1194).** A skill running inside a
   workspace guest can capture one of the client's screens through a
   loopback port in the guest (default `127.0.0.1:8662`) that reaches,
@@ -82,6 +94,22 @@ tagged `vX.Y.Z`.
   [docs/gui.md](gui.md#the-shells-tab).
 
 ### Changed
+
+- **The proxy's model list declares image input (#1197).** The
+  `llm-models.ts` pi extension registers every model the daemon's
+  proxy serves with image input. The proxy's model list carries no
+  modality data, and the text-only declaration made pi drop an
+  image for every model in the guest. A pasted image now reaches a
+  text-only upstream, which answers an error where pi used to put
+  a placeholder.
+
+- **The holder writes the pipe's port into the guest (#1197).**
+  The bridge holder runs one ssh command beside the screenshot
+  pipe's reverse forward. The command writes the configured
+  `screenshot_port` to `/tmp/msks-screenshot-port` in the guest,
+  which the guest's tooling reads instead of assuming `8662`. A
+  failed write is reported once on the holder's stderr and
+  retried.
 
 - **Terminal-only mode: the page's top margin stands at zero
   (#1189).** The blank band the mode kept above the shell tab

@@ -466,6 +466,23 @@ let
           $out/etc/skel/.pi/agent/extensions/llm-models.ts
         install -D -m 0644 ${./guest-pi-extension.ts} \
           $out/root/.pi/agent/extensions/llm-models.ts
+        # The screenshot extension (#1197): the same two homes, as a
+        # directory — pi discovers index.ts and leaves the capture
+        # module beside it alone (plain node runs that module: the
+        # smoke test's probe). The package.json marks the directory
+        # an ES module and declares no manifest.
+        install -D -m 0644 ${./guest-pi-screenshot/index.ts} \
+          $out/etc/skel/.pi/agent/extensions/msks-screenshot/index.ts
+        install -D -m 0644 ${./guest-pi-screenshot/capture.ts} \
+          $out/etc/skel/.pi/agent/extensions/msks-screenshot/capture.ts
+        install -D -m 0644 ${./guest-pi-screenshot/package.json} \
+          $out/etc/skel/.pi/agent/extensions/msks-screenshot/package.json
+        install -D -m 0644 ${./guest-pi-screenshot/index.ts} \
+          $out/root/.pi/agent/extensions/msks-screenshot/index.ts
+        install -D -m 0644 ${./guest-pi-screenshot/capture.ts} \
+          $out/root/.pi/agent/extensions/msks-screenshot/capture.ts
+        install -D -m 0644 ${./guest-pi-screenshot/package.json} \
+          $out/root/.pi/agent/extensions/msks-screenshot/package.json
         # The default user settings (#616): pi hides the model's
         # thinking blocks in the transcript. Copy-once like the
         # extension — a user's later edits are theirs.
@@ -1554,6 +1571,18 @@ let
         test -f \
           "$root"/etc/skel/.pi/agent/extensions/llm-models.ts
         test -f "$root"/root/.pi/agent/extensions/llm-models.ts
+        test -f \
+          "$root"/etc/skel/.pi/agent/extensions/msks-screenshot/index.ts
+        test -f \
+          "$root"/etc/skel/.pi/agent/extensions/msks-screenshot/capture.ts
+        test -f \
+          "$root"/root/.pi/agent/extensions/msks-screenshot/index.ts
+        test -f \
+          "$root"/root/.pi/agent/extensions/msks-screenshot/capture.ts
+        test -f \
+          "$root"/etc/skel/.pi/agent/extensions/msks-screenshot/package.json
+        test -f \
+          "$root"/root/.pi/agent/extensions/msks-screenshot/package.json
         test -f "$root"/etc/skel/.pi/agent/settings.json
         test -f "$root"/root/.pi/agent/settings.json
         # The toolchain linkage guard (#267 review): the same

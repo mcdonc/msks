@@ -249,6 +249,102 @@ def test_the_image_ships_the_pi_extension() -> None:
     assert 'apiKey: "msks-local-proxy"' in ext
     assert 'pi.registerProvider("msks"' in ext
     assert '"embed"' in ext and '"rerank"' in ext
+    # Every model takes images (#1197): the proxy's model list
+    # carries no modality data, and a text-only declaration would
+    # make pi-ai drop an image for every model in the guest.
+    assert 'input: ["text", "image"]' in ext
+    assert 'input: ["text"]' not in ext
+
+
+def test_the_image_ships_the_screenshot_extension() -> None:
+    """The screenshot extension (#1197) reaches every guest the
+    way the model-discovery extension does: a directory under
+    extensions/ — index.ts for pi, the pi-free capture module and
+    an ES-module package.json beside it — planted for the
+    skeleton and for root in all three images, with the build
+    asserting every file."""
+    root = REPO_ROOT / "nix" / "guest-pi-screenshot"
+    index = (root / "index.ts").read_text()
+    capture = (root / "capture.ts").read_text()
+    package = (root / "package.json").read_text()
+    assert '"type": "module"' in package
+    assert "pi.extensions" not in package  # the index.ts rule applies
+
+    # The pi side: the tool, the command, the picker, the settings
+    # key, and the port file the holder writes (#1197).
+    assert 'name: "screenshot"' in index
+    assert 'pi.registerCommand("screenshot"' in index
+    assert '"msksScreenshotVisionModel"' in index
+    assert "pi.getSettings()" in index
+    assert "ctx.ui.select(" in index
+    assert "modelRegistry.complete(" in index
+    assert 'from "./capture.ts"' in index
+    # The capture side: no pi import (plain node runs it), the
+    # port file and the default, the refusal's both remedies, and
+    # the byte sniffing the octet-stream answer needs.
+    sources = re.findall(r'from "([^"]+)"', capture)
+    assert sources, "capture.ts imports nothing but node builtins"
+    assert all(source.startswith("node:") for source in sources), sources
+    assert '"/tmp/msks-screenshot-port"' in capture
+    assert "8662" in capture
+    assert "msks screenshot hold" in capture
+    assert "screenshot_command" in capture
+    assert '"RIFF"' in capture and '"GIF89a"' in capture
+    assert "image/jpeg" in capture
+    # Captures show the operator's screen: this account's directory
+    # alone, files readable by this account alone.
+    assert "0o700" in capture and "0o600" in capture
+    assert "lstatSync" in capture
+
+    debian = (REPO_ROOT / "nix" / "guest-debian.nix").read_text()
+    fedora = (REPO_ROOT / "nix" / "guest-fedora.nix").read_text()
+    configuration = (
+        REPO_ROOT / "nix" / "guest-nixos-configuration.nix"
+    ).read_text()
+    build = (REPO_ROOT / "nix" / "guest-nixos.nix").read_text()
+    for name in ("index.ts", "capture.ts", "package.json"):
+        for build_text, tree in ((debian, "$root"), (fedora, "$tree")):
+            assert f"${{./guest-pi-screenshot/{name}}}" in build_text
+            assert (
+                f"$out/etc/skel/.pi/agent/extensions/msks-screenshot/{name}"
+                in build_text
+            )
+            assert (
+                f"$out/root/.pi/agent/extensions/msks-screenshot/{name}"
+                in build_text
+            )
+            assert (
+                f'"{tree}"/etc/skel/.pi/agent/extensions/'
+                f"msks-screenshot/{name}" in build_text
+            )
+            assert (
+                f'"{tree}"/root/.pi/agent/extensions/'
+                f"msks-screenshot/{name}" in build_text
+            )
+        assert f"${{piScreenshot}}/{name}" in configuration
+        assert (
+            f"C /etc/skel/.pi/agent/extensions/msks-screenshot/{name}"
+            in configuration
+        )
+        assert (
+            f"C /root/.pi/agent/extensions/msks-screenshot/{name}"
+            in configuration
+        )
+        assert (
+            f'test -f "$root"/etc/nixos/nix/guest-pi-screenshot/{name}'
+            in build
+        )
+    # NixOS: the directory is staged into /etc/nixos whole, the
+    # tmpfiles rules carry it, and the closure names it.
+    assert "piScreenshotDir = ./guest-pi-screenshot;" in build
+    assert 'cp -r "$piScreenshotDir"' in build
+    assert (
+        "grep -Rq 'msks-screenshot/index.ts' \"$toplevel\"/etc/tmpfiles.d/"
+        in build
+    )
+    assert (
+        "grep -q 'guest-pi-screenshot' \"$closureInfo\"/store-paths" in build
+    )
 
 
 def test_the_image_bakes_the_agent_toolchain() -> None:
