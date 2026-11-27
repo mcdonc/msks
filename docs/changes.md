@@ -94,6 +94,16 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **pi runs in regular mode in the guest (#1204).** The default
+  `~/.pi/agent/settings.json` now sets `tuiMode` to `"regular"`,
+  so a workspace's pi keeps its transcript in the terminal's
+  scrollback and leaves the mouse to the terminal. pi's own
+  default is fullscreen mode, which draws the transcript in its
+  own viewport and handles selection itself. A workspace built
+  from an earlier image keeps the old file, and its accounts stay
+  in fullscreen mode until the setting is added by hand. See
+  [docs/llm.md](llm.md#integration-with-the-pi-coding-agent).
+
 - **The proxy's model list declares image input (#1197).** The
   `llm-models.ts` pi extension registers every model the daemon's
   proxy serves with image input. The proxy's model list carries no
@@ -165,6 +175,15 @@ tagged `vX.Y.Z`.
   [docs/gui.md](gui.md#creating-a-workspace).
 
 ### Fixed
+
+- **Quitting pi in a GUI shell returns to the prompt at once
+  (#1192).** With pi in regular mode (#1204), quitting no longer
+  writes the whole transcript to the terminal on the way out. A
+  home that still runs pi in fullscreen mode can add
+  `"tuiMode": "regular"` to its `~/.pi/agent/settings.json`, or
+  set `fullscreenExitOutput` to `"resume-hint"` to keep fullscreen
+  and print only the resume hint. See
+  [docs/llm.md](llm.md#integration-with-the-pi-coding-agent).
 
 - **The TUI and the GUI stack no second bridge holder on a start
   another client makes (#1198).** The open client read the rows the

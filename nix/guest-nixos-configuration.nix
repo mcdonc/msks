@@ -49,11 +49,12 @@ let
   # rules below plant the same way, one file per rule.
   piScreenshot = ./guest-pi-screenshot;
 
-  # The default user settings pi starts under (#616): the guest
-  # keeps its transcripts free of the model's thinking blocks —
-  # the workspace's terminal is the operator's reading surface.
-  # Copy-once like the extension: a user's later edits are
-  # theirs.
+  # The default user settings pi starts under (#616, #1204): the
+  # guest keeps its transcripts free of the model's thinking
+  # blocks, and pi runs in regular mode so the transcript stays
+  # in the terminal's scrollback. The workspace's terminal is the
+  # operator's reading surface. Copy-once like the extension: a
+  # user's later edits are theirs.
   piSettings = ./guest-pi-settings.json;
 
   # The workspace's interception CA (#427): the identity seed
