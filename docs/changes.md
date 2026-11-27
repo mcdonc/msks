@@ -6,6 +6,8 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.11.0] - 2026-11-27
+
 ### Added
 
 - **The `screenshot` tool and `/screenshot` in the guest's pi
