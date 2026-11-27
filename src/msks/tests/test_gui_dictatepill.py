@@ -977,7 +977,7 @@ def test_apply_and_revert_flash_a_file_that_will_not_read(qt, monkeypatch):
     # A download's landing over a file that will not read: the
     # model save reads the standing values first and refuses, the
     # broken file left as it is.
-    page.downloaded.emit("", "")
+    page.downloaded.emit("small", "", "")
     assert page.status.text().startswith("cannot save gui.yaml: ")
     assert broken.read_text() == "dictate_model: ["
     # A tree the atomic write cannot land in: Apply's save fails
@@ -1139,3 +1139,188 @@ def test_a_hand_typed_label_resolves_to_its_model(qt):
     assert page.model_value() == "small"
     page.model.setEditText("/nix/store/x.bin")
     assert page.model_value() == "/nix/store/x.bin"
+
+
+def one_pill(window, *seated) -> bool:
+    """The invariant: of the window's floating pill and the seated
+    pills, exactly one shows to the window."""
+    from msks.client.gui.dictatepill import pill_in
+
+    showing = [p for p in (pill_in(window), *seated) if p.isVisibleTo(window)]
+    return len(showing) == 1
+
+
+def test_one_pill_holds_through_every_page_round_trip(qt):
+    """The invariant (#1216 review): the floating pill stands down
+    while *any* seated pill shows, whatever order a page change
+    hides one page and shows the next — the everyday path, list →
+    workspace → Back, once showed two pills; and the long tour
+    through every page and terminal-only shows exactly one
+    throughout, the floating one serving terminal-only alone."""
+    from msks.client.gui.dictatepill import PillHost, pill_in
+    from msks.client.gui.shells import ShellHub
+    from msks.client.gui.tabs import MainTabs
+    from msks.client.gui.workspace import WorkspaceShell
+    from PySide6 import QtWidgets
+    from test_gui_workspace import StubBridge
+
+    held, _fake = controller(qt)
+    host = PillHost(held, qt.app)
+    hub = ShellHub(argv_factory=lambda ws: [sys.executable, "-c", SLEEPER])
+    qt.hubs.append(hub)
+    shell = WorkspaceShell(StubBridge(), hub=hub, dictation=held)
+    tabs = MainTabs(shell, None)
+    for page in (
+        QtWidgets.QWidget(),
+        QtWidgets.QWidget(),
+        QtWidgets.QWidget(),
+    ):
+        tabs.addTab(page, f"page{tabs.count()}")
+    window = QtWidgets.QMainWindow()
+    window.setCentralWidget(tabs)
+    window.resize(900, 600)
+    window.show()
+    spin(qt, 50)
+    floating = pill_in(window)
+    listing = shell.listing
+    detail = shell.detail
+
+    def showing():
+        return [
+            name
+            for name, pill in (
+                ("floating", floating),
+                ("list", listing.pill),
+                ("detail", detail.pill),
+            )
+            if pill.isVisibleTo(window)
+        ]
+
+    assert showing() == ["list"]
+    # Open a workspace, go Back: one pill each step.
+    shell.open_detail("ws-a")
+    spin(qt, 50)
+    assert showing() == ["detail"]
+    shell.show_listing()
+    spin(qt, 50)
+    assert showing() == ["list"]
+    # The tour: Images, Secrets, Settings, terminal-only, Back, list.
+    for index in (1, 2, 3):
+        tabs.setCurrentIndex(index)
+        spin(qt, 50)
+        assert floating.isVisibleTo(window) and not listing.pill.isVisibleTo(
+            window
+        )
+    tabs.setCurrentIndex(0)
+    spin(qt, 50)
+    assert showing() == ["list"]
+    shell.open_detail("ws-a")
+    spin(qt, 50)
+    detail.terminal_only.toggle.click()
+    spin(qt, 150)
+    assert showing() == ["floating"]
+    assert floating.x() > window.width() // 2  # at the tab row's right end
+    shell.show_listing()
+    spin(qt, 50)
+    assert showing() == ["list"]
+    # Back and forth once more: the set holds, nothing dangles.
+    shell.open_detail("ws-a")
+    shell.show_listing()
+    spin(qt, 50)
+    assert showing() == ["list"]
+    # A re-dial tears the tree down: the dead pages' pills drop from
+    # the floating pill's set, and the floating one serves alone.
+    window.setCentralWidget(QtWidgets.QWidget())
+    window.close()
+    QtWidgets.QApplication.sendPostedEvents(
+        None, qt.QtCore.QEvent.Type.DeferredDelete
+    )
+    spin(qt, 50)
+    assert len(floating.seated) == 0  # the dead pages' pills forgot themselves
+    host.remove()
+
+
+def test_a_landed_download_saves_the_model_that_was_fetched(qt):
+    """A pick changed mid-flight (#1216 review): the landing saves
+    the model the worker fetched, not whatever the picker holds by
+    then — the file, the controller, and the disk agree, and the
+    flash names the fetched file."""
+    from msks.client.gui.settingspage import SettingsPage
+
+    held, _fake = controller(qt)
+    (qt.tmp / "cache" / "msks" / "whisper" / "ggml-small.bin").unlink()
+    held.check_model()
+    page = SettingsPage(held, {})
+    picked: list = []
+
+    def fake_download(name, cache_root, progress=None, cancel=None):
+        page.pick_model("large-v3-turbo")  # the operator moves on
+        picked.append(name)
+        path = cache_root / "whisper" / f"ggml-{name}.bin"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"ggml")
+        return path
+
+    page.downloader = fake_download
+    page.download()
+    page.flight.join(5)
+    spin(qt, 100)
+    assert picked == ["small"]
+    assert load_prefs() == {"dictate_model": "small"}
+    assert held.settings.model == "small" and held.state == "idle"
+    assert page.status.text() == "saved ggml-small.bin"
+    # The picker keeps the operator's later pick, and it differs
+    # from the file: Apply asks.
+    assert page.model_value() == "large-v3-turbo"
+    assert page.apply_button.isEnabled()
+
+
+def test_a_clean_landing_settles_apply(qt):
+    """A landed download with no other edit (#1216 review): the
+    fields match the file again, and Apply goes dark — the pick
+    that started the download was the save."""
+    from msks.client.gui.settingspage import SettingsPage
+
+    held, _fake = controller(qt)
+    page = SettingsPage(held, {})
+
+    def fake_download(name, cache_root, progress=None, cancel=None):
+        path = cache_root / "whisper" / f"ggml-{name}.bin"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"ggml")
+        return path
+
+    page.downloader = fake_download
+    # The pick is the only edit: it lights Apply, and the download of
+    # that same model is its save.
+    page.pick_model("large-v3-turbo")
+    assert page.apply_button.isEnabled()
+    page.download()
+    page.flight.join(5)
+    spin(qt, 100)
+    assert load_prefs() == {"dictate_model": "large-v3-turbo"}
+    assert not page.apply_button.isEnabled()
+    assert held.settings.model == "large-v3-turbo"
+
+
+def test_a_landed_download_under_a_pinned_model_keeps_the_pin(qt, monkeypatch):
+    """A model the environment pins (#1216 review): the Download
+    button stands dark — the pin would override the file anyway —
+    and a landing that arrives regardless writes the pin's value,
+    not the fetched name, saying so."""
+    from msks.client.gui.settingspage import SettingsPage
+
+    monkeypatch.setenv("MSKSC_DICTATE_MODEL", "small")
+    held, _fake = controller(qt)
+    (qt.tmp / "cache" / "msks" / "whisper" / "ggml-small.bin").unlink()
+    held.check_model()
+    page = SettingsPage(held, {})
+    assert "missing" in page.model_state.text()
+    assert page.download_button.isEnabled() is False  # the pin decides
+    save_prefs({"dictate_device": "mic-a"})
+    assert page.save_model("large-v3-turbo") is False
+    assert load_prefs() == {
+        "dictate_device": "mic-a",
+        "dictate_model": "small",
+    }
+    assert held.settings.model == "small"

@@ -158,11 +158,7 @@ def remove_dictation_shims() -> str:
     Linux tools' own rule). The arm never requires brew (#701's
     lesson): the prefix answers or the fallback bins sweep."""
     bins = shim_dirs()
-    removed = [
-        swept
-        for name in SHIM_NAMES
-        if (swept := remove_one_shim(bins, name)) is not None
-    ]
+    removed = [path for name in SHIM_NAMES for path in sweep_shims(bins, name)]
     return shims_gone(removed)
 
 
@@ -185,16 +181,19 @@ def shims_gone(removed: list[str]) -> str:
         return "no dictation shim found"
     if len(removed) == 1:
         return f"the dictation shim {removed[0]} is gone"
-    return f"the dictation shims {' and '.join(removed)} are gone"
+    return f"the dictation shims {', '.join(removed)} are gone"
 
 
-def remove_one_shim(bins: list[str], name: str) -> str | None:
-    """One shim's sweep over the candidate dirs: the first path
-    holding the tool's own sentinel names it, and a path holding
-    nothing of the tool's leaves the name unswept."""
+def sweep_shims(bins: list[str], name: str) -> list[str]:
+    """One shim name's sweep over the candidate dirs (#1216): every
+    path holding the tool's own sentinel goes — the brew prefix's
+    bin and a fallback bin can both hold one after a prefix
+    migration — and a path holding nothing of the tool's leaves the
+    name unswept there. The paths removed, in sweep order."""
+    removed = []
     for bin_dir in dict.fromkeys(bins):
         path = Path(bin_dir) / name
         if is_ours(path):
             path.unlink()
-            return str(path)
-    return None
+            removed.append(str(path))
+    return removed

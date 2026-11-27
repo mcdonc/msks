@@ -172,9 +172,11 @@ class DictationPill(QtWidgets.QFrame):
         self.setObjectName(PILL_NAME)
         self.dictation = dictation
         self.floating = floating
-        #: The seated pill this floating one stands down for
-        #: (#1214), set by :meth:`yields_to`; None until then.
-        self.seated = None
+        #: The seated pills this floating one stands down for
+        #: (#1214), every page's own — a set, so the floating pill
+        #: asks whether *any* shows, whatever order the pages hide
+        #: and show in.
+        self.seated: set = set()
         self.setFixedHeight(HEIGHT)
         self.setFixedWidth(self.widest(self.font()))
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
@@ -240,11 +242,13 @@ class DictationPill(QtWidgets.QFrame):
     # --- the anchor -----------------------------------------------------
 
     def showEvent(self, event) -> None:  # noqa: N802
-        """A laid-out pill's first show (#1214): the window and its
-        floating pill both stand by then, so the seated one links
-        itself — the floating pill stands down while this one
-        shows. A window floating no pill (the suites' bare windows)
-        links nothing, and the next show asks again."""
+        """A laid-out pill's show (#1214): the window and its floating
+        pill both stand by then, so the seated one links itself — the
+        floating pill stands down while any seated pill shows. A
+        window floating no pill (the suites' bare windows) links
+        nothing, and the next show asks again; a pill linked once
+        stays linked, and its own show and hide drive the floating
+        one from here."""
         super().showEvent(event)
         if self.floating or getattr(self, "linked", False):
             return
@@ -254,20 +258,23 @@ class DictationPill(QtWidgets.QFrame):
 
     def eventFilter(self, watched, event) -> bool:
         """The window's resizes and shows re-anchor the pill
-        (#1214): the corner is fixed relative to the window, and
-        the pill stays above the content. The seated pill's show
-        and hide stand the floating one down and bring it back."""
-        if watched is self.seated and event.type() in (
-            QtCore.QEvent.Type.Show,
-            QtCore.QEvent.Type.Hide,
-        ):
-            self.follow(watched)
+        (#1214); a seated pill's show, hide, or destruction is the
+        floating one's to hear (:meth:`seated_event`)."""
+        if watched in self.seated:
+            self.seated_event(watched, event.type())
         elif watched is self.parentWidget() and event.type() in (
             QtCore.QEvent.Type.Resize,
             QtCore.QEvent.Type.Show,
         ):
             self.anchor()
         return False
+
+    def seated_event(self, seated, kind) -> None:
+        """A seated pill's event (#1214): a show or hide re-asks
+        whether any seated pill shows. Its destruction is
+        :meth:`forget`'s, through ``destroyed``."""
+        if kind in (QtCore.QEvent.Type.Show, QtCore.QEvent.Type.Hide):
+            self.follow()
 
     def anchor(self) -> None:
         """The top-right corner (#1214): ``MARGIN`` in from the top
@@ -282,22 +289,34 @@ class DictationPill(QtWidgets.QFrame):
         self.raise_()
 
     def yields_to(self, seated) -> None:
-        """Stand down while ``seated`` shows (#1214): the workspaces
-        list seats its own pill in its quick-facts row, and while
-        that page is the one showing, the window's floating pill
-        hides — one pill at a time, both reading the one controller.
-        The seated pill's own show and hide events drive it, and the
-        page's change delivers them."""
-        self.seated = seated
+        """Stand down while ``seated`` shows (#1214): every page seats
+        its own pill in its bottom row, and while any of them shows
+        the window's floating pill hides — one pill at a time, all
+        reading the one controller. Each seated pill's own show and
+        hide events re-ask, so the order a page change hides one
+        page and shows the next in decides nothing."""
+        self.seated.add(seated)
         seated.installEventFilter(self)
-        self.follow(seated)
+        # The destruction hook fires while the C++ object still
+        # stands (#1216): a DeferredDelete event would arrive after
+        # it, and a set holding dead wrappers could ask one
+        # isVisibleTo.
+        seated.destroyed.connect(lambda _obj=None, p=seated: self.forget(p))
+        self.follow()
 
-    def follow(self, seated) -> None:
-        """The floating pill's visibility after the seated one's, as
-        the window sees it: a seated pill hidden with its page's
-        footer (the terminal-only mode) still reads ``isVisible()``
-        of itself, so the window is asked."""
-        self.setVisible(not seated.isVisibleTo(self.window()))
+    def forget(self, seated) -> None:
+        """A seated pill is gone (#1216): it leaves the set, and the
+        floating one re-asks."""
+        self.seated.discard(seated)
+        self.follow()
+
+    def follow(self) -> None:
+        """The floating pill's visibility after the seated pills',
+        as the window sees them: a seated pill hidden with its
+        page's footer (the terminal-only mode) still reads
+        ``isVisible()`` of itself, so the window is asked."""
+        showing = any(pill.isVisibleTo(self.window()) for pill in self.seated)
+        self.setVisible(not showing)
 
     def stands_down_for(self, seated) -> bool:
         """Link this floating pill to a seated one (#1214) when they

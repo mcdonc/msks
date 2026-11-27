@@ -1,4 +1,4 @@
-"""The dictate pill's settings (#1214): the five keys' resolution
+"""The dictate pill's settings (#1214): the three keys' resolution
 and the record the pill, the settings page, and the transcription
 read. Plain data over the client's own config layer — no Qt in
 it.

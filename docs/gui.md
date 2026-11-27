@@ -528,18 +528,22 @@ recovery line.
 
 ## Dictation
 
-![The dictate pill in a recording: the red mic, the timer, and the
-discard button at the window's top-right corner](screens/gui-dictate.png)
+![The dictate pill in a recording on the workspace list: the red
+mic, the timer, and the discard button in the quick-facts row, under
+the connection picker](screens/gui-dictate.png)
 
 A small pill sits on every page of the main window and on each
 torn-off shell window. It is the same control everywhere, and one
-recording runs behind all of them. On the workspace list it sits in
-the quick-facts row at the right end, directly under the connection
-picker; on every other page it floats at the window's top-right
-corner. Dialogs carry no pill. Click it to start
-talking. Click it again to finish. Nothing ends a recording on your
-behalf: a pause inside a sentence is not the end of one. A
-three-minute cap ends a clip that nobody stopped.
+recording runs behind all of them. On each page it sits at the right
+end of the page's own bottom row, under the connection picker: beside
+the quick facts on the workspace list, the counts on Images and
+Secrets, the status line on Settings, and the footer on a workspace
+page. The workspace page's terminal-only mode hides its footer, and
+the pill then floats at the tab row's right end, left of the restore
+button. Dialogs carry no pill. Click it to start talking. Click it
+again to finish. Nothing ends a recording on your behalf: a pause
+inside a sentence is not the end of one. A three-minute cap ends a
+clip that nobody stopped.
 
 The transcript goes to the clipboard and to the primary selection.
 You paste it where you want it. A tone plays when the recording
@@ -578,14 +582,15 @@ not shipped: the first click opens the **Settings** tab, whose
 [CLI chapter](cli.md#the-gui-preferences-file) describes the
 settings, their file, and the precedence.
 
-On a Mac the same calls answer through the shims
-`msks-setup-macos-host` lands (#1216): `pw-record` maps onto
-ffmpeg's avfoundation capture, `pw-cat` onto `afplay`, and
-`notify-send` onto `osascript`, with `whisper-cli` and `ffmpeg`
-brewed by the run. The first recording asks macOS for the
-microphone — the prompt names the terminal that launched the
-GUI — and the capture device is avfoundation's index 0 unless
-`PW_RECORD_AUDIO_INDEX` names another.
+On a Mac the same calls answer through the shims that
+`msks-setup-macos-host` lands (#1216). `pw-record` captures through
+ffmpeg's avfoundation, `pw-cat` plays through `afplay`, and
+`notify-send` shows the notification through `osascript`. The run
+brews `whisper-cli` and `ffmpeg`. The first recording asks macOS for
+the microphone. The prompt shows the name of the terminal that
+launched the GUI. The capture device is the desktop's default input,
+and the Device setting below selects another one by its avfoundation
+index. `PW_RECORD_AUDIO_INDEX` overrides the setting for one launch.
 
 ## The Settings tab
 
@@ -601,11 +606,13 @@ settings in effect now, and every field takes a change.
   path. A larger model transcribes more accurately and loads more
   slowly at each clip: about a second with `small`, two to three
   with `large-v3-turbo`.
-- **Device**: the microphone `pw-record` captures from, as a
-  PipeWire source. The picker lists the sources the desktop serves,
-  and **Refresh** reads the list again. The default input follows
-  the desktop's own choice. A node name or serial typed free
-  selects one the list does not carry.
+- **Device**: the microphone `pw-record` captures from. On Linux it
+  is a PipeWire source: the picker lists the sources the desktop
+  serves, **Refresh** reads the list again, and the default input
+  follows the desktop's own choice. A node name or serial typed free
+  selects one the list does not carry. On macOS the picker is empty,
+  and a number typed free selects the avfoundation input with that
+  index. The default input follows the desktop's choice there too.
 - **Vocabulary prompt**: the words whisper-cli biases its spelling
   toward, such as `msks, devenv, NixOS, pi`. Leave it empty for
   plain dictation.

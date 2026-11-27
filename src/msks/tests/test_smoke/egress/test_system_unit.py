@@ -196,8 +196,8 @@ def test_the_unit_boots_under_the_account_with_native_caps(
         # lands on the empty instant.
         if ambient.exists():
             mask = ambient.read_text().strip()
-            if mask:
-                break
+            if len(mask) == 16 and set(mask) <= set("0123456789abcdef"):
+                break  # a whole CapAmb word, not a torn write
         assert active.stdout.strip() != "failed", active.stdout
         time.sleep(0.2)
     assert mask not in ("", "0000000000000000")

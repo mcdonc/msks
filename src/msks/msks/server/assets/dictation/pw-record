@@ -5,12 +5,16 @@
 # rate on stdout — through ffmpeg's avfoundation capture. Replace
 # it only through a re-run of the tool.
 #
-# The avfoundation audio device defaults to index 0; list the
-# devices with `ffmpeg -f avfoundation -list_devices true -i ""`
-# and override with PW_RECORD_AUDIO_INDEX=N.
+# The avfoundation audio device: the desktop's default input
+# (`:default`), or an index — list the devices with
+# `ffmpeg -f avfoundation -list_devices true -i ""` — set through
+# PW_RECORD_AUDIO_INDEX, which stands above the GUI's Device
+# setting — honored when it carries a number (a PipeWire node name
+# has no avfoundation equivalent and reads as the default).
 rate=16000
 channels=1
-device="${PW_RECORD_AUDIO_INDEX:-0}"
+device=""
+pinned="${PW_RECORD_AUDIO_INDEX:-}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -18,11 +22,18 @@ while [ $# -gt 0 ]; do
         --channels) channels="$2"; shift 2 ;;
         --format) shift 2 ;;   # s16 assumed (s16le is what we emit)
         --raw) shift ;;
-        --target) shift 2 ;;   # a PipeWire node name: default device
+        --target)
+            case "$2" in
+                ''|*[!0-9]*) ;;         # a name or blank: the default
+                *) device="$2" ;;
+            esac
+            shift 2 ;;
         -) shift ;;            # stdout — the only output the client reads
         *) echo "pw-record shim: ignoring unrecognized argument: $1" >&2; shift ;;
     esac
 done
 
+# The environment's index stands above the setting, as every pin.
+device="${pinned:-${device:-default}}"
 exec ffmpeg -hide_banner -loglevel error -f avfoundation -i ":$device" \
     -ar "$rate" -ac "$channels" -f s16le -flush_packets 1 -

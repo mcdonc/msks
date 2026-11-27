@@ -2313,7 +2313,7 @@ def test_the_uninstall_closing_line_gates_on_the_note() -> None:
     shims = mac.uninstall_closing_line(
         "the client links /opt/brew/msks are gone",
         "/opt/msks removed (the venv, the provisioned Python, uv)",
-        "the dictation shims /opt/brew/pw-record, /opt/brew/pw-cat, and "
+        "the dictation shims /opt/brew/pw-record, /opt/brew/pw-cat, "
         "/opt/brew/notify-send are gone",
     )
     assert "the dictation shims went with them" in shims
@@ -2516,7 +2516,185 @@ def test_the_uninstall_arms_without_brew_and_by_the_count(
         (fb1 / name).write_text(f"#!/bin/sh\n# {mac.SENTINEL}\n")
     note = mac.remove_dictation_shims()
     assert note == (
-        f"the dictation shims {fb1 / 'pw-record'} and "
+        f"the dictation shims {fb1 / 'pw-record'}, "
         f"{fb1 / 'notify-send'} are gone"
     )
     assert mac.remove_dictation_shims() == "no dictation shim found"
+
+
+# --- the shims' behavior (#1216) -----------------------------------------
+#: A stand-in for the engine a shim execs: it records its argv, one
+#: per line, and its stdin's byte count, to the file named by
+#: SHIM_RECORD, and answers 0.
+RECORDER = """#!/bin/sh
+{
+    for arg in "$@"; do printf '%s\\n' "$arg"; done
+    printf -- '--stdin-bytes=%s\\n' "$(wc -c)"
+} > "$SHIM_RECORD"
+exit 0
+"""
+
+
+def shim_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *engines: str
+) -> Path:
+    """A private PATH head holding a recording stand-in for each
+    engine name; the shims resolve from the wheel's assets. Returns
+    the record file's path."""
+    record = tmp_path / "record"
+    bin_dir = tmp_path / "shimbin"
+    bin_dir.mkdir()
+    for engine in engines:
+        fake = bin_dir / engine
+        fake.write_text(RECORDER)
+        fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("SHIM_RECORD", str(record))
+    return record
+
+
+def run_shim(
+    name: str, *args: str, stdin: bytes = b""
+) -> subprocess.CompletedProcess:
+    shim = dictation.shim_body(name)
+    script = Path(os.environ["SHIM_RECORD"]).parent / name
+    script.write_text(shim)
+    script.chmod(0o755)
+    # The shims exec their engines by absolute path (/usr/bin/...); the
+    # stand-ins sit at the front of PATH, so the test rewrites that
+    # one path for the run.
+    text = shim.replace("/usr/bin/", "")
+    script.write_text(text)
+    return subprocess.run(
+        ["/bin/sh", str(script), *args],
+        input=stdin,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_the_pw_record_shim_maps_the_clients_command(
+    tmp_path: Path, monkeypatch
+):
+    """The GUI's exact capture command (#1216): the PipeWire flags
+    map onto ffmpeg's — the rate, one channel, raw s16le to stdout,
+    flushed per packet — and `--format s16` and the bare `-` go to
+    stdout as the client reads it."""
+    record = shim_env(tmp_path, monkeypatch, "ffmpeg")
+    monkeypatch.delenv("PW_RECORD_AUDIO_INDEX", raising=False)
+    done = run_shim(
+        "pw-record",
+        "--raw",
+        "--rate",
+        "16000",
+        "--channels",
+        "1",
+        "--format",
+        "s16",
+        "-",
+        stdin=b"",
+    )
+    assert done.returncode == 0, done.stderr
+    argv = record.read_text().splitlines()
+    assert argv[:5] == [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "avfoundation",
+    ]
+    assert "-i" in argv and argv[argv.index("-i") + 1] == ":default"
+    assert argv[argv.index("-ar") + 1] == "16000"
+    assert argv[argv.index("-ac") + 1] == "1"
+    formats = [i for i, a in enumerate(argv) if a == "-f"]
+    assert len(formats) == 2  # avfoundation in, s16le out
+    assert argv[formats[1] + 1] == "s16le"
+    assert argv[argv.index("-flush_packets") + 1] == "1"
+    assert argv[-2] == "-" and argv[-1] == "--stdin-bytes=0"
+
+
+def test_the_pw_record_shim_honors_the_device_and_the_index(
+    tmp_path: Path, monkeypatch
+):
+    """The Device setting reaches avfoundation as an index when it
+    carries one; a PipeWire node name reads as the desktop's default
+    input; ``PW_RECORD_AUDIO_INDEX`` stands above both."""
+    record = shim_env(tmp_path, monkeypatch, "ffmpeg")
+    monkeypatch.delenv("PW_RECORD_AUDIO_INDEX", raising=False)
+
+    def device_of(*args: str) -> str:
+        record.unlink(missing_ok=True)
+        run_shim("pw-record", "--target", *args, "-")
+        argv = record.read_text().splitlines()
+        return argv[argv.index("-i") + 1]
+
+    assert device_of("2") == ":2"
+    assert device_of("alsa_input.usb-scarlett.mic1") == ":default"
+    assert device_of("") == ":default"
+    monkeypatch.setenv("PW_RECORD_AUDIO_INDEX", "1")
+    assert device_of("2") == ":1"
+
+
+def test_the_notify_send_shim_keeps_the_body_as_data(
+    tmp_path: Path, monkeypatch
+):
+    """The transcript is data (#1216 review): a body carrying quotes,
+    backslashes, newlines, and an AppleScript-looking tail reaches
+    osascript as one argument, verbatim but for the newlines — never
+    spliced into the script source — and the script itself is the
+    fixed three lines."""
+    record = shim_env(tmp_path, monkeypatch, "osascript")
+    body = 'say \\" ) & (do shell script "id") & ("\nline two'
+    done = run_shim("notify-send", "-t", "4000", "dictate", body)
+    assert done.returncode == 0, done.stderr
+    argv = record.read_text().splitlines()
+    script = argv[: argv.index("dictate")]
+    assert script == [
+        "-e",
+        "on run argv",
+        "-e",
+        "display notification (item 2 of argv) with title (item 1 of argv)",
+        "-e",
+        "end run",
+    ]
+    # The recorder folds newlines to its own line breaks; the shim
+    # already turned them to spaces, so the body is one line.
+    assert argv[-3:-1] == [
+        "dictate",
+        'say \\" ) & (do shell script "id") & (" line two',
+    ]
+    assert "do shell script" not in " ".join(script)
+
+
+def test_the_pw_cat_shim_plays_the_file(tmp_path: Path, monkeypatch):
+    """`pw-cat --playback <wav>` (#1216): afplay takes the file."""
+    record = shim_env(tmp_path, monkeypatch, "afplay")
+    done = run_shim("pw-cat", "--playback", "/tmp/beep-880.wav")
+    assert done.returncode == 0, done.stderr
+    assert record.read_text().splitlines() == [
+        "/tmp/beep-880.wav",
+        "--stdin-bytes=0",
+    ]
+
+
+def test_the_uninstall_sweeps_a_shim_from_every_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A prefix migration (#1216 review) leaves the tool's shim at
+    the old brew bin and the new one: the sweep takes both, so the
+    name no longer resolves from either, and the report lists them
+    with commas."""
+    old_bin = tmp_path / "oldbrew"
+    new_bin = tmp_path / "newbrew"
+    for bin_dir in (old_bin, new_bin):
+        bin_dir.mkdir()
+        for name in mac.SHIM_NAMES:
+            (bin_dir / name).write_text(f"#!/bin/sh\n# {mac.SENTINEL}\n")
+    patch_phase(monkeypatch, "dictation_bin_dir", lambda: str(new_bin))
+    patch_phase(monkeypatch, "FALLBACK_BREW_BINS", (str(old_bin),))
+    note = mac.remove_dictation_shims()
+    for bin_dir in (old_bin, new_bin):
+        assert not any((bin_dir / name).exists() for name in mac.SHIM_NAMES)
+    assert note.startswith("the dictation shims ")
+    assert ", " in note and " and " not in note
+    assert note.count(str(old_bin)) == 3 and note.count(str(new_bin)) == 3

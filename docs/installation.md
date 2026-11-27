@@ -344,23 +344,25 @@ point into that venv, so every account's bare `msks` resolves the
 same shared install. `--wheel <path>` (a wheel in hand) and
 `--uninstall` carry the Linux tools' vocabulary.
 
-The dictation prerequisites land with the run (#1216): the
-GUI's dictate pill calls the PipeWire names a stock Mac does not
-carry, so the tool brews the two real engines the Mac can hold
-(`whisper.cpp` for `whisper-cli`, `ffmpeg` for capture) and
-lands three shims at the brew prefix's bin — `pw-record`
-answering the client's raw-capture contract over ffmpeg's
-avfoundation, `pw-cat` over `afplay`, and `notify-send` over
-`osascript` — beside the client links. A foreign file at a shim
-path refuses by name; the shims carry the tool's sentinel, the
-uninstall arm removes only its own, and the brew packages stay
-(shared packages, the Linux tools' own rule). The first
-recording asks macOS for the microphone: the prompt names the
-terminal that launched the GUI, and the grant lands in Privacy
-& Security. The capture device is avfoundation's index 0 by
-default; list the devices with `ffmpeg -f avfoundation
--list_devices true -i ""` and override with
-`PW_RECORD_AUDIO_INDEX`.
+The dictation prerequisites land with the run (#1216). The GUI's
+dictate pill calls `pw-record`, `pw-cat`, and `notify-send`. A stock
+Mac carries none of the three, so the tool brews the two engines the
+Mac can hold: `whisper.cpp` provides `whisper-cli`, and `ffmpeg`
+captures. It then lands three shims at the brew prefix's bin, beside
+the client links. `pw-record` captures through ffmpeg's avfoundation,
+`pw-cat` plays through `afplay`, and `notify-send` shows the
+notification through `osascript`. Each shim carries the tool's
+sentinel. A foreign file at a shim path refuses by name, and the
+uninstall arm removes only the tool's own shims. The brew packages
+stay on uninstall, the Linux tools' rule for shared packages.
+
+The first recording asks macOS for the microphone. The prompt shows
+the name of the terminal that launched the GUI, and the grant lands
+in Privacy & Security. The capture device is the desktop's default
+input. The Device setting in the GUI selects another one by its
+avfoundation index, and `ffmpeg -f avfoundation -list_devices true -i
+""` lists the indexes. `PW_RECORD_AUDIO_INDEX` overrides the setting
+for one launch.
 
 The msksd VM that `msks-setup-macos-host` creates from the shipped
 Lima template is the host that shares Mac folders into workspaces.

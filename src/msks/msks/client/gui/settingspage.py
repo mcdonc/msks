@@ -1,6 +1,6 @@
 """The settings page (#1214): the top-level tab that edits the
-dictate pill's settings — the model, the device, the gate's three
-numbers, and the prompt — saves them into ``gui.yaml`` through
+dictate pill's settings — the model, the device, and the prompt —
+saves them into ``gui.yaml`` through
 :mod:`msks.client.gui.guiprefs`, and carries the model download
 with its progress.
 
@@ -43,7 +43,7 @@ from ..dictate import (
 )
 from .dictatekeys import DictateSettings, resolve
 from .dictatepill import seat_pill
-from .guiprefs import load_prefs, save_prefs
+from .guiprefs import dump_prefs, load_prefs, save_prefs
 from .statusflash import StatusFlash
 from .tintedlabel import TintedLabel
 
@@ -67,7 +67,7 @@ REFRESH_TIP = (
 TIPS = {
     "dictate_model": (
         "The whisper.cpp speech model. Pick a known name and Download "
-        "fetches it into ~/.cache/msks/whisper/ on first use; a larger "
+        "fetches it into ~/.cache/msks/whisper/; a larger "
         "model transcribes more accurately and loads more slowly at "
         "each clip (about a second with small, two to three with "
         "large-v3-turbo). A path to a .bin file uses that file instead "
@@ -98,7 +98,7 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
 
     settings_saved = QtCore.Signal(object)
     progressed = QtCore.Signal(int, int)
-    downloaded = QtCore.Signal(str, str)
+    downloaded = QtCore.Signal(str, str, str)
 
     def __init__(
         self,
@@ -384,7 +384,7 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
     def values(self) -> dict:
         """The fields' values by key (#1214): the model's text (a
         name or a path), the device's picked name or typed text,
-        the three numbers, and the prompt."""
+        and the prompt."""
         return {
             "dictate_model": self.model_value(),
             "dictate_device": self.device_value(),
@@ -506,7 +506,10 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         self.model_state.setText(self.model_words(path, name))
         self.model_state.setToolTip(str(path))
         self.download_button.setEnabled(
-            name is not None and not path.exists() and self.flight is None
+            name is not None
+            and not path.exists()
+            and self.flight is None
+            and "dictate_model" not in self.dictation.settings.pinned
         )
 
     @QtCore.Slot()
@@ -531,7 +534,9 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
     def fetch(self, name: str) -> None:
         """The worker thread's body (#1214): the leaf's download
         with this page's progress and cancel, the answer back
-        over a signal."""
+        over a signal — the requested ``name`` beside the path, so
+        the landing saves the model that was fetched, not whatever
+        the picker holds by then."""
         try:
             path = self.downloader(
                 name,
@@ -540,13 +545,13 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
                 cancel=self.cancel.is_set,
             )
         except DictateFailure as exc:
-            self.downloaded.emit("", str(exc))
+            self.downloaded.emit(name, "", str(exc))
         except Exception as exc:  # a best-effort worker: the page
             # must not stay with its bar up and its button dark
             # because the thread died — the failure is shown.
-            self.downloaded.emit("", f"{type(exc).__name__}: {exc}")
+            self.downloaded.emit(name, "", f"{type(exc).__name__}: {exc}")
         else:
-            self.downloaded.emit(str(path), "")
+            self.downloaded.emit(name, str(path), "")
 
     @QtCore.Slot(int, int)
     def progress(self, done: int, total: int) -> None:
@@ -558,12 +563,13 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         else:
             self.bar.setRange(0, 0)
 
-    @QtCore.Slot(str, str)
-    def landed(self, path: str, error: str) -> None:
+    @QtCore.Slot(str, str, str)
+    def landed(self, name: str, path: str, error: str) -> None:
         """The download's end (#1214): the bar goes, and a failure
         or a cancel flashes its reason and leaves the fields as the
         operator left them — a pick stands for a retry. A landed
-        download makes the picked model the configured one and
+        download makes the fetched ``name`` the configured one —
+        not whatever the picker holds by then (#1216 review) — and
         says so."""
         self.flight = None
         self.bar.hide()
@@ -573,18 +579,24 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
             self.flash(error, error=True)
             self.refresh_model()
             return
-        if self.save_model(self.model_value()):
+        if self.save_model(name):
             self.flash(f"saved {Path(path).name}")
 
     def save_model(self, model: str) -> bool:
         """Make ``model`` the configured one (#1214): the file takes
         the model key over its standing values — the other fields
         stay as the operator left them, applied or not — and the
-        layers resolve again for the controller. False when the file
-        will not write or read, with the reason flashed."""
+        layers resolve again for the controller. A model the
+        environment pins is the pin's, as everywhere: the download
+        stands on disk and the file keeps the pin's value, and the
+        flash says the pin still decides. False when the file will
+        not write or read, with the reason flashed."""
+        pinned = "dictate_model" in self.dictation.settings.pinned
         try:
             values = dict(load_prefs())
-            values["dictate_model"] = model
+            values["dictate_model"] = (
+                self.dictation.settings.model if pinned else model
+            )
             save_prefs(values)
             settings = self.effective()
         except (OSError, ValueError) as exc:
@@ -593,9 +605,16 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         self.dictation.reload(settings)
         # The fields stand as the operator left them (#1216 review):
         # only the model line follows the save. A field that differs
-        # from the file still asks for Apply.
+        # from the file still asks for Apply; the model pick that
+        # started the download is now the file's, so it does not.
         self.refresh_model()
-        return True
+        # The file's own form of the fields against the file: blanks
+        # drop out of both, as the dump does.
+        if self.dirty and dump_prefs(self.file_values()) == dump_prefs(
+            load_prefs()
+        ):
+            self.settled()
+        return not pinned
 
     @QtCore.Slot()
     def abandon_download(self) -> None:
