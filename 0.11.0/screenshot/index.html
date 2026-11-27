@@ -1,0 +1,1518 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Microvm workspaces for AI coding agents">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/msks/0.11.0/screenshot/">
+      
+      
+      
+        <link rel="prev" href="../proxies/">
+      
+      
+        <link rel="next" href="../egress-consent/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.71">
+    
+    
+      
+        <title>The Screenshot Pipe - msks</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.e442bf79.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.b60ce83d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="msks" class="md-header__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            msks
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              The Screenshot Pipe
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="msks" class="md-nav__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    msks
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The host doctor
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  First run
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ssh-key/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Your ssh key
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The GUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Host Share Mounts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guest Networking
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Proxies
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The Screenshot Pipe
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The Screenshot Pipe
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#enabling-the-pipe" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Enabling the pipe
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#holding-the-pipe-on-demand" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Holding the pipe on demand
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-guests-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The guest's contract
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-guests-pi" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The guest's pi
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The guest&#x27;s pi">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-screenshot-tool" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The <code>screenshot</code> tool
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#who-sees-the-capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Who sees the capture
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-screenshot-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The <code>/screenshot</code> command
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-port-in-the-guest" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The port in the guest
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-capture-commands-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The capture command's contract
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Recipes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-audit-trail" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The audit trail
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-trust-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The trust shape
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../egress-consent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Consent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cloning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Cloning Workspaces
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The CLI Client
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent Reference Card
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Daemon Configuration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development environment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#enabling-the-pipe" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Enabling the pipe
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#holding-the-pipe-on-demand" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Holding the pipe on demand
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-guests-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The guest's contract
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-guests-pi" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The guest's pi
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The guest&#x27;s pi">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-screenshot-tool" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The <code>screenshot</code> tool
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#who-sees-the-capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Who sees the capture
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-screenshot-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The <code>/screenshot</code> command
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-port-in-the-guest" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The port in the guest
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-capture-commands-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The capture command's contract
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Recipes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-audit-trail" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The audit trail
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-trust-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The trust shape
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+  
+
+
+<h1 id="the-screenshot-pipe">The screenshot pipe<a class="headerlink" href="#the-screenshot-pipe" title="Permanent link">&para;</a></h1>
+<p>A skill running inside a workspace guest can capture one of your screens and
+read the result, the way a host-side agent skill does. The pipe is the path:
+a loopback TCP port inside the guest that, through an ssh reverse forward,
+reaches a capture command running on the client that started the workspace.</p>
+<p>The pipe is client-held. The holder process that serves a workspace's
+forward proxies also keeps one <code>ssh -N -R</code> child. That child asks the
+guest's own sshd to bind a loopback listener, and each connection to it
+becomes one connection to a unix socket the holder owns on your machine.
+The daemon relays the ssh bytes and holds no part of the capture: it serves
+no endpoint for this, and the workspace's network chain stays exactly as it
+was.</p>
+<h2 id="enabling-the-pipe">Enabling the pipe<a class="headerlink" href="#enabling-the-pipe" title="Permanent link">&para;</a></h2>
+<p>One setting decides: <code>screenshot_command</code>, a global-only client config key.
+Its value is the capture command the pipe runs. Set it in <code>msks.yaml</code>:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">screenshot_command</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">import -window root -crop 3840x2160+0+0</span>
+</span></code></pre></div>
+<p>The variable <code>MSKSC_SCREENSHOT_COMMAND</code> carries the string form for one
+shell and overrides the file. A leading <code>~</code> in the command's program
+expands to your home directory, the way the shell would take it. The value
+can also be a list, with the tokens kept whole:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">screenshot_command</span><span class="p">:</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">import</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-window</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">root</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-crop</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3840x2160+0+0</span>
+</span></code></pre></div>
+<p>The setting belongs to the operator, not to a daemon connection: a
+per-alias <code>screenshot_command</code> is refused, the same rule <code>identity_file</code>
+carries. The screen the pipe captures is this client's desktop, wherever
+this client runs.</p>
+<p>The command's presence is the whole enablement. A client with the setting
+unconfigured spawns no pipe, and a workspace started from it leaves the
+guest's port refused. Every start from a configured client brings the pipe
+up, beside the bridge holder the start already leaves for forward proxies.</p>
+<p>The guest-side port is a fixed default, <code>127.0.0.1:8662</code>, and
+<code>screenshot_port</code> overrides it (global-only, same rule). The holder
+writes the configured port to <code>/tmp/msks-screenshot-port</code> in the
+guest, and <a href="#the-guests-pi">the guest's pi</a> reads it from there. If
+something in the guest already holds the port, the holder reports the
+refusal on its stderr as a start-time failure. It keeps retrying at a
+slow pace, and the capture path answers only when the bind succeeds.
+The report reaches the terminal of a holder you run by hand
+(<code>msks screenshot hold</code>, <code>msks proxy hold</code>). A holder the start path
+left in the background writes it to no terminal. The guest's refused
+connection is the symptom you see.</p>
+<h2 id="holding-the-pipe-on-demand">Holding the pipe on demand<a class="headerlink" href="#holding-the-pipe-on-demand" title="Permanent link">&para;</a></h2>
+<p><code>msks start</code> leaves the pipe up when it leaves a holder: a configured
+client, a start, and the pipe serves after the command exits. The pipe
+also serves while any holder stands, and <code>msks proxy hold &lt;workspace&gt;</code>
+brings one on demand.</p>
+<p>The pipe's own command:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>msks<span class="w"> </span>screenshot<span class="w"> </span>hold<span class="w"> </span>&lt;workspace&gt;
+</span></code></pre></div>
+<p>It runs the same holder (the bridge and the pipe serve together) and
+refuses first, with the remedy spelled out, when this client carries no
+<code>screenshot_command</code>.</p>
+<p>The pipe's lifetime is the holder's, and the holder's is the ssh session
+it holds. A stopped workspace takes the pipe down with the bridge; the
+guest's next connection to the port is refused until a configured client
+starts the workspace again or someone runs the hold command. A holder
+that dies on its own comes back only through the next start or a manual
+hold: the automatic re-hold an open client runs covers forward proxy rows
+alone. A stop signal to a running holder (SIGTERM, or the terminal a
+manual holder runs in closing) unwinds it cleanly: the guest's listener
+and the client's socket file go with it. A holder killed outright
+(<code>kill -9</code>) leaves the socket file behind. The runtime directory's own
+lifetime sweeps it.</p>
+<h2 id="the-guests-contract">The guest's contract<a class="headerlink" href="#the-guests-contract" title="Permanent link">&para;</a></h2>
+<p>Inside the guest, the pipe is one loopback HTTP endpoint. The request is a
+plain GET, and the answer is the capture command's stdout:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>--max-time<span class="w"> </span><span class="m">30</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="s1">'http://127.0.0.1:8662/screenshot?monitor=0'</span><span class="w"> </span>-o<span class="w"> </span>/tmp/screenshot.png
+</span></code></pre></div>
+<p><code>monitor</code> is the only parameter. It selects the screen to capture, with
+<code>0</code> the default. The whole number passes to the capture command as the
+<code>MSKS_SCREENSHOT_MONITOR</code> variable, so the command's argv is exactly what
+the config spelled.</p>
+<p><code>--fail-with-body</code> matters: plain <code>curl -f</code> discards error bodies, and the
+body is where every remedy below travels. <code>--max-time</code> bounds a hung
+capture command; the helper also kills one itself after 60 seconds.</p>
+<p>The answers a request can fail with:</p>
+<table>
+<thead>
+<tr>
+<th>the skill sees</th>
+<th>means</th>
+<th>the body carries</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>connection refused</td>
+<td>no holder serves the pipe, or no command is configured</td>
+<td>nothing: the skill's own remedy line names both: start the workspace from a client with <code>screenshot_command</code> set, or run <code>msks screenshot hold</code></td>
+</tr>
+<tr>
+<td><code>400</code></td>
+<td>a malformed request</td>
+<td>the rule and the valid spellings</td>
+</tr>
+<tr>
+<td><code>500</code></td>
+<td>the capture command failed</td>
+<td>its stderr tail, verbatim, or the timeout</td>
+</tr>
+<tr>
+<td><code>503</code></td>
+<td>the client is already running the most captures it runs at once (four)</td>
+<td>one line: retry</td>
+</tr>
+</tbody>
+</table>
+<p>A refused connection covers two causes because the guest cannot tell them
+apart: nothing is listening in both. The skill prints its remedy line and
+the operator picks the fix. The guest's pi reaches this endpoint through
+its <code>screenshot</code> tool; see <a href="#the-guests-pi">The guest's pi</a>.</p>
+<h2 id="the-guests-pi">The guest's pi<a class="headerlink" href="#the-guests-pi" title="Permanent link">&para;</a></h2>
+<p>The guest images ship a pi extension beside the model-discovery one:
+<code>~/.pi/agent/extensions/msks-screenshot/</code>, copied into every account's
+home from the skeleton. It gives the agent in the workspace two ways to
+capture your screen through the pipe.</p>
+<h3 id="the-screenshot-tool">The <code>screenshot</code> tool<a class="headerlink" href="#the-screenshot-tool" title="Permanent link">&para;</a></h3>
+<p>The agent calls <code>screenshot</code> and receives the capture as an image in one
+tool call. The optional <code>monitor</code> parameter selects the screen, <code>0</code> by
+default. The full-resolution capture is saved first, in a directory this
+account alone reads, and the tool's text gives its path. pi downsamples
+an image before the model sees it. Small text on a 4K capture needs a
+<code>magick</code> crop and a second <code>read</code> of that file.</p>
+<h3 id="who-sees-the-capture">Who sees the capture<a class="headerlink" href="#who-sees-the-capture" title="Permanent link">&para;</a></h3>
+<p>The proxy's model list carries no modality data. The <code>llm-models.ts</code>
+extension therefore registers every proxy model with image input, and the
+active model receives the capture directly. A text-only upstream answers
+the image with an error. That error is the signal to pick a vision model.</p>
+<p><code>/screenshot model</code> opens a picker over the model list. The choice is
+stored under the <code>msksScreenshotVisionModel</code> key in
+<code>~/.pi/agent/settings.json</code> and survives a restart. With a vision model
+picked and a different model active, the tool sends the capture to the
+vision model in one nested call and returns its description as text.
+The optional <code>prompt</code> parameter says what to look at. The active model
+sees the capture directly when no vision model is picked, or when the
+picked model is the active one.</p>
+<p>While the vision model works, the TUI replaces the editor with a
+bordered spinner that reads <code>Describing screenshot…</code>, for the tool and
+for <code>/screenshot</code> alike. Escape or <code>Ctrl+C</code> cancels the description at
+once, and the result reports the saved capture's path. During an agent
+turn, that key also stops the turn, as it does anywhere else in pi. A
+terminal that supports OSC 7501 program status shows pi as blocked with
+the same message for as long as the description runs.</p>
+<h3 id="the-screenshot-command">The <code>/screenshot</code> command<a class="headerlink" href="#the-screenshot-command" title="Permanent link">&para;</a></h3>
+<p><code>/screenshot</code> captures monitor 0, and <code>/screenshot &lt;monitor&gt;</code> captures
+that screen. The capture, or the vision model's description, goes in
+front of the agent as a message and a turn starts on it. A failed
+capture shows the pipe's answer as a notice instead.</p>
+<h3 id="the-port-in-the-guest">The port in the guest<a class="headerlink" href="#the-port-in-the-guest" title="Permanent link">&para;</a></h3>
+<p>The holder writes the configured <code>screenshot_port</code> to
+<code>/tmp/msks-screenshot-port</code> when the pipe comes up, and the extension
+reads the file. The default <code>8662</code> answers when the file is absent. The
+holder writes a fresh file and moves it over the path in one rename. A
+reader sees the whole port or the previous file. A stale file is
+harmless while the ports agree: with no holder the port is refused
+either way, and the next hold by the same account rewrites the file.</p>
+<p>Two holders on one workspace with different <code>screenshot_port</code> values
+are a misconfiguration. The file carries the port of the hold that
+came last. The tool reaches that holder's pipe, not the other one.</p>
+<h2 id="the-capture-commands-contract">The capture command's contract<a class="headerlink" href="#the-capture-commands-contract" title="Permanent link">&para;</a></h2>
+<p>The command runs on the client, once per request, in a fresh process. Its
+stdout is the answer's body, whatever bytes it writes (an image, in
+practice). Its exit code decides the response: zero answers <code>200</code>, anything
+else answers <code>500</code> with the command's stderr tail.</p>
+<p>The helper that runs the command passes it the whole holder environment,
+so a desktop capture finds <code>DISPLAY</code>, <code>WAYLAND_DISPLAY</code>, and <code>XAUTHORITY</code>
+already set: the holder inherits the shell that started the workspace.
+Two variables join them:</p>
+<ul>
+<li><code>MSKS_SCREENSHOT_MONITOR</code> — the request's monitor number.</li>
+<li><code>MSKS_SCREENSHOT_WORKSPACE</code> — the workspace's name, set by the holder
+  from its own records, useful for a notification that says who captured.</li>
+</ul>
+<p>The command's argv comes from the config alone. Nothing from the request
+reaches the command line: the monitor number is validated to a whole
+number first, and it travels as a variable. A command that wants to be
+told which screen to grab reads <code>MSKS_SCREENSHOT_MONITOR</code> and picks its
+own geometry.</p>
+<p>One exchange runs one process, and the process tree ends with it: the
+helper exits after the response, and a failing or leaking capture command
+costs exactly one request. A capture that writes more than 64 MiB, or
+runs past 60 seconds, is refused with a <code>500</code> naming the limit.</p>
+<p>The client runs at most four captures at once. A fifth concurrent request
+answers <code>503</code>, written by the holder itself without spawning anything:
+a guest that floods the port gets cheap refusals, not a pile of capture
+commands on the desktop. A connection that sends no request head answers
+nothing and holds no slot past 30 seconds. A SIGTERM'd helper takes its
+running capture command with it, so stopping the holder leaves no capture
+(a blocking prompt among them) running on.</p>
+<h2 id="recipes">Recipes<a class="headerlink" href="#recipes" title="Permanent link">&para;</a></h2>
+<p>Nothing ships as a default command. An unconfigured client is the shipped
+state, and the first refused connection from a guest is the onboarding
+path: it names the setting. These recipes are the copy-paste starts.</p>
+<p>X11, one fixed monitor (a 4K left screen):</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">screenshot_command</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">import -window root -crop 3840x2160+0+0</span>
+</span></code></pre></div>
+<p>Wayland (KDE), the same idea through spectacle:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">screenshot_command</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">spectacle -b -n -o /dev/stdout</span>
+</span></code></pre></div>
+<p>macOS, where the client is the Mac and <code>screencapture</code> serves:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">screenshot_command</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">screencapture -x -</span>
+</span></code></pre></div>
+<p>Per-capture visibility, any platform with <code>notify-send</code>: a wrapper script
+in the config's value. The pipe tells the wrapper which workspace asked
+through <code>MSKS_SCREENSHOT_WORKSPACE</code>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="ch">#!/bin/sh</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>notify-send<span class="w"> </span><span class="s2">"msks screenshot"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$MSKS_SCREENSHOT_WORKSPACE</span><span class="s2"> captured the screen"</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="nb">exec</span><span class="w"> </span>import<span class="w"> </span>-window<span class="w"> </span>root<span class="w"> </span>-crop<span class="w"> </span>3840x2160+0+0
+</span></code></pre></div>
+<p>A blocking prompt, for a pipe you want to answer by hand per capture:
+the same wrapper with <code>zenity</code> in place of the notification, exiting
+nonzero when the operator declines (the guest then reads the <code>500</code>).</p>
+<h2 id="the-audit-trail">The audit trail<a class="headerlink" href="#the-audit-trail" title="Permanent link">&para;</a></h2>
+<p>The daemon holds no part of this feature, so its events feed and the TUI
+show nothing of captures. The record is one JSON line per command run,
+appended to <code>screenshots.jsonl</code> under the client state root
+(<code>MSKSC_STATE_DIR</code>, else <code>~/.local/state/msks</code>):</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="p">{</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">"ts"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-12-01T18:22:04.512345+00:00"</span><span class="p">,</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">"workspace"</span><span class="p">:</span><span class="w"> </span><span class="s2">"dev"</span><span class="p">,</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="nt">"monitor"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ok"</span><span class="p">,</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">  </span><span class="nt">"bytes"</span><span class="p">:</span><span class="w"> </span><span class="mi">821349</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>The <code>status</code> is <code>ok</code> for a capture that answered <code>200</code> and <code>error</code> for one
+that answered <code>500</code>. A malformed request writes nothing. The lines are the
+whole history: who captured, when, and how big.</p>
+<h2 id="the-trust-shape">The trust shape<a class="headerlink" href="#the-trust-shape" title="Permanent link">&para;</a></h2>
+<p>The capability is the holder's session and nothing wider. The guest's sshd
+binds the listener, so the guest holds a port it could bind anyway; the
+client's ssh session reaches in, not out; and the only thing the grant
+gives the guest is one fixed-argv exec whose stdout flows back. Stopping
+the holder removes the guest's listener with it.</p>
+<p>Anything in the guest can reach the port, and every guest caller looks
+alike to the client. The audit line is the record; the notify wrapper
+above is the live signal; and a command that prompts is the gate, for a
+pipe an operator wants to answer per capture. The images pin
+<code>AllowTcpForwarding</code> in their sshd config so the reverse forward the pipe
+asks for is a contract, not an OpenSSH default.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"redirect":null,"search":"../assets/javascripts/workers/search.c47bb847.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a2388154.min.js"></script>
+      
+    
+  </body>
+</html>

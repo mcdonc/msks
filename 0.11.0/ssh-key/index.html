@@ -1,0 +1,1501 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Microvm workspaces for AI coding agents">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/msks/0.11.0/ssh-key/">
+      
+      
+      
+        <link rel="prev" href="../first-run/">
+      
+      
+        <link rel="next" href="../tui/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.71">
+    
+    
+      
+        <title>Your ssh key - msks</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.e442bf79.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.b60ce83d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="msks" class="md-header__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            msks
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Your ssh key
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="msks" class="md-nav__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    msks
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The host doctor
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  First run
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Your ssh key
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Your ssh key
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-stored-line-stays" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The stored line stays
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-1-point-the-client-at-the-new-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Step 1: point the client at the new key
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-2-the-workspaces-created-with-the-old-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Step 2: the workspaces created with the old key
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Step 2: the workspaces created with the old key">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#keep-the-old-key-for-those-workspaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Keep the old key for those workspaces
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#add-the-new-line-by-hand" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Add the new line by hand
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-a-re-provision-does-to-a-hand-added-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a re-provision does to a hand-added line
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#or-recreate-the-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Or recreate the workspace
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-3-secrets-after-the-key-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Step 3: secrets after the key change
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#two-keys-during-the-transition" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Two keys during the transition
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-does-not-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What does not change
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-workspace-created-with-pubkey" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A workspace created with <code>--pubkey</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The GUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Host Share Mounts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guest Networking
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Proxies
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../screenshot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The Screenshot Pipe
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../egress-consent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Consent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cloning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Cloning Workspaces
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The CLI Client
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent Reference Card
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Daemon Configuration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development environment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-stored-line-stays" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The stored line stays
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-1-point-the-client-at-the-new-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Step 1: point the client at the new key
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-2-the-workspaces-created-with-the-old-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Step 2: the workspaces created with the old key
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Step 2: the workspaces created with the old key">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#keep-the-old-key-for-those-workspaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Keep the old key for those workspaces
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#add-the-new-line-by-hand" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Add the new line by hand
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-a-re-provision-does-to-a-hand-added-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a re-provision does to a hand-added line
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#or-recreate-the-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Or recreate the workspace
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-3-secrets-after-the-key-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Step 3: secrets after the key change
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#two-keys-during-the-transition" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Two keys during the transition
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-does-not-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What does not change
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-workspace-created-with-pubkey" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A workspace created with <code>--pubkey</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+  
+
+
+<h1 id="your-ssh-key">Your ssh key<a class="headerlink" href="#your-ssh-key" title="Permanent link">&para;</a></h1>
+<p>Every workspace carries one ssh public key as its identity: the key
+the client sent at create. The guest's first boot writes that line into
+<code>authorized_keys</code> for <code>root</code> and for the workspace's login user. The
+daemon keeps the same line on the workspace's row and serves it across
+restarts and stop/start cycles. <code>msks key &lt;workspace&gt;</code> prints the
+stored line.</p>
+<p><a href="../first-run/#the-key-files">First run</a> shows how to supply the key.
+This chapter shows what to do when the key changes: a routine
+rotation, a lost or revoked key, a replaced hardware token, or a new
+client machine.</p>
+<h2 id="the-stored-line-stays">The stored line stays<a class="headerlink" href="#the-stored-line-stays" title="Permanent link">&para;</a></h2>
+<p>A workspace's key is fixed at create. The API refuses a change to a
+workspace: <code>PUT</code> and <code>PATCH /api/v1/workspaces/{id}</code> answer 405 with
+<code>workspaces cannot be modified after create</code> (#41). The stored line
+stays for the life of the workspace, and <code>msks key</code> only reads it.</p>
+<p>Two things follow from that, and the rest of the chapter builds on
+them.</p>
+<ul>
+<li><strong>Login.</strong> The guest's <code>authorized_keys</code> files hold the stored key.
+  A different key logs in only after you add its line to those files
+  by hand. <code>msks ssh</code> and <code>msks rsync</code> sign with the private half of
+  the stored line.</li>
+<li><strong>Secrets.</strong> Every mint wraps the value to the stored line. A
+  hand-added key receives no new mint. <a href="../secrets/">The secrets
+  chapter</a> covers the mint and the unlock.</li>
+</ul>
+<h2 id="step-1-point-the-client-at-the-new-key">Step 1: point the client at the new key<a class="headerlink" href="#step-1-point-the-client-at-the-new-key" title="Permanent link">&para;</a></h2>
+<p>Edit the two keys in the client config (<code>~/.config/msks/msks.yaml</code>),
+or export their environment forms:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">identity_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.ssh/id_ed25519_2026</span><span class="w"> </span><span class="c1"># the private half</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">pubkey_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.ssh/id_ed25519_2026.pub</span><span class="w"> </span><span class="c1"># the public half</span>
+</span></code></pre></div>
+<p>Change both, or unset <code>pubkey_file</code>. <code>msks create</code> reads <code>pubkey_file</code>
+first. It reads <code>identity_file</code> only when <code>pubkey_file</code> is unset. A
+<code>pubkey_file</code> still on the old key plants the old key in every new
+workspace.</p>
+<p>A hardware token's key reaches a workspace through <code>pubkey_file</code>
+or <code>--pubkey</code>, with the token in your agent. msks reads no private
+key file a token holds from <code>identity_file</code>.</p>
+<p>Load the new key into your ssh agent as well. <code>msks create</code> reads
+the files above. <code>msks ssh</code> and <code>msks rsync</code> sign through the agent
+when it holds the workspace's key, and read <code>identity_file</code> otherwise:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ssh-add<span class="w"> </span>~/.ssh/id_ed25519_2026
+</span></code></pre></div>
+<p>From then on every <code>msks create</code> plants the new key. The TUI's <code>c</code>
+form and the GUI's Add dialog use the same configured key. The
+confirmation prints the file it used:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>$ msks create my-workspace --image debian:13 --start
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>created my-workspace (id 9f2c41ab77)
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>identity: /home/you/.ssh/id_ed25519_2026.pub (public half)
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>attach with: msks console my-workspace
+</span></code></pre></div>
+<p>A create with <code>pubkey_file</code> unset prints the <code>identity_file</code> path
+instead. A new client machine needs the same two settings, and the
+same <code>ssh-add</code> for the agent. The environment forms are
+<code>MSKSC_IDENTITY_FILE</code> and
+<code>MSKSC_PUBKEY_FILE</code> (<a href="../cli/#client-environment">the CLI chapter's environment
+table</a>).</p>
+<h2 id="step-2-the-workspaces-created-with-the-old-key">Step 2: the workspaces created with the old key<a class="headerlink" href="#step-2-the-workspaces-created-with-the-old-key" title="Permanent link">&para;</a></h2>
+<p>Those workspaces keep the old key as their identity. Nothing on the
+daemon changes when you edit the client config. Three routes keep you
+in, and you can mix them.</p>
+<h3 id="keep-the-old-key-for-those-workspaces">Keep the old key for those workspaces<a class="headerlink" href="#keep-the-old-key-for-those-workspaces" title="Permanent link">&para;</a></h3>
+<p><code>msks ssh</code> and <code>msks rsync</code> look for the private half of the stored
+line in two places. Your agent comes first. The match is on key
+material, so the agent may hold the old key under any file name. The
+file <code>identity_file</code> points at comes second, and that rung reads
+unencrypted files only. An encrypted file there exits with a line
+that says <code>msks never types a passphrase</code> and lists the ways back
+in. With the old key in your agent, both commands keep working on
+the old workspaces while <code>identity_file</code> already points at the new
+key. An old key you keep encrypted on disk stays in the agent for
+them.</p>
+<h3 id="add-the-new-line-by-hand">Add the new line by hand<a class="headerlink" href="#add-the-new-line-by-hand" title="Permanent link">&para;</a></h3>
+<p><code>msks console &lt;workspace&gt;</code> needs no key. The console is the guest's
+root autologin on its virtio-console port, reached through the daemon's
+authenticated websocket. Inside the session, append the new public
+line to the two <code>authorized_keys</code> files that matter. <code>alice</code> below is
+the workspace's login user, the name <code>msks create --user</code> recorded.
+<code>msks ls --json</code> shows it as <code>login_user</code>.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>$ msks console old-workspace
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>(old-workspace prompt, as root)
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a># printf '%s\n' 'ssh-ed25519 AAAAC3Nza… you@client' &gt;&gt; /root/.ssh/authorized_keys
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a># printf '%s\n' 'ssh-ed25519 AAAAC3Nza… you@client' &gt;&gt; /home/alice/.ssh/authorized_keys
+</span></code></pre></div>
+<p>Paste the line from the new <code>.pub</code> file on the client
+(<code>cat ~/.ssh/id_ed25519_2026.pub</code>). The image's own <code>msks</code> account
+holds the stored line at <code>/home/msks/.ssh/authorized_keys</code>. Add the
+new line there too if you log in as <code>msks</code>.</p>
+<p>Plain <code>ssh</code> through a forward then logs in with the new key:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>msks<span class="w"> </span>forward<span class="w"> </span>old-workspace<span class="w"> </span><span class="m">22</span><span class="w"> </span>--local<span class="w"> </span><span class="m">2201</span><span class="w"> </span><span class="p">&amp;</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>ssh<span class="w"> </span>-i<span class="w"> </span>~/.ssh/id_ed25519_2026<span class="w"> </span>-p<span class="w"> </span><span class="m">2201</span><span class="w"> </span>alice@127.0.0.1
+</span></code></pre></div>
+<p>The <code>Host msks-*</code> block in <a href="../networking/#the-workspace-ssh-identity">the networking
+chapter</a> works too. Add a
+second <code>IdentityFile</code> line to it for the transition.</p>
+<p><code>msks ssh</code> and <code>msks rsync</code> keep signing with the stored line, the old
+key. Both commands read that line from the daemon at session time and
+never read the guest's <code>authorized_keys</code>. When neither your agent nor
+<code>identity_file</code> holds the old key, both commands exit with
+<code>this client holds no private half for &lt;workspace&gt;</code>. Use plain <code>ssh</code>
+through the forward for that workspace.</p>
+<h3 id="what-a-re-provision-does-to-a-hand-added-line">What a re-provision does to a hand-added line<a class="headerlink" href="#what-a-re-provision-does-to-a-hand-added-line" title="Permanent link">&para;</a></h3>
+<p>The daemon's seed script runs on every re-provision of a workspace. It
+appends the stored line when the file lacks it. It removes no line.
+Two events re-provision a workspace:</p>
+<ul>
+<li><strong>A factory reset</strong> (<code>POST /api/v1/workspaces/{id}/reset</code>, see <a href="../storage/#factory-reset">the
+  storage chapter</a>), and a boot that finds
+  the root overlay lost (#697). Both rebuild the root overlay from the
+  image. <code>/root/.ssh/authorized_keys</code> is on the overlay, and it comes
+  back with the stored line alone. The login user's file is on the
+  persistent <code>/home</code> volume. It keeps the hand-added line, and the
+  stored line stays beside it.</li>
+<li><strong>A seed renewal.</strong> A changed mount set or a rotated interception
+  CA bakes a new seed with a new instance-id. The overlay stays, and
+  both files keep their hand-added lines. cloud-init's own ssh module
+  runs on the new instance-id. It keeps the lines a file already
+  holds.</li>
+</ul>
+<p>A factory reset and an overlay heal rebuild the root filesystem, and
+the guest generates new ssh host keys on every image. A seed renewal
+makes the guest generate new host keys on the Debian and Fedora
+images. The NixOS image runs no cloud-init ssh module and keeps its
+host keys. The client rotates its host-key cache with each event's
+counter, and the next <code>msks ssh</code> re-pins with a notice that says
+what caused it. That notice is about the guest's host key (<a href="#what-does-not-change">what
+does not change</a>).</p>
+<h3 id="or-recreate-the-workspace">Or recreate the workspace<a class="headerlink" href="#or-recreate-the-workspace" title="Permanent link">&para;</a></h3>
+<p><code>msks rm</code> and a fresh <code>msks create</code> give a workspace whose stored
+line is the new key. Copy what you need out of the old workspace
+first (<code>msks rsync</code>, with the old key in your agent). <code>msks clone</code>
+does not help here. A clone copies the source's stored line. A
+clone of an old-key workspace is an old-key workspace (<a href="../cloning/">the cloning
+chapter</a>).</p>
+<h2 id="step-3-secrets-after-the-key-change">Step 3: secrets after the key change<a class="headerlink" href="#step-3-secrets-after-the-key-change" title="Permanent link">&para;</a></h2>
+<p>Every mint wraps the value once per covering workspace, to the public
+line on that workspace's row. The unlock reads the private half from
+<code>identity_file</code> and opens the blobs that key opens. A hand-added
+<code>authorized_keys</code> line changes neither side. New mints for an old
+workspace wrap to the old key, and only the old private half opens
+them.</p>
+<p>The store wraps to two key types only: <code>ssh-ed25519</code> and <code>ssh-rsa</code>.
+A workspace whose stored line is another type receives no blob. An
+ecdsa key and a hardware token's <code>sk-ssh-ed25519@openssh.com</code> key
+are outside the set. An owner-wide mint skips such a workspace, and
+a scoped mint refuses with the workspace named (<a href="../secrets/#the-mint-flow">the mint
+flow</a>). A key change to one of those types
+keeps every login step above. The new workspaces get no blob: they
+cannot unlock a row, and a scoped mint for one refuses. An
+owner-wide row still swaps in them while another covered workspace
+keeps it warm. An owner-wide mint whose every acceptor is such a
+workspace refuses too.</p>
+<p>The options depend on whether you still hold the old private half.</p>
+<ul>
+<li><strong>You keep the old private half.</strong> The old workspaces' placeholders
+  stay readable. When <code>msks secret ls</code> shows those rows <code>locked</code>, run
+  the unlock from a client whose <code>identity_file</code> is the old key:</li>
+</ul>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nv">MSKSC_IDENTITY_FILE</span><span class="o">=</span>~/.ssh/id_ed25519<span class="w"> </span>msks<span class="w"> </span>secret<span class="w"> </span>unlock
+</span></code></pre></div>
+<p>The TUI and the GUI run the same unlock with the configured
+  <code>identity_file</code> alone. Start either one with <code>MSKSC_IDENTITY_FILE</code>
+  set to the old key for that run. With the config on the new key,
+  both leave the old rows locked. The status line reads
+  <code>stay ciphertext (no stanza matches this key)</code> beside a row that
+  opened, and <code>stay locked — the key opens none of them</code> otherwise.</p>
+<p>The unlock POST has a second effect. The daemon re-encrypts each
+  unlocked row to the row's current recipient set. Owner-wide rows
+  cover every workspace you own that accepts owner-wide coverage,
+  the new-key ones included. <code>msks create --secret-coverage scoped</code>
+  opts a workspace out. One unlock with the old key gives those rows
+  a blob for each new workspace in the set, when its key type is a
+  capable one. A client configured with the new key opens them from
+  then on. Scoped rows (<code>--workspace</code>) keep the coverage they
+  were minted with. A recreated workspace has a new id, and no
+  scoped row covers it. Mint its scoped placeholders again.</p>
+<ul>
+<li><strong>You lost the old private half.</strong> The blobs wrapped to the old
+  key cannot be opened. An owner-wide row still has a way forward:
+  revoke it and mint it again under the same name. The fresh mint
+  wraps to every workspace's stored line of a capable type, and a
+  client configured with the new key unlocks it from then on. The
+  swap then serves every covered workspace, the old ones included.
+  The daemon swaps from the row's cached plaintext, not from a
+  per-workspace blob. A scoped placeholder for an old workspace has
+  no way forward. A re-mint wraps to the same lost key. Each
+  re-mint warms the row for one unlock window. After that nobody
+  can unlock it again, because its only blob is wrapped to the lost
+  key. Recreate the workspace under the new key
+  when it needs that credential.</li>
+</ul>
+<h2 id="two-keys-during-the-transition">Two keys during the transition<a class="headerlink" href="#two-keys-during-the-transition" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Both keys in the agent.</strong> <code>ssh-add</code> both. <code>msks ssh</code> and
+  <code>msks rsync</code> pick the key that matches the workspace's stored
+  line, by key material. The agent is consulted first, and
+  <code>identity_file</code> holds one key. Point it at the new key, and keep
+  the old key in the agent for the old workspaces.</li>
+<li><strong>The unlock reads one file.</strong> <code>identity_file</code> is one private key.
+  The old workspaces' blobs open with the old key, and the new
+  workspaces' blobs with the new key. Run <code>msks secret unlock</code> with
+  <code>MSKSC_IDENTITY_FILE</code> set to the old key for the old rows, and
+  leave the config on the new key for everything else.</li>
+<li><strong><code>--pubkey</code> for one create.</strong> This form plants that one line,
+  whatever the config says:</li>
+</ul>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>msks<span class="w"> </span>create<span class="w"> </span>ws<span class="w"> </span>--pubkey<span class="w"> </span>~/.ssh/id_ed25519.pub
+</span></code></pre></div>
+<p>During the transition it creates a workspace around either key
+  from one client. The confirmation prints no identity line for a
+  <code>--pubkey</code> create. <code>msks key ws</code> shows the stored line.</p>
+<ul>
+<li><strong>When the old key can be retired.</strong> List the workspaces that
+  still hold the old line. Compare the first two fields of each
+  stored line with the old <code>.pub</code>, because the daemon appends its
+  own comment to the stored line:</li>
+</ul>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nv">old</span><span class="o">=</span><span class="k">$(</span>cut<span class="w"> </span>-d<span class="s1">' '</span><span class="w"> </span>-f1,2<span class="w"> </span>~/.ssh/id_ed25519.pub<span class="k">)</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>msks<span class="w"> </span>ls<span class="w"> </span>--json<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-r<span class="w"> </span>--arg<span class="w"> </span>old<span class="w"> </span><span class="s2">"</span><span class="nv">$old</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="s1">'.[] | select(((.ssh_pubkey // "") | split(" ")[0:2] | join(" ")) == $old) | .name'</span>
+</span></code></pre></div>
+<p>An empty list means no workspace holds the old key. Drop it from
+  the agent (<code>ssh-add -d ~/.ssh/id_ed25519</code>) and archive or delete
+  the file. Nothing changes for any workspace.</p>
+<p>A list with names means those workspaces still need the old key
+  for <code>msks ssh</code> and for their scoped placeholders. Keep the key
+  until you recreate or delete them. If you drop it anyway, <code>msks ssh</code>
+  fails on them, plain <code>ssh</code> works only through a hand-added
+  line, and their scoped placeholders cannot be unlocked again.
+  Their owner-wide placeholders keep swapping while another
+  workspace on the row unlocks it.</p>
+<h2 id="what-does-not-change">What does not change<a class="headerlink" href="#what-does-not-change" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>The per-workspace <code>known_hosts</code> pin.</strong> That entry is the guest's
+  ssh host key, which the guest generates at its first boot. Your key
+  is the client's login credential. The two are unrelated, and a key
+  change causes no pin notice. A factory reset or a healed overlay
+  loss regenerates the host keys. The next <code>msks ssh</code> then re-pins
+  with a notice that says what caused it. The CLI chapter's
+  <a href="../cli/#msks-ssh"><code>msks ssh</code> section</a> has the details.</li>
+<li><strong><code>msks console</code>.</strong> The console never needed the key. It works
+  through every step above.</li>
+</ul>
+<h2 id="a-workspace-created-with-pubkey">A workspace created with <code>--pubkey</code><a class="headerlink" href="#a-workspace-created-with-pubkey" title="Permanent link">&para;</a></h2>
+<p>Its stored line is the supplied key, whatever the client config said
+at the time. Everything above applies to it, with the supplied key as
+the workspace's key. <code>msks ssh</code> signs with it when the agent holds it
+or <code>identity_file</code> points at it. Secrets wrap to it when its type is
+<code>ssh-ed25519</code> or <code>ssh-rsa</code>. A different key needs the by-hand line
+or a recreate.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"redirect":null,"search":"../assets/javascripts/workers/search.c47bb847.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a2388154.min.js"></script>
+      
+    
+  </body>
+</html>

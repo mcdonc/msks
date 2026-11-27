@@ -1,0 +1,1999 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Microvm workspaces for AI coding agents">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/msks/0.11.0/gui/">
+      
+      
+      
+        <link rel="prev" href="../tui/">
+      
+      
+        <link rel="next" href="../mounts/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.71">
+    
+    
+      
+        <title>The GUI - msks</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.e442bf79.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.b60ce83d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="msks" class="md-header__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            msks
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              The GUI
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="msks" class="md-nav__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    msks
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The host doctor
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  First run
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ssh-key/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Your ssh key
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The GUI
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The GUI
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-connection-picker" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The connection picker
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-main-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The main window
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-workspace-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The workspace list
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#creating-a-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Creating a workspace
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-workspace-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The workspace page
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The workspace page">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-shells-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Shells tab
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#terminal-only-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Terminal-only mode
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-consent-panel" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The consent panel
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-mounts-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Mounts tab
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-proxies-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Proxies tab
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-egress-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Egress tab
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-events-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Events tab
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-images-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Images tab
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-secrets-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Secrets tab
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-zoom-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The zoom keys
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-external-terminal-launcher" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The external-terminal launcher
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#light-and-dark-palettes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Light and dark palettes
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Light and dark palettes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#state-colors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        State colors
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-icons-and-scaling" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Environment, icons and scaling
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-macos-menu-bar" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The macOS menu bar
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Host Share Mounts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guest Networking
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Proxies
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../screenshot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The Screenshot Pipe
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../egress-consent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Consent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cloning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Cloning Workspaces
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The CLI Client
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent Reference Card
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Daemon Configuration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development environment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-connection-picker" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The connection picker
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-main-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The main window
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-workspace-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The workspace list
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#creating-a-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Creating a workspace
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-workspace-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The workspace page
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The workspace page">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-shells-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Shells tab
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#terminal-only-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Terminal-only mode
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-consent-panel" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The consent panel
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-mounts-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Mounts tab
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-proxies-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Proxies tab
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-egress-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Egress tab
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-events-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Events tab
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-images-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Images tab
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-secrets-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Secrets tab
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-zoom-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The zoom keys
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-external-terminal-launcher" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The external-terminal launcher
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#light-and-dark-palettes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Light and dark palettes
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Light and dark palettes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#state-colors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        State colors
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-icons-and-scaling" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Environment, icons and scaling
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-macos-menu-bar" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The macOS menu bar
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+  
+
+
+<h1 id="the-gui">The GUI<a class="headerlink" href="#the-gui" title="Permanent link">&para;</a></h1>
+<p>The desktop GUI and the terminal UI are one program: <code>msks</code>. The GUI is a
+desktop window over the daemon's REST API. It reads the same environment
+variables and config file as the TUI and the CLI. It reads no daemon state
+directly: every page uses the API.</p>
+<p><code>msks gui</code> opens the window.</p>
+<h2 id="the-connection-picker">The connection picker<a class="headerlink" href="#the-connection-picker" title="Permanent link">&para;</a></h2>
+<p><img alt="The connection picker's menu: two aliases and the dev daemon, the standing one checked" src="../screens/gui-connection.png" /></p>
+<p>The list's bottom bar carries the connection picker at its
+right end, beside the buttons: the standing daemon's name beside a
+menu. The menu lists the config
+file's <a href="../cli/#daemon-aliases">daemon aliases</a> in file order, the
+dev daemon's state dir, and the environment's own exports when
+they carry an address.</p>
+<p>A pick switches the whole window to the picked daemon. The
+current screens close and fresh ones open over the new
+connection. Shell sessions open on the old connection close with
+it.</p>
+<h2 id="the-main-window">The main window<a class="headerlink" href="#the-main-window" title="Permanent link">&para;</a></h2>
+<p>The window opens on three top-level tabs: <strong>Workspaces</strong>,
+<strong>Images</strong>, and <strong>Secrets</strong>.</p>
+<p>The content appears once it is final. At open and on every tab
+change, the page holds clear until its refresh has landed and the
+layout is quiet. It then shows at once, and the rows of its tables
+rise into place from the top down. The workspace page's own tabs
+(Mounts, Proxies, Egress, Events) give their tables the same rise.
+A page's live terminals blank for the same spell and repaint when it
+shows.</p>
+<h2 id="the-workspace-list">The workspace list<a class="headerlink" href="#the-workspace-list" title="Permanent link">&para;</a></h2>
+<p><img alt="The workspaces list: three rows, the action buttons at each row's end, the connection picker at the bottom bar's right end" src="../screens/gui-list.png" /></p>
+<p>The <strong>Workspaces</strong> tab opens on the list: one row per workspace,
+newest first, in five columns. NAME, STATUS, ID, IMAGE, and
+CREATED. A start/stop toggle and a shell button close each row.
+The list sits under a <strong>Workspaces</strong> heading, the shape the Images
+and Secrets pages use, so the first table of every tab starts at
+the same height.</p>
+<p>The list re-reads the daemon when the daemon publishes a websocket
+event: a workspace changed from another surface (the CLI, another
+operator) appears without a click, and a daemon at rest receives
+no periodic listing traffic from an open window.</p>
+<p>Click a column header to sort by it. CREATED sorts newest first
+by default. STATUS sorts in the lifecycle order (created,
+starting, running, paused, stopping, stopped, absent, unknown).
+A click on the header above the action buttons sorts nothing.</p>
+<p>The STATUS cell can carry two markers ahead of the state word.
+<code>✗N</code> counts the workspace's unresolved mounts, and <code>↻N</code> counts
+the changes that wait for the next start. The <a href="../mounts/">mounts
+chapter</a> lists every kind of skip. A row with pending
+changes spells the count out in its tooltip: <code>2 changes apply at
+the next start</code>.</p>
+<p>A click selects the whole row. A double-click or Enter opens the
+workspace's page. The row's toggle starts a stopped workspace or
+stops a running one, and a stop asks first. The shell button
+opens the workspace's page with a shell in it. A right-click
+opens the row's menu: Edit, Start or Stop, Open a shell, Clone,
+and Delete. Clone asks for the new workspace's name. Delete asks
+for confirmation, and the workspace's data goes with it.</p>
+<p>The page's bottom bar carries <strong>Add</strong>, <strong>Edit</strong>, <strong>Clone</strong>, and
+<strong>Remove</strong>, then the status line, then the connection picker at the
+right end. Add opens the create dialog. Edit, Clone, and Remove
+act on the selected row. Clone asks for the new workspace's name
+there too, and the clone takes the same route the <code>msks clone</code>
+command takes: both disks copy under the source's egress mode.
+A stopped workspace clones; a running one answers a refusal that
+flashes on the status line.</p>
+<p>A failed refresh flashes the status line in the bottom bar.
+A refusal clears itself after four seconds. A daemon outage
+stands on the line until an answer resolves it, and the rows
+already on screen stand the whole time. While the daemon is
+down, the events feed's retry message flashes over the outage
+on every failed connection. The outage's text returns when each
+flash ends. A window opened while the daemon is down recovers by
+itself when the daemon comes up. The events feed reconnects
+within five seconds, and every connection it makes re-reads the
+page. The status line then says <code>daemon back — listing resumed</code>
+once.</p>
+<p>The strip at the bottom reads the held row's quick facts: the
+name, id, image, cpu count, memory, egress mode, mounts marker,
+pending note, and storage cost. The storage figure comes from the
+daemon's capacity report. The strip follows the selection, and
+an empty list blanks it.</p>
+<h2 id="creating-a-workspace">Creating a workspace<a class="headerlink" href="#creating-a-workspace" title="Permanent link">&para;</a></h2>
+<p><img alt="The create dialog: the fields, the image picker, the size placeholders, the summary line" src="../screens/gui-create.png" /></p>
+<p><strong>Add</strong> opens the create dialog over the list, centered on the
+window. Name is the only required field. The image picker offers
+the daemon's default first, then every catalog ref. Each size
+field takes a whole number of MiB. It also takes a size with a
+<code>G</code>, <code>GiB</code>, <code>M</code>, or <code>MiB</code> suffix: <code>8G</code>, <code>8GiB</code>, and <code>8192M</code> all
+mean 8192 MiB, and <code>0.5G</code> means 512 MiB. Their placeholders show
+the defaults (<code>default 4G</code>), and a blank field takes that
+default. The user field's placeholder is your own account name.
+A line under the fields restates the four sizes as you type, with
+the defaults filling the blanks:
+<code>4 vCPU · 8 GiB RAM · 4 GiB root · 8 GiB home</code>. A decimal entry
+shows its resolved size there: <code>0.5G</code> shows <code>512 MiB</code>. A create
+the daemon refuses keeps the dialog standing with the reason on
+its note line. A landed create closes the dialog and refreshes
+the list, which holds the new workspace on its first row.</p>
+<p>You may need to <a href="../first-run/#importing-a-guest-vm-image">import an
+image</a> before the first
+create.</p>
+<p><strong>Edit</strong> opens a dialog seeded with the workspace's sizes and
+topology: VCPUs, memory, and the root and home volumes. The size
+fields take the same forms as the create dialog. Each one opens
+with the workspace's current size. <code>8G</code>, <code>1.5G</code>, and <code>1000M</code> are
+the usual spellings, and a size those spellings would round opens
+in plain MiB (<code>8193M</code>). Apply posts to the same endpoint
+<code>msks resize</code> uses, with the sizes as MiB counts.</p>
+<h2 id="the-workspace-page">The workspace page<a class="headerlink" href="#the-workspace-page" title="Permanent link">&para;</a></h2>
+<p><img alt="The workspace page: the back arrow, the tab strip with one shell tab titled by its program and one renamed, the consent panel, the terminal" src="../screens/gui-shells.png" /></p>
+<p>Enter on a row opens the workspace's page. The back arrow (or
+Escape) returns to the list. The window's title reads <code>msks —
+alpha</code> while the page shows: the title bar is where the page's
+header lives.</p>
+<p>The page's top row holds the back arrow, the tab strip, a status
+line, the external-terminal button, and the terminal-only button
+at the right end. The tab strip holds <strong>Shells</strong> (the default),
+<strong>Mounts</strong>, <strong>Proxies</strong>, <strong>Egress</strong>, and <strong>Events</strong>. The footer strip
+at the bottom repeats the list's quick-facts line for this
+workspace.</p>
+<p>The page re-reads the daemon at its open, when the events
+connection serves, and on every move the events feed pushes.
+A proxy transition repaints the
+Proxies tab without a click, and every frame appends to the
+Events tab.</p>
+<p>A listing that can no longer see the workspace returns you to
+the list, with a notice on the list's status line.</p>
+<h3 id="the-shells-tab">The Shells tab<a class="headerlink" href="#the-shells-tab" title="Permanent link">&para;</a></h3>
+<p>The page opens with one shell when the workspace has none. Each
+shell is an ssh session in its own terminal subtab, numbered in
+open order. The numbers are never reused inside a workspace. The
+<strong>+</strong> tab at the strip's right end opens one more shell. A
+double-click on a shell tab renames it in place: Return stands
+the name, and Escape or an empty edit cancels. Each tab's close
+button ends its session.</p>
+<p>The same actions have keys, the set Konsole and GNOME Terminal
+use. They answer with a terminal focused, and the key itself never
+reaches the program inside the terminal. They answer from the
+page's other tabs too, and a shell action first brings the Shells
+tab forward.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Ctrl+Shift+T</code></td>
+<td>open a shell</td>
+</tr>
+<tr>
+<td><code>Ctrl+Shift+W</code></td>
+<td>close the current shell</td>
+</tr>
+<tr>
+<td><code>Ctrl+Tab</code>, <code>Ctrl+Shift+Tab</code></td>
+<td>the next shell, the previous shell</td>
+</tr>
+<tr>
+<td><code>Ctrl+1</code> to <code>Ctrl+9</code></td>
+<td>the Nth shell</td>
+</tr>
+<tr>
+<td><code>Alt+1</code> to <code>Alt+5</code></td>
+<td>the page's tab: Shells, Mounts, Proxies, Egress, Events</td>
+</tr>
+</tbody>
+</table>
+<p>The keys belong to the workspace page. The Workspaces list and
+the Images and Secrets pages do not answer them.</p>
+<p>The keys take precedence over the same keys inside the shell. A
+program that binds <code>Ctrl+Tab</code> or <code>Alt+1</code> to <code>Alt+5</code>, such as tmux
+or WeeChat, does not receive them from the GUI. Bind such a program
+to other keys.</p>
+<p>The terminal has keys of its own. Linux and Windows spell them
+<code>Ctrl+Shift</code>, as Konsole and GNOME Terminal do, because plain
+<code>Ctrl+C</code> is the program's interrupt. macOS spells them with
+Command, as Terminal.app and iTerm2 do, and answers the
+<code>Ctrl+Shift</code> keys as well.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Ctrl+Shift+C</code> (macOS: <code>Cmd+C</code>)</td>
+<td>copy the selection</td>
+</tr>
+<tr>
+<td><code>Ctrl+Shift+V</code> (macOS: <code>Cmd+V</code>)</td>
+<td>paste the clipboard</td>
+</tr>
+<tr>
+<td><code>Ctrl+Shift+F</code> (macOS: <code>Cmd+F</code>)</td>
+<td>open or close the find bar</td>
+</tr>
+<tr>
+<td><code>Shift+PgUp</code>, <code>Shift+PgDn</code></td>
+<td>page the scrollback</td>
+</tr>
+<tr>
+<td><code>Ctrl+Click</code> on a link (macOS: <code>Cmd+Click</code>)</td>
+<td>open the link in the browser</td>
+</tr>
+</tbody>
+</table>
+<p><code>Ctrl+Shift+X</code> copies on Linux and Windows. <code>Cmd+X</code> is not a copy
+key on macOS, so the program inside the terminal receives it.</p>
+<p>On macOS the Control key is the program's Control key. <code>Ctrl+C</code>
+inside a terminal is the program's interrupt, as it is on Linux.
+The terminal keeps the keys in the table above for itself. The
+program inside receives neither the press nor the release.</p>
+<p>A right-click opens a menu with Copy and Paste. The menu shows
+the keys of the platform.</p>
+<p>Output wrapped in a synchronized-output block (mode 2026) holds
+its presentation until the block closes. The terminal then
+paints the block's whole change once, as the mode specifies.
+Your own actions still paint right away: scrolling the buffer,
+selecting, resizing, and searching each show the current state
+at once. A block that stays open past half a second presents
+anyway, so a program wedged inside its own block cannot freeze
+the terminal. A program that writes without the mode sees each
+chunk painted as it arrives.</p>
+<p>A tab shows the title the program inside sets. A program that
+sets the terminal's title (vim, less, ssh, or a prompt with an
+OSC title in its <code>PS1</code>) sets its tab's title too. A long title
+ends in an ellipsis, and the tab's tooltip shows the whole
+title. When the program clears the title, the tab shows the
+number again. A renamed tab keeps its name for the session's
+life, whatever the program inside sets.</p>
+<p>The sessions outlive the page. Back to the list closes nothing,
+and a return visit finds them running the whole time. Closing
+the window closes every open shell.</p>
+<h3 id="terminal-only-mode">Terminal-only mode<a class="headerlink" href="#terminal-only-mode" title="Permanent link">&para;</a></h3>
+<p><img alt="The workspace page in terminal-only mode: the shell tabs, the workspace's name and the restore button at the right end, the terminal" src="../screens/gui-terminal-only.png" /></p>
+<p>The terminal-only button hides the page's controls and the
+window's top-level tab strip. <code>Ctrl+Shift+M</code> does the same from
+the keyboard, from a terminal too. The window then shows the
+shell tabs and the terminal alone, in the layout of a tabbed
+terminal app: the tab row on top, the terminal filling the rest.
+The mode sets the page's top margin to zero. With no egress hold
+waiting, the tab row is then the window's first row, flush under
+the title bar. The workspace's name shows in gray at the tab
+row's right end, and the restore button follows it. The restore
+button keeps the right edge the terminal-only button stood at,
+and it rides the tab row. Where the page's top row stood taller
+than the tab row, the pointer rests on the terminal, below the
+restore button. Leaving the mode by mouse then takes one move of
+the pointer. <code>Ctrl+Shift+M</code> leaves the mode from anywhere on the
+page.</p>
+<p>The mode shows the Shells tab when another page tab was current.
+The shell tabs, the <strong>+</strong> tab, the rename, the close buttons, and
+their keys work as before. The consent panel keeps its place above
+the terminals while a hold waits. The status line moves to the tab
+row. A flash or an outage shows beside the workspace's name. A
+long one elides at its width, and the whole text reads in its
+tooltip.</p>
+<p>The restore button and <code>Ctrl+Shift+M</code> bring every control back:
+the top-level strip, the page's top row, and the footer. The same
+tabs stay current, and no shell closes. The mode also ends when
+the page closes, and the top-level strip comes back with it. In
+the mode the back arrow is hidden and Escape does not leave the
+page. Leave the mode first to leave the page.</p>
+<h3 id="the-consent-panel">The consent panel<a class="headerlink" href="#the-consent-panel" title="Permanent link">&para;</a></h3>
+<p>Above the terminals, the consent panel lists the workspace's
+pending egress requests while any wait: one row per hold, the
+destination, a live countdown, and Allow and Deny buttons. The
+main click sends the verdict until restart. The small arrow
+beside each button opens the duration menu: <code>once</code>, <code>5m</code>,
+<code>15m</code>, <code>tilrestart</code>, <code>forever</code>. The <a href="../egress-consent/">egress consent
+chapter</a> explains what verdicts cover.</p>
+<p>A hold leaves the list the moment the daemon resolves it,
+whatever resolved it: a verdict from another decider window, or
+the hold's own timeout. The panel hides itself when no hold
+waits. A verdict the daemon refuses keeps its row and flashes
+the reason on the panel's note line.</p>
+<p>The page registers as the workspace's decider while it shows.
+While the page is hidden it holds no flows, and another decider
+(the TUI's page, <code>msks-term-popup</code>) can take the queue.</p>
+<h3 id="the-mounts-tab">The Mounts tab<a class="headerlink" href="#the-mounts-tab" title="Permanent link">&para;</a></h3>
+<p><img alt="The Mounts tab: two rows, one skipped, the next-start note" src="../screens/gui-mounts.png" /></p>
+<p>The tab edits the workspace's host-share mounts. The table reads
+the spec beside the state the daemon derived, in five columns:
+HOST, GUEST, MODE, STATE, REASON. <strong>Add</strong> opens the form, <strong>Edit</strong>
+changes the selected row, and <strong>Remove</strong> drops it. Every change
+posts the whole list to the daemon.</p>
+<p>A right-click on a row selects it and opens its menu with
+<strong>Edit</strong> and <strong>Remove</strong>. The entries take the buttons' own
+paths and act on the selection, with the buttons' gating. A
+press below the rows opens nothing.</p>
+<p>The daemon owns the rules. A host path outside the allowed roots
+is refused with the remedy stated, and the refusal appears on
+the tab's note line. The edited list rolls back to the last set
+the daemon accepted.</p>
+<p>A change waits for the next start, and the tab says so in a
+standing note while it waits. The <a href="../mounts/">mounts chapter</a>
+describes what a mount is and every kind of skip.</p>
+<h3 id="the-proxies-tab">The Proxies tab<a class="headerlink" href="#the-proxies-tab" title="Permanent link">&para;</a></h3>
+<p><img alt="The Proxies tab: one listening local proxy, one failed remote" src="../screens/gui-proxies.png" /></p>
+<p>The tab manages the workspace's persisted proxies. The rows read
+the direction (local <code>-L</code>, remote <code>-R</code>), the spec in the CLI's
+own grammar, the label, and the live status word with its cause.
+<strong>Add</strong> opens the form, and a spec the CLI's parser refuses keeps
+the form standing with the rule on its note line. <strong>Edit</strong>
+reopens the form seeded with the row. <strong>Remove</strong> asks first.</p>
+<p>The listing refreshes after every mutation and on every proxy
+transition the events feed pushes. A bind that fails while the
+tab stands paints itself without a click. The <a href="../proxies/">proxies
+chapter</a> describes what a proxy is.</p>
+<h3 id="the-egress-tab">The Egress tab<a class="headerlink" href="#the-egress-tab" title="Permanent link">&para;</a></h3>
+<p>The tab manages the workspace's egress posture. The top shows
+the current mode with its meaning. The switcher under it
+changes the mode in place. A running workspace swaps its rules
+in one transaction, and a stopped workspace builds the new
+posture at its next start. The note line at the bottom says
+which one happened.</p>
+<p>A switch to <code>static</code> with nothing effectively allowed asks a
+question first. That posture answers every name NXDOMAIN, so
+the workspace would be offline. <strong>Yes</strong> confirms the switch.</p>
+<p>The lower half edits the static allowlist. The list reads the
+workspace's entries. <strong>Add</strong> opens a one-field form. The entry
+is a host, a scope (<code>.debian.org</code>, <code>*.example.com</code>), an
+address, a CIDR, or <code>host:port</code>. <strong>Remove</strong> drops the selected
+entry. Each write posts the whole new list through the policy
+route, and the reply repaints the list.</p>
+<p>The daemon owns the entry's shape. An entry the route rejects
+appears with the route's reason on the tab's note line, and the
+list rolls back to the last set the daemon accepted. Removing
+the last entry under <code>static</code> asks the same offline question
+the mode switch asks. The <a href="../egress-consent/">egress consent
+chapter</a> explains what the modes, the
+allowlist, and the verdicts cover.</p>
+<h3 id="the-events-tab">The Events tab<a class="headerlink" href="#the-events-tab" title="Permanent link">&para;</a></h3>
+<p><img alt="The Events tab: three rows, newest last" src="../screens/gui-events.png" /></p>
+<p>The tab is the workspace's recent-events window. Each row is one
+frame the daemon published, written as a log line: a local time
+stamp, the event kind, and a one-line summary. Rows append
+newest last, the window keeps the last twenty, and the tail
+stays in view. Long summaries wrap to the next line. The tab
+clears at every open of the page.</p>
+<h2 id="the-images-tab">The Images tab<a class="headerlink" href="#the-images-tab" title="Permanent link">&para;</a></h2>
+<p><img alt="The Images tab: the catalog group above the published group, each with its button row under the table" src="../screens/gui-images.png" /></p>
+<p>The second top-level tab manages the image catalog. <strong>In the
+catalog</strong> lists the daemon's own rows with the default marker,
+the hash prefix, and the import date. <strong>Published</strong> lists the
+channel's rows with their descriptions, sizes, hash prefixes,
+and build dates. A published row that declares another
+architecture stays off the page. A row that declares none is
+shown. A published row whose exact hash the catalog holds reads
+<code>[imported]</code>. One the catalog holds under a different hash reads
+<code>[local]</code>.</p>
+<p>Each group carries a button row under its table. The buttons act
+on the selected row of their group, and each button stands
+disabled until a row is selected. Under <strong>In the catalog</strong>,
+Details… opens the selected image's record, which holds the same
+lines <code>msks image info</code> prints. Enter on a catalog row opens the
+record too. Set as the default posts the designation at once.
+Remove… asks first. Under <strong>Published</strong>, Import… runs behind a
+progress dialog while the daemon downloads, verifies, and
+floor-checks the archive. The catalog refreshes when the import
+lands.</p>
+<p>A right-click on a row opens the same actions as a menu: Open
+the detail, Set as the default, and Remove… on a catalog row, and
+Import… on a published row.</p>
+<p>The counts line at the page's bottom tallies both sides. The
+<a href="../images/">images chapter</a> describes the catalog and the
+channel.</p>
+<p>The page re-reads itself. It re-reads at every show, and the
+daemon's pushed <code>image.changed</code> frame re-reads the catalog
+group while the tab is open: an import, rename, or removal from
+any attached client repaints the page. The published group is
+the channel's manifest, which the client fetches itself. The
+channel publishes no frame, so its rows move only through the
+page's re-reads.</p>
+<p>A dropped events feed flashes the page while it is open. The
+page re-reads whole when the feed serves again, so the gap
+between the drop and the recovery lands on screen. A daemon
+outage keeps its text on the status line between the feed's
+retry flashes. The first answered read after it says
+<code>daemon back — images resumed</code> once. An action's answer also ends
+the outage. The status line shows the action's result, not the
+recovery line.</p>
+<h2 id="the-secrets-tab">The Secrets tab<a class="headerlink" href="#the-secrets-tab" title="Permanent link">&para;</a></h2>
+<p><img alt="The Secrets tab: the placeholder listing above the audit group" src="../screens/gui-secrets.png" /></p>
+<p>The third top-level tab manages the daemon's secret
+placeholders. The <strong>Placeholders</strong> group lists every row with its
+coverage, name, destinations, expiry, created label, and lock
+state. The COVERAGE cell uses the words the mint form's coverage
+picker uses. A row that every accepting workspace honors reads
+<code>daemon-wide</code>. A row that serves picked workspaces reads
+<code>scoped: ws-a, ws-b</code>. The COVERAGE header carries both meanings
+as its tooltip. The EXPIRES cell is a live countdown with the
+deadline's clock beside it. <code>2h · 14:20</code> means the row expires in
+two hours, at 14:20 local time. The countdown repaints every
+second and the clock stands still. The cell's tooltip shows the
+full local date and time of the deadline. An unbounded row reads
+<code>never</code>.</p>
+<p><strong>Renew…</strong> and <strong>Revoke…</strong> sit on the button row beside Mint and
+Unlock. Both stay disabled until a placeholder row is selected,
+and both stay disabled while a renew or a revoke is in flight.
+Renew… opens the TTL picker (<code>1h</code> to <code>30d</code>, with the choice
+nearest the row's remaining lifetime pre-selected). Revoke… asks
+first. A revoked row retires everywhere at once. A right-click
+on a row opens a menu with the same two actions.</p>
+<p><strong>Mint</strong> opens the mint form: name, comma-separated destinations,
+coverage (<code>daemon-wide</code>, or <code>scoped</code> with a workspace
+multi-select), the TTL choice, and the value. A landed mint
+closes the form and the listing refreshes. The GUI shows no
+sentinel panel: the flash reports the minted row, and the
+sentinel itself reads back through the CLI or the TUI. The
+<a href="../secrets/">secrets chapter</a> explains placeholders and sentinels.</p>
+<p><strong>Unlock</strong> runs the secrets unlock against the daemon's locked rows,
+the TUI's <code>u</code> action as a button. An encrypted key file opens a
+masked passphrase dialog centered on the window. The typed
+passphrase loads the key, and every row the key opens uploads.
+The outcome shows on the tab's status line, and the daemon's
+unlock frame re-reads the listing behind it. The window also
+offers the unlock on its own when it opens and after a connection
+pick. The prompt is the window's one per session. The outcome lands
+on the workspaces list's status line, and the button asks again by
+hand. See the <a href="../secrets/#the-clients-half">secrets chapter</a>.</p>
+<p>The <strong>Audit</strong> group beneath lists the daemon's recorded secret
+events, newest first. The daemon records four kinds of rows:
+mint, revoke, expiry, and unlock. A renew changes a row's
+deadline without recording an audit row. The table has four
+columns: TIME, KIND, PLACEHOLDER, and DEST. The TIME cell shows
+the row's local clock. A row from an earlier day carries its
+date beside the clock. PLACEHOLDER reads <code>*/name</code> for a
+daemon-wide row and <code>ws-a/name</code> for a scoped one. A sighting (a
+placeholder token that reached a host its mint did not allow) is
+a live event. It streams into the TUI's audit view and does not
+appear in this table.</p>
+<p>The page re-reads itself. It re-reads at every show and behind
+every action, and the daemon's pushed secret frames re-read it
+while the tab is open: a mint, revoke, unlock, or expiry from
+any attached client repaints both groups. A workspace reading
+its placeholders pushes a frame per request, so the page
+batches frames behind half a second and takes one re-read per
+batch.</p>
+<p>A dropped events feed flashes the page while it is open. The
+page re-reads whole when the feed serves again, so the gap
+between the drop and the recovery lands on screen. A daemon
+outage keeps its text on the status line between the feed's
+retry flashes. The first answered read after it says
+<code>daemon back — secrets resumed</code> once. An action's answer also ends
+the outage. The status line shows the action's result, not the
+recovery line.</p>
+<h2 id="the-zoom-keys">The zoom keys<a class="headerlink" href="#the-zoom-keys" title="Permanent link">&para;</a></h2>
+<p>Ctrl+Plus, Ctrl+=, and Ctrl+Shift++ (the plus key without a
+numpad) all grow every font in the client one step. Ctrl+Minus
+shrinks them. Ctrl+0 puts both font sets back to their defaults.
+The keys answer wherever the focus stands, on any screen.</p>
+<p>Both font sets move together: the window's chrome and every live
+terminal. Each set stops at its own clamp, and one still moves
+while the other stands at its clamp. A shell opened after a zoom
+joins the standing size, and the zoom survives a connection
+switch.</p>
+<h2 id="the-external-terminal-launcher">The external-terminal launcher<a class="headerlink" href="#the-external-terminal-launcher" title="Permanent link">&para;</a></h2>
+<p>The workspace page's top-right button opens a workspace shell in
+an external terminal window. The launcher comes from the
+<code>terminal_open_cmd</code> client setting, the same one the TUI's
+windowed shell action uses. <a href="../tui/#terminal_open_cmd">The TUI
+chapter</a> documents the string and list
+forms and the terminal examples.</p>
+<p>Without a configured launcher the button flashes a notice and
+opens nothing: the GUI has no terminal of its own to hand the
+session. A configured launcher starts detached with the <code>msks
+ssh</code> invocation appended, beside the running window, and the
+flash reports whether it started.</p>
+<h2 id="light-and-dark-palettes">Light and dark palettes<a class="headerlink" href="#light-and-dark-palettes" title="Permanent link">&para;</a></h2>
+<p>The window follows the desktop's color scheme. A light desktop
+paints the chrome light, and a dark one paints it dark. A scheme
+switch mid-session repaints the window live, with no restart.</p>
+<p>The terminal grids switch with the chrome. A program inside a
+terminal that sets its own colors keeps winning over the theme.
+A desktop that states no scheme keeps the palette the platform
+handed the window.</p>
+<h3 id="state-colors">State colors<a class="headerlink" href="#state-colors" title="Permanent link">&para;</a></h3>
+<p>A state word wears one of three colors beside its text, in both
+palettes. Green means the state is as it should be: a running
+workspace, a mount the last start attached, a listening proxy
+the guest can reach, an open secret. Amber means the state is in
+flight or wants a look: a workspace that is starting, stopping,
+or paused, a row with unresolved mounts or changes that wait for
+the next start, a skipped mount, a proxy that listens but whose
+guest cannot reach it, a locked secret, and a secret that
+expires within fifteen minutes. Red means something failed or
+cannot be placed: an absent or unknown workspace, a failed
+proxy, a refused call or an outage on a status line, and a
+consent request in its last fifteen seconds.</p>
+<p>The word stays in the cell, so a color-blind reader and a
+grayscale screenshot keep the same information. A selected row
+keeps the highlight's own text color, and a disabled row keeps
+its dimmed text. Each color meets a 4.5:1 contrast ratio against
+every background it paints on, and a scheme switch repaints the
+colors with the rest of the window.</p>
+<h2 id="environment-icons-and-scaling">Environment, icons and scaling<a class="headerlink" href="#environment-icons-and-scaling" title="Permanent link">&para;</a></h2>
+<p>The window needs a display. A Linux session provides one through
+<code>DISPLAY</code> or <code>WAYLAND_DISPLAY</code>, and <code>QT_QPA_PLATFORM=offscreen</code>
+also works. A start that finds no display prints one line on
+stderr and exits. A macOS session needs a desktop login. The
+window opens fine over ssh while one stands.</p>
+<p>The window plants its own desktop entry and taskbar icon on a
+Linux desktop. Every <code>msks gui</code> launch installs both under the
+XDG data home before the window opens. The taskbar shows the
+msks icon from the first launch after a fresh install, and the
+next launch after an upgrade refreshes the icon renders. When
+the install fails, msks prints one line on stderr and the
+window still opens. <code>msks gui-shortcut</code> does the same work by
+hand and prints the entry's path. On macOS nothing is planted.
+The dock reads the icon the window itself already carries.</p>
+<p>Uninstalling the wheel leaves the entry and the icons in
+place, because they live in the XDG data home, outside the
+wheel's tree. Delete <code>~/.local/share/applications/msks.desktop</code>
+and the <code>msks.*</code> files under <code>~/.local/share/icons/hicolor</code> to
+remove them by hand.</p>
+<p>The window opens 1280 by 720 the first time. Every later open
+takes back the place and size the last close left, as long as a
+connected screen still shows some of that rect.</p>
+<p><code>MSKSC_GUI_FONT_SCALE</code> multiplies the window's base font size.
+The base is 15 logical pixels, the size the terminal face's
+15pt default rasterizes to on macOS. A Linux session rasterizes
+a point size larger (96 against 72 font dpi), so the window
+anchors its chrome in pixels and converts through the screen's
+own dpi: the chrome opens at the same size on every platform
+(#1056). The terminal content keeps its own 15pt default, so
+it opens larger than the chrome on a 96-dpi session. The
+default multiplier is 1.0. The <a href="#the-zoom-keys">zoom
+keys</a> change both sizes at runtime.</p>
+<h2 id="the-macos-menu-bar">The macOS menu bar<a class="headerlink" href="#the-macos-menu-bar" title="Permanent link">&para;</a></h2>
+<p>On macOS the window adds the platform's menu bar with the two
+standard roles. About opens a dialog with the client's name and
+version. Quit (Cmd+Q) closes through the window's own quit path,
+the one that closes every open shell. Other platforms keep the
+window they have.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"redirect":null,"search":"../assets/javascripts/workers/search.c47bb847.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a2388154.min.js"></script>
+      
+    
+  </body>
+</html>
