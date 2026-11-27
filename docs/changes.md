@@ -176,6 +176,14 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **`/screenshot model` opens on the first Enter
+  (#1207).** In the guest's pi, typing `/screenshot model` and
+  pressing Enter left the command in the editor: the completion
+  popup still showed `model`, and pi gives Enter to a visible
+  completion. The popup now closes once the word is complete, and
+  Enter runs the command. See
+  [docs/screenshot.md](screenshot.md#the-screenshot-command).
+
 - **Quitting pi in a GUI shell returns to the prompt at once
   (#1192).** With pi in regular mode (#1204), quitting no longer
   writes the whole transcript to the terminal on the way out. A

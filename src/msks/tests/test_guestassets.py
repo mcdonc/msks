@@ -284,6 +284,15 @@ def test_the_image_ships_the_screenshot_extension() -> None:
     assert "seedVisionModel();" in index
     assert "picked = next;" in index
     assert "ctx.ui.select(" in index
+    # The popup closes once the argument reads `model`. pi's editor
+    # gives Enter to a visible completion, and applying `model` over
+    # `model` changes nothing while it swallows the Enter that should
+    # run the command: without the guard the picker opened on the
+    # second Enter only.
+    complete_closes = 'if (prefix === "model") {'
+    offers_model = '"model".startsWith(prefix)'
+    assert complete_closes in index
+    assert index.index(complete_closes) < index.index(offers_model)
     assert "modelRegistry.complete(" in index
     # The describe step runs behind a spinner in the TUI (#1201):
     # ctx.ui.custom() hosts pi's BorderedLoader (a CancellableLoader
