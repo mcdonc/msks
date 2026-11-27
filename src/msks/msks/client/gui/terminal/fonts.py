@@ -89,8 +89,8 @@ def register_faces() -> None:
     (a CI runner's offscreen platform answers an empty
     database) still measures and renders one real face. A call
     that finds no application does nothing and stays pending:
-    taken without one, the seat crashes the process, and the
-    next call with the application up seats the faces."""
+    taken without one, the seat crashes the process. The next
+    call with the application up seats the faces."""
     global _FACES_SEATED
     if _FACES_SEATED or QGuiApplication.instance() is None:
         return

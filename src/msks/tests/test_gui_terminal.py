@@ -301,20 +301,27 @@ def test_a_call_before_the_application_leaves_the_faces_pending(
     none in it: a stub QtWidgets in a worker that built no
     window yet. A done mark there would keep every later call
     from seating the faces. The call stays pending, and the next
-    call with the application up seats them."""
-    families = qt.QtGui.QFontDatabase.families
+    call with the application up seats them. The recorder stands
+    in for the seat itself, so the worker's database carries no
+    second copy of the faces."""
+    seats: list[str] = []
+    monkeypatch.setattr(
+        qt.QtGui.QFontDatabase,
+        "addApplicationFont",
+        staticmethod(lambda path: seats.append(path) or 0),
+    )
     monkeypatch.setattr(qt.fonts, "_FACES_SEATED", False)
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
             qt.QtGui.QGuiApplication, "instance", staticmethod(lambda: None)
         )
-        before = len(families())
         qt.fonts.register_faces()
         assert qt.fonts._FACES_SEATED is False
-        assert len(families()) == before
+        assert seats == []
     # The application stands again: the pending seat runs.
     qt.fonts.register_faces()
     assert qt.fonts._FACES_SEATED is True
+    assert len(seats) == 4  # the four bundled faces
 
 
 def test_the_face_resolves_and_measures_as_one(qt):

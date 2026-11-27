@@ -1003,7 +1003,6 @@ def test_open_window_reuses_an_existing_app(
         # (#1211): a strip built ahead of the seat measures its
         # bar with the fallback face and keeps that size.
         assert shown.index("faces") < shown.index("window")
-        assert shown.count("faces") == 1  # the one seat, never a re-seat
         # One pick's re-dial (#1009): the presenter applies the
         # preset, the standing bridge stops, the shell hub's
         # terminals close with the connection they belonged to,
@@ -1115,6 +1114,9 @@ def test_open_window_reuses_an_existing_app(
     # (#1009).
     assert schemes == [(screens[0].hub, existing)]
     assert shown[-1] == "driven"  # the drive ran last, inside the bracket
+    # The faces were seated once (#1211): the re-dial above rebuilt
+    # the tree and asked for no second seat.
+    assert shown.count("faces") == 1
     assert "stopped" in shown  # the return path stopped the first bridge
     # The saved geometry written on close (#939): the fake's
     # rect, as the next open reads it.

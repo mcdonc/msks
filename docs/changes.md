@@ -21,9 +21,9 @@ tagged `vX.Y.Z`.
 
 - **The GUI's first tab strip keeps one height on a host without
   fonts (#1211).** The bundled terminal faces now sit in the font
-  database before the first widget builds, so the first window's
-  tab bars measure with the same face as every later one. A host
-  with fonts of its own shows no difference.
+  database before the first widget builds. The first window's tab
+  bars measure with the same face as every later one. A host with
+  fonts of its own shows no difference.
 
 ## \[v0.11.0] - 2026-11-27
 
