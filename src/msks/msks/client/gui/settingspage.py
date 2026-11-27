@@ -217,9 +217,13 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         bar_row.addStretch(1)
         down.addLayout(bar_row)
         # The page's own frame (#1214): the group boxes stop short
-        # of the dictate pill's corner — the pill floats over
-        # every window, and the Model picker's arrow sits exactly
-        # at the top-right without the room.
+        # of the dictate pill's corner. The pill floats over the
+        # window's top-right, and without the room the first
+        # render put the Model picker's arrow under it; the other
+        # tabs' tables run under the pill's band with their last
+        # column's header sort arrow, which the pill covers
+        # cleanly, while a form's control there would be
+        # unclickable.
         page = QtWidgets.QVBoxLayout(self)
         page.setContentsMargins(0, 0, pill_room(self.font()), 0)
         page.addWidget(settings_box)
@@ -437,6 +441,10 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
             )
         except DictateFailure as exc:
             self.downloaded.emit("", str(exc))
+        except Exception as exc:  # a best-effort worker: the page
+            # must not stay with its bar up and its button dark
+            # because the thread died — the failure is shown.
+            self.downloaded.emit("", f"{type(exc).__name__}: {exc}")
         else:
             self.downloaded.emit(str(path), "")
 
@@ -461,14 +469,26 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         self.bar.setRange(0, 100)
         if error:
             self.flash(error, error=True)
-        else:
-            self.flash(f"saved {Path(path).name}")
+            self.reload_layers()
+            return
+        # The model was downloaded to be used: the field's values
+        # are saved as Apply would save them, so the controller's
+        # re-read takes the downloaded model instead of the one
+        # the files still name.
+        self.apply()
+        self.flash(f"saved {Path(path).name}")
+
+    def reload_layers(self) -> None:
+        """The layers read again after a download's end (#1214),
+        the controller and the model state following; a file that
+        will not read flashes its reason."""
         try:
             settings = self.effective()
         except ValueError as exc:
             self.flash(str(exc), error=True)
             return
         self.dictation.reload(settings)
+        self.load(settings)
         self.refresh_model()
 
     @QtCore.Slot()

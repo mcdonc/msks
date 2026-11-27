@@ -32,6 +32,7 @@ whisper.cpp's ``whisper-cli`` (transcription), ``notify-send``
 from __future__ import annotations
 
 import array
+import http.client
 import json
 import math
 import os
@@ -76,7 +77,8 @@ CAP_SECONDS = 180.0
 PREROLL_SECONDS = 0.5
 PAD_SECONDS = 0.3
 
-#: The model setting's default: a ggml name, fetched on first use.
+#: The model setting's default: a ggml name, downloaded from the
+#: settings page.
 DEFAULT_MODEL = "small"
 DEFAULT_LANG = "en"
 MODEL_URL = (
@@ -360,7 +362,9 @@ def model_path(setting: str, cache_root: Path) -> Path:
 def stream_model(response, part: Path, progress, cancel) -> None:
     """The response's body into ``part`` (#1214): 1 MiB chunks,
     the progress told per chunk (the total 0 when the server
-    names none), the cancel asked before each."""
+    names none), the cancel asked before each. A body that ends
+    short of the length the server named is a torn download: it
+    raises, and the caller takes the partial file with it."""
     total = int(response.headers.get("Content-Length") or 0)
     report = progress or (lambda done, total: None)
     done = 0
@@ -370,6 +374,15 @@ def stream_model(response, part: Path, progress, cancel) -> None:
             out.write(chunk)
             done += len(chunk)
             report(done, total)
+    check_whole(done, total)
+
+
+def check_whole(done: int, total: int) -> None:
+    """The body's length against the one the server named (#1214):
+    a body that ended short is a torn download, refused by name —
+    a server that named no total is not checked."""
+    if total and done != total:
+        raise DictateFailure(f"download torn: {done} of {total} bytes")
 
 
 def check_cancel(cancel) -> None:
@@ -389,7 +402,10 @@ def pull_model(url: str, part: Path, progress, cancel) -> None:
     except DictateFailure:
         part.unlink(missing_ok=True)
         raise
-    except OSError as exc:
+    except (OSError, ValueError, http.client.HTTPException) as exc:
+        # URLError and the socket errors are OSError; a model name
+        # with a space raises InvalidURL, an HTTPException; a bad
+        # header a ValueError.
         part.unlink(missing_ok=True)
         raise DictateFailure(f"download failed: {exc}") from exc
 

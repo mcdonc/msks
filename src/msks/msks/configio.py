@@ -72,7 +72,11 @@ def write_atomic(path: str, body: str) -> None:
     when missing, the text lands in a temporary file beside the
     target — written 0600, the tree's own mode — and is renamed
     over it once complete. A reader never sees a half-written file,
-    and a crash mid-write leaves the old file whole."""
+    and a crash mid-write leaves the old file whole and the
+    temporary file beside it (``<name>.*.tmp``), swept by hand. The
+    rename replaces a symlink with a regular file: a preferences
+    file a home-manager links into the store becomes mutable here,
+    which is the file's purpose."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, tmp = tempfile.mkstemp(

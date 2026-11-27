@@ -345,6 +345,9 @@ class TerminalOnly(QtCore.QObject):
         self.restore.clicked.connect(self.leave)
         corner_row = QtWidgets.QHBoxLayout(self.corner)
         corner_row.setContentsMargins(0, 0, 0, 0)
+        #: The corner row's layout (#1152): the mode parks its
+        #: right margin clear of the dictate pill at the enter.
+        self.corner_row = corner_row
         corner_row.addWidget(self.name)
         # The status takes the row's slack and its squeeze alike
         # (#1152): a stretch of one hands it the spare width
@@ -469,6 +472,24 @@ class TerminalOnly(QtCore.QObject):
         self.park_restore()
         QtCore.QTimer.singleShot(0, self, self.park_restore)
 
+    def park_corner(self) -> None:
+        """The corner row clear of the dictate pill (#1214): the
+        pill floats at the window's top-right, over the tab row's
+        right end — the corner's own band. The corner's layout
+        takes a right margin of the pill's width and its gap, less
+        the page's own right margin the corner already stands in,
+        so the name, the status seat, and the restore button end
+        left of the pill and the terminal below keeps the window's
+        whole width. No pill stands: no margin."""
+        pill = pill_in(self.page.window())
+        if pill is None or not pill.isVisibleTo(self.page.window()):
+            self.corner_row.setContentsMargins(0, 0, 0, 0)
+            return
+        page_margin = self.page.layout().contentsMargins().right()
+        self.corner_row.setContentsMargins(
+            0, 0, max(0, pill.width() + PILL_MARGIN - page_margin), 0
+        )
+
     def toggle_spot(self) -> int | None:
         """How far the toggle's right edge stood from its window's
         right edge before its row hides (#1152, #1189): the one
@@ -536,24 +557,12 @@ class TerminalOnly(QtCore.QObject):
                 + (margins.right() - current.right())
             )
             target.setRight(max(0, margins.right() - right))
-        self.clear_the_pill(page, target)
         # A page already parked writes nothing: an unchanged
         # margin would relayout the row for no move, and the
         # corner's own resize would ask for the check again.
         if target != current:
             page.layout().setContentsMargins(target)
-
-    @staticmethod
-    def clear_the_pill(page, target: QtCore.QMargins) -> None:
-        """The dictate pill's room (#1214): the pill floats at the
-        window's top-right corner, the tab row's right end in the
-        mode, so the right margin grows by a pill's width and a
-        gap and the name, the status seat, and the restore button
-        stand clear of it. The pill keeps one width in every
-        state, so the park holds through a recording."""
-        pill = pill_in(page.window())
-        if pill is not None and pill.isVisibleTo(page.window()):
-            target.setRight(target.right() + pill.width() + PILL_MARGIN)
+        self.park_corner()
 
     @QtCore.Slot()
     def leave(self) -> None:
@@ -579,6 +588,7 @@ class TerminalOnly(QtCore.QObject):
         self.margins = None
         self.spot = None
         self.corner.hide()
+        self.corner_row.setContentsMargins(0, 0, 0, 0)
         for widget in self.row:
             widget.show()
         page.footer.show()

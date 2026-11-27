@@ -349,14 +349,13 @@ def test_the_pill_takes_no_focus_and_joins_no_tab_chain(qt):
 
 def test_the_terminal_only_corner_parks_clear_of_the_pill(qt):
     """The terminal-only mode's corner (#1152, #1214): with a pill
-    on the window, the page's right margin grows by the pill's
-    width and its gap, so the restore button stands clear of it."""
+    on the window, the corner's row — the workspace's name, the
+    status seat, the restore button — ends left of the pill, and
+    the page keeps the mode's own margins so the terminal runs to
+    the window's edge; the pill never forms a column of its own.
+    Without a pill the corner takes the row's whole width."""
     from msks.client.gui import workspace as workspace_mod
-    from msks.client.gui.dictatepill import (
-        MARGIN,
-        DictationPill,
-        PillHost,
-    )
+    from msks.client.gui.dictatepill import DictationPill, pill_in
     from msks.client.gui.terminal import fonts as faces
     from PySide6 import QtWidgets
     from test_gui_terminalonly import StubBridge, enter
@@ -369,31 +368,41 @@ def test_the_terminal_only_corner_parks_clear_of_the_pill(qt):
     page = workspace_mod.WorkspaceDetail(StubBridge(), hub)
     window = QtWidgets.QMainWindow()
     window.setCentralWidget(page)
+    window.resize(1200, 600)
     window.show()
     qt.keep.append(window)
     page.open("ws-a", "alpha")
     qt.app.processEvents()
-    # The pill stands before the mode enters, the way the window
-    # path stands it (before any page): the terminal suites'
-    # fixture builds pages by hand, so equip by hand the way the
-    # host would.
+    enter(page)
+    spin(qt, 100)  # the mode's margins land a tick after the enter
+    # The pill stands, as the window path stands it before any page;
+    # the mode's re-park then clears the corner of it.
     pill = DictationPill(held, window)
+    spin(qt, 100)  # the strip lays the corner out around the pill
+    page.terminal_only.park_restore()
+    spin(qt, 50)
+    assert pill_in(window) is pill
+    mode = page.terminal_only
+    assert mode.restore.width() > 0
+    landed = mode.restore.mapTo(window, qt.QtCore.QPoint(0, 0))
+    assert landed.x() + mode.restore.width() <= pill.x()
+    assert (
+        mode.name.mapTo(window, qt.QtCore.QPoint(0, 0)).x()
+        + (mode.name.width())
+        <= pill.x()
+    )
+    # The page's right margin is the mode's own, whatever the pill:
+    # the terminal still runs to the window's right edge, and no
+    # column forms beside it.
+    assert page.layout().contentsMargins().right() == 0
+    strip_right = page.shells.mapTo(window, qt.QtCore.QPoint(0, 0)).x() + (
+        page.shells.width()
+    )
+    assert strip_right == window.width()
+    # Leaving the mode: the corner's margin goes.
+    mode.leave()
     qt.app.processEvents()
-    enter(page)
-    qt.app.processEvents()
-    parked = page.layout().contentsMargins().right()
-    landed = page.terminal_only.restore.mapTo(window, qt.QtCore.QPoint(0, 0))
-    assert landed.x() + page.terminal_only.restore.width() <= pill.x()
-    # Without the pill the margin is one pill and one gap narrower.
-    page.terminal_only.leave()
-    pill.hide()
-    qt.app.processEvents()
-    enter(page)
-    qt.app.processEvents()
-    bare = page.layout().contentsMargins().right()
-    assert parked == bare + pill.width() + MARGIN
-    host = PillHost(held, qt.app)
-    host.remove()
+    assert mode.corner_row.contentsMargins().right() == 0
 
 
 # --- the settings page ----------------------------------------------------
@@ -513,6 +522,10 @@ def test_the_model_download_shows_progress_and_lands(qt):
     assert "present" in page.model_state.text()
     assert page.download_button.isEnabled() is False
     assert held.state == "idle"
+    # The download saved the field's values as Apply would: the
+    # model on disk is now the configured one (#1216 review).
+    assert load_prefs()["dictate_model"] == "small"
+    assert held.settings.model == "small"
 
     # A failure flashes its reason and the page stands on nomodel.
     model.unlink()
@@ -529,6 +542,17 @@ def test_the_model_download_shows_progress_and_lands(qt):
     assert page.status.text() == "download failed: reset"
     assert page.bar.isHidden() and page.cancel_button.isHidden()
     assert held.state == "nomodel"
+    # A failed download over a gui.yaml that will not read: the
+    # layers' refusal flashes in the failure's place, the
+    # controller keeping its standing settings.
+    broken = prefs_path()
+    broken.write_text("dictate_model: [")
+    page.download()
+    page.flight.join(5)
+    spin(qt, 100)
+    assert "invalid YAML" in page.status.text()
+    assert held.state == "nomodel"
+    broken.unlink()
 
     # Cancel: the flag the worker reads; the landing hides the bar.
     def stalled(name, cache_root, progress=None, cancel=None):
@@ -547,6 +571,31 @@ def test_the_model_download_shows_progress_and_lands(qt):
     spin(qt, 100)
     assert page.status.text() == "download cancelled"
     assert page.bar.isHidden()
+
+
+def test_a_download_thread_that_raises_anything_lands(qt):
+    """The worker's catch (#1216 review): a downloader raising
+    anything at all lands as a failure — the bar goes, Cancel
+    hides, the button comes back — never a dead thread with the
+    page's download wedged."""
+    from msks.client.gui.settingspage import SettingsPage
+
+    held, _fake = controller(qt)
+    (qt.tmp / "cache" / "msks" / "whisper" / "ggml-small.bin").unlink()
+    held.check_model()
+    page = SettingsPage(held, {})
+
+    def explode(name, cache_root, progress=None, cancel=None):
+        raise RuntimeError("socket gone")
+
+    page.downloader = explode
+    page.download()
+    page.flight.join(5)
+    spin(qt, 100)
+    assert page.status.text() == "RuntimeError: socket gone"
+    assert page.flight is None
+    assert page.bar.isHidden() and page.cancel_button.isHidden()
+    assert page.download_button.isEnabled()
 
 
 def test_a_path_model_downloads_nothing(qt):
@@ -775,8 +824,10 @@ def test_apply_and_revert_flash_a_file_that_will_not_read(qt, monkeypatch):
     broken.write_text("dictate_model: [")
     page.revert()
     assert "gui.yaml: invalid YAML" in page.status.text()
+    # A download's landing over a file that will not read: Apply's
+    # save replaces the broken file whole, then the read stands.
     page.downloaded.emit("", "")
-    assert "invalid YAML" in page.status.text()
+    assert page.status.text() == "saved "
     # A tree the atomic write cannot land in: Apply's save fails
     # before any read, and the page keeps the standing settings.
     held.settings = DictateSettings(model="small")

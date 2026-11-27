@@ -284,7 +284,10 @@ page.
 
 The mode shows the Shells tab when another page tab was current.
 The shell tabs, the **+** tab, the rename, the close buttons, and
-their keys work as before. So do the drag gestures: a left-drag
+their keys work as before. The [dictate pill](#dictation) keeps its
+corner at the tab row's right end, and the workspace's name and the
+restore button end left of it; the terminal keeps the window's whole
+width. So do the drag gestures: a left-drag
 tears a tab off into a window, reorders the tabs, and puts a
 torn-off shell back on the row. The consent panel keeps its place
 above the terminals while a hold waits. The status line moves to
@@ -567,8 +570,9 @@ Capture runs on the host because a workspace guest has no audio
 device. `pw-record` captures 16 kHz mono, and `whisper-cli` (from
 whisper.cpp) transcribes the clip once it ends. The model loads for
 each clip, which takes about one second with `small`. The model is
-fetched on first use into `~/.cache/msks/whisper/`. The
-[config chapter](config.md#the-gui-preferences-file) describes the
+not shipped: the first click opens the **Settings** tab, whose
+**Download** button fetches it into `~/.cache/msks/whisper/`. The
+[CLI chapter](cli.md#the-gui-preferences-file) describes the
 settings, their file, and the precedence.
 
 ## The Settings tab

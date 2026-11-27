@@ -119,16 +119,16 @@ class CaptureStream(QtCore.QObject):
             self.frames.emit(bytes(self.proc.read(self.READ)))
 
     def stop(self) -> None:
-        """End the child (#1212's own stop): SIGINT, the way the
-        spike stopped ``pw-record``, then a kill if it lingers.
-        The end is the controller's, so ``gone`` stays silent.
-        Never called from inside a ``readyRead`` slot: the wait
-        blocks the loop under the notifier that is dispatching,
-        and the child's exit tears that notifier down mid-flight
-        (a segfault under the offscreen suite). The controller
-        defers its finish one loop iteration for exactly that;
-        this method stays the blocking stop for every other
-        caller."""
+        """End the child (#1212's own stop): the terminate signal
+        (SIGTERM on Unix, which pw-record exits on), then a kill
+        if it lingers. The end is the controller's, so ``gone``
+        stays silent. Never called from inside a ``readyRead``
+        slot: the wait blocks the loop under the notifier that is
+        dispatching, and the child's exit tears that notifier down
+        mid-flight (a segfault under the offscreen suite). The
+        controller defers its finish one loop iteration for
+        exactly that; this method stays the blocking stop for
+        every other caller."""
         self.stopping = True
         if self.proc.state() == QtCore.QProcess.ProcessState.NotRunning:
             return
@@ -270,6 +270,7 @@ class Dictation(QtCore.QObject):
         self.finishing = False
         if self.stream is not None:
             self.stream.stop()
+            self.release_stream()
         self.elapsed = 0.0
         self.detector = self.settings.gate.detector()
         self.framer = Framer()
@@ -317,7 +318,20 @@ class Dictation(QtCore.QObject):
         finish outside this read slot."""
         self.finishing = True
         self.stream.stopping = True
-        QtCore.QTimer.singleShot(0, self, self.finish)
+        QtCore.QTimer.singleShot(0, self, self.capped_finish)
+
+    @QtCore.Slot()
+    def capped_finish(self) -> None:
+        """The deferred finish (#1214): only a recording still
+        marked finishing ends here — a discard or a shutdown in
+        the iteration between cancels it (:meth:`cancel_finish`)."""
+        if self.finishing:
+            self.finish()
+
+    def cancel_finish(self) -> None:
+        """A pending cap's finish stands down (#1214): a discard,
+        a shutdown, or a fresh start owns the recording now."""
+        self.finishing = False
 
     @QtCore.Slot()
     def tocked(self) -> None:
@@ -335,10 +349,26 @@ class Dictation(QtCore.QObject):
         if self.state != RECORDING:
             return
         if self.detector is not None and self.detector.said_something():
-            self.finish()
+            # The finish stops the child — already gone, but the
+            # stop and the release run under this dispatch: one
+            # iteration later, the same deferral the cap takes.
+            self.finishing = True
+            QtCore.QTimer.singleShot(0, self, self.capped_finish)
         else:
             self.tick.stop()
+            self.release_stream()
             self.fail(reason)
+
+    def release_stream(self) -> None:
+        """The stream's last reference goes, safely (#1214): the
+        child's own ``finished``/``errorOccurred`` dispatch is
+        still on the stack under this slot, and a QProcess torn
+        down under its own notifier takes the process with it (a
+        segfault) — so the stream schedules its own deletion one
+        iteration later and the controller forgets it now."""
+        stream, self.stream = self.stream, None
+        if stream is not None:
+            stream.deleteLater()
 
     def finish(self) -> None:
         """The end of a recording (#1214): the second click, the
@@ -351,7 +381,7 @@ class Dictation(QtCore.QObject):
         self.finishing = False
         if self.stream is not None:
             self.stream.stop()
-            self.stream = None
+            self.release_stream()
         if self.detector is None or not self.detector.said_something():
             self.show(IDLE)
             return
@@ -375,6 +405,10 @@ class Dictation(QtCore.QObject):
             text = self.transcriber(wav, self.settings)
         except DictateFailure as exc:
             self.landed.emit(generation, "", str(exc))
+        except Exception as exc:  # a best-effort worker: the pill
+            # must not stay in transcribing, and the clip must be
+            # swept — the failure is shown, not silenced.
+            self.landed.emit(generation, "", f"{type(exc).__name__}: {exc}")
         else:
             self.landed.emit(generation, text, "")
         shutil.rmtree(work, ignore_errors=True)
@@ -425,12 +459,14 @@ class Dictation(QtCore.QObject):
 
     def discard(self) -> None:
         """The pill's ``x`` (#1214): a recording stops and its
-        clip drops with no tone; a pending transcription drops."""
+        clip drops with no tone; a pending transcription drops; a
+        cap's deferred finish stands down."""
         self.settle.stop()
         self.tick.stop()
+        self.cancel_finish()
         if self.stream is not None:
             self.stream.stop()
-            self.stream = None
+            self.release_stream()
         self.abandon()
         self.show(IDLE)
 
@@ -442,7 +478,8 @@ class Dictation(QtCore.QObject):
         path both reach it."""
         self.settle.stop()
         self.tick.stop()
+        self.cancel_finish()
         if self.stream is not None:
             self.stream.stop()
-            self.stream = None
+            self.release_stream()
         self.abandon()

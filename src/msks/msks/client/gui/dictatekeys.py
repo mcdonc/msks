@@ -33,6 +33,12 @@ from ..config_keys import DICTATE_KEYS, GLOBAL_ENV_VARS
 from ..dictate import DEFAULT_LANG, DEFAULT_MODEL, Gate, model_path
 from ..validate import dictate_number
 
+#: The settings tab's label (#1214): the strip's fourth tab, the
+#: page that edits these keys. A plain word in this Qt-free leaf,
+#: so the window path (``app.py``, Qt-free at parse time) and the
+#: strip's module read one definition.
+SETTINGS_TAB_LABEL = "Settings"
+
 #: The string keys (#1214): the model (a ggml name or a path),
 #: the capture device (a ``pw-record`` target), and the
 #: vocabulary prompt. The empty string is their unset form.

@@ -1639,7 +1639,9 @@ def test_the_dictation_composition_survives_a_bad_preferences_file(
         "raise",
         "activate",
     ]
-    assert gui_app.SETTINGS_TAB_LABEL == SETTINGS_LABEL
+    from msks.client.gui.dictatekeys import SETTINGS_TAB_LABEL
+
+    assert SETTINGS_LABEL == SETTINGS_TAB_LABEL == "Settings"
 
 
 def test_terminal_command_lists_a_resolved_launcher() -> None:

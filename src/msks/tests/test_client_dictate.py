@@ -609,3 +609,37 @@ def test_capped_tells_the_cap_from_the_quiet_stop():
     quiet = build(timeout=0.3)
     feed_until_stop(quiet, [QUIET] * 200)
     assert quiet.state == "waiting" and quiet.capped() is False
+
+
+def test_a_torn_download_never_installs(tmp_path: Path, monkeypatch):
+    """A body shorter than its ``Content-Length`` (#1216 review):
+    the download raises, the partial file goes, and nothing stands
+    at the model's path — a torn download never reads as a present
+    model. A server naming no total is not torn."""
+
+    def torn(url: str, timeout: int):
+        response = FakeResponse(b"x" * 10)
+        response.headers = {"Content-Length": "1000"}
+        return response
+
+    monkeypatch.setattr(dictate.urllib.request, "urlopen", torn)
+    with pytest.raises(dictate.DictateFailure, match="torn: 10 of 1000"):
+        dictate.download_model("small", tmp_path)
+    whisper = tmp_path / "whisper"
+    assert sorted(p.name for p in whisper.iterdir()) == []
+    monkeypatch.setattr(
+        dictate.urllib.request,
+        "urlopen",
+        lambda url, timeout: FakeResponse(b"x" * 10, length=False),
+    )
+    assert dictate.download_model("small", tmp_path).read_bytes() == b"x" * 10
+
+
+def test_a_model_name_that_makes_a_bad_url_fails_named(tmp_path: Path):
+    """A model name with a space (#1216 review): the URL is
+    malformed and ``urlopen`` raises an ``HTTPException``, which
+    the download reports as a named failure — never a dead thread
+    and a ``.part`` left behind."""
+    with pytest.raises(dictate.DictateFailure, match="download failed"):
+        dictate.download_model("my model", tmp_path)
+    assert list((tmp_path / "whisper").iterdir()) == []

@@ -724,3 +724,76 @@ def test_stop_on_a_dead_child_and_a_stubborn_one(qt, tmp_path, monkeypatch):
     stubborn.start()
     stubborn.stop()
     assert killed == [True]
+
+
+# --- the review's pins (#1216) --------------------------------------------
+
+
+def test_a_discard_between_the_cap_and_its_deferred_finish_cancels_it(qt):
+    """The cap's finish lands one loop iteration after the gate's
+    stop; a discard in that iteration owns the recording, and the
+    deferred call ends nothing: no transcript, no clipboard."""
+    controller, fake = dictation(qt, "q10 l*")
+    controller.toggle()
+    spin(qt, 2500, until=lambda: controller.detector.state == "speaking")
+    # The cap's stop, deferred — then the discard before the timer.
+    # The gate is fed the frame its own cap lands on.
+    controller.detector.max_seconds = controller.detector.elapsed
+    assert controller.capped_after(LOUD) is True
+    assert controller.detector.capped()
+    controller.defer_finish()
+    assert controller.finishing is True
+    controller.discard()
+    assert controller.finishing is False
+    controller.capped_finish()  # the timer's slot, after the discard
+    assert controller.state == "idle"
+    assert fake.transcribed == [] and fake.copied == []
+    # The same for a shutdown.
+    controller.toggle()
+    spin(qt, 2500, until=lambda: controller.detector.state == "speaking")
+    controller.detector.max_seconds = controller.detector.elapsed
+    controller.capped_after(LOUD)
+    controller.defer_finish()
+    controller.shutdown()
+    assert controller.finishing is False
+    controller.capped_finish()
+    assert fake.transcribed == []
+    controller.discard()
+
+
+def test_a_dying_capture_leaves_no_stream_behind(qt):
+    """``died`` with nothing said (#1214): the failed recording
+    holds no stream — the dead child is nobody's."""
+    controller, fake = dictation(qt, "q*")
+    controller.toggle()
+    spin(qt, 600)
+    assert controller.stream is not None
+    controller.detector.timeout = 3600  # the gate's wait holds
+    controller.stream.gone.emit("pw-record exited 2")
+    spin(qt, 100)
+    assert controller.state == "failed"
+    assert controller.stream is None
+
+
+def test_a_transcriber_that_raises_anything_fails_the_recording(qt):
+    """The worker's catch (#1214): a transcriber raising anything
+    at all fails the recording with the error named, and the clip
+    directory is swept — the pill never stays in transcribing."""
+    controller, fake = dictation(qt, "q10 l*")
+
+    def explode(wav: Path, settings: DictateSettings) -> str:
+        fake.transcribed.append(wav)  # the clip this recording wrote
+        raise RuntimeError("whisper-cli hung up")
+
+    controller.transcriber = explode
+    controller.toggle()
+    spin(qt, 2500, until=lambda: controller.detector.state == "speaking")
+    controller.toggle()
+    spin(qt, 3000, until=lambda: controller.state == "failed")
+    assert controller.note == "RuntimeError: whisper-cli hung up"
+    controller.discard()
+    # The sweep follows the answer on the worker thread: this
+    # recording's own directory goes, whatever else stands.
+    work = fake.transcribed[0].parent
+    spin(qt, 2000, until=lambda: not work.exists())
+    assert not work.exists()

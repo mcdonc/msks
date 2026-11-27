@@ -21,6 +21,7 @@ from types import ModuleType
 
 from ..sshsessions import state_dir
 from .data import GuiData
+from .dictatekeys import SETTINGS_TAB_LABEL
 from .rows import WINDOW_TITLE
 from .shortcut import DESKTOP_ID, ICON_FILE, ensure_installed, icon_dir
 
@@ -378,12 +379,6 @@ def compose_dictation(conf, app):
     dictation = Dictation(resolve(os.environ, prefs, operator), cache_dir())
     pills = PillHost(dictation, app)
     return dictation, pills
-
-
-#: The settings tab's label (#1214), the strip's own constant
-#: re-spelled here: the tab module carries PySide6 at module
-#: scope, and this module stays Qt-free at parse time.
-SETTINGS_TAB_LABEL = "Settings"
 
 
 def seat_settings(tabs, dictation, operator: dict, tree: dict):
