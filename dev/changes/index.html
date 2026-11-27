@@ -2488,6 +2488,18 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>The <code>screenshot</code> tool and <code>/screenshot</code> in the guest's pi
+  (#1197).</strong> pi inside a workspace gains a <code>screenshot</code> tool that
+  captures the client's screen through the screenshot pipe and
+  returns it as an image in one call, with the full-resolution file
+  kept for crops. <code>/screenshot [monitor]</code> puts a capture in front of
+  the agent, and <code>/screenshot model</code> picks a vision model from the
+  model list: a picked model describes each capture in text when it
+  is not the active model, and otherwise the active model sees it.
+  The images ship the extension beside <code>llm-models.ts</code>. See
+  <a href="../screenshot/#the-guests-pi">docs/screenshot.md</a>.</p>
+</li>
+<li>
 <p><strong>The screenshot pipe (#1194).</strong> A skill running inside a
   workspace guest can capture one of the client's screens through a
   loopback port in the guest (default <code>127.0.0.1:8662</code>) that reaches,
@@ -2571,6 +2583,24 @@ tagged <code>vX.Y.Z</code>.</p>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>The proxy's model list declares image input (#1197).</strong> The
+  <code>llm-models.ts</code> pi extension registers every model the daemon's
+  proxy serves with image input. The proxy's model list carries no
+  modality data, and the text-only declaration made pi drop an
+  image for every model in the guest. A pasted image now reaches a
+  text-only upstream, which answers an error where pi used to put
+  a placeholder.</p>
+</li>
+<li>
+<p><strong>The holder writes the pipe's port into the guest (#1197).</strong>
+  The bridge holder runs one ssh command beside the screenshot
+  pipe's reverse forward. The command writes the configured
+  <code>screenshot_port</code> to <code>/tmp/msks-screenshot-port</code> in the guest,
+  which the guest's tooling reads instead of assuming <code>8662</code>. A
+  failed write is reported once on the holder's stderr and
+  retried.</p>
+</li>
 <li>
 <p><strong>Terminal-only mode: the page's top margin stands at zero
   (#1189).</strong> The blank band the mode kept above the shell tab

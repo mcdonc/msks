@@ -580,6 +580,67 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-guests-pi" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The guest's pi
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The guest&#x27;s pi">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-screenshot-tool" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The <code>screenshot</code> tool
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#who-sees-the-capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Who sees the capture
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-screenshot-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The <code>/screenshot</code> command
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-port-in-the-guest" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The port in the guest
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-capture-commands-contract" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1017,6 +1078,67 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-guests-pi" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The guest's pi
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The guest&#x27;s pi">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-screenshot-tool" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The <code>screenshot</code> tool
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#who-sees-the-capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Who sees the capture
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-screenshot-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The <code>/screenshot</code> command
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-port-in-the-guest" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The port in the guest
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-capture-commands-contract" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1117,13 +1239,16 @@ unconfigured spawns no pipe, and a workspace started from it leaves the
 guest's port refused. Every start from a configured client brings the pipe
 up, beside the bridge holder the start already leaves for forward proxies.</p>
 <p>The guest-side port is a fixed default, <code>127.0.0.1:8662</code>, and
-<code>screenshot_port</code> overrides it (global-only, same rule). If something in
-the guest already holds the port, the holder reports the refusal on its
-stderr as a start-time failure and keeps retrying at a slow pace; the
-capture path answers only when the bind lands. The report reaches the
-terminal of a holder you run by hand (<code>msks screenshot hold</code>, <code>msks proxy
-hold</code>). A holder the start path left in the background writes it to no
-terminal. The guest's refused connection is the symptom you see.</p>
+<code>screenshot_port</code> overrides it (global-only, same rule). The holder
+writes the configured port to <code>/tmp/msks-screenshot-port</code> in the
+guest, and <a href="#the-guests-pi">the guest's pi</a> reads it from there. If
+something in the guest already holds the port, the holder reports the
+refusal on its stderr as a start-time failure. It keeps retrying at a
+slow pace, and the capture path answers only when the bind succeeds.
+The report reaches the terminal of a holder you run by hand
+(<code>msks screenshot hold</code>, <code>msks proxy hold</code>). A holder the start path
+left in the background writes it to no terminal. The guest's refused
+connection is the symptom you see.</p>
 <h2 id="holding-the-pipe-on-demand">Holding the pipe on demand<a class="headerlink" href="#holding-the-pipe-on-demand" title="Permanent link">&para;</a></h2>
 <p><code>msks start</code> leaves the pipe up when it leaves a holder: a configured
 client, a start, and the pipe serves after the command exits. The pipe
@@ -1193,7 +1318,49 @@ capture command; the helper also kills one itself after 60 seconds.</p>
 </table>
 <p>A refused connection covers two causes because the guest cannot tell them
 apart: nothing is listening in both. The skill prints its remedy line and
-the operator picks the fix.</p>
+the operator picks the fix. The guest's pi reaches this endpoint through
+its <code>screenshot</code> tool; see <a href="#the-guests-pi">The guest's pi</a>.</p>
+<h2 id="the-guests-pi">The guest's pi<a class="headerlink" href="#the-guests-pi" title="Permanent link">&para;</a></h2>
+<p>The guest images ship a pi extension beside the model-discovery one:
+<code>~/.pi/agent/extensions/msks-screenshot/</code>, copied into every account's
+home from the skeleton. It gives the agent in the workspace two ways to
+capture your screen through the pipe.</p>
+<h3 id="the-screenshot-tool">The <code>screenshot</code> tool<a class="headerlink" href="#the-screenshot-tool" title="Permanent link">&para;</a></h3>
+<p>The agent calls <code>screenshot</code> and receives the capture as an image in one
+tool call. The optional <code>monitor</code> parameter selects the screen, <code>0</code> by
+default. The full-resolution capture is saved first, in a directory this
+account alone reads, and the tool's text gives its path. pi downsamples
+an image before the model sees it. Small text on a 4K capture needs a
+<code>magick</code> crop and a second <code>read</code> of that file.</p>
+<h3 id="who-sees-the-capture">Who sees the capture<a class="headerlink" href="#who-sees-the-capture" title="Permanent link">&para;</a></h3>
+<p>The proxy's model list carries no modality data. The <code>llm-models.ts</code>
+extension therefore registers every proxy model with image input, and the
+active model receives the capture directly. A text-only upstream answers
+the image with an error. That error is the signal to pick a vision model.</p>
+<p><code>/screenshot model</code> opens a picker over the model list. The choice is
+stored under the <code>msksScreenshotVisionModel</code> key in
+<code>~/.pi/agent/settings.json</code> and survives a restart. With a vision model
+picked and a different model active, the tool sends the capture to the
+vision model in one nested call and returns its description as text.
+The optional <code>prompt</code> parameter says what to look at. The active model
+sees the capture directly when no vision model is picked, or when the
+picked model is the active one.</p>
+<h3 id="the-screenshot-command">The <code>/screenshot</code> command<a class="headerlink" href="#the-screenshot-command" title="Permanent link">&para;</a></h3>
+<p><code>/screenshot</code> captures monitor 0, and <code>/screenshot &lt;monitor&gt;</code> captures
+that screen. The capture, or the vision model's description, goes in
+front of the agent as a message and a turn starts on it. A failed
+capture shows the pipe's answer as a notice instead.</p>
+<h3 id="the-port-in-the-guest">The port in the guest<a class="headerlink" href="#the-port-in-the-guest" title="Permanent link">&para;</a></h3>
+<p>The holder writes the configured <code>screenshot_port</code> to
+<code>/tmp/msks-screenshot-port</code> when the pipe comes up, and the extension
+reads the file. The default <code>8662</code> answers when the file is absent. The
+holder writes a fresh file and moves it over the path in one rename. A
+reader sees the whole port or the previous file. A stale file is
+harmless while the ports agree: with no holder the port is refused
+either way, and the next hold by the same account rewrites the file.</p>
+<p>Two holders on one workspace with different <code>screenshot_port</code> values
+are a misconfiguration. The file carries the port of the hold that
+came last. The tool reaches that holder's pipe, not the other one.</p>
 <h2 id="the-capture-commands-contract">The capture command's contract<a class="headerlink" href="#the-capture-commands-contract" title="Permanent link">&para;</a></h2>
 <p>The command runs on the client, once per request, in a fresh process. Its
 stdout is the answer's body, whatever bytes it writes (an image, in

@@ -1226,6 +1226,11 @@ discovers it. At every pi startup the extension makes one fetch of
 <code>${MSKSWS_BASE_URL}/models</code>, aborted at 1.5 seconds, and registers the catalog
 under the <code>msks</code> provider, so <code>/model</code> always shows the daemon's live model
 list.</p>
+<p>Every model registers with image input (#1197). The proxy's model list
+carries no modality data, and a text-only declaration would make pi drop
+an image for every model in the guest. A text-only upstream answers an
+image with an error. The <a href="../screenshot/#the-guests-pi">screenshot extension</a>
+beside <code>llm-models.ts</code> depends on the declaration.</p>
 <h2 id="sighup">SIGHUP<a class="headerlink" href="#sighup" title="Permanent link">&para;</a></h2>
 <p>A restart or <code>SIGHUP</code> of msksd is required in order to register changes to the
 LLM proxy settings.</p>

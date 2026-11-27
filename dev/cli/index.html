@@ -1935,7 +1935,7 @@ variables has a config-file equivalent.</p>
 <tr>
 <td><code>MSKSC_SCREENSHOT_PORT</code></td>
 <td><code>screenshot_port</code></td>
-<td>The loopback port the guest's sshd binds for the <a href="../screenshot/">screenshot pipe</a>, when a configured client holds one</td>
+<td>The loopback port the guest's sshd binds for the <a href="../screenshot/">screenshot pipe</a>, when a configured client holds one. The holder writes it to <code>/tmp/msks-screenshot-port</code> in the guest for the guest's <code>screenshot</code> tool</td>
 <td><code>8662</code></td>
 </tr>
 </tbody>
@@ -3164,7 +3164,9 @@ prerequisites are <code>ssh</code> and <code>rsync</code>. The exit code is rsyn
 guest that, through an ssh reverse forward held by the bridge holder,
 reaches the capture command this client runs. <a href="../screenshot/">The screenshot pipe
 chapter</a> owns the concept, the recipes, and the guest's
-failure shapes; this section is the command reference.</p>
+failure shapes; this section is the command reference. The holder also
+writes the configured port to <code>/tmp/msks-screenshot-port</code> in the guest
+(#1197), where the guest's pi <code>screenshot</code> tool reads it.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-39-1"><a id="__codelineno-39-1" name="__codelineno-39-1" href="#__codelineno-39-1"></a>msks<span class="w"> </span>screenshot<span class="w"> </span>hold<span class="w"> </span>my-workspace
 </span></code></pre></div>
 <p><code>hold</code> runs the same holder <code>msks start</code> leaves behind (the bridge and
