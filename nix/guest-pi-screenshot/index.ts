@@ -8,8 +8,8 @@
  * node runs it — the smoke test's probe — and this file imports
  * it). This file adds what only pi can do: a tool that returns the
  * capture as image content in one call, a command that puts the
- * capture in front of the agent, and a picker for the vision
- * model.
+ * capture in front of the agent, a picker for the vision model,
+ * and a spinner while that model describes a capture.
  *
  * Who sees the capture. The vision model the user picked with
  * `/screenshot model`, stored under one custom key in pi's
@@ -41,6 +41,7 @@ import type {
   TextContent,
   Usage,
 } from "@earendil-works/pi-ai";
+import { CancellableLoader } from "@earendil-works/pi-tui";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { capture, type Capture } from "./capture.ts";
@@ -82,6 +83,11 @@ const PICK_HINT = "run /screenshot model to pick a vision model";
 const DESCRIBE_PROMPT =
   "Describe this screenshot of the user's screen in detail: the " +
   "windows, the text, and anything that looks like an error.";
+
+/** The spinner's message while the vision model describes a
+ * capture, and the message of the blocked report beside it
+ * (#1201). */
+const DESCRIBING = "Describing screenshot…";
 
 type Settings = Record<string, unknown>;
 type Content = TextContent | ImageContent;
@@ -218,6 +224,61 @@ function text(content: string): TextContent {
   return { type: "text", text: content };
 }
 
+/** The describe step's way out through `done()`: a rejection is
+ * carried as a value, since the component's only exit is `done()`,
+ * and thrown again for the caller's own error text. */
+type Described = { answer: AssistantMessage } | { failure: unknown };
+
+/** One request to the vision model: the capture and the prompt,
+ * answered by its message. In the TUI the call runs behind a
+ * spinner (#1201): `ctx.ui.custom()` hosts a CancellableLoader,
+ * whose Escape aborts the call through its signal, and the
+ * component's `blocked` option makes terminals that speak OSC
+ * 7501 report pi as blocked, with the spinner's message, for as
+ * long as the describe runs. Anywhere else the call runs bare: a
+ * custom component is terminal-only. The run's own signal aborts
+ * the call on both paths. */
+async function describeCapture(
+  ctx: ExtensionContext,
+  model: CatalogModel,
+  content: Content[],
+  signal: AbortSignal | undefined,
+): Promise<AssistantMessage> {
+  const complete = (abort: AbortSignal | undefined) =>
+    ctx.modelRegistry.complete(
+      model,
+      { messages: [{ role: "user", content, timestamp: Date.now() }] },
+      { signal: abort },
+    );
+  if (ctx.mode !== "tui") {
+    return complete(signal);
+  }
+  const outcome = await ctx.ui.custom<Described>(
+    (tui, theme, _keybindings, done) => {
+      const loader = new CancellableLoader(
+        tui,
+        (frame) => theme.fg("accent", frame),
+        (message) => theme.fg("dim", message),
+        DESCRIBING,
+      );
+      const abort =
+        signal === undefined
+          ? loader.signal
+          : AbortSignal.any([signal, loader.signal]);
+      complete(abort).then(
+        (answer) => done({ answer }),
+        (failure: unknown) => done({ failure }),
+      );
+      return loader;
+    },
+    { blocked: { kind: "question", message: DESCRIBING } },
+  );
+  if ("failure" in outcome) {
+    throw outcome.failure;
+  }
+  return outcome.answer;
+}
+
 /** One capture, seen by whoever the choice above picks. The
  * saved full-resolution file is in the text either way, for the
  * crops a downscaled view cannot serve. */
@@ -282,18 +343,11 @@ async function shoot(
   };
   let answer: AssistantMessage;
   try {
-    answer = await ctx.modelRegistry.complete(
+    answer = await describeCapture(
+      ctx,
       who.model,
-      {
-        messages: [
-          {
-            role: "user",
-            content: [text(params.prompt ?? DESCRIBE_PROMPT), image],
-            timestamp: Date.now(),
-          },
-        ],
-      },
-      { signal },
+      [text(params.prompt ?? DESCRIBE_PROMPT), image],
+      signal,
     );
   } catch (error) {
     return {

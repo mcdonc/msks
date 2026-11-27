@@ -102,6 +102,15 @@ tagged `vX.Y.Z`.
   text-only upstream, which answers an error where pi used to put
   a placeholder.
 
+- **A spinner while a vision model describes a screenshot
+  (#1201).** When the `screenshot` tool or `/screenshot` waits on a
+  picked vision model, the TUI shows an animated spinner that reads
+  `Describing screenshot…` in place of the editor. Escape cancels the
+  description, and the tool reports the saved capture's path. A
+  terminal that supports OSC 7501 program status shows pi as blocked
+  with the same message for as long as the description runs. See
+  [docs/screenshot.md](screenshot.md#who-sees-the-capture).
+
 - **The holder writes the pipe's port into the guest (#1197).**
   The bridge holder runs one ssh command beside the screenshot
   pipe's reverse forward. The command writes the configured
