@@ -6,6 +6,17 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Added
+
+- **Tearing shell tabs off into windows in the GUI (#1203).** A
+  left-button drag on a shell tab moves it along the strip, and the
+  tab takes its new place on release. Dropped off every tab strip, the
+  tab opens as a window of its own that keeps the session running, with
+  the tab's close button, the rename, the shell keys, and a **+** tab
+  of its own. Dropped on another window's tab strip, it becomes a tab
+  there. The gestures work in terminal-only mode too. See
+  [docs/gui.md](gui.md#tearing-a-shell-off-into-a-window).
+
 ## \[v0.11.0] - 2026-11-27
 
 ### Added

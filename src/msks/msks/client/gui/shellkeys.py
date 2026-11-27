@@ -16,7 +16,10 @@ with the keyboard on the current shell: the keys answer from the
 Mounts or Events tab too, and a shell opened or closed behind
 another tab would be a change the operator cannot see. The
 actions themselves are the strip's (:class:`.shells.ShellTabs`),
-the same steps the pointer takes.
+the same steps the pointer takes. A window torn off the strip
+(:mod:`.shellwindow`, #1203) stands the shell keys of its own
+through :func:`stand_shortcut`, the one shape every shell key
+wears.
 
 The module imports PySide6 at module scope, the screen modules'
 contract: nothing imports it at CLI parse time.
@@ -30,6 +33,21 @@ from PySide6 import QtCore, QtGui
 #: jumps to the Nth shell, the first nine — a tenth shell
 #: switches by Ctrl+Tab or the pointer.
 SHELL_KEYS = 9
+
+
+def stand_shortcut(scope, spellings: tuple[str, ...], slot):
+    """One shell action's shortcut on a scope (#1163, #1203):
+    every spelling of its key, the scope's children included, one
+    answer per press. The page and a torn-off window both stand
+    their keys this way, so a terminal focused inside either
+    answers before its program sees the press, and a held key
+    repeats nothing (#1152's rule for the toggle)."""
+    shortcut = QtGui.QShortcut(scope)
+    shortcut.setKeys([QtGui.QKeySequence(spelling) for spelling in spellings])
+    shortcut.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
+    shortcut.setAutoRepeat(False)
+    shortcut.activated.connect(slot)
+    return shortcut
 
 
 class ShellKeys(QtCore.QObject):
@@ -68,18 +86,7 @@ class ShellKeys(QtCore.QObject):
         """One action's shortcut on the page (#1163): every
         spelling of its key, the page's scope, one answer per
         press."""
-        shortcut = QtGui.QShortcut(self.page)
-        shortcut.setKeys(
-            [QtGui.QKeySequence(spelling) for spelling in spellings]
-        )
-        shortcut.setContext(
-            QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut
-        )
-        # A held key must not open a shell per repeat (#1152's
-        # rule for its toggle): one press, one action.
-        shortcut.setAutoRepeat(False)
-        shortcut.activated.connect(slot)
-        self.shortcuts.append(shortcut)
+        self.shortcuts.append(stand_shortcut(self.page, spellings, slot))
 
     @QtCore.Slot()
     def open_shell(self) -> None:
