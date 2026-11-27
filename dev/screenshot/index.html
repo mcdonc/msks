@@ -1345,6 +1345,13 @@ vision model in one nested call and returns its description as text.
 The optional <code>prompt</code> parameter says what to look at. The active model
 sees the capture directly when no vision model is picked, or when the
 picked model is the active one.</p>
+<p>While the vision model works, the TUI replaces the editor with a
+bordered spinner that reads <code>Describing screenshot…</code>, for the tool and
+for <code>/screenshot</code> alike. Escape or <code>Ctrl+C</code> cancels the description at
+once, and the result reports the saved capture's path. During an agent
+turn, that key also stops the turn, as it does anywhere else in pi. A
+terminal that supports OSC 7501 program status shows pi as blocked with
+the same message for as long as the description runs.</p>
 <h3 id="the-screenshot-command">The <code>/screenshot</code> command<a class="headerlink" href="#the-screenshot-command" title="Permanent link">&para;</a></h3>
 <p><code>/screenshot</code> captures monitor 0, and <code>/screenshot &lt;monitor&gt;</code> captures
 that screen. The capture, or the vision model's description, goes in

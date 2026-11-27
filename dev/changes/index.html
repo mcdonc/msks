@@ -2593,6 +2593,17 @@ tagged <code>vX.Y.Z</code>.</p>
   a placeholder.</p>
 </li>
 <li>
+<p><strong>A spinner while a vision model describes a screenshot
+  (#1201).</strong> When the <code>screenshot</code> tool or <code>/screenshot</code> waits on a
+  picked vision model, the TUI shows a bordered spinner that reads
+  <code>Describing screenshot…</code> in place of the editor. Escape or <code>Ctrl+C</code>
+  cancels the description at once, the result reports the saved
+  capture's path, and during an agent turn the turn stops as well. A
+  terminal that supports OSC 7501 program status shows pi as blocked
+  with the same message for as long as the description runs. See
+  <a href="../screenshot/#who-sees-the-capture">docs/screenshot.md</a>.</p>
+</li>
+<li>
 <p><strong>The holder writes the pipe's port into the guest (#1197).</strong>
   The bridge holder runs one ssh command beside the screenshot
   pipe's reverse forward. The command writes the configured
