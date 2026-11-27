@@ -2675,6 +2675,15 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong><code>/screenshot model</code> opens on the first Enter
+  (#1207).</strong> In the guest's pi, typing <code>/screenshot model</code> and
+  pressing Enter left the command in the editor: the completion
+  popup still showed <code>model</code>, and pi gives Enter to a visible
+  completion. The popup now closes once the word is complete, and
+  Enter runs the command. See
+  <a href="../screenshot/#the-screenshot-command">docs/screenshot.md</a>.</p>
+</li>
+<li>
 <p><strong>Quitting pi in a GUI shell returns to the prompt at once
   (#1192).</strong> With pi in regular mode (#1204), quitting no longer
   writes the whole transcript to the terminal on the way out. A
