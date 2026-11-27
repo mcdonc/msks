@@ -120,7 +120,8 @@ SLEEPER = "import time; time.sleep(60)"
 def qt(tmp_path: Path):
     """The offscreen ``QApplication`` the page needs, the list's
     own fixture shape: the silent fontconfig, the platform pin,
-    and the Qt names imported inside the fixture (a
+    the bundled faces seated once the application exists
+    (#1211), and the Qt names imported inside the fixture (a
     collection-time controller has no business loading the
     binding)."""
     fonts = tmp_path / "fonts.conf"
@@ -128,11 +129,20 @@ def qt(tmp_path: Path):
     os.environ["FONTCONFIG_FILE"] = str(fonts)
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     from msks.client.gui import workspace as workspace_mod
+    from msks.client.gui.terminal import fonts as faces
     from PySide6 import QtCore, QtGui, QtWidgets
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
         ["msks-test"]
     )
+    # The faces go in before any widget this fixture's tests
+    # build, the terminal's own fixture's step: the silent
+    # fontconfig answers an empty database, and until the faces
+    # are seated every font request resolves to the fallback
+    # face. The first strip a process builds sized its bar with
+    # that face and kept the size, 4 px under every strip after
+    # the first terminal seated the faces (#1211).
+    faces.register_faces()
     ns = SimpleNamespace(
         app=app,
         QtCore=QtCore,
