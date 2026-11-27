@@ -346,10 +346,10 @@ same shared install. `--wheel <path>` (a wheel in hand) and
 
 The dictation prerequisites land with the run (#1216). The GUI's
 dictate pill calls `pw-record`, `pw-cat`, and `notify-send`. A stock
-Mac carries none of the three, so the tool brews the two engines the
-Mac can hold: `whisper.cpp` provides `whisper-cli`, and `ffmpeg`
-captures. It then lands three shims at the brew prefix's bin, beside
-the client links. `pw-record` captures through ffmpeg's avfoundation,
+Mac carries none of the three. The tool brews the two engines the Mac
+can hold: `whisper.cpp` provides `whisper-cli`, and `ffmpeg` captures.
+It then lands three shims at the brew prefix's bin, beside the client
+links. `pw-record` captures through ffmpeg's avfoundation,
 `pw-cat` plays through `afplay`, and `notify-send` shows the
 notification through `osascript`. Each shim carries the tool's
 sentinel. A foreign file at a shim path refuses by name, and the

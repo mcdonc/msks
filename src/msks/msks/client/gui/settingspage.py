@@ -587,16 +587,20 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         the model key over its standing values — the other fields
         stay as the operator left them, applied or not — and the
         layers resolve again for the controller. A model the
-        environment pins is the pin's, as everywhere: the download
-        stands on disk and the file keeps the pin's value, and the
-        flash says the pin still decides. False when the file will
-        not write or read, with the reason flashed."""
-        pinned = "dictate_model" in self.dictation.settings.pinned
+        environment pins is the pin's: the file is left as it
+        stands (the pin wins at resolve, and a write would discard
+        the operator's own saved row behind the pin's back), and
+        the page says the pin still decides. False then, and when
+        the file will not write or read, the reason flashed."""
+        if "dictate_model" in self.dictation.settings.pinned:
+            self.flash(
+                f"{GLOBAL_ENV_VARS['dictate_model']} pins the model; "
+                "the download stands on disk for when the pin goes"
+            )
+            return False
         try:
             values = dict(load_prefs())
-            values["dictate_model"] = (
-                self.dictation.settings.model if pinned else model
-            )
+            values["dictate_model"] = model
             save_prefs(values)
             settings = self.effective()
         except (OSError, ValueError) as exc:
@@ -614,7 +618,7 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
             load_prefs()
         ):
             self.settled()
-        return not pinned
+        return True
 
     @QtCore.Slot()
     def abandon_download(self) -> None:

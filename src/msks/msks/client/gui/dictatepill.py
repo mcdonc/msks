@@ -34,6 +34,7 @@ contract: nothing imports it at CLI parse time (#927).
 
 from __future__ import annotations
 
+import shiboken6
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .dictation import (
@@ -300,22 +301,43 @@ class DictationPill(QtWidgets.QFrame):
         # The destruction hook fires while the C++ object still
         # stands (#1216): a DeferredDelete event would arrive after
         # it, and a set holding dead wrappers could ask one
-        # isVisibleTo.
-        seated.destroyed.connect(lambda _obj=None, p=seated: self.forget(p))
+        # isVisibleTo. A bound slot, so the connection is the
+        # floating pill's own and dies with it: a lambda would
+        # outlive a floating pill destroyed first (a re-dial's
+        # tree, then the window's close) and call into a dead
+        # wrapper.
+        seated.destroyed.connect(self.forgot)
         self.follow()
 
-    def forget(self, seated) -> None:
+    @QtCore.Slot(QtCore.QObject)
+    def forgot(self, seated: QtCore.QObject) -> None:
         """A seated pill is gone (#1216): it leaves the set, and the
-        floating one re-asks."""
+        floating one re-asks — while it still stands; a floating
+        pill destroyed first never hears this, its connection gone
+        with it."""
         self.seated.discard(seated)
         self.follow()
 
     def follow(self) -> None:
-        """The floating pill's visibility after the seated pills',
-        as the window sees them: a seated pill hidden with its
-        page's footer (the terminal-only mode) still reads
-        ``isVisible()`` of itself, so the window is asked."""
-        showing = any(pill.isVisibleTo(self.window()) for pill in self.seated)
+        """Re-ask the floating pill's visibility one loop iteration
+        from now (#1216): a pill's own show or hide event arrives
+        before its visible flag settles, so the read is taken on the
+        next pass, when every pill's state is the window's truth."""
+        QtCore.QTimer.singleShot(0, self, self.settle_visibility)
+
+    def settle_visibility(self) -> None:
+        """The floating pill's visibility after the seated pills', as
+        the window sees them: a seated pill hidden with its page's
+        footer (the terminal-only mode) still reads ``isVisible()``
+        of itself, so the window is asked. A member whose C++ side
+        is already gone (a sibling destroyed in the same teardown
+        pass) reads as not showing."""
+        showing = False
+        for pill in list(self.seated):
+            if not shiboken6.isValid(pill):
+                self.seated.discard(pill)
+                continue
+            showing = showing or pill.isVisibleTo(self.window())
         self.setVisible(not showing)
 
     def stands_down_for(self, seated) -> bool:
@@ -404,15 +426,16 @@ class DictationPill(QtWidgets.QFrame):
 class PillHost(QtCore.QObject):
     """A floating pill on every main window (#1214): an application
     event filter that equips each ``QMainWindow`` when it is polished
-    or shown — the main window itself, on every page, and a shell
-    window torn off the strip. Dialogs, popups, and tooltips stay
+    or shown — the main window itself, and a shell window torn off
+    the strip. Every page of the main window seats a pill of its own
+    in its bottom row, and while any seated pill shows, the floating
+    one stands down (:meth:`DictationPill.yields_to`); it serves the
+    workspace page's terminal-only mode, whose footer is hidden, and
+    the torn-off windows alone. Dialogs, popups, and tooltips stay
     bare: a dialog is a question or a form in flight, and the
     recording toggle belongs to the window the operator works in.
-    The workspaces list seats a pill of its own in its quick-facts
-    row; while that page shows, it stands the main window's floating
-    pill down (:meth:`DictationPill.yields_to`), so one pill shows
-    at a time. The host comes off the application at the
-    controller's shutdown (:meth:`remove`)."""
+    The host comes off the application at the controller's shutdown
+    (:meth:`remove`)."""
 
     def __init__(self, dictation, app) -> None:
         super().__init__(dictation)

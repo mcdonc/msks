@@ -1317,10 +1317,58 @@ def test_a_landed_download_under_a_pinned_model_keeps_the_pin(qt, monkeypatch):
     page = SettingsPage(held, {})
     assert "missing" in page.model_state.text()
     assert page.download_button.isEnabled() is False  # the pin decides
-    save_prefs({"dictate_device": "mic-a"})
+    save_prefs({"dictate_device": "mic-a", "dictate_model": "base.en"})
     assert page.save_model("large-v3-turbo") is False
+    # The file stands as the operator left it: the pin wins at
+    # resolve without a write, and the page says so.
     assert load_prefs() == {
         "dictate_device": "mic-a",
-        "dictate_model": "small",
+        "dictate_model": "base.en",
     }
     assert held.settings.model == "small"
+    assert "MSKSC_DICTATE_MODEL pins the model" in page.status.text()
+
+
+def test_the_floating_pill_destroyed_first_raises_nothing(qt):
+    """The teardown order a re-dial makes (#1216 delta review): the
+    floating pill can die before the seated pills — a re-dial's
+    tree lands after it, so the window's deletion destroys it
+    first, and a hand ``deleteLater`` reaches the same order. The
+    seated pills' ``destroyed`` then reach a connection that died
+    with the floating pill (a bound slot is the receiver's own),
+    never a dead wrapper. Nothing raises."""
+    from msks.client.gui.dictatepill import PillHost, pill_in
+    from msks.client.gui.workspaces import WorkspaceList
+    from PySide6 import QtWidgets
+    from test_gui_workspaces import StubBridge
+
+    held, _fake = controller(qt)
+    host = PillHost(held, qt.app)
+    errors: list = []
+    before = sys.excepthook
+    sys.excepthook = lambda t, v, _tb: errors.append(f"{t.__name__}: {v}")
+    try:
+        window = QtWidgets.QMainWindow()
+        window.setAttribute(qt.QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
+        listing = WorkspaceList(StubBridge(), held)
+        window.setCentralWidget(listing)
+        window.show()
+        spin(qt, 50)
+        floating = pill_in(window)
+        assert listing.pill in floating.seated
+        # The floating pill goes first.
+        floating.deleteLater()
+        spin(qt, 20)
+        QtWidgets.QApplication.sendPostedEvents(
+            None, qt.QtCore.QEvent.Type.DeferredDelete
+        )
+        # Then the pages: their pills' destroyed reach nothing dead.
+        window.close()
+        QtWidgets.QApplication.sendPostedEvents(
+            None, qt.QtCore.QEvent.Type.DeferredDelete
+        )
+        spin(qt, 20)
+    finally:
+        sys.excepthook = before
+        host.remove()
+    assert errors == []

@@ -27,7 +27,7 @@ tagged `vX.Y.Z`.
   `pw-cat`, and `notify-send` shims at the brew prefix's bin, so the
   GUI's dictation works on a Mac. `--check` reports the engines and
   shims, and a Mac without them fails that check until the tool runs
-  again. The shims carry the tool's mark. A re-run refreshes them,
+  again. The shims carry the tool's mark, a re-run refreshes them,
   and `--uninstall` removes them. See
   [docs/installation.md](installation.md#macos-on-apple-silicon-hosts).
 

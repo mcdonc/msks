@@ -535,12 +535,12 @@ the connection picker](screens/gui-dictate.png)
 A small pill sits on every page of the main window and on each
 torn-off shell window. It is the same control everywhere, and one
 recording runs behind all of them. On each page it sits at the right
-end of the page's own bottom row, under the connection picker: beside
-the quick facts on the workspace list, the counts on Images and
-Secrets, the status line on Settings, and the footer on a workspace
-page. The workspace page's terminal-only mode hides its footer, and
-the pill then floats at the tab row's right end, left of the restore
-button. Dialogs carry no pill. Click it to start talking. Click it
+end of the page's own bottom row: beside the quick facts on the
+workspace list, where the connection picker stands above it, the
+counts on Images and Secrets, the status line on Settings, and the
+footer on a workspace page. The workspace page's terminal-only mode
+hides its footer, and the pill then floats at the tab row's right
+end, left of the restore button. Dialogs carry no pill. Click it to start talking. Click it
 again to finish. Nothing ends a recording on your behalf: a pause
 inside a sentence is not the end of one. A three-minute cap ends a
 clip that nobody stopped.
@@ -610,9 +610,10 @@ settings in effect now, and every field takes a change.
   is a PipeWire source: the picker lists the sources the desktop
   serves, **Refresh** reads the list again, and the default input
   follows the desktop's own choice. A node name or serial typed free
-  selects one the list does not carry. On macOS the picker is empty,
-  and a number typed free selects the avfoundation input with that
-  index. The default input follows the desktop's choice there too.
+  selects one the list does not carry. On macOS the picker holds the
+  default input alone, and a number typed free selects the
+  avfoundation input with that index. The default input follows the
+  desktop's choice there too.
 - **Vocabulary prompt**: the words whisper-cli biases its spelling
   toward, such as `msks, devenv, NixOS, pi`. Leave it empty for
   plain dictation.
