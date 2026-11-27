@@ -21,7 +21,7 @@ ends one request, not the pipe.
 The pipe exists exactly while a holder this client started serves
 the workspace. The capability is that session: the ssh child
 authenticates with the workspace's own identity through the same
-transport ``msks ssh`` rides (the forward websocket as
+transport ``msks ssh`` uses (the forward websocket as
 ProxyCommand), the daemon relays its bytes and learns nothing, no
 tap port joins the input chain, and stopping the holder removes
 the guest's listener with it. A client with no
@@ -29,6 +29,13 @@ the guest's listener with it. A client with no
 command's presence is the enablement — and the guest's connection
 refusal covers both that and a gone holder alike (the skill's own
 remedy line carries the pair).
+
+The guest learns one thing about the pipe (#1197): its port. One
+short ssh exec, the forward child's transport with a command in
+place of the forward, writes the port to :data:`PORT_FILE` in the
+guest, where the guest's own tooling (the pi screenshot extension)
+reads it. The default is the only thing the guest could assume
+before, and ``screenshot_port`` breaks that assumption.
 """
 
 from __future__ import annotations
@@ -73,6 +80,19 @@ BIND_REFUSED = "remote port forwarding failed"
 #: The module the holder spawns per connection — the helper that
 #: answers the one exchange.
 HELPER_MODULE = "msks.client.screenshotserv"
+
+#: The guest-side file the holder writes its port to (#1197): the
+#: guest's tooling reads it instead of assuming the default. Under
+#: /tmp, world-readable: every guest account's agent reaches the
+#: one pipe the workspace serves. A stale file is harmless — with
+#: no holder the port is refused either way, and the next hold
+#: rewrites it.
+PORT_FILE = "/tmp/msks-screenshot-port"
+
+#: Seconds the one-shot exec that writes the port file may take:
+#: ssh through the forward websocket and one shell command. A child
+#: past it is terminated and the write retried.
+PORT_FILE_TIMEOUT_S = 30.0
 
 
 def pipe_port(environ=None) -> int:
@@ -168,11 +188,48 @@ def reverse_argv(
     ]
 
 
+def port_file_argv(
+    workspace_id: str,
+    agent: str,
+    identity: str,
+    user: str,
+    known_hosts: str,
+    port: int,
+) -> list[str]:
+    """The one-shot exec that writes :data:`PORT_FILE` in the
+    guest (#1197): the forward child's transport, host-key, and
+    identity options with a command in place of ``-N`` and the
+    forward. ``BatchMode`` keeps a holder that serves unattended
+    from parking on a prompt it cannot answer.
+
+    The login shell writes a fresh file and moves it over the
+    path: the move is one rename, so a reader sees the whole port
+    or the old file, never a half-written line, and a file another
+    guest account planted at the path (a symlink among the
+    sticky-dir tricks) is replaced, not followed. The file lands
+    world-readable: the exec runs as the workspace's login user,
+    and every guest account's agent reads it."""
+    return [
+        SSH,
+        "-o",
+        "BatchMode=yes",
+        *session_options(workspace_id, agent, identity, known_hosts),
+        "-l",
+        user,
+        workspace_id,
+        f"f=$(mktemp {PORT_FILE}.XXXXXX) && printf '%s' {port} > \"$f\" "
+        f'&& chmod 644 "$f" '
+        f'&& {{ mv -fT "$f" {PORT_FILE} '
+        f'|| {{ r=$?; rm -f "$f"; exit $r; }}; }}',
+    ]
+
+
 class ScreenshotPipe:
     """One holder's pipe: the unix listener, the reverse-forward
-    child, and the threads that serve them — two threads while
-    idle (the supervisor and the accept loop) and one short-lived
-    waiter per connection.
+    child, the port-file exec, and the threads that serve them —
+    two threads while idle (the supervisor and the accept loop),
+    one short-lived port-file writer until the guest learns the
+    port, and one short-lived waiter per connection.
 
     The ``ssh_runner`` and ``helper_runner`` seams exist for the
     tests; both default to :class:`subprocess.Popen`."""
@@ -200,6 +257,8 @@ class ScreenshotPipe:
         self.reported = False
         self.listener: socket.socket | None = None
         self.ssh: subprocess.Popen | None = None
+        self.port_child: subprocess.Popen | None = None
+        self.port_reported = False
         self.children: set[subprocess.Popen] = set()
         self.lock = threading.Lock()
         self.threads: list[threading.Thread] = []
@@ -229,6 +288,11 @@ class ScreenshotPipe:
                 name="msks-screenshot-accept",
                 daemon=True,
             ),
+            threading.Thread(
+                target=self.write_port_file,
+                name="msks-screenshot-port",
+                daemon=True,
+            ),
         )
         for worker in workers:
             self.threads.append(worker)
@@ -236,26 +300,30 @@ class ScreenshotPipe:
 
     def stop(self) -> None:
         """End the pipe: the listener closes (the accept loop
-        leaves), the forward child terminates (the guest's
-        listener goes with it, and every helper's connection
-        closes under it), a helper mid-capture is terminated too
-        (its own handler takes the capture command with it), and
-        the socket path unlinks."""
+        leaves), every child the pipe spawned terminates — the
+        forward child (the guest's listener goes with it, and every
+        helper's connection closes under it), a port-file exec in
+        flight, and a helper mid-capture (its own handler takes the
+        capture command with it) — and the socket path unlinks."""
         self.stopping.set()
         if self.listener is not None:
             with suppress(OSError):
                 self.listener.close()
-        if self.ssh is not None:
-            with suppress(OSError):
-                self.ssh.terminate()
-        with self.lock:
-            children = list(self.children)
-        for child in children:
-            with suppress(OSError):
-                child.terminate()
+        self.terminate_children()
         for thread in self.threads:
             thread.join(timeout=RETRY_S)
         self.target.unlink(missing_ok=True)
+
+    def terminate_children(self) -> None:
+        """SIGTERM to the forward child, the port-file exec, and
+        every helper mid-capture: each takes its own side of the
+        pipe down with it. A child already gone is not an error."""
+        with self.lock:
+            helpers = list(self.children)
+        for child in (self.ssh, self.port_child, *helpers):
+            if child is not None:
+                with suppress(OSError):
+                    child.terminate()
 
     def supervise(self) -> None:
         """Keep one forward child alive until the pipe stops: a
@@ -345,6 +413,103 @@ class ScreenshotPipe:
                         file=sys.stderr,
                     )
         return refused
+
+    def write_port_file(self) -> None:
+        """Tell the guest the port (#1197): one ssh exec, retried
+        at the fast pace until it lands — the guest's sshd can
+        come up after the pipe starts, the same race the
+        supervisor waits out for the forward child. The first
+        failure says why on the holder's stderr and the rest stay
+        quiet.
+
+        The stop path is checked twice: a stop that lands while
+        the exec spawns (after the loop's check, before the child
+        is recorded) takes the fresh child here, and a stop that
+        lands while it runs ends the writer without a failure
+        line (:meth:`wait_port_child`)."""
+        while not self.stopping.is_set():
+            child = self.start_port_child()
+            if child is None:
+                continue
+            if self.stopping.is_set():
+                self.end_port_child(child)
+                return
+            if self.wait_port_child(child):
+                return
+
+    def wait_port_child(self, child) -> bool:
+        """One exec's outcome: True when the writer is done (the
+        file landed, or the stop path took the exec), False when
+        the write is retried. A child past
+        :data:`PORT_FILE_TIMEOUT_S` is terminated and counted a
+        failure; the exec's own ssh diagnostics reach the holder's
+        stderr the way the forward child's do. A stop that landed
+        while the exec ran is the writer's end, not a failure to
+        report: the SIGTERM death is the stop."""
+        try:
+            code = child.wait(timeout=PORT_FILE_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            with suppress(OSError):
+                child.terminate()
+            self.watch_stderr(child)
+            self.port_file_failed(
+                f"ssh did not finish within {PORT_FILE_TIMEOUT_S:.0f}s"
+            )
+            return False
+        self.watch_stderr(child)
+        self.port_child = None
+        if self.stopping.is_set() or code == 0:
+            return True
+        self.port_file_failed(f"ssh exited {code}")
+        return False
+
+    def end_port_child(self, child) -> None:
+        """The stop path's view of the exec in flight: SIGTERM, and
+        the record cleared."""
+        with suppress(OSError):
+            child.terminate()
+        self.port_child = None
+
+    def start_port_child(self):
+        """Spawn the port-file exec, or None when it cannot start
+        (a missing binary — the named line says so, and the retry
+        paces the next attempt)."""
+        argv = port_file_argv(
+            self.workspace_id,
+            self.agent,
+            self.identity,
+            self.user,
+            self.known_hosts,
+            self.port,
+        )
+        try:
+            child = self.ssh_runner(
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                env=dict(os.environ),
+            )
+        except OSError as exc:
+            self.port_file_failed(f"ssh did not start ({exc})")
+            return None
+        self.port_child = child
+        return child
+
+    def port_file_failed(self, reason: str) -> None:
+        """One failed port-file write: the reason on the holder's
+        stderr once, then the fast retry pace. A stop that landed
+        meanwhile prints nothing and wakes at once."""
+        if self.stopping.is_set():
+            return
+        if not self.port_reported:
+            self.port_reported = True
+            print(
+                f"msks: the screenshot pipe's port file did not reach "
+                f"the guest ({reason}); retrying",
+                file=sys.stderr,
+            )
+        self.stopping.wait(RETRY_S)
 
     def accept_loop(self, listener: socket.socket) -> None:
         """Serve connections until the pipe stops: each accepted

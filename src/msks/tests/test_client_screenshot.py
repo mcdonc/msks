@@ -532,21 +532,25 @@ def test_reverse_argv_shapes_the_forward_child() -> None:
 
 
 class FakeProc:
-    """The subprocess stand-in for the pipe's two children: a
-    readable stderr script, a wait the test controls, and a
-    terminate the stop path reaches."""
+    """The subprocess stand-in for the pipe's children: a
+    readable stderr script, a wait the test controls (with the
+    exit code the test picks), and a terminate the stop path
+    reaches."""
 
-    def __init__(self, stderr: bytes | None = b"", on_wait=None) -> None:
+    def __init__(
+        self, stderr: bytes | None = b"", on_wait=None, code: int = 0
+    ) -> None:
         self.stderr = io.BytesIO(stderr) if stderr is not None else None
         self.returncode = None
         self.terminated = False
         self.on_wait = on_wait
+        self.code = code
 
-    def wait(self) -> int:
+    def wait(self, timeout=None) -> int:
         if self.on_wait is not None:
             self.on_wait()
-        self.returncode = 0
-        return 0
+        self.returncode = self.code
+        return self.code
 
     def terminate(self) -> None:
         self.terminated = True
@@ -631,6 +635,173 @@ def test_reap_waits_and_discards_the_child() -> None:
     pipe.reap(child)
     assert child.returncode == 0
     assert child not in pipe.children
+
+
+# --- the port file (#1197) ---
+
+
+def test_port_file_argv_shapes_the_exec() -> None:
+    """The exec is the forward child's argv with a command in
+    place of `-N` and the forward: BatchMode, the same transport
+    and identity options, the login user, and the shell line that
+    writes the port and makes the file world-readable."""
+    argv = screenshot.port_file_argv(
+        "ws1", "/agent.sock", "/identity.pub", "dev", "/kh", 8663
+    )
+    assert argv[0] == "ssh"
+    assert "-N" not in argv
+    assert "-R" not in argv
+    assert "BatchMode=yes" in argv
+    assert argv[argv.index("-l") + 1] == "dev"
+    assert "UserKnownHostsFile=/kh" in argv
+    assert "IdentityAgent=/agent.sock" in argv
+    assert argv[-2] == "ws1"
+    assert argv[-1] == (
+        f"f=$(mktemp {screenshot.PORT_FILE}.XXXXXX) "
+        f"&& printf '%s' 8663 > \"$f\" "
+        f'&& chmod 644 "$f" '
+        f'&& {{ mv -fT "$f" {screenshot.PORT_FILE} '
+        f'|| {{ r=$?; rm -f "$f"; exit $r; }}; }}'
+    )
+
+
+def test_the_port_file_writer_runs_the_exec_once(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A landed exec ends the writer: one ssh_runner call with the
+    exec's argv, no child left behind, and a quiet stderr."""
+    pipe = screenshot.ScreenshotPipe("ws1", "/agent", "/ident", "dev", "/kh")
+    calls = []
+
+    def runner(argv, **kw):
+        calls.append(argv)
+        return FakeProc(stderr=b"")
+
+    pipe.ssh_runner = runner
+    pipe.write_port_file()
+    assert calls == [
+        screenshot.port_file_argv(
+            "ws1", "/agent", "/ident", "dev", "/kh", 8662
+        )
+    ]
+    assert pipe.port_child is None
+    assert capsys.readouterr().err == ""
+
+
+def test_the_port_file_writer_retries_a_failed_exec(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A nonzero exit (the guest's sshd not up yet) is one named
+    line — the exec's own ssh diagnostic relayed beside it — and
+    the fast pace; a second failure stays quiet, and the landed
+    retry ends the writer."""
+    monkeypatch.setattr(screenshot, "RETRY_S", 0.01)
+    pipe = screenshot.ScreenshotPipe("ws1", "/agent", "/ident", "dev", "/kh")
+    denied = FakeProc(
+        stderr=b"ssh: Permission denied (publickey).\n", code=255
+    )
+    denied_again = FakeProc(stderr=b"", code=255)
+    landed = FakeProc(stderr=b"")
+    children = [denied, denied_again, landed]
+    pipe.ssh_runner = lambda argv, **kw: children.pop(0)
+    pipe.write_port_file()
+    assert children == []
+    err = capsys.readouterr().err
+    assert "screenshot pipe ssh: ssh: Permission denied (publickey)." in err
+    assert (
+        "port file did not reach the guest (ssh exited 255); retrying" in err
+    )
+    assert err.count("port file did not reach") == 1
+
+
+def test_the_port_file_writer_terminates_a_hung_exec(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An exec past the timeout is terminated, its failure named,
+    and the write retried."""
+    monkeypatch.setattr(screenshot, "RETRY_S", 0.01)
+
+    class Hung(FakeProc):
+        def wait(self, timeout=None) -> int:
+            if not self.terminated:
+                raise subprocess.TimeoutExpired("ssh", timeout)
+            return super().wait()
+
+    hung = Hung(stderr=b"")
+    landed = FakeProc(stderr=b"")
+    children = [hung, landed]
+    pipe = screenshot.ScreenshotPipe("ws1", "/agent", "/ident", "dev", "/kh")
+    pipe.ssh_runner = lambda argv, **kw: children.pop(0)
+    pipe.write_port_file()
+    assert hung.terminated is True
+    assert "did not finish within" in capsys.readouterr().err
+
+
+def test_the_port_file_writer_names_an_ssh_that_cannot_start(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A missing ssh is the named line and the retry pace; the
+    stop flag ends the writer between attempts, and the second
+    failure that lands after it prints nothing."""
+    monkeypatch.setattr(screenshot, "RETRY_S", 0.01)
+    pipe = screenshot.ScreenshotPipe("ws1", "/agent", "/ident", "dev", "/kh")
+    calls = []
+
+    def runner(argv, **kw):
+        calls.append(argv)
+        if len(calls) >= 2:
+            pipe.stopping.set()
+        raise OSError("no ssh on PATH")
+
+    pipe.ssh_runner = runner
+    pipe.write_port_file()
+    assert len(calls) == 2
+    err = capsys.readouterr().err
+    assert "ssh did not start (no ssh on PATH)" in err
+    assert err.count("did not reach the guest") == 1
+
+
+def test_a_stop_during_the_spawn_takes_the_fresh_exec(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A stop that lands while the exec spawns — after the loop's
+    check, before the child is recorded — is caught by the second
+    check: the fresh child is terminated, nothing is reported."""
+    pipe = screenshot.ScreenshotPipe("ws1", "/agent", "/ident", "dev", "/kh")
+    child = FakeProc(stderr=b"")
+
+    def runner(argv, **kw):
+        pipe.stopping.set()
+        return child
+
+    pipe.ssh_runner = runner
+    pipe.write_port_file()
+    assert child.terminated is True
+    assert pipe.port_child is None
+    assert capsys.readouterr().err == ""
+
+
+def test_a_stop_during_the_exec_ends_the_writer_quietly(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A stop that lands while the exec runs ends it with SIGTERM
+    (wait answers -15): the writer leaves without a failure line,
+    since the death is the stop and not a refusal to report."""
+    pipe = screenshot.ScreenshotPipe("ws1", "/agent", "/ident", "dev", "/kh")
+    child = FakeProc(stderr=b"", code=-15, on_wait=pipe.stopping.set)
+    pipe.ssh_runner = lambda argv, **kw: child
+    pipe.write_port_file()
+    assert pipe.port_child is None
+    assert capsys.readouterr().err == ""
+
+
+def test_stop_terminates_the_port_file_exec() -> None:
+    """The stop path takes an exec in flight with it."""
+    pipe = screenshot.ScreenshotPipe("ws1", "/agent", "/ident", "dev", "/kh")
+    exec_child = FakeProc(stderr=b"")
+    pipe.port_child = exec_child
+    pipe.stop()
+    assert exec_child.terminated is True
 
 
 def dial(pipe: screenshot.ScreenshotPipe) -> socket.socket:
@@ -731,7 +902,12 @@ def test_stop_terminates_the_forward_and_the_helpers() -> None:
     pipe = screenshot.ScreenshotPipe("ws1", "/agent", "/ident", "dev", "/kh")
     forward = FakeProc(stderr=b"")
     helper = Held()
-    pipe.ssh_runner = lambda argv, **kw: forward
+    # The forward child is the held FakeProc the assertion reads;
+    # the port-file exec gets a fresh one per attempt, each with
+    # its own stderr (one stream cannot serve two readers).
+    pipe.ssh_runner = lambda argv, **kw: (
+        forward if "-N" in argv else FakeProc(stderr=b"")
+    )
 
     def held_runner(argv, stdin, stdout, stderr, env):
         helper.held = os.dup(stdin.fileno())

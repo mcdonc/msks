@@ -13,6 +13,13 @@ The failure paths ride stubs through the same wire: a selector
 the helper refuses (``400``), a command that exits nonzero
 (``500`` with its stderr), and no holder at all (the guest's
 refused connection, before the first holder and after the last).
+
+The guest's own tooling takes part too (#1197): the pi screenshot
+extension's capture module runs with plain node in the guest
+against the same stub, so the probe that proves the bytes crossed
+the boundary also proves the tool reads them, saves the file, and
+carries the pipe's failure text; and the port file the holder
+writes is read back with the configured port.
 """
 
 import asyncio
@@ -60,6 +67,13 @@ from test_smoke import (
 #: ``screenshot_port`` override reaches the guest.
 PIPE_PORT = 8662
 PIPE_PORT_OVERRIDE = 8663
+
+#: The screenshot extension's capture module in root's copy of the
+#: extension (#1197): plain node runs it, no pi involved.
+CAPTURE_TS = "/root/.pi/agent/extensions/msks-screenshot/capture.ts"
+
+#: The file the holder writes the configured port to (#1197).
+PORT_FILE = "/tmp/msks-screenshot-port"
 
 
 @needs_egress
@@ -294,6 +308,40 @@ async def test_local_screenshot_pipe() -> None:
             f"forward logs:\n{forward_evidence()}"
         )
 
+    async def await_capture(
+        monitor: int,
+        want: str,
+        timeout_s: float = 60.0,
+    ) -> str:
+        """Run the extension's capture module in the guest until its
+        one line starts with ``want`` or the deadline passes; the
+        last output is the failure evidence (node's type-stripping
+        warning is on stderr and stays out of it)."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        last = ""
+        while loop.time() < deadline:
+            run = await run_ssh(
+                forward_port, f"node {CAPTURE_TS} --monitor={monitor}"
+            )
+            last = f"{run.stdout.strip()}\n{run.stderr.strip()[-400:]}"
+            lines = run.stdout.strip().splitlines()
+            if lines and lines[0].startswith(want):
+                return lines[0]
+            await asyncio.sleep(2.0)
+        raise AssertionError(
+            f"the guest's capture module never answered {want!r} "
+            f"within {timeout_s}s; last run:\n{last}\n"
+            f"holder logs:\n{holder_evidence()}"
+        )
+
+    async def read_port_file() -> str:
+        run = await run_ssh(forward_port, f"cat {PORT_FILE}")
+        assert run.returncode == 0, (
+            f"{run.stdout}\n{run.stderr}\n{holder_evidence()}"
+        )
+        return run.stdout.strip()
+
     try:
         api_server = uvicorn.Server(
             uvicorn.Config(
@@ -410,9 +458,13 @@ async def test_local_screenshot_pipe() -> None:
         )
 
         # No holder yet: the guest's port is refused, the same
-        # refusal an unconfigured client leaves.
+        # refusal an unconfigured client leaves — and the guest's
+        # own tooling reports it with both remedies (#1197).
         refused = await await_probe(PIPE_PORT, "monitor=0", "FAIL", 30.0)
         assert "URLError" in refused, refused
+        unheld = await await_capture(0, "FAIL refused")
+        assert "msks screenshot hold" in unheld, unheld
+        assert "screenshot_command" in unheld, unheld
 
         # The holder with the stub command: the pipe comes up, and
         # the guest reads the stub's bytes — the workspace name and
@@ -420,6 +472,24 @@ async def test_local_screenshot_pipe() -> None:
         start_holder(stub, PIPE_PORT)
         ok = await await_probe(PIPE_PORT, "monitor=1", "OK")
         assert f"OK PNG-{wid}-M1" in ok, ok
+
+        # The holder told the guest the port (#1197), and the
+        # extension's capture module reads the stub's bytes through
+        # it: an unknown body is taken as PNG, and the saved file's
+        # path travels with the mime and the byte count.
+        deadline = asyncio.get_running_loop().time() + 60
+        while asyncio.get_running_loop().time() < deadline:
+            if await read_port_file() == str(PIPE_PORT):
+                break
+            await asyncio.sleep(1.0)
+        else:
+            raise AssertionError(
+                f"the port file never carried {PIPE_PORT}; "
+                f"holder logs:\n{holder_evidence()}"
+            )
+        captured = await await_capture(1, "OK image/png ")
+        assert f"OK image/png {len(f'PNG-{wid}-M1')} " in captured, captured
+        assert "/tmp/msks-screenshots/" in captured, captured
 
         # A selector the helper refuses: the 400 with the rule.
         bad = await await_probe(PIPE_PORT, "monitor=x", "HTTP 400")
@@ -433,6 +503,20 @@ async def test_local_screenshot_pipe() -> None:
         failed = await await_probe(PIPE_PORT_OVERRIDE, "monitor=0", "HTTP 500")
         assert "exited 3" in failed, failed
         assert "stub capture failure" in failed, failed
+        # The port file follows the override, and the capture module
+        # carries the 500's body — the stub's stderr — as its text.
+        deadline = asyncio.get_running_loop().time() + 60
+        while asyncio.get_running_loop().time() < deadline:
+            if await read_port_file() == str(PIPE_PORT_OVERRIDE):
+                break
+            await asyncio.sleep(1.0)
+        else:
+            raise AssertionError(
+                f"the port file never carried {PIPE_PORT_OVERRIDE}; "
+                f"holder logs:\n{holder_evidence()}"
+            )
+        failed_capture = await await_capture(0, "FAIL 500 ")
+        assert "stub capture failure" in failed_capture, failed_capture
 
         # The audit trail: one JSONL line per command run, under
         # the client state root the holder carried.

@@ -47,13 +47,16 @@ guest's port refused. Every start from a configured client brings the pipe
 up, beside the bridge holder the start already leaves for forward proxies.
 
 The guest-side port is a fixed default, `127.0.0.1:8662`, and
-`screenshot_port` overrides it (global-only, same rule). If something in
-the guest already holds the port, the holder reports the refusal on its
-stderr as a start-time failure and keeps retrying at a slow pace; the
-capture path answers only when the bind lands. The report reaches the
-terminal of a holder you run by hand (`msks screenshot hold`, `msks proxy
-hold`). A holder the start path left in the background writes it to no
-terminal. The guest's refused connection is the symptom you see.
+`screenshot_port` overrides it (global-only, same rule). The holder
+writes the configured port to `/tmp/msks-screenshot-port` in the
+guest, and [the guest's pi](#the-guests-pi) reads it from there. If
+something in the guest already holds the port, the holder reports the
+refusal on its stderr as a start-time failure. It keeps retrying at a
+slow pace, and the capture path answers only when the bind succeeds.
+The report reaches the terminal of a holder you run by hand
+(`msks screenshot hold`, `msks proxy hold`). A holder the start path
+left in the background writes it to no terminal. The guest's refused
+connection is the symptom you see.
 
 ## Holding the pipe on demand
 
@@ -114,7 +117,61 @@ The answers a request can fail with:
 
 A refused connection covers two causes because the guest cannot tell them
 apart: nothing is listening in both. The skill prints its remedy line and
-the operator picks the fix.
+the operator picks the fix. The guest's pi reaches this endpoint through
+its `screenshot` tool; see [The guest's pi](#the-guests-pi).
+
+## The guest's pi
+
+The guest images ship a pi extension beside the model-discovery one:
+`~/.pi/agent/extensions/msks-screenshot/`, copied into every account's
+home from the skeleton. It gives the agent in the workspace two ways to
+capture your screen through the pipe.
+
+### The `screenshot` tool
+
+The agent calls `screenshot` and receives the capture as an image in one
+tool call. The optional `monitor` parameter selects the screen, `0` by
+default. The full-resolution capture is saved first, in a directory this
+account alone reads, and the tool's text gives its path. pi downsamples
+an image before the model sees it. Small text on a 4K capture needs a
+`magick` crop and a second `read` of that file.
+
+### Who sees the capture
+
+The proxy's model list carries no modality data. The `llm-models.ts`
+extension therefore registers every proxy model with image input, and the
+active model receives the capture directly. A text-only upstream answers
+the image with an error. That error is the signal to pick a vision model.
+
+`/screenshot model` opens a picker over the model list. The choice is
+stored under the `msksScreenshotVisionModel` key in
+`~/.pi/agent/settings.json` and survives a restart. With a vision model
+picked and a different model active, the tool sends the capture to the
+vision model in one nested call and returns its description as text.
+The optional `prompt` parameter says what to look at. The active model
+sees the capture directly when no vision model is picked, or when the
+picked model is the active one.
+
+### The `/screenshot` command
+
+`/screenshot` captures monitor 0, and `/screenshot <monitor>` captures
+that screen. The capture, or the vision model's description, goes in
+front of the agent as a message and a turn starts on it. A failed
+capture shows the pipe's answer as a notice instead.
+
+### The port in the guest
+
+The holder writes the configured `screenshot_port` to
+`/tmp/msks-screenshot-port` when the pipe comes up, and the extension
+reads the file. The default `8662` answers when the file is absent. The
+holder writes a fresh file and moves it over the path in one rename. A
+reader sees the whole port or the previous file. A stale file is
+harmless while the ports agree: with no holder the port is refused
+either way, and the next hold by the same account rewrites the file.
+
+Two holders on one workspace with different `screenshot_port` values
+are a misconfiguration. The file carries the port of the hold that
+came last. The tool reaches that holder's pipe, not the other one.
 
 ## The capture command's contract
 

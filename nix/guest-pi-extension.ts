@@ -38,6 +38,11 @@
  * above; the awaited async factory, the quiet no-op, the
  * embed/rerank filter, and the placeholder metadata carry over
  * verbatim.
+ *
+ * Every model registers with image input (#1197): the proxy's
+ * /models carries no modality data, and a text-only declaration
+ * would make pi-ai drop an image for every model in the guest.
+ * The screenshot extension beside this file depends on it.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -133,7 +138,14 @@ export default async function (pi: ExtensionAPI) {
       id: m.id,
       name: m.id,
       reasoning: false,
-      input: ["text"] as ("text" | "image")[],
+      // Every proxy model takes images (#1197): the proxy's
+      // /models carries no modality data, so a text-only
+      // declaration here would make pi-ai replace an image with
+      // a placeholder for every model in the guest — the
+      // screenshot extension's capture included. A text-only
+      // upstream answers the image with an error, which is the
+      // signal to pick a vision model (/screenshot model).
+      input: ["text", "image"] as ("text" | "image")[],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 128000,
       maxTokens: 8192,

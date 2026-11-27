@@ -113,7 +113,7 @@ variables has a config-file equivalent.
 | `MSKSC_PUBKEY_FILE`        | `pubkey_file`        | Your key's public half, what a bare `msks create` plants instead of reading `identity_file`. The form for a key you keep encrypted: create reads no private half, ssh sessions sign through your agent when it holds the key, and the secrets unlock still needs `identity_file`; same naming rule, global-only                                                  | unset (`identity_file` answers)                           |
 | `MSKSC_IMAGE_MANIFEST_URL` | `image_manifest_url` | Where the TUI's Import image action (`i` on the workspace list) reads the published channel's manifest (a fork's or self-hoster's channel gives its own); the picker shows each row's ref, description, and size, and the pick POSTs the row's URL to the daemon's import endpoint                                                                               | this repository's latest release's `images.json`          |
 | `MSKSC_SCREENSHOT_COMMAND` | `screenshot_command` | The capture command the [screenshot pipe](screenshot.md) runs on this client per guest request; its presence enables the pipe, its stdout is the image the guest receives, and its argv is the config's alone (the requested monitor arrives as the `MSKS_SCREENSHOT_MONITOR` variable). String or list form; global-only, the same rule `identity_file` carries | unset (the pipe stays down)                               |
-| `MSKSC_SCREENSHOT_PORT`    | `screenshot_port`    | The loopback port the guest's sshd binds for the [screenshot pipe](screenshot.md), when a configured client holds one                                                                                                                                                                                                                                            | `8662`                                                    |
+| `MSKSC_SCREENSHOT_PORT`    | `screenshot_port`    | The loopback port the guest's sshd binds for the [screenshot pipe](screenshot.md), when a configured client holds one. The holder writes it to `/tmp/msks-screenshot-port` in the guest for the guest's `screenshot` tool                                                                                                                                        | `8662`                                                    |
 
 `MSKSC_CACHE_DIR` exists because the host-key cache is disposable: a swept
 cache costs one trust-on-first-use re-pin. Pointing it at a per-project,
@@ -1523,7 +1523,9 @@ The client-held screenshot pipe (#1194): a loopback port inside the
 guest that, through an ssh reverse forward held by the bridge holder,
 reaches the capture command this client runs. [The screenshot pipe
 chapter](screenshot.md) owns the concept, the recipes, and the guest's
-failure shapes; this section is the command reference.
+failure shapes; this section is the command reference. The holder also
+writes the configured port to `/tmp/msks-screenshot-port` in the guest
+(#1197), where the guest's pi `screenshot` tool reads it.
 
 ```bash
 msks screenshot hold my-workspace

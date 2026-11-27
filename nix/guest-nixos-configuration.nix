@@ -11,7 +11,7 @@
 #
 # The module must stay guest-evaluable: it references only nix/
 # files that ship beside it (./agent-toolchain.nix,
-# ./guest-pi-extension.ts and the shrinkwrap
+# ./guest-pi-extension.ts, ./guest-pi-screenshot/ and the shrinkwrap
 # pair the toolchain build reads) — every one of them from
 # nix/, none from src/ — the image bakes the whole import chain
 # into /etc/nixos.
@@ -42,6 +42,12 @@ let
   # The model-discovery extension (#266, #268): the shared source
   # file the tmpfiles rules below plant inside the guest.
   piExtension = ./guest-pi-extension.ts;
+
+  # The screenshot extension (#1197): a directory — the pi entry
+  # (index.ts), the capture module beside it that plain node runs,
+  # and the package.json marking them ES modules — the tmpfiles
+  # rules below plant the same way, one file per rule.
+  piScreenshot = ./guest-pi-screenshot;
 
   # The default user settings pi starts under (#616): the guest
   # keeps its transcripts free of the model's thinking blocks —
@@ -654,6 +660,16 @@ in
       "C /root/.pi/agent/extensions/llm-models.ts 0644 root root - ${piExtension}"
       "C /etc/skel/.pi/agent/settings.json 0644 root root - ${piSettings}"
       "C /root/.pi/agent/settings.json 0644 root root - ${piSettings}"
+      # The screenshot extension's directory (#1197): pi discovers
+      # index.ts and leaves the module beside it alone.
+      "d /etc/skel/.pi/agent/extensions/msks-screenshot 0755 root root -"
+      "d /root/.pi/agent/extensions/msks-screenshot 0755 root root -"
+      "C /etc/skel/.pi/agent/extensions/msks-screenshot/index.ts 0644 root root - ${piScreenshot}/index.ts"
+      "C /root/.pi/agent/extensions/msks-screenshot/index.ts 0644 root root - ${piScreenshot}/index.ts"
+      "C /etc/skel/.pi/agent/extensions/msks-screenshot/capture.ts 0644 root root - ${piScreenshot}/capture.ts"
+      "C /root/.pi/agent/extensions/msks-screenshot/capture.ts 0644 root root - ${piScreenshot}/capture.ts"
+      "C /etc/skel/.pi/agent/extensions/msks-screenshot/package.json 0644 root root - ${piScreenshot}/package.json"
+      "C /root/.pi/agent/extensions/msks-screenshot/package.json 0644 root root - ${piScreenshot}/package.json"
     ];
 
     # Every `env`-shebang in the toolchain (`env node` for pi,

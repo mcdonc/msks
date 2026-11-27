@@ -38,6 +38,7 @@ on:
       - devenv.lock
       - nix/guest.nix
       - nix/guest-pi-extension.ts
+      - nix/guest-pi-screenshot/**
       - nix/guest-pi-settings.json
       - nix/agent-toolchain.nix
       - nix/pi-shrinkwrap-patch.py
@@ -62,6 +63,7 @@ on:
       - devenv.lock
       - nix/guest.nix
       - nix/guest-pi-extension.ts
+      - nix/guest-pi-screenshot/**
       - nix/guest-pi-settings.json
       - nix/agent-toolchain.nix
       - nix/pi-shrinkwrap-patch.py
@@ -124,7 +126,7 @@ jobs:
           # the bare `nixos` flavor follows the host's uname. The
           # hashFiles call lives here, at step level, because a
           # workflow-level env evaluates before checkout.
-          key: smoke-nixos-guest-${{ runner.arch }}-${{ hashFiles('devenv.lock', 'devenv.nix', 'scripts/build-guest.sh', 'nix/guest.nix', 'nix/guest-nixos.nix', 'nix/guest-nixos-configuration.nix', 'nix/image-archive.nix', 'nix/agent-toolchain.nix', 'nix/guest-pi-extension.ts', 'nix/guest-pi-settings.json', 'nix/pi-shrinkwrap-patch.py', 'nix/pi-shrinkwrap-integrity.json') }}
+          key: smoke-nixos-guest-${{ runner.arch }}-${{ hashFiles('devenv.lock', 'devenv.nix', 'scripts/build-guest.sh', 'nix/guest.nix', 'nix/guest-nixos.nix', 'nix/guest-nixos-configuration.nix', 'nix/image-archive.nix', 'nix/agent-toolchain.nix', 'nix/guest-pi-extension.ts', 'nix/guest-pi-screenshot/**', 'nix/guest-pi-settings.json', 'nix/pi-shrinkwrap-patch.py', 'nix/pi-shrinkwrap-integrity.json') }}
 
       - name: Free runner disk for the guest build
         # The guest build peaks past 12 GB on / (the nix closure,
@@ -229,7 +231,7 @@ jobs:
           path: .devenv/state/guest-nixos
           # The same key the core job hashes — byte-identical, so
           # both jobs restore one guest build per input set.
-          key: smoke-nixos-guest-${{ runner.arch }}-${{ hashFiles('devenv.lock', 'devenv.nix', 'scripts/build-guest.sh', 'nix/guest.nix', 'nix/guest-nixos.nix', 'nix/guest-nixos-configuration.nix', 'nix/image-archive.nix', 'nix/agent-toolchain.nix', 'nix/guest-pi-extension.ts', 'nix/guest-pi-settings.json', 'nix/pi-shrinkwrap-patch.py', 'nix/pi-shrinkwrap-integrity.json') }}
+          key: smoke-nixos-guest-${{ runner.arch }}-${{ hashFiles('devenv.lock', 'devenv.nix', 'scripts/build-guest.sh', 'nix/guest.nix', 'nix/guest-nixos.nix', 'nix/guest-nixos-configuration.nix', 'nix/image-archive.nix', 'nix/agent-toolchain.nix', 'nix/guest-pi-extension.ts', 'nix/guest-pi-screenshot/**', 'nix/guest-pi-settings.json', 'nix/pi-shrinkwrap-patch.py', 'nix/pi-shrinkwrap-integrity.json') }}
 
       - name: Free runner disk for the guest build
         # The guest build peaks past 12 GB on / (the nix closure,

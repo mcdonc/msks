@@ -50,6 +50,7 @@ on:
       - nix/guest-fedora.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
+      - nix/guest-pi-screenshot/**
       - nix/guest-pi-settings.json
       - scripts/build-guest.sh
       - src/msks/msks/**
@@ -70,6 +71,7 @@ on:
       - nix/guest-fedora.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
+      - nix/guest-pi-screenshot/**
       - nix/guest-pi-settings.json
       - scripts/build-guest.sh
       - src/msks/msks/**
@@ -133,7 +135,7 @@ jobs:
           # the bare `fedora` flavor follows the host's uname. The
           # hashFiles call lives here, at step level, because a
           # workflow-level env evaluates before checkout.
-          key: smoke-fedora-guest-${{ runner.arch }}-${{ hashFiles('devenv.lock', 'devenv.nix', 'scripts/build-guest.sh', 'nix/guest.nix', 'nix/guest-fedora.nix', 'nix/image-archive.nix', 'nix/agent-toolchain.nix', 'nix/guest-pi-extension.ts', 'nix/guest-pi-settings.json', 'nix/pi-shrinkwrap-patch.py', 'nix/pi-shrinkwrap-integrity.json') }}
+          key: smoke-fedora-guest-${{ runner.arch }}-${{ hashFiles('devenv.lock', 'devenv.nix', 'scripts/build-guest.sh', 'nix/guest.nix', 'nix/guest-fedora.nix', 'nix/image-archive.nix', 'nix/agent-toolchain.nix', 'nix/guest-pi-extension.ts', 'nix/guest-pi-screenshot/**', 'nix/guest-pi-settings.json', 'nix/pi-shrinkwrap-patch.py', 'nix/pi-shrinkwrap-integrity.json') }}
 
       - name: Free runner disk for the guest build
         # The same reclaim the NixOS lane took (#723): the guest
