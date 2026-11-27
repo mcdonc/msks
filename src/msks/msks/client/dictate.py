@@ -287,6 +287,13 @@ class Detector:
     def said_something(self) -> bool:
         return self.voiced_total >= MIN_SPEECH
 
+    def capped(self) -> bool:
+        """Whether the last decision was the cap (#1214): the clip
+        ran to ``max_seconds``. The GUI ends a recording on the
+        operator's click alone and treats the cap as the safety
+        net, so it tells the two stops apart."""
+        return self.elapsed >= self.max_seconds
+
 
 def frames_from(raw: bytes) -> list:
     """Whole 30 ms frames out of a raw s16 byte stream (#1214):

@@ -9,10 +9,10 @@ tagged `vX.Y.Z`.
 ### Added
 
 - **Dictation in the GUI (#1214).** A small pill at the top-right
-  corner of every GUI window starts a recording, and a pause of about
-  one second ends it. The transcript goes to the clipboard and the
-  primary selection, with a tone at the start and at the end and a
-  desktop notification carrying the first line. A **Settings** tab
+  corner of every main GUI window is a toggle: one click starts a
+  recording, a second ends it. The transcript goes to the clipboard
+  and the primary selection, with a tone at the start and at the end
+  and a desktop notification carrying the first line. A **Settings** tab
   edits the model, the microphone, and the gate's numbers, and
   downloads the whisper.cpp model with a progress bar. The settings
   save to `~/.config/msks/gui.yaml`, a file the GUI owns beside the

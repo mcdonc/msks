@@ -1,10 +1,13 @@
 """The dictate pill (#1214): the small floating control overlaid
-at the top-right corner of every top-level window the GUI
-displays — the main window on every tab, each torn-off shell
-window (#1203), and every dialog — one widget, identical
-everywhere, in no layout. :class:`PillHost` installs one on each
-window the application polishes; the pill anchors itself on its
-window's resize and reads the one :class:`.dictation.Dictation`
+at the top-right corner of every window the GUI displays — the
+main window on every tab, and each torn-off shell window (#1203)
+— one widget, identical everywhere, in no layout. Dialogs carry
+none: the create and edit forms, the progress boxes, the pickers,
+and the message boxes are short-lived and modal, and a recording
+toggle on a form that is itself answering a question reads as a
+control of that form. :class:`PillHost` installs one on each
+main window the application polishes; the pill anchors itself on
+its window's resize and reads the one :class:`.dictation.Dictation`
 every pill shares.
 
 The states and their faces (#1214):
@@ -135,8 +138,9 @@ class DictationPill(QtWidgets.QFrame):
     """The floating pill on one window (#1214): a rounded panel
     in the palette's base color, the glyph, the text, and the
     discard button. A click on the panel toggles the recording
-    through the shared controller; ``x`` discards. The pill takes
-    no focus and joins no tab chain (#1214's scope: mouse only)."""
+    through the shared controller: once to start, once to finish.
+    ``x`` discards. The pill takes no focus and joins no tab chain
+    (mouse only)."""
 
     def __init__(self, dictation, window: QtWidgets.QWidget) -> None:
         super().__init__(window)
@@ -265,8 +269,8 @@ class DictationPill(QtWidgets.QFrame):
         if state == NOMODEL:
             return "Download the speech model on the settings page"
         return {
-            IDLE: "Dictate: click to start",
-            RECORDING: "Click to finish",
+            IDLE: "Dictate: click to start recording",
+            RECORDING: "Click to finish recording",
             TRANSCRIBING: "Click to start again",
         }.get(state, "")
 
@@ -302,13 +306,14 @@ class DictationPill(QtWidgets.QFrame):
 
 
 class PillHost(QtCore.QObject):
-    """One pill on every top-level window the application shows
+    """One pill on every main window the application shows
     (#1214): an application event filter that equips each
-    ``QMainWindow`` and ``QDialog`` when it is polished or shown
-    — the main window, a torn-off shell window, a message box, a
-    picker. Popups and tooltips are neither, and stay bare. The
-    host comes off the application at the controller's shutdown
-    (:meth:`remove`)."""
+    ``QMainWindow`` when it is polished or shown — the main window
+    itself, and a shell window torn off the strip. Dialogs, popups,
+    and tooltips stay bare: a dialog is a question or a form in
+    flight, and the recording toggle belongs to the window the
+    operator works in. The host comes off the application at the
+    controller's shutdown (:meth:`remove`)."""
 
     def __init__(self, dictation, app) -> None:
         super().__init__(dictation)
@@ -327,9 +332,10 @@ class PillHost(QtCore.QObject):
     @staticmethod
     def equips(watched) -> bool:
         """Whether a window takes a pill (#1214): a top-level
-        window of the two kinds, carrying none yet."""
+        ``QMainWindow`` carrying none yet. A dialog never is one,
+        whatever its parent."""
         return (
-            isinstance(watched, (QtWidgets.QDialog, QtWidgets.QMainWindow))
+            isinstance(watched, QtWidgets.QMainWindow)
             and watched.isWindow()
             and pill_in(watched) is None
         )

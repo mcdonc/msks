@@ -593,3 +593,19 @@ def test_download_model_returns_to_the_loop_after_each_chunk(
     )
     assert path.stat().st_size == 2 * dictate.DOWNLOAD_CHUNK
     assert seen == [dictate.DOWNLOAD_CHUNK, 2 * dictate.DOWNLOAD_CHUNK]
+
+
+def test_capped_tells_the_cap_from_the_quiet_stop():
+    """``capped`` (#1214): the GUI ends a recording on the click
+    alone and takes the cap as its one safety net, so the gate
+    tells the two stops apart."""
+    det = build(max_seconds=1.0, silence=10.0)
+    decisions = [
+        det.feed(f, dictate.frame_db(f)) for f in [QUIET] * 10 + [LOUD] * 12
+    ]
+    assert decisions[-1] == "speaking" and det.capped() is False
+    decisions = feed_until_stop(det, [LOUD] * 40)
+    assert decisions[-1] == "stop" and det.capped() is True
+    quiet = build(timeout=0.3)
+    feed_until_stop(quiet, [QUIET] * 200)
+    assert quiet.state == "waiting" and quiet.capped() is False

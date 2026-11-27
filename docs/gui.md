@@ -527,12 +527,13 @@ recovery line.
 ![The dictate pill in a recording: the red mic, the timer, and the
 discard button at the window's top-right corner](screens/gui-dictate.png)
 
-A small pill sits at the top-right corner of every window the GUI
-shows: the main window on every tab, each torn-off shell window,
-and every dialog. It is the same control everywhere, and one
-recording runs behind all of them. Click it to start talking. Click
-it again to finish. A pause of about one second finishes the
-recording on its own, and so does the three-minute cap.
+A small pill sits at the top-right corner of every main window the
+GUI shows: the main window on every tab, and each torn-off shell
+window. It is the same control everywhere, and one recording runs
+behind all of them. Dialogs carry no pill. Click it to start
+talking. Click it again to finish. Nothing ends a recording on your
+behalf: a pause inside a sentence is not the end of one. A
+three-minute cap ends a clip that nobody stopped.
 
 The transcript goes to the clipboard and to the primary selection.
 You paste it where you want it. A tone plays when the recording
@@ -545,7 +546,7 @@ The pill changes with the recording:
 
 - Idle: a microphone glyph in the window's own text color.
 - Recording: the glyph in red, a timer (`● 0:12`), and a small
-  `x`. A click finishes. The `x` discards the clip.
+  `x`. A click finishes the recording. The `x` discards the clip.
 - Transcribing: an ellipsis in place of the timer. A click abandons
   the transcript and starts a new recording. The `x` discards it.
 - Done: `copied` for two seconds. Failed: the reason for four
@@ -553,14 +554,14 @@ The pill changes with the recording:
 - No model yet: a download glyph. A click opens the **Settings**
   tab.
 
-The recorder finds speech against the room's noise floor. The level
-that counts as speech sits 14 dB above the tracked floor (the 10th
-percentile of the last three seconds) and never below -60 dBFS. The
-first 0.3 seconds calibrate the floor, so start talking after the
-tone. A speakerphone's floor in a quiet room sits near -33 dBFS,
-and a fixed level would start a recording at once and never stop
-it. One second of quiet ends the clip, and up to three loud frames
-inside that second are tolerated, so a click does not hold it open.
+The recorder finds speech against the room's noise floor, and keeps
+the half second before the speech starts so the first word survives.
+The level that counts as speech sits 14 dB above the tracked floor
+(the 10th percentile of the last three seconds) and never below -60
+dBFS. The first 0.3 seconds calibrate the floor, so start talking
+after the tone. A speakerphone's floor in a quiet room sits near -33
+dBFS, and a fixed level would take the room itself for speech. A
+clip with no speech in it ends with no transcript and no tone.
 
 Capture runs on the host because a workspace guest has no audio
 device. `pw-record` captures 16 kHz mono, and `whisper-cli` (from
@@ -587,13 +588,15 @@ settings in effect now, and every field takes a change.
   types free. **Refresh** reads the list again.
 - **Speech floor** and **Speech margin**: the lowest level that can
   count as speech, and the dB above the tracked floor that counts.
-- **Silence that ends a clip**: the seconds of quiet that finish a
-  recording.
+- **Silence that ends a clip**: the seconds of quiet the speech
+  gate treats as a pause. The pill's click ends the recording; this
+  setting shapes how the gate reads the room while it runs.
 - **Vocabulary prompt**: the words whisper-cli biases its spelling
   toward, such as `msks, devenv, NixOS, pi`.
 
 **Apply** saves the fields into `~/.config/msks/gui.yaml` and the
-next recording takes them. **Revert** reads the layers again and
+next recording takes them. A recording ends at the pill's second
+click, whatever the settings. **Revert** reads the layers again and
 reseeds the fields. A key that an `MSKSC_DICTATE_*` variable pins
 shows the variable's value in a read-only field, with the variable
 named under the form. A value that refused anywhere shows its

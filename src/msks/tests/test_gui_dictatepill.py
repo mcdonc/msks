@@ -154,11 +154,13 @@ def spin(qt, ms: int = 50) -> None:
 # --- the pill and the host -----------------------------------------------
 
 
-def test_the_host_equips_every_top_level_window(qt):
-    """One pill on the main window, on a torn-off shell window,
-    and on a dialog (#1214) — identical widgets, one controller
-    behind them, the main window's at the top-right corner, and
-    none on a popup."""
+def test_the_host_equips_the_main_windows_and_no_dialog(qt):
+    """One pill on the main window and on a torn-off shell window
+    (#1214) — identical widgets, one controller behind them, the
+    main window's at the top-right corner — and none on a dialog,
+    a message box, a progress box, or a popup: a dialog is a
+    question or a form in flight, and the recording toggle belongs
+    to the window the operator works in."""
     from msks.client.gui.dictatepill import (
         MARGIN,
         PILL_NAME,
@@ -181,26 +183,29 @@ def test_the_host_equips_every_top_level_window(qt):
     assert pill.dictation is held
     assert pill.x() + pill.width() == 600 - MARGIN
     assert pill.y() == MARGIN
-    # The shell window (#1203) and a dialog each take one too —
-    # the dialog's is the dialog's own, not the main window's.
+    # A torn-off shell window (#1203) takes one too.
     torn = ShellWindow(None, "ws")
     torn.resize(500, 300)
     torn.show()
-    dialog = QtWidgets.QDialog(window)
-    dialog.show()
     spin(qt)
     assert pill_in(torn).dictation is held
-    assert pill_in(dialog).dictation is held
-    assert pill_in(window) is pill
     # Polishing or showing again equips nothing twice.
     spin(qt)
     assert pill_in(window) is pill
-    assert len(window.findChildren(QtWidgets.QFrame, PILL_NAME)) == 2
-    # A popup carries none: not a dialog and not a main window.
+    assert len(window.findChildren(QtWidgets.QFrame, PILL_NAME)) == 1
+    # A dialog, a message box, a progress box, and a popup carry
+    # none, whatever their parent.
+    dialog = QtWidgets.QDialog(window)
+    dialog.show()
+    box = QtWidgets.QMessageBox(window)
+    progress = QtWidgets.QProgressDialog("Importing…", None, 0, 100, window)
+    progress.show()
     popup = QtWidgets.QFrame(None, qt.QtCore.Qt.WindowType.Popup)
     popup.show()
     spin(qt)
-    assert pill_in(popup) is None
+    assert pill_in(dialog) is None and pill_in(box) is None
+    assert pill_in(progress) is None and pill_in(popup) is None
+    assert len(window.findChildren(QtWidgets.QFrame, PILL_NAME)) == 1
     host.remove()
 
 
@@ -239,14 +244,16 @@ def test_the_pill_wears_each_state(qt):
 
     idle = face()
     assert idle.glyph == "mic" and idle.kind is None and idle.text == ""
-    assert idle.close is True and idle.tip == "Dictate: click to start"
+    assert (
+        idle.close is True and idle.tip == "Dictate: click to start recording"
+    )
     held.show(RECORDING)
     held.elapsed = 72.0
     held.tocked()
     recording = face()
     assert recording.text == "● 1:12"
     assert recording.kind is ERROR and recording.close is False
-    assert recording.tip == "Click to finish"
+    assert recording.tip == "Click to finish recording"
     held.show(TRANSCRIBING)
     transcribing = face()
     assert transcribing.text == "…" and transcribing.kind is WARN
@@ -273,6 +280,7 @@ def test_a_click_on_any_pill_toggles_the_one_recording(qt):
     none — and the discard button discards. Every pill reads the
     one controller's state."""
     from msks.client.gui.dictatepill import PillHost, pill_in
+    from msks.client.gui.shellwindow import ShellWindow
     from PySide6 import QtTest, QtWidgets
 
     Left = qt.QtCore.Qt.MouseButton.LeftButton
@@ -280,10 +288,10 @@ def test_a_click_on_any_pill_toggles_the_one_recording(qt):
     host = PillHost(held, qt.app)
     window = QtWidgets.QMainWindow()
     window.show()
-    dialog = QtWidgets.QDialog(window)
-    dialog.show()
+    torn = ShellWindow(None, "ws")
+    torn.show()
     spin(qt)
-    first, second = pill_in(window), pill_in(dialog)
+    first, second = pill_in(window), pill_in(torn)
     # The capture fails to start at once under the stand-in
     # command, so a click runs the whole arc: recording, then
     # failed with the binary named — on both pills alike.

@@ -195,6 +195,29 @@ def states(controller) -> list:
     return seen
 
 
+def record_speech(qt, controller, fake, quiet_tail: bool = False) -> None:
+    """Start a recording and let speech arrive, then finish it
+    with the toggle's second click (#1214): the clip holds the
+    speech and, with ``quiet_tail``, the quiet after it. The
+    transcription starts and its answer waits on the fake's
+    gate."""
+    controller.toggle()
+    spin(
+        qt,
+        3000,
+        until=lambda: (
+            controller.detector is not None
+            and controller.detector.state == "speaking"
+            and controller.detector.elapsed >= 1.0
+        ),
+    )
+    if quiet_tail:
+        spin(qt, 1200)
+    controller.toggle()
+    spin(qt, 3000, until=lambda: fake.started.is_set())
+    assert controller.state == "transcribing"
+
+
 # --- the idle and no-model states ----------------------------------------
 
 
@@ -228,25 +251,29 @@ def test_a_missing_model_wears_the_download_glyph_and_opens_settings(qt):
     assert controller.state == IDLE
 
 
-def test_the_start_tone_then_the_quiet_stop_copies_the_transcript(qt):
-    """The one-shot (#1214, the spike's interaction): a click
-    starts the capture with the start tone, the gate's quiet stop
-    ends it, whisper-cli runs once over the clip, the transcript
-    goes to the clipboard, the done tone plays, the notification
-    carries the transcript, and ``copied`` stands two seconds
-    before idle."""
-    controller, fake = dictation(qt)
+def test_the_toggle_records_until_the_second_click(qt):
+    """The toggle (#1214): a click starts the capture with the
+    start tone, and the gate's quiet stop ends nothing — the clip
+    that goes quiet on its own keeps recording until the second
+    click. Then whisper-cli runs once over the clip, the
+    transcript goes to the clipboard, the done tone plays, the
+    notification carries the transcript, and ``copied`` stands
+    two seconds before idle."""
+    controller, fake = dictation(qt, "q10 l40 q*")
     seen = states(controller)
     controller.toggle()
     assert controller.state == "recording"
     assert fake.tones == [dictate.START_TONE_HZ]
-    # The stream runs until the gate's stop (about 1.5 s of
-    # frames), then the worker transcribes.
-    spin(qt, 6000, until=lambda: fake.started.is_set())
-    assert fake.started.is_set()
-    assert controller.state == "transcribing"
-    # One move into recording, one into transcribing: the quiet
-    # stop ended it on its own, no second click.
+    # The stream runs well past the quiet that would have ended
+    # the spike's clip (1.5 s of frames, then silence for
+    # another 1.5 s): the recording stands.
+    spin(qt, 3000)
+    assert controller.state == "recording"
+    assert seen == ["recording"]
+    assert fake.transcribed == []
+    # The second click finishes it.
+    controller.toggle()
+    spin(qt, 3000, until=lambda: fake.started.is_set())
     assert seen == ["recording", "transcribing"]
     fake.gate.set()
     spin(qt, 2000, until=lambda: controller.state == "done")
@@ -254,7 +281,6 @@ def test_the_start_tone_then_the_quiet_stop_copies_the_transcript(qt):
     assert fake.tones == [dictate.START_TONE_HZ, dictate.DONE_TONE_HZ]
     assert fake.notes == ["Hello world."]
     assert controller.state == "done" and controller.note == "copied"
-    # The clip was a real WAV with the loud frames in it.
     assert not fake.transcribed[0].exists()  # swept after the run
     spin(qt, 2600, until=lambda: controller.state == "idle")
     assert controller.state == "idle"
@@ -282,15 +308,10 @@ def test_the_second_click_finishes_the_recording(qt):
 
 
 def test_the_cap_ends_a_recording(qt):
-    """The cap (#1214): a clip that never goes quiet ends at the
-    gate's ``max_seconds`` with its speech transcribed."""
-    controller, fake = dictation(qt, "q10 l*")
-    controller.settings.gate.__dict__  # frozen; the detector takes
-    # the leaf's own cap, 180 s — too long for the suite. The gate
-    # under test reads the cap through the detector's field, so
-    # the test drives the detector directly: the cap's own check
-    # is test_client_dictate's. Here: a stream that stops on its
-    # own after the loud stretch is the cap's shape.
+    """The cap (#1214): a clip that runs past the gate's
+    ``max_seconds`` ends on its own — the one stop the operator
+    does not make — with its speech transcribed. The leaf's own
+    cap is 180 s; the detector under test takes a shorter one."""
     controller, fake = dictation(qt, "q10 l*")
     controller.toggle()
     spin(
@@ -301,8 +322,6 @@ def test_the_cap_ends_a_recording(qt):
             and controller.detector.elapsed >= 1.0
         ),
     )
-    # The quiet stop at the cap is the detector's branch: feed
-    # the cap directly to pin the controller's path from it.
     controller.detector.max_seconds = controller.detector.elapsed
     spin(qt, 3000, until=lambda: fake.started.is_set())
     assert controller.state == "transcribing"
@@ -312,15 +331,16 @@ def test_the_cap_ends_a_recording(qt):
 
 
 def test_nothing_said_returns_to_idle_with_no_tone(qt):
-    """Silence through the wait (#1214): the gate's timeout ends
-    the recording, nothing was said, and the controller returns
-    to idle — no transcription, no done tone."""
-    controller, fake = dictation(qt, "q*", **{"dictate_silence": 1.0})
-    # The wait is the leaf's 5 s; the detector under test gets a
-    # shorter one the same way the cap test drives its own field.
+    """Silence throughout (#1214): the gate's wait times out and
+    the recording still stands — nothing ends it but the click —
+    and the click ends it with nothing said: no transcription, no
+    done tone, back to idle."""
+    controller, fake = dictation(qt, "q*")
     controller.toggle()
-    controller.detector.timeout = 0.6
-    spin(qt, 3000, until=lambda: controller.state == "idle")
+    controller.detector.timeout = 0.3
+    spin(qt, 1200)
+    assert controller.state == "recording"  # the wait's timeout ended nothing
+    controller.toggle()
     assert controller.state == "idle"
     assert fake.transcribed == []
     assert fake.tones == [dictate.START_TONE_HZ]
@@ -345,12 +365,8 @@ def test_discard_drops_the_clip(qt):
     assert controller.stream is None
     spin(qt, 1500)
     assert fake.transcribed == []  # nothing reached whisper-cli
-    # A pending transcript dropped mid-transcription: a clip that
-    # ends on its own this time.
-    fake.spec_path = spec(qt, "q10 l40 q*")
-    controller.toggle()
-    spin(qt, 6000, until=lambda: fake.started.is_set())
-    assert controller.state == "transcribing"
+    # A pending transcript dropped mid-transcription.
+    record_speech(qt, controller, fake)
     controller.discard()
     assert controller.state == "idle"
     fake.gate.set()
@@ -364,13 +380,13 @@ def test_a_click_while_transcribing_starts_again(qt):
     drops, a fresh recording begins, and only the new clip's
     answer reaches the clipboard."""
     controller, fake = dictation(qt, "q10 l40 q*")
-    controller.toggle()
-    spin(qt, 6000, until=lambda: fake.started.is_set())
-    assert controller.state == "transcribing"
+    record_speech(qt, controller, fake)
     controller.toggle()  # abandon, start again
     assert controller.state == "recording"
     assert fake.tones.count(dictate.START_TONE_HZ) == 2
-    spin(qt, 6000, until=lambda: len(fake.transcribed) == 2)
+    spin(qt, 3000, until=lambda: controller.detector.elapsed >= 1.0)
+    controller.toggle()
+    spin(qt, 3000, until=lambda: len(fake.transcribed) == 2)
     fake.gate.set()
     spin(qt, 3000, until=lambda: controller.state == "done")
     assert fake.copied == ["Hello world."]  # the first answer dropped
@@ -382,8 +398,7 @@ def test_a_failing_transcription_fails_with_the_reason(qt):
     nothing is copied, and no done tone plays."""
     controller, fake = dictation(qt, "q10 l40 q*")
     fake.error = "whisper-cli exited 1: no model"
-    controller.toggle()
-    spin(qt, 6000, until=lambda: fake.started.is_set())
+    record_speech(qt, controller, fake)
     fake.gate.set()
     spin(qt, 2000, until=lambda: controller.state == "failed")
     assert controller.note == "whisper-cli exited 1: no model"
@@ -436,9 +451,7 @@ def test_shutdown_stops_a_recording_and_drops_a_transcript(qt):
     pending transcription drops, nothing further shows, and the
     second call is a no-op."""
     controller, fake = dictation(qt, "q10 l40 q*")
-    controller.toggle()
-    spin(qt, 6000, until=lambda: fake.started.is_set())
-    assert controller.state == "transcribing"
+    record_speech(qt, controller, fake)
     controller.shutdown()
     assert controller.stream is None
     fake.gate.set()
@@ -595,9 +608,7 @@ def test_discard_while_transcribing_drops_the_pending_answer(qt):
     """A stale answer after a discard (#1214): the generation moved,
     so the old transcript lands nowhere."""
     controller, fake = dictation(qt, "q10 l40 q*")
-    controller.toggle()
-    spin(qt, 6000, until=lambda: fake.started.is_set())
-    assert controller.state == "transcribing"
+    record_speech(qt, controller, fake)
     stale = controller.generation
     controller.discard()
     fake.gate.set()

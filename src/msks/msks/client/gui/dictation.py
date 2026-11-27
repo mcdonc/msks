@@ -1,24 +1,29 @@
 """The dictate pill's controller (#1214): one state machine over
-one recording — the capture stream, the gate, the transcription,
-and the delivery to the clipboard — with every pill on every
-window reading the same state.
+one recording — the capture stream, the speech gate, the
+transcription, and the delivery to the clipboard — with every
+pill on every window reading the same state.
 
 The states are ``idle``, ``recording``, ``transcribing``, ``done``,
 ``failed``, and ``nomodel``; the machine the issue draws is
-``idle -> recording -> transcribing -> done``. A click starts in
-idle, finishes in recording, and abandons-and-starts-again in
-transcribing. The quiet stop ends a recording on its own, and so
-does the cap. Discard cancels from recording or transcribing.
-``done`` shows ``copied`` for two seconds and ``failed`` shows the
-failure for four, each then back to idle; ``nomodel`` stands until
-the model downloads.
+``idle -> recording -> transcribing -> done``. The pill is a
+toggle: one click starts a recording, a second click finishes it.
+Nothing ends a recording on the operator's behalf — the gate's
+quiet stop is not used, because a pause inside a sentence is not
+the end of one — except the cap, the safety net that ends a clip
+nobody stopped. A click in transcribing abandons the pending
+transcript and starts again; Discard cancels from recording or
+transcribing. ``done`` shows ``copied`` for two seconds and
+``failed`` shows the failure for four, each then back to idle;
+``nomodel`` stands until the model downloads.
 
 Capture is the spike's own (#1212): ``pw-record`` writes raw 16 kHz
 mono s16 to a pipe, here a QProcess whose stdout feeds the
-:mod:`msks.client.dictate` gate frame by frame. The transcription
-runs once per clip on a worker thread, exactly as the spike ran
-``whisper-cli``, and its answer lands on the GUI thread through a
-signal. The tones, the notification, the clipboard, the
+:mod:`msks.client.dictate` gate frame by frame. The gate still finds
+where speech starts — the half second before it is kept, so the
+first word survives — and whether anything was said at all. The
+transcription runs once per clip on a worker thread, exactly as the
+spike ran ``whisper-cli``, and its answer lands on the GUI thread
+through a signal. The tones, the notification, the clipboard, the
 transcription, and the capture command are constructor seams: the
 offscreen suite drives the machine over a synthetic source and a
 canned transcript, with no microphone, model, or desktop.
@@ -243,9 +248,10 @@ class Dictation(QtCore.QObject):
         self.changed.emit(state, self.elapsed, note)
 
     def toggle(self) -> None:
-        """The click (#1214): start in idle and in the transient
-        states, finish in recording, abandon and start again in
-        transcribing, open the settings in nomodel."""
+        """The click (#1214): the toggle — start in idle and in
+        the transient states, finish in recording — and in
+        transcribing abandon the pending transcript and start
+        again; in nomodel open the settings."""
         if self.state == RECORDING:
             self.finish()
         elif self.state == TRANSCRIBING:
@@ -258,8 +264,8 @@ class Dictation(QtCore.QObject):
 
     def start(self) -> None:
         """Begin a recording (#1214): the start tone, a fresh
-        gate, and the capture child; the timer runs from zero.
-        The model was checked by the caller's state."""
+        gate, and the capture child; the timer runs from zero. The
+        model was checked by the caller's state."""
         self.settle.stop()
         self.finishing = False
         if self.stream is not None:
@@ -281,20 +287,37 @@ class Dictation(QtCore.QObject):
     @QtCore.Slot(bytes)
     def heard(self, raw: bytes) -> None:
         """The pipe's bytes through the gate (#1214): each frame
-        fed, and the gate's stop ends the recording — one loop
-        iteration later, never inside the read slot: the finish
-        stops the child, and the blocking stop under the notifier
-        that delivered these bytes takes the process down
-        mid-dispatch. The stream reads nothing more meanwhile
+        fed, so the gate finds where speech starts and whether
+        anything was said. The gate's quiet stop ends nothing — the
+        operator's click does — but its cap still does, as the
+        safety net, and that stop is taken one loop iteration
+        later, never inside the read slot: the finish stops the
+        child, and the blocking stop under the notifier that
+        delivered these bytes takes the process down mid-dispatch.
+        The stream reads nothing more meanwhile
         (:meth:`CaptureStream.pump`)."""
         if self.detector is None or self.finishing:
             return
         for frame in self.framer.feed(raw):
-            if self.detector.feed(frame, frame_db(frame)) == "stop":
-                self.finishing = True
-                self.stream.stopping = True
-                QtCore.QTimer.singleShot(0, self, self.finish)
+            if self.capped_after(frame):
+                self.defer_finish()
                 return
+
+    def capped_after(self, frame) -> bool:
+        """Feed one frame (#1214) and answer whether the cap ended
+        the clip: the gate's quiet stop and its wait's timeout end
+        nothing here — only the cap does."""
+        decision = self.detector.feed(frame, frame_db(frame))
+        return decision == "stop" and self.detector.capped()
+
+    def defer_finish(self) -> None:
+        """The cap's finish, one loop iteration later (#1214): the
+        gate is marked finishing so no frame feeds it again, the
+        stream reads nothing more, and the zero timer lands the
+        finish outside this read slot."""
+        self.finishing = True
+        self.stream.stopping = True
+        QtCore.QTimer.singleShot(0, self, self.finish)
 
     @QtCore.Slot()
     def tocked(self) -> None:
@@ -318,12 +341,12 @@ class Dictation(QtCore.QObject):
             self.fail(reason)
 
     def finish(self) -> None:
-        """The end of a recording (#1214) — the quiet stop, the
-        cap, or the second click: the child stops, and a clip
-        with speech in it goes to the transcription; nothing said
-        returns to idle with no tone. The quiet stop reaches here
-        through a zero timer (:meth:`heard); the second click and
-        the child's own end call it directly."""
+        """The end of a recording (#1214): the second click, the
+        cap, or the capture child's own end. The child stops, and
+        a clip with speech in it goes to the transcription;
+        nothing said returns to idle with no tone. The cap
+        reaches here through a zero timer (:meth:`heard`); the
+        click and the child's end call it directly."""
         self.tick.stop()
         self.finishing = False
         if self.stream is not None:
