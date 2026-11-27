@@ -35,10 +35,12 @@ from PySide6 import QtCore, QtWidgets
 from ..config_keys import DICTATE_KEYS, GLOBAL_ENV_VARS
 from ..dictate import (
     DEFAULT_MODEL,
+    DEFAULT_SILENCE,
     MODEL_SIZES,
     DictateFailure,
     download_model,
     list_sources,
+    model_path,
 )
 from ..validate import DICTATE_RANGES
 from .dictatekeys import DictateSettings, resolve
@@ -54,6 +56,48 @@ MODEL_LABEL = "Model"
 BAR_WIDTH = 360
 DEVICE_LABEL = "Device"
 DEFAULT_DEVICE = "the default input"
+
+#: Each setting's long description (#1214): the field's tooltip,
+#: the same words for the page and for the docs chapter. A key the
+#: environment pins appends its variable's notice to its field's.
+TIPS = {
+    "dictate_model": (
+        "The whisper.cpp speech model. Pick a known name and Download "
+        "fetches it into ~/.cache/msks/whisper/ on first use; a larger "
+        "model transcribes more accurately and loads more slowly at "
+        "each clip (about a second with small, two to three with "
+        "large-v3-turbo). A path to a .bin file uses that file instead "
+        "and downloads nothing: a NixOS host pins a model as a "
+        "derivation and types its store path here."
+    ),
+    "dictate_device": (
+        "The microphone the recording captures from: a PipeWire "
+        "source. The picker lists the sources the desktop serves "
+        "(Refresh reads the list again); the default input follows "
+        "the desktop's own choice. A node name or serial typed free "
+        "selects one the list does not carry."
+    ),
+    "dictate_threshold": (
+        "The lowest level that can count as speech, in dBFS. The gate "
+        "tracks the room's noise floor and counts as speech whatever "
+        "sits the margin above it; this floor keeps a very quiet room "
+        "from making a whisper into speech. The default, -60, is "
+        "near digital silence."
+    ),
+    "dictate_margin": (
+        "How many decibels above the tracked noise floor a level must "
+        "sit to count as speech. The floor is the quiet tenth of the "
+        "last three seconds, learned while you are silent. A "
+        "speakerphone lifts the room's floor to about -33 dBFS, and "
+        "the default of 14 keeps its hiss out of the clip; a closer "
+        "microphone in a quiet room can take a lower margin."
+    ),
+    "dictate_prompt": (
+        "The vocabulary whisper-cli biases its spelling toward: the "
+        "names it would otherwise misspell, comma-separated. Leave "
+        "it empty for plain dictation."
+    ),
+}
 
 
 class SettingsPage(QtWidgets.QWidget, StatusFlash):
@@ -102,15 +146,22 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
     # --- the form -------------------------------------------------------
 
     def build_form(self) -> None:
-        """The six fields (#1214): the model as an editable picker
+        """The five fields (#1214): the model as an editable picker
         over the known names (a path typed free), the device as an
-        editable picker over the listed sources, the gate's three
-        numbers in their validated ranges, and the prompt."""
+        editable picker over the listed sources, the gate's floor
+        and margin in their validated ranges, and the prompt. The
+        picker drives the model line and the Download button as it
+        changes, so a pick shows what a download would fetch before
+        anything is saved. The gate's pause window (``dictate_silence``)
+        has no field: the click ends a recording, and the window
+        only shapes how the gate reads the room."""
         self.model = QtWidgets.QComboBox(self)
         self.model.setEditable(True)
         self.model.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
         for name, size in MODEL_SIZES.items():
             self.model.addItem(f"{name} ({size})", name)
+        self.model.currentIndexChanged.connect(self.refresh_model)
+        self.model.editTextChanged.connect(self.refresh_model)
         self.fields["dictate_model"] = self.model
         self.device = QtWidgets.QComboBox(self)
         self.device.setEditable(True)
@@ -123,11 +174,11 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         low, high = DICTATE_RANGES["dictate_margin"]
         self.margin = self.number(low, high, " dB")
         self.fields["dictate_margin"] = self.margin
-        low, high = DICTATE_RANGES["dictate_silence"]
-        self.silence = self.number(low, high, " s", step=0.5, floor=0.1)
-        self.fields["dictate_silence"] = self.silence
         self.prompt = QtWidgets.QLineEdit(self)
-        self.prompt.setPlaceholderText("msks, devenv, NixOS, pi")
+        # No placeholder (#1214): the gray example text read as a
+        # value already in effect. The tooltip carries the examples,
+        # and an empty prompt is visibly empty.
+        self.prompt.setToolTip(TIPS["dictate_prompt"])
         self.fields["dictate_prompt"] = self.prompt
         self.refresh_sources = QtWidgets.QPushButton("Refresh", self)
         self.refresh_sources.clicked.connect(self.list_devices)
@@ -188,7 +239,6 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         form.addRow(DEVICE_LABEL, device_row)
         form.addRow("Speech floor", self.threshold)
         form.addRow("Speech margin", self.margin)
-        form.addRow("Silence that ends a clip", self.silence)
         form.addRow("Vocabulary prompt", self.prompt)
         form.addRow(self.pinned_note)
         settings_box = QtWidgets.QGroupBox("Dictation", self)
@@ -237,9 +287,11 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         """One field's seed (#1214): the effective value in the
         field's own shape, and the field read-only with the
         variable named when the environment pins the key."""
+        if key == "dictate_silence":
+            return  # no field (#1214): the click ends a recording
         field = self.fields[key]
         if key == "dictate_model":
-            self.model.setEditText(settings.model)
+            self.pick_model(settings.model)
         elif key == "dictate_device":
             self.pick_device(settings.device)
         elif isinstance(field, QtWidgets.QDoubleSpinBox):
@@ -248,11 +300,21 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
             field.setText(str(settings.value(key)))
         pinned = key in settings.pinned
         field.setEnabled(not pinned)
-        field.setToolTip(
-            f"{GLOBAL_ENV_VARS[key]} pins this key; the page cannot change it"
-            if pinned
-            else ""
-        )
+        field.setToolTip(self.tip(key, pinned))
+
+    @staticmethod
+    def tip(key: str, pinned: bool) -> str:
+        """A field's tooltip (#1214): the setting's description, and
+        for a key the environment pins, the variable's notice after
+        it."""
+        text = TIPS[key]
+        if pinned:
+            notice = (
+                f"{GLOBAL_ENV_VARS[key]} pins this setting; the page "
+                "cannot change it."
+            )
+            return f"{text}\n\n{notice}"
+        return text
 
     def notes(self, settings: DictateSettings) -> str:
         """The note beside the form (#1214): the variables that
@@ -275,6 +337,16 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         note = self.notes(settings)
         self.pinned_note.setText(note)
         self.pinned_note.setVisible(bool(note))
+
+    def pick_model(self, model: str) -> None:
+        """The model picker's seed (#1214): the listed item whose
+        name is the setting, so a known model shows its label with
+        the size; a path or an unknown name typed free."""
+        index = self.model.findData(model)
+        if index >= 0:
+            self.model.setCurrentIndex(index)
+        else:
+            self.model.setEditText(model)
 
     def pick_device(self, device: str) -> None:
         """The device field's seed (#1214): the listed source whose
@@ -304,13 +376,28 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         name or a path), the device's picked name or typed text,
         the three numbers, and the prompt."""
         return {
-            "dictate_model": self.model.currentText().strip(),
+            "dictate_model": self.model_value(),
             "dictate_device": self.device_value(),
             "dictate_threshold": self.threshold.value(),
             "dictate_margin": self.margin.value(),
-            "dictate_silence": self.silence.value(),
             "dictate_prompt": self.prompt.text().strip(),
         }
+
+    def file_values(self) -> dict:
+        """What Apply writes (#1214): the fields' values, a pinned
+        key left out (the variable wins it anyway), and the pause
+        window — which has no field — carried at the value it
+        resolves to now, so a save never drops a value the operator
+        wrote by hand."""
+        values = {
+            key: value
+            for key, value in self.values().items()
+            if key not in self.dictation.settings.pinned
+        }
+        silence = self.dictation.settings.gate.silence
+        if silence != DEFAULT_SILENCE:
+            values["dictate_silence"] = silence
+        return values
 
     def effective(self) -> DictateSettings:
         """The settings as the layers resolve them right now
@@ -324,11 +411,7 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         out, the variable wins it anyway — and hand the freshly
         resolved settings to the controller. A file the tree
         cannot write flashes the reason."""
-        values = {
-            key: value
-            for key, value in self.values().items()
-            if key not in self.dictation.settings.pinned
-        }
+        values = self.file_values()
         try:
             save_prefs(values)
             settings = self.effective()
@@ -382,16 +465,27 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
 
     # --- the model and its download -------------------------------------
 
+    def model_value(self) -> str:
+        """The picker's setting (#1214): the picked item's model
+        name when the text is a listed item's label (the label
+        carries the size in parentheses), else the typed text — a
+        path, or a name the list does not carry."""
+        index = self.model.currentIndex()
+        text = self.model.currentText()
+        if index >= 0 and self.model.itemText(index) == text:
+            return str(self.model.itemData(index))
+        return text.strip() or DEFAULT_MODEL
+
     def model_name(self) -> str | None:
-        """The model field as a downloadable name (#1214): None
+        """The picker's model as a downloadable name (#1214): None
         when it points at a path."""
-        text = self.model.currentText().strip() or DEFAULT_MODEL
+        text = self.model_value()
         if os.sep in text or text.endswith(".bin"):
             return None
         return text
 
     def model_words(self, path: Path, name: str | None) -> str:
-        """The model state's line (#1214): where the model points
+        """The model line's words (#1214): where the model points
         and whether it stands, with its size or the download's."""
         if name is None:
             return f"{path} — a path; nothing to download"
@@ -401,13 +495,18 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         return f"{path} — missing ({size})"
 
     def refresh_model(self) -> None:
-        """Where the model points and whether it stands (#1214):
-        the download button answers to it."""
-        path = self.dictation.settings.model_file(self.cache_root)
+        """The model line and the Download button follow the picker
+        (#1214): a picked name points at the cache's file for that
+        name, a typed path at itself, and the button answers to
+        whether that file stands — so a pick changes what a
+        download would fetch, before anything is saved."""
         name = self.model_name()
+        path = model_path(self.model_value(), self.cache_root)
         self.model_state.setText(self.model_words(path, name))
         self.model_state.setToolTip(str(path))
-        self.download_button.setEnabled(name is not None and not path.exists())
+        self.download_button.setEnabled(
+            name is not None and not path.exists() and self.flight is None
+        )
 
     @QtCore.Slot()
     def download(self) -> None:

@@ -421,12 +421,15 @@ def test_the_page_seeds_from_the_effective_settings_and_saves_gui_yaml(qt):
     assert held.settings.model == "base.en"  # the operator's file
     assert held.settings.gate.margin == 10.0  # gui.yaml wins over it
     page = SettingsPage(held, operator)
-    assert page.model.currentText() == "base.en"
+    assert page.model.currentText() == "base.en (142 MB)"  # its label
+    assert page.model_value() == "base.en"
     assert page.margin.value() == 10.0
-    assert page.silence.value() == 2.0
+    assert "dictate_silence" not in page.fields  # no field (#1214)
     # Edit, apply: gui.yaml carries the fields, the operator's
-    # dict stands as it was, the controller re-resolves.
-    page.model.setEditText("small")
+    # dict stands as it was, the controller re-resolves. The
+    # operator's pause window is carried through, not dropped.
+    page.pick_model("small")  # a listed name: its label shows
+    assert page.model.currentText() == "small (466 MB)"
     page.threshold.setValue(-55.0)
     page.prompt.setText("msks, devenv")
     page.apply()
@@ -439,6 +442,7 @@ def test_the_page_seeds_from_the_effective_settings_and_saves_gui_yaml(qt):
         "dictate_silence": 2.0,
         "dictate_prompt": "msks, devenv",
     }
+    assert held.settings.gate.silence == 2.0
     assert operator == {"dictate_model": "base.en", "dictate_silence": 2.0}
     assert held.settings.model == "small"
     assert held.settings.gate.threshold == -55.0
@@ -464,27 +468,33 @@ def test_a_pinned_key_reads_read_only_and_apply_leaves_it(qt, monkeypatch):
     assert len(held.settings.problems) == 1
     page = SettingsPage(held, {})
     assert page.model.isEnabled() is False
-    assert "MSKSC_DICTATE_MODEL" in page.model.toolTip()
-    assert page.silence.isEnabled() is True
+    assert page.model.toolTip().endswith(
+        "MSKSC_DICTATE_MODEL pins this setting; the page cannot change it."
+    )
+    assert page.model.toolTip().startswith("The whisper.cpp speech model")
+    assert page.margin.isEnabled() is True
     note = page.pinned_note.text()
     assert "MSKSC_DICTATE_MODEL pins this setting" in note
     assert "MSKSC_DICTATE_SILENCE" in note and "nonsense" in note
-    page.silence.setValue(1.5)
+    page.margin.setValue(9.0)
     page.apply()
     assert "dictate_model" not in load_prefs()
-    assert load_prefs()["dictate_silence"] == 1.5
+    assert load_prefs()["dictate_margin"] == 9.0
     assert held.settings.model == "large-v3-turbo"
     # The refused variable still stands over gui.yaml: the key
     # reads its default — the bad pin is never masked by the
     # layer under it — and the page shows the refusal still.
     assert held.settings.gate.silence == dictate.DEFAULT_SILENCE
     assert "MSKSC_DICTATE_SILENCE" in page.pinned_note.text()
-    # Clear the bad pin: the saved value takes effect at the next
-    # resolve, which the page's Revert runs.
+    # Clear the bad pin: the operator file's value takes effect at
+    # the next resolve, which the page's Revert runs.
     monkeypatch.delenv("MSKSC_DICTATE_SILENCE")
     page.revert()
-    assert page.silence.value() == 1.5
-    assert held.settings.gate.silence == 1.5
+    assert held.settings.gate.silence == dictate.DEFAULT_SILENCE
+    # A save over a refused pin drops nothing: the pause window's
+    # resolved value is the default, so the file carries none.
+    page.apply()
+    assert "dictate_silence" not in load_prefs()
 
 
 def test_the_model_download_shows_progress_and_lands(qt):
@@ -596,6 +606,47 @@ def test_a_download_thread_that_raises_anything_lands(qt):
     assert page.flight is None
     assert page.bar.isHidden() and page.cancel_button.isHidden()
     assert page.download_button.isEnabled()
+
+
+def test_every_field_carries_its_description_and_the_pin_notice(qt):
+    """Each field's tooltip (#1214) is the setting's long
+    description, and a key the environment pins appends its
+    variable's notice."""
+    from msks.client.gui import settingspage as page_mod
+    from msks.client.gui.settingspage import SettingsPage
+
+    held, _fake = controller(qt)
+    page = SettingsPage(held, {})
+    for key, field in page.fields.items():
+        assert field.toolTip() == page_mod.TIPS[key]
+        assert len(page_mod.TIPS[key]) > 80  # a description, not a label
+    assert "noise floor" in page.margin.toolTip()
+    assert "~/.cache/msks/whisper/" in page.model.toolTip()
+
+
+def test_the_picker_drives_the_model_line_live(qt):
+    """The model picker (#1214): a pick changes the model line and
+    the Download button at once, before anything is saved — the
+    line reads the picked model's file, and the button answers to
+    whether it stands."""
+    from msks.client.gui.settingspage import SettingsPage
+
+    held, _fake = controller(qt)  # small on disk, the setting
+    page = SettingsPage(held, {})
+    assert "present" in page.model_state.text()
+    assert page.download_button.isEnabled() is False
+    page.model.setCurrentIndex(page.model.findData("large-v3-turbo"))
+    assert (
+        "ggml-large-v3-turbo.bin — missing (1.5 GB)" in page.model_state.text()
+    )
+    assert page.download_button.isEnabled() is True
+    # A typed path: nothing to download, the line says where it points.
+    page.model.setEditText("/nix/store/x-ggml-small.bin")
+    assert "a path; nothing to download" in page.model_state.text()
+    assert page.download_button.isEnabled() is False
+    page.model.setEditText("small")
+    assert "present" in page.model_state.text()
+    assert held.settings.model == "small"  # nothing saved by a pick
 
 
 def test_a_path_model_downloads_nothing(qt):
@@ -871,7 +922,7 @@ def test_download_asks_once_and_the_busy_bar_runs(qt):
         raise dictate.DictateFailure("download cancelled")
 
     page.downloader = stalled
-    page.model.setEditText("small")
+    page.pick_model("small")
     page.refresh_model()
     (qt.tmp / "cache" / "msks" / "whisper" / "ggml-small.bin").unlink()
     page.refresh_model()

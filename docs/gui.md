@@ -586,30 +586,44 @@ settings in effect now, and every field takes a change.
 - **Model**: a whisper.cpp ggml model. The picker lists the known
   names with their sizes, and a path to a `.bin` file types free.
   A NixOS host can pin a model as a derivation and type its store
-  path.
-- **Device**: the microphone `pw-record` captures from. The picker
-  lists the sources PipeWire serves, and a node name or serial
-  types free. **Refresh** reads the list again.
-- **Speech floor** and **Speech margin**: the lowest level that can
-  count as speech, and the dB above the tracked floor that counts.
-- **Silence that ends a clip**: the seconds of quiet the speech
-  gate treats as a pause. The pill's click ends the recording; this
-  setting shapes how the gate reads the room while it runs.
+  path. A larger model transcribes more accurately and loads more
+  slowly at each clip: about a second with `small`, two to three
+  with `large-v3-turbo`.
+- **Device**: the microphone `pw-record` captures from, as a
+  PipeWire source. The picker lists the sources the desktop serves,
+  and **Refresh** reads the list again. The default input follows
+  the desktop's own choice. A node name or serial typed free
+  selects one the list does not carry.
+- **Speech floor**: the lowest level that can count as speech, in
+  dBFS. The gate tracks the room's noise floor, and this floor
+  keeps a very quiet room from making a whisper into speech. The
+  default, -60, is near digital silence.
+- **Speech margin**: how many decibels above the tracked noise
+  floor a level must sit to count as speech. The floor is the
+  quiet tenth of the last three seconds, learned while you are
+  silent. A speakerphone lifts a quiet room's floor to about -33
+  dBFS, and the default of 14 keeps its hiss out of the clip. A
+  closer microphone in a quiet room can take a lower margin.
 - **Vocabulary prompt**: the words whisper-cli biases its spelling
-  toward, such as `msks, devenv, NixOS, pi`.
+  toward, such as `msks, devenv, NixOS, pi`. Leave it empty for
+  plain dictation.
+
+Each field's tooltip carries its description. A key that an
+`MSKSC_DICTATE_*` variable pins shows the variable's value in a
+read-only field, with the variable named under the form.
 
 **Apply** saves the fields into `~/.config/msks/gui.yaml` and the
 next recording takes them. A recording ends at the pill's second
 click, whatever the settings. **Revert** reads the layers again and
-reseeds the fields. A key that an `MSKSC_DICTATE_*` variable pins
-shows the variable's value in a read-only field, with the variable
-named under the form. A value that refused anywhere shows its
-message there too, and the setting reads as its default.
+reseeds the fields. A value that refused anywhere shows its message
+under the form, and the setting reads as its default.
 
-**Speech model** shows where the model points and whether it is on
-disk, with its size. **Download** fetches a missing model into the
-cache with a progress bar, and **Cancel** abandons the download. A
-path setting downloads nothing, and the line says so.
+**Speech model** shows where the picked model points and whether
+it is on disk, with its size; the line follows the picker as it
+changes. **Download** fetches a missing model into the cache with a
+progress bar and makes it the configured model, and **Cancel**
+abandons the download. A path setting downloads nothing, and the
+line says so.
 
 ## The zoom keys
 
