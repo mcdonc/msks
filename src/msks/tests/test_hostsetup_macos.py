@@ -2524,13 +2524,11 @@ def test_the_uninstall_arms_without_brew_and_by_the_count(
 
 # --- the shims' behavior (#1216) -----------------------------------------
 #: A stand-in for the engine a shim execs: it records its argv, one
-#: per line, and its stdin's byte count, to the file named by
-#: SHIM_RECORD, and answers 0.
+#: per line, to the file named by SHIM_RECORD, draining stdin, and
+#: answers 0.
 RECORDER = """#!/bin/sh
-{
-    for arg in "$@"; do printf '%s\\n' "$arg"; done
-    printf -- '--stdin-bytes=%s\\n' "$(wc -c)"
-} > "$SHIM_RECORD"
+cat > /dev/null
+for arg in "$@"; do printf '%s\\n' "$arg"; done > "$SHIM_RECORD"
 exit 0
 """
 
@@ -2610,7 +2608,7 @@ def test_the_pw_record_shim_maps_the_clients_command(
     assert len(formats) == 2  # avfoundation in, s16le out
     assert argv[formats[1] + 1] == "s16le"
     assert argv[argv.index("-flush_packets") + 1] == "1"
-    assert argv[-2] == "-" and argv[-1] == "--stdin-bytes=0"
+    assert argv[-1] == "-"
 
 
 def test_the_pw_record_shim_honors_the_device_and_the_index(
@@ -2659,7 +2657,7 @@ def test_the_notify_send_shim_keeps_the_body_as_data(
     ]
     # The recorder folds newlines to its own line breaks; the shim
     # already turned them to spaces, so the body is one line.
-    assert argv[-3:-1] == [
+    assert argv[-2:] == [
         "dictate",
         'say \\" ) & (do shell script "id") & (" line two',
     ]
@@ -2671,10 +2669,7 @@ def test_the_pw_cat_shim_plays_the_file(tmp_path: Path, monkeypatch):
     record = shim_env(tmp_path, monkeypatch, "afplay")
     done = run_shim("pw-cat", "--playback", "/tmp/beep-880.wav")
     assert done.returncode == 0, done.stderr
-    assert record.read_text().splitlines() == [
-        "/tmp/beep-880.wav",
-        "--stdin-bytes=0",
-    ]
+    assert record.read_text().splitlines() == ["/tmp/beep-880.wav"]
 
 
 def test_the_uninstall_sweeps_a_shim_from_every_dir(
