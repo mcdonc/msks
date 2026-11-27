@@ -1,0 +1,6 @@
+#!/bin/sh
+# Landed by msks-setup-macos-host: the GUI's dictation tones
+# (#1216) call PipeWire's pw-cat; macOS's afplay plays the WAV
+# instead. Replace it only through a re-run of the tool.
+[ "$1" = "--playback" ] && shift
+exec /usr/bin/afplay "$@"

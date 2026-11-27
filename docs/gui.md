@@ -578,6 +578,15 @@ not shipped: the first click opens the **Settings** tab, whose
 [CLI chapter](cli.md#the-gui-preferences-file) describes the
 settings, their file, and the precedence.
 
+On a Mac the same calls answer through the shims
+`msks-setup-macos-host` lands (#1216): `pw-record` maps onto
+ffmpeg's avfoundation capture, `pw-cat` onto `afplay`, and
+`notify-send` onto `osascript`, with `whisper-cli` and `ffmpeg`
+brewed by the run. The first recording asks macOS for the
+microphone — the prompt names the terminal that launched the
+GUI — and the capture device is avfoundation's index 0 unless
+`PW_RECORD_AUDIO_INDEX` names another.
+
 ## The Settings tab
 
 ![The Settings tab: the dictation form, the model's state and its

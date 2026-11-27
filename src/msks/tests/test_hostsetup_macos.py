@@ -246,6 +246,17 @@ def client_tree(
         "FALLBACK_BREW_BINS",
         (str(tmp_path / "fb1"), str(tmp_path / "fb2")),
     )
+    # The dictation phase's surfaces (#1216): the shims' dir and
+    # the engine probe relocate under tmp_path — a test run
+    # never brews and never reaches the host's brew prefix, and
+    # the shims stand already-made so the check row answers
+    # green.
+    for name in mac.SHIM_NAMES:
+        shim = brew_bin / name
+        shim.write_text(f"#!/bin/sh\n# {mac.SENTINEL}\n")
+        shim.chmod(0o755)
+    patch_phase(monkeypatch, "dictation_bin_dir", lambda: str(brew_bin))
+    patch_phase(monkeypatch, "missing_engines", lambda: [])
     return tmp_path
 
 
@@ -1999,6 +2010,120 @@ def test_a_foreign_thing_at_the_client_link_refuses(
         mac.link_client_mac()
 
 
+# --- phase 8: the dictation prerequisites (#1216) ---------------------
+
+
+def test_the_dictation_phase_brews_the_missing_and_lands_the_shims(
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+    tmp_path: Path,
+) -> None:
+    """#1216: the phase brews the engines the PATH does not
+    answer and lands the three shims at the brew prefix's bin —
+    executable, sentinel-carrying — and the rerun with the
+    engines answering brews nothing and refreshes its own."""
+    brew_bin = tmp_path / "brewbin"
+    brew_bin.mkdir()
+    patch_phase(monkeypatch, "dictation_bin_dir", lambda: str(brew_bin))
+    patch_phase(
+        monkeypatch, "missing_engines", lambda: ["whisper-cli", "ffmpeg"]
+    )
+    note = mac.install_dictation()
+    assert ["brew", "install", "whisper.cpp", "ffmpeg"] in procs.calls
+    assert "the dictation engines answer" in note
+    for name in mac.SHIM_NAMES:
+        path = brew_bin / name
+        assert f"{path} landed" in note
+        assert mac.SENTINEL in path.read_text()
+        assert path.stat().st_mode & 0o777 == 0o755
+        assert path.read_text().startswith("#!/bin/sh")
+    brewed = list(procs.calls)
+    patch_phase(monkeypatch, "missing_engines", lambda: [])
+    again = mac.install_dictation()
+    assert procs.calls == brewed
+    for name in mac.SHIM_NAMES:
+        assert f"{brew_bin / name} refreshed" in again
+
+
+def test_a_foreign_file_at_a_shim_path_refuses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The claim arms (#1216 review): a regular file without
+    the sentinel at a shim path refuses by name — the run never
+    clobbers what it did not land."""
+    brew_bin = tmp_path / "brewbin"
+    brew_bin.mkdir()
+    (brew_bin / "pw-record").write_text("#!/bin/sh\n# the operator's own\n")
+    patch_phase(monkeypatch, "dictation_bin_dir", lambda: str(brew_bin))
+    patch_phase(monkeypatch, "missing_engines", lambda: [])
+    with pytest.raises(mac.MacSetupError, match="not this tool's shim"):
+        mac.install_dictation()
+
+
+def test_the_dictation_row_answers_green_and_refuses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The --check row (#1216): green naming the engines and
+    the shims' dir, a missing engine refuses with the brew
+    remedy, and a missing shim refuses with the re-run one."""
+    brew_bin = tmp_path / "brewbin"
+    brew_bin.mkdir()
+    for name in mac.SHIM_NAMES:
+        path = brew_bin / name
+        path.write_text(f"#!/bin/sh\n# {mac.SENTINEL}\n")
+        path.chmod(0o755)
+    patch_phase(monkeypatch, "dictation_bin_dir", lambda: str(brew_bin))
+    patch_phase(monkeypatch, "missing_engines", lambda: [])
+    row = mac.dictation_row()
+    assert "whisper-cli and ffmpeg on PATH" in row
+    assert str(brew_bin) in row
+    patch_phase(monkeypatch, "missing_engines", lambda: ["whisper-cli"])
+    with pytest.raises(mac.MacSetupError, match="brew the dictation"):
+        mac.dictation_row()
+    patch_phase(monkeypatch, "missing_engines", lambda: [])
+    (brew_bin / "pw-cat").unlink()
+    with pytest.raises(mac.MacSetupError, match="pw-cat shim"):
+        mac.dictation_row()
+
+
+def test_a_brew_that_will_not_answer_refuses_the_shims(
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+) -> None:
+    """A brew whose --prefix answers nothing refuses by name
+    (#1216): the same Homebrew line the client links' own path
+    refusal carries, the tool's Lima requirement behind it."""
+    patch_phase(monkeypatch, "missing_engines", lambda: [])
+    with pytest.raises(mac.MacSetupError, match="brew did not answer"):
+        mac.install_dictation()
+
+
+def test_the_uninstall_removes_only_the_tools_own_shims(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The sweep's mirror (#1216): the sentinel shims go over
+    the brew dir first and the fallback bins behind it, a
+    foreign file at a path stays — the uninstall never removes
+    an operator's own file — and the note names what left."""
+    brew_bin = tmp_path / "brewbin"
+    brew_bin.mkdir()
+    for name in mac.SHIM_NAMES:
+        (brew_bin / name).write_text(f"#!/bin/sh\n# {mac.SENTINEL}\n")
+    foreign = brew_bin / "notify-send"
+    foreign.write_text("#!/bin/sh\n# the operator's own\n")
+    patch_phase(monkeypatch, "dictation_bin_dir", lambda: str(brew_bin))
+    patch_phase(
+        monkeypatch,
+        "FALLBACK_BREW_BINS",
+        (str(tmp_path / "fb1"), str(tmp_path / "fb2")),
+    )
+    note = mac.remove_dictation_shims()
+    assert "are gone" in note
+    for name in ("pw-record", "pw-cat"):
+        assert not (brew_bin / name).exists()
+    assert foreign.exists()
+
+
 def test_the_client_link_without_a_sibling_stands_down(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2154,29 +2279,44 @@ def test_the_uninstall_closing_line_gates_on_the_note() -> None:
     (#734) — and a sweep that found nothing names that in the
     parenthetical instead of claiming a removal that did not
     happen. The shared host install's departure rides its own
-    note's word (#1118)."""
+    note's word (#1118), the dictation shims' on theirs
+    (#1216)."""
     gone = mac.uninstall_closing_line(
         "the client link /opt/brew/msks is gone",
         "/opt/msks already absent",
+        "no dictation shim found",
     )
     assert "and the brew-prefix client links are gone" in gone
     assert "no client link" not in gone
     assert "/opt/msks host install" not in gone
+    assert "dictation shims" not in gone
     plural = mac.uninstall_closing_line(
         "the client links /opt/brew/msks and /opt/brew/msks-term-popup "
         "are gone",
         "/opt/msks already absent",
+        "no dictation shim found",
     )
     assert "and the brew-prefix client links are gone" in plural
-    found_none = mac.uninstall_closing_line("no client link found", "x")
+    found_none = mac.uninstall_closing_line(
+        "no client link found", "x", "no dictation shim found"
+    )
     assert "and its login agent are gone" in found_none
     assert "brew-prefix client links are gone" not in found_none
     assert "(no client link found)" in found_none
     vmm = mac.uninstall_closing_line(
         "the client links /opt/brew/msks are gone",
         "/opt/msks removed (the venv, the provisioned Python, uv)",
+        "no dictation shim found",
     )
     assert "the shared /opt/msks host install with them" in vmm
+    shims = mac.uninstall_closing_line(
+        "the client links /opt/brew/msks are gone",
+        "/opt/msks removed (the venv, the provisioned Python, uv)",
+        "the dictation shims /opt/brew/pw-record, /opt/brew/pw-cat, and "
+        "/opt/brew/notify-send are gone",
+    )
+    assert "the dictation shims went with them" in shims
+    assert "brew packages the run installed stay" in shims
 
 
 # --- the host-side venv (#1118) --------------------------------------

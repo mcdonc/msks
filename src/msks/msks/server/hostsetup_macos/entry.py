@@ -14,6 +14,7 @@ from pathlib import Path
 from .agent import ensure_agent, remove_agent
 from .base import PORT, SHAPE_FLOORS, TOOL, VM_NAME, MacSetupError, say
 from .bootstrap import bootstrap_vm, refuse_dev_build
+from .dictation import install_dictation, remove_dictation_shims
 from .hostcheck import check_host
 from .hostvenv import install_host_venv, remove_host_venv
 from .links import link_client_mac, remove_client_link
@@ -140,7 +141,10 @@ def run_setup(args: argparse.Namespace) -> str:
     the VM creation (#704) — nothing the run builds is wasted —
     and the sizing floors refuse before every phase, the host
     check included (#721 review: a mistyped flag never spends a
-    brew install first)."""
+    brew install first). The dictation prerequisites land last
+    (#1216): the GUI's pill calls the PipeWire names, and the
+    phase brews the engines and lands the shims that answer
+    them — client-side polish, so nothing later builds on it."""
     shape = validate_shape(shape_from_args(args))
     check_host()
     refuse_dev_build(args.wheel)
@@ -152,15 +156,19 @@ def run_setup(args: argparse.Namespace) -> str:
     preset = client_preset(port)
     ensure_agent()
     say(link_client_mac())
+    say(install_dictation())
     return preset
 
 
-def uninstall_closing_line(link_note: str, venv_note: str) -> str:
+def uninstall_closing_line(
+    link_note: str, venv_note: str, shim_note: str
+) -> str:
     """The uninstall arm's closing print: the removal sentence
     gates on the link's note (#719 review) — a sweep that found
     no link says so in the parenthetical instead of claiming
     one gone — and the shared host install's departure rides on
-    its own note's word (#1118)."""
+    its own note's word (#1118), the dictation shims' on theirs
+    (#1216)."""
     if "gone" in link_note:
         head = (
             f"{TOOL}: the {VM_NAME} VM, its login agent, and the "
@@ -173,11 +181,14 @@ def uninstall_closing_line(link_note: str, venv_note: str) -> str:
         )
     if "removed" in venv_note:
         head += ", the shared /opt/msks host install with them"
+    if "gone" in shim_note:
+        head += "; the dictation shims went with them"
     return (
         head + ". "
         "Lima itself, the client config, and the CA and token "
         "under ~/.config/msks/ stay; remove them by hand when "
-        "you want them gone."
+        "you want them gone. The brew packages the run installed "
+        "stay too (shared packages, the Linux tools' own rule)."
     )
 
 
@@ -220,7 +231,11 @@ def main(argv: list[str] | None = None) -> int:
             remove_agent()
             delete_vm(VM_NAME)
             link_note = remove_client_link()
-            print(uninstall_closing_line(link_note, remove_host_venv()))
+            print(
+                uninstall_closing_line(
+                    link_note, remove_host_venv(), remove_dictation_shims()
+                )
+            )
             return 0
         if args.check:
             check_host(install=False)

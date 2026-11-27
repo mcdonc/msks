@@ -24,6 +24,7 @@ from .base import (
 )
 from .bootstrap import vm_version
 from .clientconfig import client_config_row
+from .dictation import dictation_row
 from .hostcheck import require_lima
 from .links import client_link_row
 from .verify import verify_chain, verify_daemon
@@ -178,7 +179,9 @@ def check_rows(port: int, install: bool = True) -> list[str]:
 def client_side_rows(port: int) -> list[str]:
     """The client-side rows: the config a bare ``msks`` reads and
     the login agent that brings the VM up after a reboot — the
-    two #689 rows, one refusal each with the re-run remedy."""
+    two #689 rows, one refusal each with the re-run remedy —
+    beside the client links (#719, #734) and the dictation
+    prerequisites (#1216) that answer on the same PATH."""
     rows = [client_config_row(port)]
     if not agent_loaded():
         raise MacSetupError(
@@ -188,6 +191,7 @@ def client_side_rows(port: int) -> list[str]:
         f"the login agent brings the {VM_NAME} VM up at login ({AGENT_LABEL})"
     )
     rows.append(client_link_row())
+    rows.append(dictation_row())
     return rows
 
 

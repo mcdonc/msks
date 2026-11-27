@@ -1,0 +1,20 @@
+#!/bin/sh
+# Landed by msks-setup-macos-host: the GUI's dictation
+# notification (#1216) calls notify-send; osascript shows a macOS
+# notification instead. Replace it only through a re-run of the
+# tool.
+summary=""
+body=""
+skip=0
+for arg in "$@"; do
+    case "$arg" in
+        -t) skip=1; continue ;;
+        -*) continue ;;
+    esac
+    if [ "$skip" = 1 ]; then skip=0; continue; fi
+    if [ -z "$summary" ]; then summary="$arg"; else body="$arg"; fi
+done
+summary=$(printf '%s' "$summary" | sed 's/"/\\"/g')
+body=$(printf '%s' "$body" | sed 's/"/\\"/g')
+osascript -e "display notification \"$body\" with title \"$summary\"" 2>/dev/null
+exit 0

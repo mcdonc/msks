@@ -1,0 +1,28 @@
+#!/bin/sh
+# Landed by msks-setup-macos-host: the GUI's dictate pill (#1216)
+# calls PipeWire's pw-record, which does not exist on macOS; this
+# shim answers the same contract — raw s16le mono at the asked
+# rate on stdout — through ffmpeg's avfoundation capture. Replace
+# it only through a re-run of the tool.
+#
+# The avfoundation audio device defaults to index 0; list the
+# devices with `ffmpeg -f avfoundation -list_devices true -i ""`
+# and override with PW_RECORD_AUDIO_INDEX=N.
+rate=16000
+channels=1
+device="${PW_RECORD_AUDIO_INDEX:-0}"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --rate) rate="$2"; shift 2 ;;
+        --channels) channels="$2"; shift 2 ;;
+        --format) shift 2 ;;   # s16 assumed (s16le is what we emit)
+        --raw) shift ;;
+        --target) shift 2 ;;   # a PipeWire node name: default device
+        -) shift ;;            # stdout — the only output the client reads
+        *) echo "pw-record shim: ignoring unrecognized argument: $1" >&2; shift ;;
+    esac
+done
+
+exec ffmpeg -hide_banner -loglevel error -f avfoundation -i ":$device" \
+    -ar "$rate" -ac "$channels" -f s16le -flush_packets 1 -
