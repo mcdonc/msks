@@ -176,6 +176,15 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **Quitting pi in a GUI shell returns to the prompt at once
+  (#1192).** With pi in regular mode (#1204), quitting no longer
+  writes the whole transcript to the terminal on the way out. A
+  home that still runs pi in fullscreen mode can add
+  `"tuiMode": "regular"` to its `~/.pi/agent/settings.json`, or
+  set `fullscreenExitOutput` to `"resume-hint"` to keep fullscreen
+  and print only the resume hint. See
+  [docs/llm.md](llm.md#integration-with-the-pi-coding-agent).
+
 - **The TUI and the GUI stack no second bridge holder on a start
   another client makes (#1198).** The open client read the rows the
   moment the daemon announced `running` and spawned its own holder

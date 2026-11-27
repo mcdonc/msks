@@ -259,6 +259,15 @@ selection, search, and scrolling then work over the session. pi's own default
 is fullscreen mode, which draws the transcript in its own viewport and handles
 the mouse itself. The file is copied once, and later edits belong to the user.
 
+Quitting returns to the prompt at once in regular mode. Fullscreen mode writes
+the whole transcript to the terminal on exit, and a GUI shell paints that write
+slowly enough to watch (#1192). An existing home keeps its own copy of the
+settings file and stays in fullscreen mode until `"tuiMode": "regular"` is
+added there by hand. A user who wants fullscreen can instead set
+`fullscreenExitOutput` to `"resume-hint"`, and quitting then prints only the
+resume hint. `pi --continue` resumes the most recent session from the same
+folder in either mode.
+
 ## SIGHUP
 
 A restart or `SIGHUP` of msksd is required in order to register changes to the
