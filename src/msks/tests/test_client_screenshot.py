@@ -877,14 +877,20 @@ def test_the_accept_loop_names_a_helper_that_cannot_start(
 
 
 def test_stop_terminates_the_forward_and_the_helpers() -> None:
+    """The stop path takes the forward child and a helper
+    mid-capture with it."""
+
     class Held:
-        """A child that stays in the pipe's children until the stop
-        path terminates it: wait() parks, terminate() releases. The
-        spawn dup is the copy a real child would hold, so the
-        accept loop's own close of the connection strands no
-        writer."""
+        """A child that stays alive until the stop path terminates
+        it: wait() parks, terminate() releases — the shape of a
+        real forward child, which never exits on its own, so the
+        supervisor never respawns it. The helper's spawn dup stands
+        in for the descriptor a real child inherits: the accept
+        loop closes its own copy after the spawn, and the dup keeps
+        the client's connection open the way the child would."""
 
         def __init__(self) -> None:
+            self.stderr = io.BytesIO(b"")
             self.terminated = False
             self.held: int | None = None
 
@@ -900,10 +906,9 @@ def test_stop_terminates_the_forward_and_the_helpers() -> None:
                     os.close(self.held)
 
     pipe = screenshot.ScreenshotPipe("ws1", "/agent", "/ident", "dev", "/kh")
-    forward = FakeProc(stderr=b"")
+    forward = Held()
     helper = Held()
-    # The forward child is the held FakeProc the assertion reads;
-    # the port-file exec gets a fresh one per attempt, each with
+    # The port-file exec gets a fresh FakeProc per attempt, each with
     # its own stderr (one stream cannot serve two readers).
     pipe.ssh_runner = lambda argv, **kw: (
         forward if "-N" in argv else FakeProc(stderr=b"")
@@ -915,20 +920,56 @@ def test_stop_terminates_the_forward_and_the_helpers() -> None:
 
     pipe.helper_runner = held_runner
     pipe.start()
-    client = dial(pipe)
-    client.sendall(b"GET /screenshot HTTP/1.1\r\n\r\n")
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        with pipe.lock:
-            if pipe.children:
-                break
-        time.sleep(0.01)
-    else:
-        pytest.fail("the accept loop never held the helper child")
-    pipe.stop()
-    client.close()
+    try:
+        with contextlib.closing(dial(pipe)) as client:
+            client.sendall(b"GET /screenshot HTTP/1.1\r\n\r\n")
+            # The stop path reads pipe.ssh for the forward child, so the
+            # wait covers the supervisor's record too: under load the
+            # supervisor thread can trail the accept thread, and a stop
+            # before the record lands leaves the forward child
+            # unterminated (#1209).
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                with pipe.lock:
+                    held = bool(pipe.children)
+                if held and pipe.ssh is forward:
+                    break
+                time.sleep(0.01)
+            else:
+                pytest.fail(
+                    "the accept loop never held the helper child, or the "
+                    "supervisor never recorded the forward child"
+                )
+    finally:
+        pipe.stop()
     assert forward.terminated is True
     assert helper.terminated is True
+
+
+def test_a_stop_during_the_forward_spawn_takes_the_fresh_child(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A stop that lands while the forward child spawns — after the
+    loop's check, before the child is recorded — is caught by the
+    second check: the stop path's own sweep ran with the record
+    still empty, so the fresh child is taken here — terminated and
+    reaped, the record cleared, and no stderr line."""
+    pipe = screenshot.ScreenshotPipe("ws1", "/agent", "/ident", "dev", "/kh")
+    child = FakeProc(stderr=b"")
+
+    def runner(argv, **kw):
+        # The stop path lands mid-spawn: the flag, then the sweep of
+        # the recorded children — which does not include this child.
+        pipe.stopping.set()
+        pipe.terminate_children()
+        return child
+
+    pipe.ssh_runner = runner
+    pipe.supervise()
+    assert child.terminated is True
+    assert child.returncode == 0
+    assert pipe.ssh is None
+    assert capsys.readouterr().err == ""
 
 
 def test_pipe_from_env_stays_down_without_a_command(
