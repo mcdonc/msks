@@ -1516,26 +1516,46 @@ def test_the_shell_stacks_no_holder_on_a_boot_another_client_makes(
 ) -> None:
     """#1198: a shell the GUI opens boots a stopped workspace
     through a session child, whose own start path leaves the
-    holder. The boot's frames — the transition, the binds, the
-    running word — open the watch's window and decide nothing
-    on their own; the drain's read lands after the holder stood,
-    and rows that read listening spawn nothing and spend
+    holder. The running frame opens the watch's window and reads
+    nothing on its own; the holder's own listener ends the wait,
+    so the watch reads no rows, spawns nothing, and spends
     nothing."""
     shell, window, bridge = make_shell(qt)
     bridge.calls.clear()
-    shell.frame_landed(
-        {
-            "event": "workspace.status",
-            "data": {"id": "ws-a", "status": "starting"},
-        }
-    )
+    # The boot's binds publish their listeners before the running
+    # word: they answer no spawn of this session.
     shell.frame_landed(
         {"event": "proxy.listening", "data": {"id": "ws-a", "proxy": 7}}
     )
     shell.frame_landed(running_frame())
     assert rehold_reads(bridge) == []
+    assert bridge.reholder.pending == {"ws-a"}
+    # The booting client's holder registers: the hub's listener
+    # resolves the deferred running signal.
+    shell.frame_landed(
+        {"event": "proxy.listening", "data": {"id": "ws-a", "proxy": 7}}
+    )
+    assert bridge.reholder.pending == set()
+    force_rehold_windows(bridge)
+    shell.drain_rehold()
+    assert rehold_reads(bridge) == []
     assert bridge.holder_spawns == []
-    # The window closes with the booting client's holder standing.
+    assert bridge.reholder.spent == {}
+    # No spawn of this session: the listener says no recovery.
+    assert "bridge" not in shell.listing.status.text()
+
+
+def test_the_shell_reads_the_rows_once_when_the_boots_listener_is_missed(
+    qt,
+) -> None:
+    """#1198: a running frame whose holder's listener never
+    reached this client is read when the window closes, and rows
+    that then read listening spawn nothing and spend nothing."""
+    shell, window, bridge = make_shell(qt)
+    bridge.calls.clear()
+    shell.frame_landed(running_frame())
+    assert rehold_reads(bridge) == []
+    assert bridge.holder_spawns == []
     force_rehold_windows(bridge)
     shell.drain_rehold()
     assert rehold_reads(bridge) == [
@@ -1547,7 +1567,6 @@ def test_the_shell_stacks_no_holder_on_a_boot_another_client_makes(
     bridge.succeeded.emit("rehold:ws-a", listening)
     assert bridge.holder_spawns == []
     assert bridge.reholder.spent == {}
-    # No spawn of this session: the listener says no recovery.
     assert "bridge" not in shell.listing.status.text()
 
 

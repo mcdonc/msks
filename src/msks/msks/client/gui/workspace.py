@@ -24,13 +24,7 @@ its guards (#927), the reachability the gate counts.
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from ..bridge import (
-    GAVE_UP,
-    became_running,
-    boot_announced,
-    bridge_serving,
-    holder_lost,
-)
+from ..bridge import GAVE_UP, became_running, bridge_serving, holder_lost
 from ..data import RestFailure
 from ..frames import listing_frame, row_frame
 from .arrival import stagger_on_change
@@ -822,10 +816,10 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         if serving is not None:
             self.note_reheld(serving)
             return
-        booting = boot_announced(frame)
-        if booting is not None:
-            self.bridge.reholder.note_boot(booting)
-        lost = holder_lost(frame) or became_running(frame)
+        running = became_running(frame)
+        if running is not None:
+            self.bridge.reholder.note_boot(running)
+        lost = holder_lost(frame) or running
         if lost is not None:
             self.weigh_bridge_signal(lost)
 

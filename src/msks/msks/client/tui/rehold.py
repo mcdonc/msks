@@ -15,13 +15,7 @@ way ``HelpKeys`` does — the app, the standing rows, the
 connection — and owns no state of its own.
 """
 
-from ..bridge import (
-    GAVE_UP,
-    became_running,
-    boot_announced,
-    bridge_serving,
-    holder_lost,
-)
+from ..bridge import GAVE_UP, became_running, bridge_serving, holder_lost
 from .consent_ui import flash_safe
 from .rows import workspace_label
 
@@ -50,10 +44,10 @@ class ReholdWatch:
         if serving is not None:
             self.note_reheld(serving)
             return
-        booting = boot_announced(msg)
-        if booting is not None:
-            self.app.data.reholder.note_boot(booting)
-        lost = holder_lost(msg) or became_running(msg)
+        running = became_running(msg)
+        if running is not None:
+            self.app.data.reholder.note_boot(running)
+        lost = holder_lost(msg) or running
         if lost is not None:
             self.weigh_bridge_signal(lost)
 

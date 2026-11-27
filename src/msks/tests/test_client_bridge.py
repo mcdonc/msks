@@ -531,12 +531,6 @@ def held_rows() -> list[dict]:
     ]
 
 
-def status_frame(status: str, ws: str = "ws-a") -> dict:
-    """The watcher's status transition, the shape the daemon
-    publishes (#1198)."""
-    return {"event": "workspace.status", "data": {"id": ws, "status": status}}
-
-
 class FakeClock:
     """The monotonic stand-in: the tests advance it by hand."""
 
@@ -837,39 +831,16 @@ def test_reholder_takes_the_starts_window() -> None:
     assert holder.signal("ws-a") == bridge.WEIGH
 
 
-def test_boot_announced_names_the_booting_workspace() -> None:
-    """#1198: the daemon's two words on a start — ``starting``
-    before the launch, ``running`` at its end — name the
-    workspace booting; a stop, a pause, a frame without the
-    word, and every other event decide nothing."""
-    assert bridge.boot_announced(status_frame("starting")) == "ws-a"
-    assert bridge.boot_announced(status_frame("running")) == "ws-a"
-    assert bridge.boot_announced(status_frame("stopped")) is None
-    assert bridge.boot_announced(status_frame("paused")) is None
-    assert (
-        bridge.boot_announced(
-            {"event": "workspace.status", "data": {"id": "ws-a"}}
-        )
-        is None
-    )
-    assert (
-        bridge.boot_announced(
-            {"event": "proxy.listening", "data": {"id": "ws-a"}}
-        )
-        is None
-    )
-
-
 def test_a_foreign_boots_running_frame_waits_for_its_holder() -> None:
-    """#1198: a boot another client makes announces itself, and
-    the watch holds the boot's signals until the window closes —
-    the booting client's start path spawns its holder after the
-    running frame, and a read at once found the rows still
-    failed and stacked a standby. At the close the rows read
+    """#1198: a boot another client makes announces itself with
+    the running frame, and the watch holds that signal until the
+    window closes — the booting client's start path spawns its
+    holder after the frame, and a read at once found the rows
+    still failed and stacked a standby. At the close the rows read
     listening, owe nothing, and spend nothing."""
     holder, clock = make_reholder()
-    holder.note_boot("ws-a")  # the starting frame
-    assert holder.signal("ws-a") is None  # the running frame
+    holder.note_boot("ws-a")
+    assert holder.signal("ws-a") is None
     assert holder.take_due() == []
     clock.now += bridge.ReHolder.RETRY_AFTER_S - 1
     assert holder.take_due() == []
@@ -880,20 +851,21 @@ def test_a_foreign_boots_running_frame_waits_for_its_holder() -> None:
     assert holder.awaited == {}
 
 
-def test_the_boots_last_word_extends_the_window_past_the_boot() -> None:
-    """#1198: ``running`` re-opens the window ``starting`` opened,
-    so the holder's time counts from the boot's end, not its
-    start — a boot longer than the window still gives its
-    holder the whole window to connect."""
+def test_the_boots_own_holder_ends_the_wait_without_a_read() -> None:
+    """#1198: the holder the booting client leaves registers
+    inside the window, and its listener resolves the deferred
+    signal — no spawn of this session is answered, no recovery
+    is said, and the drain finds nothing to read. The common
+    path reads no rows at all."""
     holder, clock = make_reholder()
     holder.note_boot("ws-a")
-    clock.now += bridge.ReHolder.RETRY_AFTER_S - 5
-    holder.note_boot("ws-a")
     assert holder.signal("ws-a") is None
-    clock.now += bridge.ReHolder.RETRY_AFTER_S - 1
+    assert holder.pending == {"ws-a"}
+    assert holder.serving("ws-a") is False
+    assert holder.pending == set()
+    clock.now += bridge.ReHolder.RETRY_AFTER_S
     assert holder.take_due() == []
-    clock.now += 1
-    assert holder.take_due() == [("ws-a", bridge.WEIGH)]
+    assert holder.spent == {}
 
 
 def test_a_foreign_start_that_left_no_holder_is_reheld_a_window_late() -> None:

@@ -136,8 +136,9 @@ tagged `vX.Y.Z`.
   screenshot pipe could not bind the guest port and retried every 30
   seconds, and each retry showed in the events tab as a
   `forward.opened` and `forward.closed` pair on port 22. The watch now
-  waits 30 seconds after the announcement before it reads the rows, and
-  rows that read `listening` spawn nothing. See
+  gives that holder 30 seconds, and rows that read `listening` spawn
+  nothing. A start over the raw API leaves no holder, and the client
+  re-holds it 30 seconds after the workspace is running. See
   [docs/proxies.md](proxies.md#the-bridge).
 
 - **The GUI terminal's copy drops the selection (#1182).**

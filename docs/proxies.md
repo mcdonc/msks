@@ -98,13 +98,15 @@ spawns a fresh holder: the same detached one a start leaves. One line on
 the screen it is showing says the bridge came back. It tries three times
 per workspace per session, waiting 30 seconds between tries. A start
 that another client makes (a shell the GUI opens, `msks ssh` in a
-terminal) gets the same 30 seconds before the client reads the rows
-(#1198). The client that made the start leaves the holder, and the
-holder needs that time to connect. A read that finds the rows
-`listening` spawns nothing. A client
-that cannot resolve the workspace identity stops there and leaves the
-row's cause visible. The CLI never does this: a one-shot command is not
-a session, and `msks proxy hold <workspace>` remains the by-hand path.
+terminal) gets the same 30 seconds (#1198). The client that made the
+start leaves the holder, and the holder needs that time to connect.
+The holder's listener ends the wait. A read after the window finds the
+rows `listening` and spawns nothing. A start over the raw API leaves
+no holder, and the client re-holds it 30 seconds after the daemon says
+the workspace is running. A client that cannot resolve the workspace
+identity stops there and leaves the row's cause visible. The CLI never
+does this: a one-shot command is not a session, and
+`msks proxy hold <workspace>` remains the by-hand path.
 
 The listener binds on the daemon host, so whoever can reach
 `listen_host:listen_port` — loopback only by default — connects through
