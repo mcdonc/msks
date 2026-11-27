@@ -97,11 +97,10 @@ def seat_pill(page, dictation, line: QtWidgets.QWidget) -> QtWidgets.QWidget:
 
 
 def pill_in(window: QtWidgets.QWidget) -> DictationPill | None:
-    """The pill a window carries (#1214), or None when the window
-    shows none — the terminal-only corner asks before it parks.
-    A direct child alone: a dialog's pill is the dialog's own,
-    and a parent window's recursive walk would find that one
-    under a child dialog and answer it as the window's."""
+    """The floating pill a window carries (#1214), or None when
+    the window shows none. A direct child alone: a seated pill
+    under a page of this window is not the window's own, and a
+    recursive walk would find it and answer it as the window's."""
     for child in window.children():
         if isinstance(child, DictationPill):
             return child

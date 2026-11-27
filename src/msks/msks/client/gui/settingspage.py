@@ -467,13 +467,13 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
     # --- the model and its download -------------------------------------
 
     def model_value(self) -> str:
-        """The picker's setting (#1214): the picked item's model
-        name when the text is a listed item's label (the label
-        carries the size in parentheses), else the typed text — a
-        path, or a name the list does not carry."""
-        index = self.model.currentIndex()
+        """The picker's setting (#1214): the listed item's model
+        name when the text is one of the labels (typed or picked;
+        the label carries the size in parentheses), else the typed
+        text — a path, or a name the list does not carry."""
         text = self.model.currentText()
-        if index >= 0 and self.model.itemText(index) == text:
+        index = self.model.findText(text)
+        if index >= 0:
             return str(self.model.itemData(index))
         return text.strip() or DEFAULT_MODEL
 
@@ -560,36 +560,42 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
 
     @QtCore.Slot(str, str)
     def landed(self, path: str, error: str) -> None:
-        """The download's end (#1214): the bar goes, the model
-        state reads again, and the controller re-checks its
-        model; a failure or a cancel flashes its reason."""
+        """The download's end (#1214): the bar goes, and a failure
+        or a cancel flashes its reason and leaves the fields as the
+        operator left them — a pick stands for a retry. A landed
+        download makes the picked model the configured one and
+        says so."""
         self.flight = None
         self.bar.hide()
         self.cancel_button.hide()
         self.bar.setRange(0, 100)
         if error:
             self.flash(error, error=True)
-            self.reload_layers()
+            self.refresh_model()
             return
-        # The model was downloaded to be used: the field's values
-        # are saved as Apply would save them, so the controller's
-        # re-read takes the downloaded model instead of the one
-        # the files still name.
-        self.apply()
-        self.flash(f"saved {Path(path).name}")
+        if self.save_model(self.model_value()):
+            self.flash(f"saved {Path(path).name}")
 
-    def reload_layers(self) -> None:
-        """The layers read again after a download's end (#1214),
-        the controller and the model state following; a file that
-        will not read flashes its reason."""
+    def save_model(self, model: str) -> bool:
+        """Make ``model`` the configured one (#1214): the file takes
+        the model key over its standing values — the other fields
+        stay as the operator left them, applied or not — and the
+        layers resolve again for the controller. False when the file
+        will not write or read, with the reason flashed."""
         try:
+            values = dict(load_prefs())
+            values["dictate_model"] = model
+            save_prefs(values)
             settings = self.effective()
-        except ValueError as exc:
-            self.flash(str(exc), error=True)
-            return
+        except (OSError, ValueError) as exc:
+            self.flash(f"cannot save gui.yaml: {exc}", error=True)
+            return False
         self.dictation.reload(settings)
-        self.load(settings)
+        # The fields stand as the operator left them (#1216 review):
+        # only the model line follows the save. A field that differs
+        # from the file still asks for Apply.
         self.refresh_model()
+        return True
 
     @QtCore.Slot()
     def abandon_download(self) -> None:

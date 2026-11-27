@@ -646,3 +646,19 @@ def test_a_model_name_that_makes_a_bad_url_fails_named(tmp_path: Path):
     with pytest.raises(dictate.DictateFailure, match="download failed"):
         dictate.download_model("my model", tmp_path)
     assert list((tmp_path / "whisper").iterdir()) == []
+
+
+def test_a_hung_whisper_cli_is_named_and_failed(tmp_path: Path, private_bin):
+    """A whisper-cli that never finishes (#1216 review): the call
+    times out, the failure names the binary and the bound, and the
+    pill never stays in transcribing."""
+    tool(private_bin, "whisper-cli", "import time\ntime.sleep(30)\n")
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(dictate, "TRANSCRIBE_TIMEOUT_S", 0.3)
+    try:
+        with pytest.raises(
+            dictate.DictateFailure, match="did not finish in 0.3s"
+        ):
+            dictate.transcribe(tmp_path / "clip.wav", tmp_path / "m.bin")
+    finally:
+        monkey.undo()

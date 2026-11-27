@@ -108,6 +108,12 @@ PW_CAT = "pw-cat"
 PW_DUMP = "pw-dump"
 NOTIFY_SEND = "notify-send"
 
+#: How long one clip's transcription may run (#1214): the model
+#: loads per clip, about a second with ``small`` and three with
+#: ``large-v3-turbo``, so a run past this is a hung whisper-cli,
+#: named and failed rather than a pill stuck in transcribing.
+TRANSCRIBE_TIMEOUT_S = 120.0
+
 #: The start and done tones (#1210): 60 ms each, with 5 ms fades.
 START_TONE_HZ = 880
 DONE_TONE_HZ = 1320
@@ -442,6 +448,25 @@ def whisper_command(
     return cmd
 
 
+def run_whisper(cmd: list[str]) -> subprocess.CompletedProcess:
+    """Run whisper-cli once (#1214), under the transcription bound:
+    a missing binary and a run past the bound are named failures."""
+    try:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=TRANSCRIBE_TIMEOUT_S,
+        )
+    except FileNotFoundError:
+        raise DictateFailure(f"{cmd[0]} not found") from None
+    except subprocess.TimeoutExpired:
+        raise DictateFailure(
+            f"{cmd[0]} did not finish in {TRANSCRIBE_TIMEOUT_S:g}s"
+        ) from None
+
+
 def transcribe(
     wav: Path,
     model: Path,
@@ -455,10 +480,7 @@ def transcribe(
     cmd = whisper_command(
         wav, model, lang, prompt, threads or os.cpu_count() or 4
     )
-    try:
-        done = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    except FileNotFoundError:
-        raise DictateFailure(f"{WHISPER_CLI} not found") from None
+    done = run_whisper(cmd)
     if done.returncode != 0:
         detail = done.stderr.strip()[-300:]
         raise DictateFailure(

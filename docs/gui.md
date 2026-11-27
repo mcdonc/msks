@@ -284,10 +284,11 @@ page.
 
 The mode shows the Shells tab when another page tab was current.
 The shell tabs, the **+** tab, the rename, the close buttons, and
-their keys work as before. The [dictate pill](#dictation) keeps its
-corner at the tab row's right end, and the workspace's name and the
-restore button end left of it; the terminal keeps the window's whole
-width. So do the drag gestures: a left-drag
+their keys work as before. The footer row goes with the page's other
+controls, the [dictate pill](#dictation) seated in it with them, and
+the window's own pill floats at the tab row's right end instead, left
+of the restore button. The terminal keeps the window's whole width. So
+do the drag gestures: a left-drag
 tears a tab off into a window, reorders the tabs, and puts a
 torn-off shell back on the row. The consent panel keeps its place
 above the terminals while a hold waits. The status line moves to

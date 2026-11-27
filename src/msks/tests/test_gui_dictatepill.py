@@ -600,15 +600,14 @@ def test_the_model_download_shows_progress_and_lands(qt):
     assert page.status.text() == "download failed: reset"
     assert page.bar.isHidden() and page.cancel_button.isHidden()
     assert held.state == "nomodel"
-    # A failed download over a gui.yaml that will not read: the
-    # layers' refusal flashes in the failure's place, the
-    # controller keeping its standing settings.
+    # A failed download reads the layers not at all: the failure
+    # stands alone, the fields and the controller as they were.
     broken = prefs_path()
     broken.write_text("dictate_model: [")
     page.download()
     page.flight.join(5)
     spin(qt, 100)
-    assert "invalid YAML" in page.status.text()
+    assert page.status.text() == "download failed: reset"
     assert held.state == "nomodel"
     broken.unlink()
 
@@ -686,8 +685,9 @@ def test_apply_and_revert_light_only_while_a_field_differs(qt):
     finally:
         (qt.tmp / "config").chmod(0o700)
     assert page.apply_button.isEnabled() and page.dirty
-    # A download's landing seeds the fields: dark.
-    page.reload_layers()
+    # A revert after the pin clears: dark.
+    (qt.tmp / "config").chmod(0o700)
+    page.revert()
     assert not page.apply_button.isEnabled()
 
 
@@ -974,10 +974,12 @@ def test_apply_and_revert_flash_a_file_that_will_not_read(qt, monkeypatch):
     broken.write_text("dictate_model: [")
     page.revert()
     assert "gui.yaml: invalid YAML" in page.status.text()
-    # A download's landing over a file that will not read: Apply's
-    # save replaces the broken file whole, then the read stands.
+    # A download's landing over a file that will not read: the
+    # model save reads the standing values first and refuses, the
+    # broken file left as it is.
     page.downloaded.emit("", "")
-    assert page.status.text() == "saved "
+    assert page.status.text().startswith("cannot save gui.yaml: ")
+    assert broken.read_text() == "dictate_model: ["
     # A tree the atomic write cannot land in: Apply's save fails
     # before any read, and the page keeps the standing settings.
     held.settings = DictateSettings(model="small")
@@ -1061,3 +1063,79 @@ def test_apply_flashes_a_layers_read_that_refuses(qt, monkeypatch):
     page.apply()
     assert page.status.text() == "gui.yaml: invalid YAML: bad"
     assert held.settings.model == "small"
+
+
+def test_a_failed_download_leaves_the_pick_for_a_retry(qt):
+    """A failed or cancelled download (#1216 review): the pick
+    stands in the picker, so a retry fetches the same model, and
+    nothing is saved; the model line reads the pick still."""
+    from msks.client.gui.settingspage import SettingsPage
+
+    held, _fake = controller(qt)
+    (qt.tmp / "cache" / "msks" / "whisper" / "ggml-small.bin").unlink()
+    held.check_model()
+    page = SettingsPage(held, {})
+    page.pick_model("large-v3-turbo")
+
+    def broken(name, cache_root, progress=None, cancel=None):
+        raise dictate.DictateFailure("download failed: reset")
+
+    page.downloader = broken
+    page.download()
+    page.flight.join(5)
+    spin(qt, 100)
+    assert page.status.text() == "download failed: reset"
+    assert page.model_value() == "large-v3-turbo"  # the pick stands
+    assert "large-v3-turbo.bin — missing" in page.model_state.text()
+    assert page.download_button.isEnabled()  # a retry is offered
+    assert load_prefs() == {}
+
+
+def test_a_landed_download_saves_the_model_alone(qt):
+    """A landed download (#1216 review) saves the picked model and
+    nothing else: the fields the operator edited without applying
+    stay as they left them, applied or not, and still ask for
+    Apply."""
+    from msks.client.gui.settingspage import SettingsPage
+
+    held, _fake = controller(qt)
+    (qt.tmp / "cache" / "msks" / "whisper" / "ggml-small.bin").unlink()
+    held.check_model()
+    page = SettingsPage(held, {})
+    page.device.setEditText("mic-unapplied")  # never applied
+    page.prompt.setText("typed mid-flight")
+
+    def fake_download(name, cache_root, progress=None, cancel=None):
+        path = cache_root / "whisper" / "ggml-small.bin"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"ggml")
+        return path
+
+    page.downloader = fake_download
+    page.download()
+    page.flight.join(5)
+    spin(qt, 100)
+    assert page.status.text() == "saved ggml-small.bin"
+    assert load_prefs() == {"dictate_model": "small"}  # the model alone
+    assert held.settings.model == "small"
+    assert held.settings.device == ""  # the unsaved edit saved nothing
+    assert page.device_value() == "mic-unapplied"  # the field stands
+    assert page.apply_button.isEnabled()  # and still asks for Apply
+    page.apply()
+    assert load_prefs()["dictate_device"] == "mic-unapplied"
+    assert not page.apply_button.isEnabled()
+
+
+def test_a_hand_typed_label_resolves_to_its_model(qt):
+    """A listed item's label typed by hand (#1216 review) resolves
+    to that item's model name, not to the label text."""
+    from msks.client.gui.settingspage import SettingsPage
+
+    held, _fake = controller(qt)
+    page = SettingsPage(held, {})
+    page.model.setEditText("small (466 MB)")
+    assert page.model_value() == "small"
+    page.model.setEditText("small")
+    assert page.model_value() == "small"
+    page.model.setEditText("/nix/store/x.bin")
+    assert page.model_value() == "/nix/store/x.bin"
