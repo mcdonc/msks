@@ -10535,18 +10535,20 @@ async def test_the_listing_stacks_no_holder_on_a_boot_another_client_makes(
             {"event": "proxy.listening", "data": {"id": WS, "proxy": 7}},
         )
         pushed(factory, running_frame())
-        await asyncio.sleep(0.3)
+        await wait_for(lambda: data.reholder.pending == {WS})
         assert data.proxies_fetches == 0
-        assert data.reholder.pending == {WS}
         # The booting client's holder registers: the hub's
         # listener resolves the deferred running signal.
         pushed(
             factory,
             {"event": "proxy.listening", "data": {"id": WS, "proxy": 7}},
         )
+        await wait_for(lambda: data.reholder.pending == set())
+        # The window closes with nothing pending: a forced drain
+        # reads nothing.
         data.holder_clock.past_windows()
-        await asyncio.sleep(0.4)
-        assert data.reholder.pending == set()
+        app.screen.watch_rehold()
+        await asyncio.sleep(0.3)
         assert data.proxies_fetches == 0
         assert data.holder_spawns == []
         assert data.reholder.spent == {}

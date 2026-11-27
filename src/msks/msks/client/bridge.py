@@ -458,7 +458,11 @@ def bridge_serving(frame: dict) -> str | None:
     """The workspace one events frame names as bridge-served
     (#1127): a ``proxy.listening`` transition — the hub's own
     up-publish among the binds' own. The watch reads it as its
-    spawn's outcome alone (:meth:`ReHolder.serving`)."""
+    spawn's outcome alone (:meth:`ReHolder.serving`). The binds'
+    own frames are safe only because the attach publishes them
+    before the ``running`` word: a bind landing after it would
+    resolve a boot's deferred signal (:meth:`ReHolder.note_boot`)
+    the way a holder would."""
     if frame.get("event") != "proxy.listening":
         return None
     return frame_id(frame.get("data") or {})
