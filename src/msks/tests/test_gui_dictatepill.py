@@ -608,7 +608,44 @@ def test_a_download_thread_that_raises_anything_lands(qt):
     assert page.download_button.isEnabled()
 
 
-def test_every_field_carries_its_description_and_the_pin_notice(qt):
+def test_apply_and_revert_light_only_while_a_field_differs(qt):
+    """The dirty flag (#1214): Apply and Revert stand dark over saved
+    fields, light at the first change to any field, and darken
+    again at a save or a revert — a failed save leaves them lit,
+    since the fields still differ from the file."""
+    from msks.client.gui.settingspage import SettingsPage
+
+    held, _fake = controller(qt)
+    page = SettingsPage(held, {})
+    assert not page.apply_button.isEnabled()
+    assert not page.reload_button.isEnabled()
+    page.threshold.setValue(-55.0)  # a spin
+    assert page.dirty and page.apply_button.isEnabled()
+    page.revert()
+    assert page.dirty is False and not page.apply_button.isEnabled()
+    page.pick_model("base.en")  # a pick
+    assert page.apply_button.isEnabled()
+    page.prompt.setText("msks")  # a text edit
+    page.apply()
+    assert not page.apply_button.isEnabled()
+    assert load_prefs()["dictate_model"] == "base.en"
+    # A save that cannot land leaves the fields unsaved: lit.
+    page.margin.setValue(9.0)
+    (qt.tmp / "config" / "gui.yaml").unlink()
+    (qt.tmp / "config").chmod(0o500)
+    try:
+        page.apply()
+    finally:
+        (qt.tmp / "config").chmod(0o700)
+    assert page.apply_button.isEnabled() and page.dirty
+    # A download's landing seeds the fields: dark.
+    page.reload_layers()
+    assert not page.apply_button.isEnabled()
+
+
+def test_every_field_carries_its_description_and_the_pin_notice(
+    qt, monkeypatch
+):
     """Each field's tooltip (#1214) is the setting's long
     description, and a key the environment pins appends its
     variable's notice."""
@@ -617,11 +654,27 @@ def test_every_field_carries_its_description_and_the_pin_notice(qt):
 
     held, _fake = controller(qt)
     page = SettingsPage(held, {})
+
     for key, field in page.fields.items():
         assert field.toolTip() == page_mod.TIPS[key]
         assert len(page_mod.TIPS[key]) > 80  # a description, not a label
+        # The row's label carries the same text: a reader hovers the
+        # setting's name.
+        assert page.labels[key].toolTip() == page_mod.TIPS[key]
+        assert page.labels[key].text()  # the name itself
     assert "noise floor" in page.margin.toolTip()
     assert "~/.cache/msks/whisper/" in page.model.toolTip()
+    assert page.labels["dictate_margin"].text() == "Speech margin"
+    assert page.refresh_sources.toolTip() == page_mod.REFRESH_TIP
+    # A pinned key: the variable's notice follows on the label too.
+    monkeypatch.setenv("MSKSC_DICTATE_MARGIN", "9")
+    held.reload(resolve(os.environ, load_prefs(), {}))
+    page.load(held.settings)
+    notice = "MSKSC_DICTATE_MARGIN pins this setting"
+    assert page.margin.toolTip().endswith(
+        notice + "; the page cannot change it."
+    )
+    assert page.labels["dictate_margin"].toolTip() == page.margin.toolTip()
 
 
 def test_the_picker_drives_the_model_line_live(qt):

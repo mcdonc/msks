@@ -608,14 +608,15 @@ settings in effect now, and every field takes a change.
   toward, such as `msks, devenv, NixOS, pi`. Leave it empty for
   plain dictation.
 
-Each field's tooltip carries its description. A key that an
-`MSKSC_DICTATE_*` variable pins shows the variable's value in a
+Hover a setting's name or its field for its description. A key that
+an `MSKSC_DICTATE_*` variable pins shows the variable's value in a
 read-only field, with the variable named under the form.
 
 **Apply** saves the fields into `~/.config/msks/gui.yaml` and the
 next recording takes them. A recording ends at the pill's second
-click, whatever the settings. **Revert** reads the layers again and
-reseeds the fields. A value that refused anywhere shows its message
+click, whatever the settings. **Apply** and **Revert** stand dark
+while the fields match the saved settings, and light at the first
+change. **Revert** reads the layers again and reseeds the fields. A value that refused anywhere shows its message
 under the form, and the setting reads as its default.
 
 **Speech model** shows where the picked model points and whether

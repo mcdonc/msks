@@ -57,6 +57,12 @@ BAR_WIDTH = 360
 DEVICE_LABEL = "Device"
 DEFAULT_DEVICE = "the default input"
 
+#: The device row's Refresh button (#1214).
+REFRESH_TIP = (
+    "Read the desktop's source list again: a microphone plugged in or "
+    "a source renamed since the page opened joins the picker."
+)
+
 #: Each setting's long description (#1214): the field's tooltip,
 #: the same words for the page and for the docs chapter. A key the
 #: environment pins appends its variable's notice to its field's.
@@ -186,8 +192,58 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         self.apply_button.clicked.connect(self.apply)
         self.reload_button = QtWidgets.QPushButton("Revert", self)
         self.reload_button.clicked.connect(self.revert)
+        # The dirty flag (#1214): Apply and Revert stand dark until a
+        # field changes, and a save or a revert darkens them again —
+        # a lit Apply over saved fields invites a save that changes
+        # nothing, and a dark one says the fields stand as saved.
+        self.dirty = False
+        self.apply_button.setEnabled(False)
+        self.reload_button.setEnabled(False)
+        for field in self.fields.values():
+            self.listen(field)
         self.pinned_note = QtWidgets.QLabel("", self)
         self.pinned_note.setWordWrap(True)
+
+    def listen(self, field) -> None:
+        """One field's change signals to the dirty flag (#1214):
+        whichever the widget kind answers — a pick, a typed edit, a
+        spin, a text change."""
+        signals = (
+            getattr(field, "currentIndexChanged", None),
+            getattr(field, "editTextChanged", None),
+            getattr(field, "valueChanged", None),
+            getattr(field, "textChanged", None),
+        )
+        for signal in signals:
+            if signal is not None:
+                signal.connect(self.touched)
+
+    @QtCore.Slot()
+    @QtCore.Slot(int)
+    @QtCore.Slot(float)
+    @QtCore.Slot(str)
+    def touched(self, *_args) -> None:
+        """A field changed under the operator (#1214): Apply and
+        Revert light up."""
+        self.dirty = True
+        self.apply_button.setEnabled(True)
+        self.reload_button.setEnabled(True)
+
+    def settled(self) -> None:
+        """The fields stand as saved (#1214): a seed, a save, or a
+        revert just ran; the buttons darken until the next change."""
+        self.dirty = False
+        self.apply_button.setEnabled(False)
+        self.reload_button.setEnabled(False)
+
+    def label(self, key: str, text: str) -> QtWidgets.QLabel:
+        """A form row's label (#1214): the setting's name, carrying
+        the field's tooltip, kept under ``self.labels`` so the seed
+        re-tips it beside the field."""
+        label = QtWidgets.QLabel(text, self)
+        label.setToolTip(TIPS[key])
+        self.labels[key] = label
+        return label
 
     def number(
         self,
@@ -232,14 +288,23 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         form.setFieldGrowthPolicy(
             QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
         )
-        form.addRow(MODEL_LABEL, self.model)
+        # Each label is a widget of its own (#1214) so it carries its
+        # field's tooltip: a reader hovers the setting's name, not
+        # only its box. The seed keeps a pinned key's notice on both.
+        self.labels: dict[str, QtWidgets.QLabel] = {}
+        form.addRow(self.label("dictate_model", MODEL_LABEL), self.model)
         device_row = QtWidgets.QHBoxLayout()
         device_row.addWidget(self.device)
+        self.refresh_sources.setToolTip(REFRESH_TIP)
         device_row.addWidget(self.refresh_sources)
-        form.addRow(DEVICE_LABEL, device_row)
-        form.addRow("Speech floor", self.threshold)
-        form.addRow("Speech margin", self.margin)
-        form.addRow("Vocabulary prompt", self.prompt)
+        form.addRow(self.label("dictate_device", DEVICE_LABEL), device_row)
+        form.addRow(
+            self.label("dictate_threshold", "Speech floor"), self.threshold
+        )
+        form.addRow(self.label("dictate_margin", "Speech margin"), self.margin)
+        form.addRow(
+            self.label("dictate_prompt", "Vocabulary prompt"), self.prompt
+        )
         form.addRow(self.pinned_note)
         settings_box = QtWidgets.QGroupBox("Dictation", self)
         rows = QtWidgets.QVBoxLayout(settings_box)
@@ -300,7 +365,9 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
             field.setText(str(settings.value(key)))
         pinned = key in settings.pinned
         field.setEnabled(not pinned)
-        field.setToolTip(self.tip(key, pinned))
+        tip = self.tip(key, pinned)
+        field.setToolTip(tip)
+        self.labels[key].setToolTip(tip)
 
     @staticmethod
     def tip(key: str, pinned: bool) -> str:
@@ -337,6 +404,7 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         note = self.notes(settings)
         self.pinned_note.setText(note)
         self.pinned_note.setVisible(bool(note))
+        self.settled()  # the seed's own signals are not the operator's
 
     def pick_model(self, model: str) -> None:
         """The model picker's seed (#1214): the listed item whose
