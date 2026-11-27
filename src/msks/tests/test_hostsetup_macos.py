@@ -27,6 +27,7 @@ from urllib.error import HTTPError
 import pytest
 from msks.server import hostsetup_macos as mac
 from msks.server.hostsetup import venv as host_venv
+from msks.server.hostsetup_macos import dictation
 
 
 def patch_phase(
@@ -2442,3 +2443,80 @@ def test_the_uninstall_removes_the_host_venv(venv_tree: Path) -> None:
         f"{host_venv.VENV_ROOT} removed (the venv, the provisioned Python, uv)"
     )
     assert not Path(host_venv.VENV_ROOT).exists()
+
+
+# --- the dictation phase's own arms (#1216) ------------------------------
+
+
+def test_the_missing_engines_read_the_real_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``missing_engines`` asks ``shutil.which`` itself, in the
+    formula map's order: a PATH answering both names brews
+    nothing, one missing names one, both missing name two."""
+    seen: list[str] = []
+
+    def which(name: str, *args, **kwargs):
+        seen.append(name)
+        return "/opt/homebrew/bin/ffmpeg" if name == "ffmpeg" else None
+
+    monkeypatch.setattr(dictation.shutil, "which", which)
+    assert dictation.missing_engines() == ["whisper-cli"]
+    assert seen == ["whisper-cli", "ffmpeg"]
+    monkeypatch.setattr(dictation.shutil, "which", lambda *a, **kw: "/bin/x")
+    assert dictation.missing_engines() == []
+
+
+def test_the_bin_dir_refuses_a_silent_brew(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``dictation_bin_dir`` on a brew whose prefix answers
+    nothing (#1216): the Homebrew refusal, by name."""
+    patch_phase(monkeypatch, "brewed_prefix", lambda: "")
+    with pytest.raises(mac.MacSetupError, match="brew did not answer"):
+        mac.dictation_bin_dir()
+    patch_phase(monkeypatch, "brewed_prefix", lambda: "/opt/homebrew")
+    assert mac.dictation_bin_dir() == "/opt/homebrew/bin"
+
+
+def test_an_unreadable_shim_path_reads_as_foreign(tmp_path: Path) -> None:
+    """``is_ours`` (#1216): an unreadable file is never the
+    tool's — the run refuses rather than clobbers blind."""
+    assert dictation.is_ours(tmp_path / "absent") is False
+    present = tmp_path / "pw-record"
+    present.write_text(f"#!/bin/sh\n# {mac.SENTINEL}\n")
+    assert dictation.is_ours(present) is True
+    present.chmod(0o000)
+    if os.getuid() == 0:  # root reads anything
+        pytest.skip("root reads a mode-000 file")
+    assert dictation.is_ours(present) is False
+
+
+def test_the_uninstall_arms_without_brew_and_by_the_count(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The sweep's reports (#1216, #701): no brew is needed — the
+    fallback bins sweep alone — and the note names one shim, or
+    none, or the pair."""
+    fb1 = tmp_path / "fb1"
+    fb1.mkdir()
+    patch_phase(monkeypatch, "FALLBACK_BREW_BINS", (str(fb1),))
+
+    def refuse() -> str:
+        raise mac.MacSetupError("brew did not answer")
+
+    patch_phase(monkeypatch, "dictation_bin_dir", refuse)
+    assert mac.remove_dictation_shims() == "no dictation shim found"
+    (fb1 / "pw-cat").write_text(f"#!/bin/sh\n# {mac.SENTINEL}\n")
+    assert (
+        mac.remove_dictation_shims()
+        == f"the dictation shim {fb1 / 'pw-cat'} is gone"
+    )
+    for name in ("pw-record", "notify-send"):
+        (fb1 / name).write_text(f"#!/bin/sh\n# {mac.SENTINEL}\n")
+    note = mac.remove_dictation_shims()
+    assert note == (
+        f"the dictation shims {fb1 / 'pw-record'} and "
+        f"{fb1 / 'notify-send'} are gone"
+    )
+    assert mac.remove_dictation_shims() == "no dictation shim found"

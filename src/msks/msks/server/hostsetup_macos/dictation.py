@@ -137,8 +137,7 @@ def dictation_row() -> str:
     if missing:
         names = " and ".join(missing)
         raise MacSetupError(
-            f"{names} not on PATH; re-run {TOOL} to brew the "
-            "dictation engines"
+            f"{names} not on PATH; re-run {TOOL} to brew the dictation engines"
         )
     bin_dir = dictation_bin_dir()
     for name in SHIM_NAMES:
@@ -158,17 +157,30 @@ def remove_dictation_shims() -> str:
     brew packages stay with the engines (shared packages, the
     Linux tools' own rule). The arm never requires brew (#701's
     lesson): the prefix answers or the fallback bins sweep."""
+    bins = shim_dirs()
+    removed = [
+        swept
+        for name in SHIM_NAMES
+        if (swept := remove_one_shim(bins, name)) is not None
+    ]
+    return shims_gone(removed)
+
+
+def shim_dirs() -> list[str]:
+    """The directories the uninstall sweeps for shims (#701's
+    lesson: the arm never requires brew): the prefix's bin when the
+    prefix answers, and the fallback bins always."""
     bins: list[str] = []
     try:
         bins.append(dictation_bin_dir())
     except MacSetupError:
         pass
     bins.extend(FALLBACK_BREW_BINS)
-    removed = [
-        swept
-        for name in SHIM_NAMES
-        if (swept := remove_one_shim(bins, name)) is not None
-    ]
+    return bins
+
+
+def shims_gone(removed: list[str]) -> str:
+    """The uninstall arm's report for the shims it swept."""
     if not removed:
         return "no dictation shim found"
     if len(removed) == 1:
