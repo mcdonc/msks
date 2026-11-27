@@ -346,9 +346,12 @@ def test_transcribe_names_a_failing_run(tmp_path: Path, private_bin: Path):
     assert len(str(excinfo.value)) < 400  # the stderr's tail alone
 
 
-def test_transcribe_names_the_missing_binary(tmp_path: Path):
-    monkey = pytest.MonkeyPatch()
-    monkey.setenv("PATH", str(tmp_path / "empty"))
+def test_transcribe_names_the_missing_binary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # The fixture, not a hand-rolled patch: a worker whose PATH
+    # stays empty after this test fails every later child spawn.
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     wav = tmp_path / "clip.wav"
     with pytest.raises(dictate.DictateFailure, match="not found"):
         dictate.transcribe(wav, tmp_path / "m.bin")
@@ -414,11 +417,13 @@ def test_list_sources_reads_the_graph(private_bin: Path):
 def test_list_sources_names_a_missing_or_broken_tool(
     tmp_path: Path, private_bin: Path
 ):
-    monkey = pytest.MonkeyPatch()
-    monkey.setenv("PATH", str(tmp_path / "empty"))
-    with pytest.raises(dictate.DictateFailure, match="pw-dump not found"):
-        dictate.list_sources()
-    monkey.undo()
+    # A nested patch of its own, undone on exit, so the fixture's
+    # private PATH head stands for the stand-ins below — and the
+    # worker's PATH never stays empty past this test.
+    with pytest.MonkeyPatch.context() as empty:
+        empty.setenv("PATH", str(tmp_path / "empty"))
+        with pytest.raises(dictate.DictateFailure, match="pw-dump not found"):
+            dictate.list_sources()
     tool(private_bin, "pw-dump", "import sys\nsys.exit(2)\n")
     with pytest.raises(dictate.DictateFailure, match="exited 2"):
         dictate.list_sources()
@@ -648,17 +653,13 @@ def test_a_model_name_that_makes_a_bad_url_fails_named(tmp_path: Path):
     assert list((tmp_path / "whisper").iterdir()) == []
 
 
-def test_a_hung_whisper_cli_is_named_and_failed(tmp_path: Path, private_bin):
+def test_a_hung_whisper_cli_is_named_and_failed(
+    tmp_path: Path, private_bin: Path, monkeypatch: pytest.MonkeyPatch
+):
     """A whisper-cli that never finishes (#1216 review): the call
     times out, the failure names the binary and the bound, and the
     pill never stays in transcribing."""
     tool(private_bin, "whisper-cli", "import time\ntime.sleep(30)\n")
-    monkey = pytest.MonkeyPatch()
-    monkey.setattr(dictate, "TRANSCRIBE_TIMEOUT_S", 0.3)
-    try:
-        with pytest.raises(
-            dictate.DictateFailure, match="did not finish in 0.3s"
-        ):
-            dictate.transcribe(tmp_path / "clip.wav", tmp_path / "m.bin")
-    finally:
-        monkey.undo()
+    monkeypatch.setattr(dictate, "TRANSCRIBE_TIMEOUT_S", 0.3)
+    with pytest.raises(dictate.DictateFailure, match="did not finish in 0.3s"):
+        dictate.transcribe(tmp_path / "clip.wav", tmp_path / "m.bin")
