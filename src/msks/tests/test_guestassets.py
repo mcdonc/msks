@@ -302,12 +302,26 @@ def test_the_image_ships_the_screenshot_extension() -> None:
     assert 'const DESCRIBING = "Describing screenshot…";' in index
     assert '{ blocked: { kind: "question", message: DESCRIBING } }' in index
     assert "AbortSignal.any([signal, loader.signal])" in index
+    # The call starts in a microtask, after pi has queued the show of
+    # the component, so a settle never closes the custom() unseen.
+    assert "queueMicrotask(() => {" in index
     # A cancel closes the component before the turn is aborted, and
-    # the cancelled text carries no pick hint.
+    # only inside a turn: the run's signal is undefined elsewhere.
     cancel_done = "done({ cancelled: true });"
-    assert cancel_done in index and "ctx.abort();" in index
-    assert index.index(cancel_done) < index.index("ctx.abort();")
-    assert "the description was cancelled; the capture is saved at" in index
+    guarded_abort = "if (signal !== undefined) {"
+    assert cancel_done in index and guarded_abort in index
+    assert "ctx.abort();" in index
+    assert (
+        index.index(cancel_done)
+        < index.index(guarded_abort)
+        < index.index("ctx.abort();")
+    )
+    # The cancelled text ends at the saved path: no pick hint.
+    assert (
+        "`the description was cancelled; the capture is saved at ${shot.path}`"
+        in index
+    )
+    assert 'result.cancelled ? "warning" : "error"' in index
     assert 'from "./capture.ts"' in index
     # The capture side: no pi import (plain node runs it), the
     # port file and the default, the refusal's both remedies, and

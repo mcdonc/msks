@@ -112,6 +112,9 @@ interface ShotResult {
   content: Content[];
   details: ShotDetails;
   isError?: boolean;
+  /** The user cancelled the describe; the command path says so as a
+   * warning, not an error. */
+  cancelled?: true;
   usage?: Usage;
 }
 
@@ -264,10 +267,15 @@ async function describeCapture(
       loader.onAbort = () => {
         // done() first: it puts the editor back, and the abort then
         // returns any queued messages into it, as the editor's own
-        // Escape does. A provider still running finishes unseen:
-        // pi drops a done() after the first.
+        // Escape does. The abort stops the agent turn, so it runs
+        // only inside one: the run's signal is undefined elsewhere,
+        // and an abort outside a turn would drain the compaction
+        // queue into the editor. A provider still running finishes
+        // unseen: pi drops a done() after the first.
         done({ cancelled: true });
-        ctx.abort();
+        if (signal !== undefined) {
+          ctx.abort();
+        }
       };
       const abort =
         signal === undefined
@@ -387,6 +395,7 @@ async function shoot(
       ],
       details,
       isError: true,
+      cancelled: true,
       usage: answer?.usage,
     };
   }
@@ -539,7 +548,7 @@ export default function screenshotExtension(pi: ExtensionAPI): void {
         .map((block) => block.text)
         .join("\n");
       if (result.isError) {
-        ctx.ui.notify(line, "error");
+        ctx.ui.notify(line, result.cancelled ? "warning" : "error");
         return;
       }
       // A follow-up reaches the agent when it is idle (a new
