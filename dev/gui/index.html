@@ -614,6 +614,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#dictation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Dictation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-settings-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Settings tab
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-zoom-keys" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1321,6 +1343,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#dictation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Dictation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-settings-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Settings tab
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-zoom-keys" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1431,8 +1475,8 @@ current screens close and fresh ones open over the new
 connection. Shell sessions open on the old connection close with
 it.</p>
 <h2 id="the-main-window">The main window<a class="headerlink" href="#the-main-window" title="Permanent link">&para;</a></h2>
-<p>The window opens on three top-level tabs: <strong>Workspaces</strong>,
-<strong>Images</strong>, and <strong>Secrets</strong>.</p>
+<p>The window opens on four top-level tabs: <strong>Workspaces</strong>,
+<strong>Images</strong>, <strong>Secrets</strong>, and <strong>Settings</strong>.</p>
 <p>The content appears once it is final. At open and on every tab
 change, the page holds clear until its refresh has landed and the
 layout is quiet. It then shows at once, and the rows of its tables
@@ -1691,7 +1735,11 @@ the pointer. <code>Ctrl+Shift+M</code> leaves the mode from anywhere on the
 page.</p>
 <p>The mode shows the Shells tab when another page tab was current.
 The shell tabs, the <strong>+</strong> tab, the rename, the close buttons, and
-their keys work as before. So do the drag gestures: a left-drag
+their keys work as before. The footer row goes with the page's other
+controls, the <a href="#dictation">dictate pill</a> seated in it with them, and
+the window's own pill floats at the tab row's right end instead, left
+of the restore button. The terminal keeps the window's whole width. So
+do the drag gestures: a left-drag
 tears a tab off into a window, reorders the tabs, and puts a
 torn-off shell back on the row. The consent panel keeps its place
 above the terminals while a hold waits. The status line moves to
@@ -1888,6 +1936,104 @@ retry flashes. The first answered read after it says
 <code>daemon back — secrets resumed</code> once. An action's answer also ends
 the outage. The status line shows the action's result, not the
 recovery line.</p>
+<h2 id="dictation">Dictation<a class="headerlink" href="#dictation" title="Permanent link">&para;</a></h2>
+<p><img alt="The dictate pill in a recording on the workspace list: the red
+mic, the timer, and the discard button in the quick-facts row, under
+the connection picker" src="../screens/gui-dictate.png" /></p>
+<p>A small pill sits on every page of the main window and on each
+torn-off shell window. It is the same control everywhere, and one
+recording runs behind all of them. On each page it sits at the right
+end of the page's own bottom row: beside the quick facts on the
+workspace list, where the connection picker stands above it, the
+counts on Images and Secrets, the status line on Settings, and the
+footer on a workspace page. The workspace page's terminal-only mode
+hides its footer, and the pill then floats at the tab row's right
+end, left of the restore button. Dialogs carry no pill. Click it to start talking. Click it
+again to finish. Nothing ends a recording on your behalf: a pause
+inside a sentence is not the end of one. A three-minute cap ends a
+clip that nobody stopped.</p>
+<p>The transcript goes to the clipboard and to the primary selection.
+You paste it where you want it. A tone plays when the recording
+starts and another when the text is on the clipboard. A desktop
+notification carries the first line of the transcript. When every
+window is minimized, the tones and the notification are the only
+sign that a recording is running.</p>
+<p>The pill changes with the recording:</p>
+<ul>
+<li>Idle: a microphone glyph in the window's own text color.</li>
+<li>Recording: the glyph in red, a timer (<code>● 0:12</code>), and a small
+  <code>x</code>. A click finishes the recording. The <code>x</code> discards the clip.</li>
+<li>Transcribing: an ellipsis in place of the timer. A click abandons
+  the transcript and starts a new recording. The <code>x</code> discards it.</li>
+<li>Done: <code>copied</code> for two seconds. Failed: the reason for four
+  seconds, and the notification carries it too.</li>
+<li>No model yet: a download glyph. A click opens the <strong>Settings</strong>
+  tab.</li>
+</ul>
+<p>The recorder finds speech against the room's noise floor, and keeps
+the half second before the speech starts so the first word survives.
+The level that counts as speech sits 14 dB above the tracked floor
+(the 10th percentile of the last three seconds) and never below -60
+dBFS. The first 0.3 seconds calibrate the floor, so start talking
+after the tone. A speakerphone's floor in a quiet room sits near -33
+dBFS, and a fixed level would take the room itself for speech. A
+clip with no speech in it ends with no transcript and no tone.</p>
+<p>Capture runs on the host because a workspace guest has no audio
+device. <code>pw-record</code> captures 16 kHz mono, and <code>whisper-cli</code> (from
+whisper.cpp) transcribes the clip once it ends. The model loads for
+each clip, which takes about one second with <code>small</code>. The model is
+not shipped: the first click opens the <strong>Settings</strong> tab, whose
+<strong>Download</strong> button fetches it into <code>~/.cache/msks/whisper/</code>. The
+<a href="../cli/#the-gui-preferences-file">CLI chapter</a> describes the
+settings, their file, and the precedence.</p>
+<p>On a Mac the same calls answer through the shims that
+<code>msks-setup-macos-host</code> lands (#1216). <code>pw-record</code> captures through
+ffmpeg's avfoundation, <code>pw-cat</code> plays through <code>afplay</code>, and
+<code>notify-send</code> shows the notification through <code>osascript</code>. The run
+brews <code>whisper-cli</code> and <code>ffmpeg</code>. The first recording asks macOS for
+the microphone. The prompt shows the name of the terminal that
+launched the GUI. The capture device is the desktop's default input,
+and the Device setting below selects another one by its avfoundation
+index. <code>PW_RECORD_AUDIO_INDEX</code> overrides the setting for one launch.</p>
+<h2 id="the-settings-tab">The Settings tab<a class="headerlink" href="#the-settings-tab" title="Permanent link">&para;</a></h2>
+<p><img alt="The Settings tab: the dictation form, the model's state and its
+Download button, the status line" src="../screens/gui-dictation-settings.png" /></p>
+<p>The fourth tab edits the dictation settings. The form shows the
+settings in effect now, and every field takes a change.</p>
+<ul>
+<li><strong>Model</strong>: a whisper.cpp ggml model. The picker lists the known
+  names with their sizes, and a path to a <code>.bin</code> file types free.
+  A NixOS host can pin a model as a derivation and type its store
+  path. A larger model transcribes more accurately and loads more
+  slowly at each clip: about a second with <code>small</code>, two to three
+  with <code>large-v3-turbo</code>.</li>
+<li><strong>Device</strong>: the microphone <code>pw-record</code> captures from. On Linux it
+  is a PipeWire source: the picker lists the sources the desktop
+  serves, <strong>Refresh</strong> reads the list again, and the default input
+  follows the desktop's own choice. A node name or serial typed free
+  selects one the list does not carry. On macOS the picker holds the
+  default input alone, and a number typed free selects the
+  avfoundation input with that index. The default input follows the
+  desktop's choice there too.</li>
+<li><strong>Vocabulary prompt</strong>: the words whisper-cli biases its spelling
+  toward, such as <code>msks, devenv, NixOS, pi</code>. Leave it empty for
+  plain dictation.</li>
+</ul>
+<p>Hover a setting's name or its field for its description. A key that
+an <code>MSKSC_DICTATE_*</code> variable pins shows the variable's value in a
+read-only field, with the variable named under the form.</p>
+<p><strong>Apply</strong> saves the fields into <code>~/.config/msks/gui.yaml</code> and the
+next recording takes them. A recording ends at the pill's second
+click, whatever the settings. <strong>Apply</strong> and <strong>Revert</strong> stand dark
+while the fields match the saved settings, and light at the first
+change. <strong>Revert</strong> reads the layers again and reseeds the fields. A value that refused anywhere shows its message
+under the form, and the setting reads as its default.</p>
+<p><strong>Speech model</strong> shows where the picked model points and whether
+it is on disk, with its size; the line follows the picker as it
+changes. <strong>Download</strong> fetches a missing model into the cache with a
+progress bar and makes it the configured model, and <strong>Cancel</strong>
+abandons the download. A path setting downloads nothing, and the
+line says so.</p>
 <h2 id="the-zoom-keys">The zoom keys<a class="headerlink" href="#the-zoom-keys" title="Permanent link">&para;</a></h2>
 <p>Ctrl+Plus, Ctrl+=, and Ctrl+Shift++ (the plus key without a
 numpad) all grow every font in the client one step. Ctrl+Minus
@@ -1941,7 +2087,17 @@ colors with the rest of the window.</p>
 <p>The window needs a display. A Linux session provides one through
 <code>DISPLAY</code> or <code>WAYLAND_DISPLAY</code>, and <code>QT_QPA_PLATFORM=offscreen</code>
 also works. A start that finds no display prints one line on
-stderr and exits. A macOS session needs a desktop login. The
+stderr and exits. <a href="#dictation">Dictation</a> needs four host tools
+the window itself does not: PipeWire's <code>pw-record</code> and <code>pw-cat</code>
+(capture and the tones), whisper.cpp's <code>whisper-cli</code> (the
+transcription), and <code>notify-send</code> for the desktop notification.
+The pill shows the missing tool's name when a recording fails
+without one, and the tones and the notification stay off on a host
+without theirs. The packages carry the tools under their own
+names: <code>pw-record</code> and <code>pw-cat</code> ship with PipeWire, <code>whisper-cli</code>
+with whisper.cpp (<code>whisper-cpp</code> on NixOS), and <code>notify-send</code> with
+libnotify. The transcript reaches the clipboard through Qt, so
+no clipboard helper is needed. A macOS session needs a desktop login. The
 window opens fine over ssh while one stands.</p>
 <p>The window plants its own desktop entry and taskbar icon on a
 Linux desktop. Every <code>msks gui</code> launch installs both under the

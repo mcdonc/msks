@@ -1489,6 +1489,24 @@ and the uv-managed 3.14 beside it. The brew-prefix client links
 point into that venv, so every account's bare <code>msks</code> resolves the
 same shared install. <code>--wheel &lt;path&gt;</code> (a wheel in hand) and
 <code>--uninstall</code> carry the Linux tools' vocabulary.</p>
+<p>The dictation prerequisites land with the run (#1216). The GUI's
+dictate pill calls <code>pw-record</code>, <code>pw-cat</code>, and <code>notify-send</code>. A stock
+Mac carries none of the three. The tool brews the two engines the Mac
+can hold: <code>whisper.cpp</code> provides <code>whisper-cli</code>, and <code>ffmpeg</code> captures.
+It then lands three shims at the brew prefix's bin, beside the client
+links. <code>pw-record</code> captures through ffmpeg's avfoundation,
+<code>pw-cat</code> plays through <code>afplay</code>, and <code>notify-send</code> shows the
+notification through <code>osascript</code>. Each shim carries the tool's
+sentinel. A foreign file at a shim path refuses by name, and the
+uninstall arm removes only the tool's own shims. The brew packages
+stay on uninstall, the Linux tools' rule for shared packages.</p>
+<p>The first recording asks macOS for the microphone. The prompt shows
+the name of the terminal that launched the GUI, and the grant lands
+in Privacy &amp; Security. The capture device is the desktop's default
+input. The Device setting in the GUI selects another one by its
+avfoundation index, and <code>ffmpeg -f avfoundation -list_devices true -i
+""</code> lists the indexes. <code>PW_RECORD_AUDIO_INDEX</code> overrides the setting
+for one launch.</p>
 <p>The msksd VM that <code>msks-setup-macos-host</code> creates from the shipped
 Lima template is the host that shares Mac folders into workspaces.
 The VM mounts them under its reserved prefix and forwards each
