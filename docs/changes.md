@@ -94,6 +94,16 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **pi runs in regular mode in the guest (#1204).** The default
+  `~/.pi/agent/settings.json` now sets `tuiMode` to `"regular"`,
+  so a workspace's pi keeps its transcript in the terminal's
+  scrollback and leaves the mouse to the terminal. pi's own
+  default is fullscreen mode, which draws the transcript in its
+  own viewport and handles selection itself. Existing homes keep
+  their copy of the file, and accounts seeded from a new image
+  pick up the setting. See
+  [docs/llm.md](llm.md#integration-with-the-pi-coding-agent).
+
 - **The proxy's model list declares image input (#1197).** The
   `llm-models.ts` pi extension registers every model the daemon's
   proxy serves with image input. The proxy's model list carries no

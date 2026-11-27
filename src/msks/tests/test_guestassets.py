@@ -458,6 +458,11 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     # (#617 review): the fresh-install path would otherwise fetch
     # pi.dev on the first interactive start.
     assert '"enableInstallTelemetry": false' in settings
+    # Regular mode (#1204): pi's default fullscreen mode draws
+    # the transcript in its own viewport and takes the mouse
+    # from the terminal. Regular mode keeps the transcript in
+    # the scrollback, where the operator's terminal selects it.
+    assert '"tuiMode": "regular"' in settings
     # pi links at its published bin (dist/bundle/cli.js), and the
     # package builds the tree bin-less — each image links it
     # itself (the Debian overlay's /usr/local symlink, the NixOS

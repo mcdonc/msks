@@ -483,9 +483,11 @@ let
           $out/root/.pi/agent/extensions/msks-screenshot/capture.ts
         install -D -m 0644 ${./guest-pi-screenshot/package.json} \
           $out/root/.pi/agent/extensions/msks-screenshot/package.json
-        # The default user settings (#616): pi hides the model's
-        # thinking blocks in the transcript. Copy-once like the
-        # extension — a user's later edits are theirs.
+        # The default user settings (#616, #1204): pi hides the
+        # model's thinking blocks in the transcript and runs in
+        # regular mode, which keeps the transcript in the
+        # terminal's scrollback. Copy-once like the extension: a
+        # user's later edits are theirs.
         install -D -m 0644 ${./guest-pi-settings.json} \
           $out/etc/skel/.pi/agent/settings.json
         install -D -m 0644 ${./guest-pi-settings.json} \

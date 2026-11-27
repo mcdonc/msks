@@ -250,6 +250,15 @@ an image for every model in the guest. A text-only upstream answers an
 image with an error. The [screenshot extension](screenshot.md#the-guests-pi)
 beside `llm-models.ts` depends on the declaration.
 
+`~/.pi/agent/settings.json` ships in `/etc/skel` and root's home as well, and
+each login user gets a copy at first login. The file starts pi with the model's
+thinking blocks hidden, with install telemetry off, and in regular mode
+(`tuiMode` set to `"regular"`). Regular mode keeps the transcript in the
+terminal's scrollback and leaves the mouse to the terminal. The terminal's own
+selection, search, and scrolling then work over the session. pi's own default
+is fullscreen mode, which draws the transcript in its own viewport and handles
+the mouse itself. The file is copied once, and later edits belong to the user.
+
 ## SIGHUP
 
 A restart or `SIGHUP` of msksd is required in order to register changes to the
