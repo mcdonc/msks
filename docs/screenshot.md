@@ -51,12 +51,12 @@ The guest-side port is a fixed default, `127.0.0.1:8662`, and
 writes the configured port to `/tmp/msks-screenshot-port` in the
 guest, and [the guest's pi](#the-guests-pi) reads it from there. If
 something in the guest already holds the port, the holder reports the
-refusal on its stderr as a start-time failure and keeps retrying at a
-slow pace; the capture path answers only when the bind lands. The
-report reaches the
-terminal of a holder you run by hand (`msks screenshot hold`, `msks proxy
-hold`). A holder the start path left in the background writes it to no
-terminal. The guest's refused connection is the symptom you see.
+refusal on its stderr as a start-time failure. It keeps retrying at a
+slow pace, and the capture path answers only when the bind succeeds.
+The report reaches the terminal of a holder you run by hand
+(`msks screenshot hold`, `msks proxy hold`). A holder the start path
+left in the background writes it to no terminal. The guest's refused
+connection is the symptom you see.
 
 ## Holding the pipe on demand
 
@@ -164,13 +164,14 @@ capture shows the pipe's answer as a notice instead.
 The holder writes the configured `screenshot_port` to
 `/tmp/msks-screenshot-port` when the pipe comes up, and the extension
 reads the file. The default `8662` answers when the file is absent. The
-holder writes a fresh file and moves it over the path, so a reader sees
-the whole port or the previous file. A stale file is harmless while the
-ports agree: with no holder the port is refused either way, and the next
-hold rewrites the file. Two holders on one workspace with different
-`screenshot_port` values are a misconfiguration: the file carries the
-port of the hold that landed last, and the other holder's pipe is not
-the one the tool reaches.
+holder writes a fresh file and moves it over the path in one rename. A
+reader sees the whole port or the previous file. A stale file is
+harmless while the ports agree: with no holder the port is refused
+either way, and the next hold by the same account rewrites the file.
+
+Two holders on one workspace with different `screenshot_port` values
+are a misconfiguration. The file carries the port of the hold that
+came last. The tool reaches that holder's pipe, not the other one.
 
 ## The capture command's contract
 

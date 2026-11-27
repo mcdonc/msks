@@ -218,7 +218,9 @@ def port_file_argv(
         user,
         workspace_id,
         f"f=$(mktemp {PORT_FILE}.XXXXXX) && printf '%s' {port} > \"$f\" "
-        f'&& chmod 644 "$f" && mv -f "$f" {PORT_FILE}',
+        f'&& chmod 644 "$f" '
+        f'&& {{ mv -fT "$f" {PORT_FILE} '
+        f'|| {{ r=$?; rm -f "$f"; exit $r; }}; }}',
     ]
 
 

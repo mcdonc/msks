@@ -21,10 +21,12 @@
  * body says retry). This module retries a 503 once and turns
  * every failure into one line of text the model reads.
  *
- * Run directly (`node capture.ts [port] [monitor]`), the module
- * captures once, saves the file, and prints one line —
+ * Run directly (`node capture.ts [--monitor=N] [--port=P]`), the
+ * module captures once, saves the file, and prints one line —
  * `OK <mime> <bytes> <path>`, or `FAIL <status> <text>` — which
- * is the smoke test's probe.
+ * is the smoke test's probe. The port comes from PORT_FILE unless
+ * `--port` says otherwise, which is how the probe proves the
+ * holder's write reached the guest.
  */
 
 import {
@@ -204,13 +206,14 @@ function captureDir(): string {
   if (preferred !== undefined) {
     return preferred;
   }
-  const fallback = privateDir(
-    join(tmpdir(), `msks-screenshots-${uid < 0 ? "user" : uid}`),
-    uid,
+  const fallbackPath = join(
+    tmpdir(),
+    `msks-screenshots-${uid < 0 ? "user" : uid}`,
   );
+  const fallback = privateDir(fallbackPath, uid);
   if (fallback === undefined) {
     throw new Error(
-      `no private directory for the capture: ${CAPTURE_DIR} is another account's or unwritable`,
+      `no private directory for the capture: ${CAPTURE_DIR} and ${fallbackPath} are another account's or unwritable`,
     );
   }
   return fallback;
@@ -334,21 +337,35 @@ export async function capture(options: CaptureOptions = {}): Promise<Capture> {
 
 /** The command-line probe: `node capture.ts [port] [monitor]`
  * prints one line and exits 0 on a capture, 1 on a failure. */
+/** The command-line probe's flags: `--monitor=N` and `--port=P`,
+ * each optional; anything else is a usage error. */
+function probeOptions(
+  argv: string[],
+): { monitor: number; port: number | undefined } | string {
+  let monitor = 0;
+  let port: number | undefined = undefined;
+  for (const arg of argv) {
+    const match = /^--(monitor|port)=(\d+)$/.exec(arg);
+    if (match === null) {
+      return "FAIL usage: node capture.ts [--monitor=N] [--port=P]";
+    }
+    const value = Number(match[2]);
+    if (match[1] === "monitor") {
+      monitor = value;
+    } else {
+      port = value;
+    }
+  }
+  return { monitor, port };
+}
+
 async function main(argv: string[]): Promise<number> {
-  const [portArg, monitorArg] = argv;
-  const port = portArg !== undefined ? Number(portArg) : undefined;
-  const monitor = monitorArg !== undefined ? Number(monitorArg) : 0;
-  if (
-    (port !== undefined && !Number.isInteger(port)) ||
-    !Number.isInteger(monitor) ||
-    monitor < 0
-  ) {
-    console.error(
-      "FAIL usage: node capture.ts [port] [monitor] — both are whole numbers",
-    );
+  const options = probeOptions(argv);
+  if (typeof options === "string") {
+    console.error(options);
     return 2;
   }
-  const shot = await capture({ port, monitor });
+  const shot = await capture({ port: options.port, monitor: options.monitor });
   if (shot.ok) {
     console.log(`OK ${shot.mime} ${shot.bytes.length} ${shot.path}`);
     return 0;

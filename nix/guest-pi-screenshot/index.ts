@@ -63,14 +63,15 @@ let seeded = false;
 let picked: string | undefined = undefined;
 
 /** Read the pick from pi's settings once: the key is this
- * extension's own, outside pi's Settings schema. */
+ * extension's own, outside pi's Settings schema. The flag is set
+ * after the read, so a read that throws is retried on the next
+ * use instead of caching "none picked" for the rest of the
+ * session. `api` is bound before any handler runs (the default
+ * export sets it, and the settings are readable only then). */
 function seedVisionModel(): void {
-  seeded = true;
-  if (api === undefined) {
-    return;
-  }
-  const value = (api.getSettings() as Settings)[SETTINGS_KEY];
+  const value = (api!.getSettings() as Settings)[SETTINGS_KEY];
   picked = typeof value === "string" && value.trim() ? value.trim() : undefined;
+  seeded = true;
 }
 
 /** The picker's clear entry. */

@@ -321,7 +321,9 @@ async def test_local_screenshot_pipe() -> None:
         deadline = loop.time() + timeout_s
         last = ""
         while loop.time() < deadline:
-            run = await run_ssh(forward_port, f"node {CAPTURE_TS} {monitor}")
+            run = await run_ssh(
+                forward_port, f"node {CAPTURE_TS} --monitor={monitor}"
+            )
             last = f"{run.stdout.strip()}\n{run.stderr.strip()[-400:]}"
             lines = run.stdout.strip().splitlines()
             if lines and lines[0].startswith(want):

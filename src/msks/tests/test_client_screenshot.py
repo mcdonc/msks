@@ -659,7 +659,9 @@ def test_port_file_argv_shapes_the_exec() -> None:
     assert argv[-1] == (
         f"f=$(mktemp {screenshot.PORT_FILE}.XXXXXX) "
         f"&& printf '%s' 8663 > \"$f\" "
-        f'&& chmod 644 "$f" && mv -f "$f" {screenshot.PORT_FILE}'
+        f'&& chmod 644 "$f" '
+        f'&& {{ mv -fT "$f" {screenshot.PORT_FILE} '
+        f'|| {{ r=$?; rm -f "$f"; exit $r; }}; }}'
     )
 
 
