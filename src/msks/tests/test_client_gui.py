@@ -602,7 +602,9 @@ def test_open_window_reuses_an_existing_app(
     pins the shape without a display; the bridge itself is the
     real one (its own tests cover the loop), and the stub's
     aboutToQuit records the stop hook like the real signal
-    would."""
+    would. The path seats the bundled faces before it builds
+    the window (#1211), and the order pin reads the seat before
+    the window's construction."""
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("PySide6 is not installed on this host")
     from msks.client.gui import arrival as arrival_mod
@@ -702,6 +704,14 @@ def test_open_window_reuses_an_existing_app(
 
     monkeypatch.setattr(scheme_mod, "Scheme", FakeScheme)
 
+    # The bundled faces' seat (#1211): the window path calls
+    # it before it builds its first widget — the recorder pins
+    # the call's place in the order, never the real seat (the
+    # stub run builds no application for a database to sit in).
+    from msks.client.gui.terminal import fonts as faces
+
+    monkeypatch.setattr(faces, "register_faces", lambda: shown.append("faces"))
+
     class FakeSettle:
         """The opening settle's stub (#1177): the window path
         clears the window's central widget through the gate and
@@ -738,6 +748,7 @@ def test_open_window_reuses_an_existing_app(
     class FakeWindow:
         def __init__(self) -> None:
             windows.append(self)
+            shown.append("window")
 
         def setWindowTitle(self, title: str) -> None:
             shown.append(title)
@@ -988,6 +999,10 @@ def test_open_window_reuses_an_existing_app(
     Bridge.stop = lambda self: shown.append("stopped")  # type: ignore[method-assign]
     try:
         assert app.open_window(stub) == 3
+        # The faces are seated before the window is built
+        # (#1211): a strip built ahead of the seat measures its
+        # bar with the fallback face and keeps that size.
+        assert shown.index("faces") < shown.index("window")
         # One pick's re-dial (#1009): the presenter applies the
         # preset, the standing bridge stops, the shell hub's
         # terminals close with the connection they belonged to,

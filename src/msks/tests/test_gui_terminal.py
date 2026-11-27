@@ -292,6 +292,24 @@ def test_the_bundled_faces_sit_in_the_database(qt, monkeypatch, tmp_path):
     assert "JetBrains Mono" in set(qt.QtGui.QFontDatabase.families())
 
 
+def test_a_call_before_the_application_leaves_the_faces_pending(
+    qt, monkeypatch
+):
+    """A seat asked before an application exists does nothing
+    and marks nothing done (#1211): the database belongs to the
+    application. A window path that runs without one (a stub
+    QtWidgets in a worker that built no window yet) would
+    otherwise mark the faces seated, and every later call would
+    skip the seat. The next call with the application up seats
+    them."""
+    monkeypatch.setattr(
+        qt.QtGui.QGuiApplication, "instance", staticmethod(lambda: None)
+    )
+    monkeypatch.setattr(qt.fonts, "_FACES_SEATED", False)
+    qt.fonts.register_faces()
+    assert qt.fonts._FACES_SEATED is False
+
+
 def test_the_face_resolves_and_measures_as_one(qt):
     """The resolved family exists in the database and the
     metrics come from the same face the rasterizer will draw

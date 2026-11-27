@@ -395,6 +395,14 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     # here on the window path after the guards.
     from .terminal import fonts
 
+    # The bundled faces sit in the database before the first
+    # widget builds (#1211): a host with no fonts answers every
+    # font request with the fallback face until they are seated,
+    # and a tab bar sizes itself once and keeps that size. The
+    # first terminal used to seat them, so the strips built before
+    # it carried a bar 4 px shorter than every strip after it.
+    fonts.register_faces()
+
     # The chrome's anchor sits on the application before the
     # first widget builds (#939, #1046, #1056): every screen the
     # window opens — the table, the button, the status line —

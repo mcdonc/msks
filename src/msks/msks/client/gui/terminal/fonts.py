@@ -18,7 +18,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtGui import QFont, QFontDatabase, QFontInfo, QFontMetrics
+from PySide6.QtGui import (
+    QFont,
+    QFontDatabase,
+    QFontInfo,
+    QFontMetrics,
+    QGuiApplication,
+)
 
 # The four bundled faces (JetBrains Mono, OFL 1.1 — the face
 # Ghostty itself ships) beside this module: registering them
@@ -78,12 +84,15 @@ _FACES_SEATED = False
 
 
 def register_faces() -> None:
-    """Seat the bundled faces in the database, once per
-    process — a host with no fonts at all (a CI runner's
-    offscreen platform answers an empty database) still
-    measures and renders one real face."""
+    """Seat the bundled faces in the database, once per process
+    after an application exists — a host with no fonts at all
+    (a CI runner's offscreen platform answers an empty
+    database) still measures and renders one real face. A call
+    that finds no application does nothing and stays pending:
+    the database belongs to the application, and the next call
+    with the application up seats the faces."""
     global _FACES_SEATED
-    if _FACES_SEATED:
+    if _FACES_SEATED or QGuiApplication.instance() is None:
         return
     _FACES_SEATED = True
     for name in ("Regular", "Bold", "Italic", "BoldItalic"):

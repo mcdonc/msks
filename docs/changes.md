@@ -17,6 +17,15 @@ tagged `vX.Y.Z`.
   there. The gestures work in terminal-only mode too. See
   [docs/gui.md](gui.md#tearing-a-shell-off-into-a-window).
 
+### Fixed
+
+- **The GUI's first tab strip keeps one height on a host without
+  fonts (#1211).** The bundled terminal faces now sit in the font
+  database before the first widget builds. The first terminal used
+  to seat them, and a tab bar built before that measured itself
+  with the fallback face and stayed 4 px shorter than every later
+  bar. A host with fonts of its own showed no difference.
+
 ## \[v0.11.0] - 2026-11-27
 
 ### Added
