@@ -200,10 +200,15 @@ def port_file_argv(
     guest (#1197): the forward child's transport, host-key, and
     identity options with a command in place of ``-N`` and the
     forward. ``BatchMode`` keeps a holder that serves unattended
-    from parking on a prompt it cannot answer. The login shell
-    writes the port and makes the file world-readable: the exec
-    runs as the workspace's login user, and every guest account's
-    agent reads the file."""
+    from parking on a prompt it cannot answer.
+
+    The login shell writes a fresh file and moves it over the
+    path: the move is one rename, so a reader sees the whole port
+    or the old file, never a half-written line, and a file another
+    guest account planted at the path (a symlink among the
+    sticky-dir tricks) is replaced, not followed. The file lands
+    world-readable: the exec runs as the workspace's login user,
+    and every guest account's agent reads it."""
     return [
         SSH,
         "-o",
@@ -212,7 +217,8 @@ def port_file_argv(
         "-l",
         user,
         workspace_id,
-        f"printf '%s' {port} > {PORT_FILE} && chmod 644 {PORT_FILE}",
+        f"f=$(mktemp {PORT_FILE}.XXXXXX) && printf '%s' {port} > \"$f\" "
+        f'&& chmod 644 "$f" && mv -f "$f" {PORT_FILE}',
     ]
 
 
@@ -412,29 +418,55 @@ class ScreenshotPipe:
         come up after the pipe starts, the same race the
         supervisor waits out for the forward child. The first
         failure says why on the holder's stderr and the rest stay
-        quiet; the exec's own ssh diagnostics reach the same
-        stderr the forward child's do. A child past
-        :data:`PORT_FILE_TIMEOUT_S` is terminated and counted a
-        failure."""
+        quiet.
+
+        The stop path is checked twice: a stop that lands while
+        the exec spawns (after the loop's check, before the child
+        is recorded) takes the fresh child here, and a stop that
+        lands while it runs ends the writer without a failure
+        line (:meth:`wait_port_child`)."""
         while not self.stopping.is_set():
             child = self.start_port_child()
             if child is None:
                 continue
-            try:
-                code = child.wait(timeout=PORT_FILE_TIMEOUT_S)
-            except subprocess.TimeoutExpired:
-                with suppress(OSError):
-                    child.terminate()
-                self.watch_stderr(child)
-                self.port_file_failed(
-                    f"ssh did not finish within {PORT_FILE_TIMEOUT_S:.0f}s"
-                )
-                continue
-            self.watch_stderr(child)
-            self.port_child = None
-            if code == 0:
+            if self.stopping.is_set():
+                self.end_port_child(child)
                 return
-            self.port_file_failed(f"ssh exited {code}")
+            if self.wait_port_child(child):
+                return
+
+    def wait_port_child(self, child) -> bool:
+        """One exec's outcome: True when the writer is done (the
+        file landed, or the stop path took the exec), False when
+        the write is retried. A child past
+        :data:`PORT_FILE_TIMEOUT_S` is terminated and counted a
+        failure; the exec's own ssh diagnostics reach the holder's
+        stderr the way the forward child's do. A stop that landed
+        while the exec ran is the writer's end, not a failure to
+        report: the SIGTERM death is the stop."""
+        try:
+            code = child.wait(timeout=PORT_FILE_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            with suppress(OSError):
+                child.terminate()
+            self.watch_stderr(child)
+            self.port_file_failed(
+                f"ssh did not finish within {PORT_FILE_TIMEOUT_S:.0f}s"
+            )
+            return False
+        self.watch_stderr(child)
+        self.port_child = None
+        if self.stopping.is_set() or code == 0:
+            return True
+        self.port_file_failed(f"ssh exited {code}")
+        return False
+
+    def end_port_child(self, child) -> None:
+        """The stop path's view of the exec in flight: SIGTERM, and
+        the record cleared."""
+        with suppress(OSError):
+            child.terminate()
+        self.port_child = None
 
     def start_port_child(self):
         """Spawn the port-file exec, or None when it cannot start
@@ -464,7 +496,10 @@ class ScreenshotPipe:
 
     def port_file_failed(self, reason: str) -> None:
         """One failed port-file write: the reason on the holder's
-        stderr once, then the fast retry pace."""
+        stderr once, then the fast retry pace. A stop that landed
+        meanwhile prints nothing and wakes at once."""
+        if self.stopping.is_set():
+            return
         if not self.port_reported:
             self.port_reported = True
             print(

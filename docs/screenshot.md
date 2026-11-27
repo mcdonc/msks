@@ -50,9 +50,10 @@ The guest-side port is a fixed default, `127.0.0.1:8662`, and
 `screenshot_port` overrides it (global-only, same rule). The holder
 writes the configured port to `/tmp/msks-screenshot-port` in the
 guest, and [the guest's pi](#the-guests-pi) reads it from there. If
-something in the guest already holds the port, the holder reports the refusal on its
-stderr as a start-time failure and keeps retrying at a slow pace; the
-capture path answers only when the bind lands. The report reaches the
+something in the guest already holds the port, the holder reports the
+refusal on its stderr as a start-time failure and keeps retrying at a
+slow pace; the capture path answers only when the bind lands. The
+report reaches the
 terminal of a holder you run by hand (`msks screenshot hold`, `msks proxy
 hold`). A holder the start path left in the background writes it to no
 terminal. The guest's refused connection is the symptom you see.
@@ -130,11 +131,10 @@ capture your screen through the pipe.
 
 The agent calls `screenshot` and receives the capture as an image in one
 tool call. The optional `monitor` parameter selects the screen, `0` by
-default. The full-resolution capture is saved under
-`/tmp/msks-screenshots/` first, in a directory this account alone reads,
-and the tool's text gives its path: pi
-downsamples an image before the model sees it, and small text on a 4K
-capture needs a `magick` crop and a second `read`.
+default. The full-resolution capture is saved first, in a directory this
+account alone reads, and the tool's text gives its path. pi downsamples
+an image before the model sees it. Small text on a 4K capture needs a
+`magick` crop and a second `read` of that file.
 
 ### Who sees the capture
 
@@ -163,9 +163,14 @@ capture shows the pipe's answer as a notice instead.
 
 The holder writes the configured `screenshot_port` to
 `/tmp/msks-screenshot-port` when the pipe comes up, and the extension
-reads the file. The default `8662` answers when the file is absent. A
-stale file is harmless: with no holder the port is refused either way,
-and the next hold rewrites the file.
+reads the file. The default `8662` answers when the file is absent. The
+holder writes a fresh file and moves it over the path, so a reader sees
+the whole port or the previous file. A stale file is harmless while the
+ports agree: with no holder the port is refused either way, and the next
+hold rewrites the file. Two holders on one workspace with different
+`screenshot_port` values are a misconfiguration: the file carries the
+port of the hold that landed last, and the other holder's pipe is not
+the one the tool reaches.
 
 ## The capture command's contract
 

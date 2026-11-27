@@ -27,7 +27,13 @@
  * is the smoke test's probe.
  */
 
-import { lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -162,28 +168,51 @@ export function extensionFor(mime: string): string {
 
 let sequence = 0;
 
-/** The directory captures are saved in: CAPTURE_DIR when this
- * account created it (a directory it owns, not a symlink another
- * account planted at the path), else a private one under the
- * system temp. The check runs per save — the directory can change
- * hands between two captures. */
+/** One candidate directory, made private or refused: it must be a
+ * directory this account owns, not a symlink another account
+ * planted at the path, and it is chmod to this account alone (a
+ * directory that existed with wider modes narrows on the first
+ * save). Undefined when the candidate cannot be made private —
+ * unwritable, raced away, or another account's. */
+function privateDir(candidate: string, uid: number): string | undefined {
+  try {
+    mkdirSync(candidate, { recursive: true, mode: 0o700 });
+    const stat = lstatSync(candidate);
+    if (
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      (uid >= 0 && stat.uid !== uid)
+    ) {
+      return undefined;
+    }
+    chmodSync(candidate, 0o700);
+    return candidate;
+  } catch {
+    return undefined; // unwritable, or raced away: the next candidate
+  }
+}
+
+/** The directory captures are saved in: CAPTURE_DIR when it can be
+ * made this account's alone, else a private one named for the
+ * account under the system temp. Both checks run per save — the
+ * directory can change hands between two captures. Neither
+ * candidate answering is an error the tool reports, never a save
+ * into a directory another account reads. */
 function captureDir(): string {
   const uid = typeof process.getuid === "function" ? process.getuid() : -1;
-  try {
-    mkdirSync(CAPTURE_DIR, { recursive: true, mode: 0o700 });
-    const stat = lstatSync(CAPTURE_DIR);
-    if (
-      stat.isDirectory() &&
-      !stat.isSymbolicLink() &&
-      (uid < 0 || stat.uid === uid)
-    ) {
-      return CAPTURE_DIR;
-    }
-  } catch {
-    // unwritable, or raced away: the private directory answers
+  const preferred = privateDir(CAPTURE_DIR, uid);
+  if (preferred !== undefined) {
+    return preferred;
   }
-  const fallback = join(tmpdir(), `msks-screenshots-${uid < 0 ? "user" : uid}`);
-  mkdirSync(fallback, { recursive: true, mode: 0o700 });
+  const fallback = privateDir(
+    join(tmpdir(), `msks-screenshots-${uid < 0 ? "user" : uid}`),
+    uid,
+  );
+  if (fallback === undefined) {
+    throw new Error(
+      `no private directory for the capture: ${CAPTURE_DIR} is another account's or unwritable`,
+    );
+  }
   return fallback;
 }
 
@@ -308,13 +337,17 @@ export async function capture(options: CaptureOptions = {}): Promise<Capture> {
 async function main(argv: string[]): Promise<number> {
   const [portArg, monitorArg] = argv;
   const port = portArg !== undefined ? Number(portArg) : undefined;
-  if (port !== undefined && !Number.isInteger(port)) {
+  const monitor = monitorArg !== undefined ? Number(monitorArg) : 0;
+  if (
+    (port !== undefined && !Number.isInteger(port)) ||
+    !Number.isInteger(monitor) ||
+    monitor < 0
+  ) {
     console.error(
-      `FAIL usage: node capture.ts [port] [monitor] — the port must be a number`,
+      "FAIL usage: node capture.ts [port] [monitor] — both are whole numbers",
     );
     return 2;
   }
-  const monitor = monitorArg !== undefined ? Number(monitorArg) : 0;
   const shot = await capture({ port, monitor });
   if (shot.ok) {
     console.log(`OK ${shot.mime} ${shot.bytes.length} ${shot.path}`);
@@ -334,7 +367,7 @@ if (
       process.exitCode = code;
     },
     (error: unknown) => {
-      console.log(`FAIL usage ${String(error)}`);
+      console.log(`FAIL error ${String(error)}`);
       process.exitCode = 2;
     },
   );

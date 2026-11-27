@@ -276,6 +276,13 @@ def test_the_image_ships_the_screenshot_extension() -> None:
     assert 'pi.registerCommand("screenshot"' in index
     assert '"msksScreenshotVisionModel"' in index
     assert "pi.getSettings()" in index
+    # The pick is read from pi's settings on the first use (not at
+    # load: the settings are not readable while an extension loads)
+    # and kept in memory from then on: pi re-reads settings.json only
+    # on /reload, so the picker's write must reach the tool in the
+    # same session (review #1199).
+    assert "seedVisionModel();" in index
+    assert "picked = next;" in index
     assert "ctx.ui.select(" in index
     assert "modelRegistry.complete(" in index
     assert 'from "./capture.ts"' in index
@@ -345,6 +352,23 @@ def test_the_image_ships_the_screenshot_extension() -> None:
     assert (
         "grep -q 'guest-pi-screenshot' \"$closureInfo\"/store-paths" in build
     )
+    # The CI lanes that build or reuse a guest image key on the
+    # directory too: a follow-up touching only the extension must
+    # rebuild the cached image and re-run the smoke lanes (review
+    # #1199).
+    for lane in (
+        "smoke-debian",
+        "smoke-fedora",
+        "smoke-nixos",
+        "smoke-egress",
+        "guest-assets",
+    ):
+        workflow = (
+            REPO_ROOT / ".github" / "workflows" / f"{lane}.yml"
+        ).read_text()
+        assert "- nix/guest-pi-screenshot/**" in workflow, lane
+        if lane != "guest-assets":  # the smoke lanes cache the image by it
+            assert "'nix/guest-pi-screenshot/**'" in workflow, lane
 
 
 def test_the_image_bakes_the_agent_toolchain() -> None:

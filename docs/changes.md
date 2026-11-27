@@ -11,14 +11,13 @@ tagged `vX.Y.Z`.
 - **The `screenshot` tool and `/screenshot` in the guest's pi
   (#1197).** pi inside a workspace gains a `screenshot` tool that
   captures the client's screen through the screenshot pipe and
-  returns it as an image in one call. The full-resolution file is
-  saved under `/tmp/msks-screenshots/` for crops. `/screenshot
-[monitor]` puts a capture in front of the agent, and
-  `/screenshot model` picks a vision model from the model list. A
-  picked model describes each capture in text when it is not the
-  active model; otherwise the active model sees the capture
-  directly. The images ship the extension beside `llm-models.ts`.
-  See [docs/screenshot.md](screenshot.md#the-guests-pi).
+  returns it as an image in one call, with the full-resolution file
+  kept for crops. `/screenshot [monitor]` puts a capture in front of
+  the agent, and `/screenshot model` picks a vision model from the
+  model list: a picked model describes each capture in text when it
+  is not the active model, and otherwise the active model sees it.
+  The images ship the extension beside `llm-models.ts`. See
+  [docs/screenshot.md](screenshot.md#the-guests-pi).
 
 - **The screenshot pipe (#1194).** A skill running inside a
   workspace guest can capture one of the client's screens through a

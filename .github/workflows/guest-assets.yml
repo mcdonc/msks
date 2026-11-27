@@ -36,6 +36,7 @@ on:
       - nix/guest-nixos-configuration.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
+      - nix/guest-pi-screenshot/**
       - nix/guest-pi-settings.json
       - scripts/build-guest.sh
   pull_request:
@@ -54,6 +55,7 @@ on:
       - nix/guest-nixos-configuration.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
+      - nix/guest-pi-screenshot/**
       - nix/guest-pi-settings.json
       - scripts/build-guest.sh
 

@@ -46,10 +46,32 @@ import { Type } from "typebox";
 import { capture, type Capture } from "./capture.ts";
 
 /** The settings.json key the picker writes: a `provider/model-id`
- * from the model list. pi keeps unknown keys on its own writes,
- * so the choice survives a restart and reaches the tool through
- * pi.getSettings(). */
+ * from the model list. pi keeps unknown keys on its own writes, so
+ * the choice survives a restart. pi re-reads the file only on
+ * /reload or a restart, so the tool takes the pick from
+ * :data:`picked` in memory: seeded from pi.getSettings() on the
+ * first use (the settings are not readable while the extension
+ * loads), updated by the picker the moment the file is written. */
 export const SETTINGS_KEY = "msksScreenshotVisionModel";
+
+/** The extension API, for the one lazy read of the settings. */
+let api: ExtensionAPI | undefined;
+
+let seeded = false;
+
+/** The pick this process works with (see SETTINGS_KEY). */
+let picked: string | undefined = undefined;
+
+/** Read the pick from pi's settings once: the key is this
+ * extension's own, outside pi's Settings schema. */
+function seedVisionModel(): void {
+  seeded = true;
+  if (api === undefined) {
+    return;
+  }
+  const value = (api.getSettings() as Settings)[SETTINGS_KEY];
+  picked = typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
 
 /** The picker's clear entry. */
 const NONE = "(none): the active model sees captures";
@@ -94,11 +116,14 @@ function settingsPath(): string {
   return join(agentDir, "settings.json");
 }
 
-/** The picked vision model, or undefined when none is picked. The
- * key is this extension's own, outside pi's Settings schema. */
-function visionModel(pi: ExtensionAPI): string | undefined {
-  const value = (pi.getSettings() as Settings)[SETTINGS_KEY];
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+/** The picked vision model, or undefined when none is picked: the
+ * first call reads it from pi's settings, the picker's writes
+ * update it from then on. */
+function visionModel(): string | undefined {
+  if (!seeded) {
+    seedVisionModel();
+  }
+  return picked;
 }
 
 /** Write (or clear) the vision model in settings.json: a
@@ -169,23 +194,23 @@ type Viewer =
  * A picked model missing from the catalogue is an Error with the
  * hint — never a silent switch to a model that may take no
  * images — and the tool returns it as its text. */
-function pickedViewer(pi: ExtensionAPI, ctx: ExtensionContext): Viewer | Error {
-  const picked = visionModel(pi);
-  if (picked === undefined) {
+function pickedViewer(ctx: ExtensionContext): Viewer | Error {
+  const chosen = visionModel();
+  if (chosen === undefined) {
     return { mode: "direct" };
   }
   const active = ctx.model;
-  if (active !== undefined && modelRef(active) === picked) {
+  if (active !== undefined && modelRef(active) === chosen) {
     return { mode: "direct" };
   }
-  const { provider, id } = splitRef(picked);
+  const { provider, id } = splitRef(chosen);
   const model = ctx.modelRegistry.find(provider, id);
   if (model === undefined) {
     return new Error(
-      `the vision model ${picked} is not in the model list; ${PICK_HINT}`,
+      `the vision model ${chosen} is not in the model list; ${PICK_HINT}`,
     );
   }
-  return { mode: "describe", ref: picked, model };
+  return { mode: "describe", ref: chosen, model };
 }
 
 function text(content: string): TextContent {
@@ -196,12 +221,19 @@ function text(content: string): TextContent {
  * saved full-resolution file is in the text either way, for the
  * crops a downscaled view cannot serve. */
 async function shoot(
-  pi: ExtensionAPI,
   ctx: ExtensionContext,
   params: { monitor?: number; prompt?: string },
   signal?: AbortSignal,
 ): Promise<ShotResult> {
   const monitor = params.monitor ?? 0;
+  const who = pickedViewer(ctx);
+  if (who instanceof Error) {
+    return {
+      content: [text(who.message)],
+      details: { monitor, mode: "error" },
+      isError: true,
+    };
+  }
   let shot: Capture;
   try {
     shot = await capture({ monitor, signal });
@@ -227,20 +259,6 @@ async function shoot(
     data: Buffer.from(shot.bytes).toString("base64"),
     mimeType: shot.mime,
   };
-  const who = pickedViewer(pi, ctx);
-  if (who instanceof Error) {
-    return {
-      content: [text(`${who.message}; the capture is saved at ${shot.path}`)],
-      details: {
-        monitor,
-        mode: "error",
-        bytes: shot.bytes.length,
-        path: shot.path,
-        mime: shot.mime,
-      },
-      isError: true,
-    };
-  }
   if (who.mode === "direct") {
     return {
       content: [text(saved), image],
@@ -326,7 +344,7 @@ async function pickVisionModel(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
 ): Promise<void> {
-  const current = visionModel(pi);
+  const current = visionModel();
   const refs = modelRefs(ctx);
   if (refs.length === 0) {
     ctx.ui.notify("no models to pick from: the model list is empty", "error");
@@ -342,22 +360,29 @@ async function pickVisionModel(
     ctx.ui.notify(`vision model unchanged: ${current ?? NONE}`, "info");
     return;
   }
-  const picked = values[options.indexOf(choice)];
+  const index = options.indexOf(choice);
+  if (index < 0) {
+    ctx.ui.notify("that choice is not in the list; nothing changed", "error");
+    return;
+  }
+  const next = values[index];
   try {
-    writeVisionModel(picked);
+    writeVisionModel(next);
   } catch (error) {
     ctx.ui.notify(`could not write the setting: ${String(error)}`, "error");
     return;
   }
+  picked = next;
   ctx.ui.notify(
-    picked
-      ? `vision model set to ${picked}: it describes captures when it is not the active model`
+    next
+      ? `vision model set to ${next}: it describes captures when it is not the active model`
       : "vision model cleared: the active model sees captures",
     "info",
   );
 }
 
 export default function screenshotExtension(pi: ExtensionAPI): void {
+  api = pi;
   pi.registerTool({
     name: "screenshot",
     label: "Screenshot",
@@ -387,7 +412,7 @@ export default function screenshotExtension(pi: ExtensionAPI): void {
       ),
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      return shoot(pi, ctx, params, signal ?? undefined);
+      return shoot(ctx, params, signal ?? undefined);
     },
   });
 
@@ -395,7 +420,7 @@ export default function screenshotExtension(pi: ExtensionAPI): void {
     description:
       "Capture the client's screen: /screenshot [monitor], or /screenshot model to pick the vision model",
     getArgumentCompletions(prefix: string): AutocompleteItem[] | null {
-      const items = (
+      const items: AutocompleteItem[] =
         prefix === "" || "model".startsWith(prefix)
           ? [
               {
@@ -404,8 +429,7 @@ export default function screenshotExtension(pi: ExtensionAPI): void {
                 description: "pick the vision model",
               },
             ]
-          : []
-      ) as AutocompleteItem[];
+          : [];
       return items.length > 0 ? items : null;
     },
     async handler(args: string, ctx: ExtensionContext) {
@@ -425,7 +449,7 @@ export default function screenshotExtension(pi: ExtensionAPI): void {
         }
         monitor = Number(arg);
       }
-      const result = await shoot(pi, ctx, { monitor }, ctx.signal);
+      const result = await shoot(ctx, { monitor }, ctx.signal);
       const line = result.content
         .filter((block) => block.type === "text")
         .map((block) => block.text)

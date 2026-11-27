@@ -657,8 +657,9 @@ def test_port_file_argv_shapes_the_exec() -> None:
     assert "IdentityAgent=/agent.sock" in argv
     assert argv[-2] == "ws1"
     assert argv[-1] == (
-        f"printf '%s' 8663 > {screenshot.PORT_FILE} "
-        f"&& chmod 644 {screenshot.PORT_FILE}"
+        f"f=$(mktemp {screenshot.PORT_FILE}.XXXXXX) "
+        f"&& printf '%s' 8663 > \"$f\" "
+        f'&& chmod 644 "$f" && mv -f "$f" {screenshot.PORT_FILE}'
     )
 
 
@@ -738,20 +739,58 @@ def test_the_port_file_writer_names_an_ssh_that_cannot_start(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A missing ssh is the named line and the retry pace; the
-    stop flag ends the writer between attempts."""
+    stop flag ends the writer between attempts, and the second
+    failure that lands after it prints nothing."""
     monkeypatch.setattr(screenshot, "RETRY_S", 0.01)
     pipe = screenshot.ScreenshotPipe("ws1", "/agent", "/ident", "dev", "/kh")
     calls = []
 
     def runner(argv, **kw):
         calls.append(argv)
-        pipe.stopping.set()
+        if len(calls) >= 2:
+            pipe.stopping.set()
         raise OSError("no ssh on PATH")
 
     pipe.ssh_runner = runner
     pipe.write_port_file()
-    assert len(calls) == 1
-    assert "ssh did not start (no ssh on PATH)" in capsys.readouterr().err
+    assert len(calls) == 2
+    err = capsys.readouterr().err
+    assert "ssh did not start (no ssh on PATH)" in err
+    assert err.count("did not reach the guest") == 1
+
+
+def test_a_stop_during_the_spawn_takes_the_fresh_exec(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A stop that lands while the exec spawns — after the loop's
+    check, before the child is recorded — is caught by the second
+    check: the fresh child is terminated, nothing is reported."""
+    pipe = screenshot.ScreenshotPipe("ws1", "/agent", "/ident", "dev", "/kh")
+    child = FakeProc(stderr=b"")
+
+    def runner(argv, **kw):
+        pipe.stopping.set()
+        return child
+
+    pipe.ssh_runner = runner
+    pipe.write_port_file()
+    assert child.terminated is True
+    assert pipe.port_child is None
+    assert capsys.readouterr().err == ""
+
+
+def test_a_stop_during_the_exec_ends_the_writer_quietly(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A stop that lands while the exec runs ends it with SIGTERM
+    (wait answers -15): the writer leaves without a failure line,
+    since the death is the stop and not a refusal to report."""
+    pipe = screenshot.ScreenshotPipe("ws1", "/agent", "/ident", "dev", "/kh")
+    child = FakeProc(stderr=b"", code=-15, on_wait=pipe.stopping.set)
+    pipe.ssh_runner = lambda argv, **kw: child
+    pipe.write_port_file()
+    assert pipe.port_child is None
+    assert capsys.readouterr().err == ""
 
 
 def test_stop_terminates_the_port_file_exec() -> None:
