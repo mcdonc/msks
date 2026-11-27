@@ -2653,6 +2653,19 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>The TUI and the GUI stack no second bridge holder on a start
+  another client makes (#1198).</strong> The open client read the rows the
+  moment the daemon announced <code>running</code> and spawned its own holder
+  beside the one the starting client leaves. The second holder's
+  screenshot pipe could not bind the guest port and retried every 30
+  seconds, and each retry showed in the events tab as a
+  <code>forward.opened</code> and <code>forward.closed</code> pair on port 22. The watch now
+  gives that holder 30 seconds, and rows that read <code>listening</code> spawn
+  nothing. A start over the raw API leaves no holder, and the client
+  re-holds it 30 seconds after the workspace is running. See
+  <a href="../proxies/#the-bridge">docs/proxies.md</a>.</p>
+</li>
+<li>
 <p><strong>The GUI terminal's copy drops the selection (#1182).</strong>
   Ctrl+Shift+C and the right-click menu's Copy action now clear
   the selection after the copy. The highlight used to stay

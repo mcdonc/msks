@@ -1268,10 +1268,17 @@ the guest's host key in its own cache, the same file <code>msks ssh</code> uses.
 the workspace keeps running, or a start leaves none behind, the client
 spawns a fresh holder: the same detached one a start leaves. One line on
 the screen it is showing says the bridge came back. It tries three times
-per workspace per session, waiting 30 seconds between tries. A client
-that cannot resolve the workspace identity stops there and leaves the
-row's cause visible. The CLI never does this: a one-shot command is not
-a session, and <code>msks proxy hold &lt;workspace&gt;</code> remains the by-hand path.</p>
+per workspace per session, waiting 30 seconds between tries. A start
+that another client makes (a shell the GUI opens, <code>msks ssh</code> in a
+terminal) gets the same 30 seconds (#1198). The client that made the
+start leaves the holder, and the holder needs that time to connect.
+The holder's listener ends the wait. A read after the window finds the
+rows <code>listening</code> and spawns nothing. A start over the raw API leaves
+no holder, and the client re-holds it 30 seconds after the daemon says
+the workspace is running. A client that cannot resolve the workspace
+identity stops there and leaves the row's cause visible. The CLI never
+does this: a one-shot command is not a session, and
+<code>msks proxy hold &lt;workspace&gt;</code> remains the by-hand path.</p>
 <p>The listener binds on the daemon host, so whoever can reach
 <code>listen_host:listen_port</code> — loopback only by default — connects through
 the workspace's reach. A bind beyond loopback widens that audience
