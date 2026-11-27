@@ -42,7 +42,7 @@ FLOOR_SECONDS = 3.0  # the window that tracks the room's noise floor
 FLOOR_PERCENT = 0.10  # its low percentile: speech rarely fills 90% of it
 
 MODEL_URL = (
-    "https://huggingface.co/ggml-org/whisper.cpp/resolve/main/ggml-{name}.bin"
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{name}.bin"
 )
 MODEL_SIZES = {
     "tiny.en": "75 MB",
