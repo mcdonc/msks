@@ -180,8 +180,10 @@ tab forward.
 | `Ctrl+1` to `Ctrl+9`         | the Nth shell                                           |
 | `Alt+1` to `Alt+5`           | the page's tab: Shells, Mounts, Proxies, Egress, Events |
 
-The keys belong to the workspace page. The Workspaces list and
-the Images and Secrets pages do not answer them.
+The keys belong to the workspace page. A window torn off it answers
+the same keys, except `Alt+1` to `Alt+5`, which name the page's tabs.
+The Workspaces list and the Images and Secrets pages do not answer
+them.
 
 The keys take precedence over the same keys inside the shell. A
 program that binds `Ctrl+Tab` or `Alt+1` to `Alt+5`, such as tmux
@@ -235,6 +237,31 @@ The sessions outlive the page. Back to the list closes nothing,
 and a return visit finds them running the whole time. Closing
 the window closes every open shell.
 
+### Tearing a shell off into a window
+
+A left-button drag on a shell tab moves the tab, the way a drag moves
+a tab in Firefox. Along the strip, the other tabs make room under the
+pointer, and the tab takes its new place when the button is released.
+`Ctrl+Tab` follows the new order. A click that does not move the
+pointer stays a click. Escape during the drag cancels it, and the tab
+returns to where it started.
+
+Drop the tab off every tab strip and it opens as a window of its own,
+under the pointer on X11 and macOS. Wayland places new windows itself,
+so the window opens where the desktop puts it. The window holds that
+shell's terminal in a tab strip of its own, and its title bar shows
+the shell's title. The session keeps running through the move. The
+tab's close button, the double-click rename, and the shell keys work in
+the window, and the **+** tab opens one more shell there. `Ctrl+Tab`
+steps among the window's own tabs.
+
+Drop the tab on the tab strip of another window and it becomes a tab
+there. The strip shows where the shell will land while the pointer
+hovers over it. The other window can be the workspace page or a
+window torn off earlier.
+
+The same gestures work on the tab row in terminal-only mode.
+
 ### Terminal-only mode
 
 ![The workspace page in terminal-only mode: the shell tabs, the workspace's name and the restore button at the right end, the terminal](screens/gui-terminal-only.png)
@@ -257,11 +284,13 @@ page.
 
 The mode shows the Shells tab when another page tab was current.
 The shell tabs, the **+** tab, the rename, the close buttons, and
-their keys work as before. The consent panel keeps its place above
-the terminals while a hold waits. The status line moves to the tab
-row. A flash or an outage shows beside the workspace's name. A
-long one elides at its width, and the whole text reads in its
-tooltip.
+their keys work as before. So do the drag gestures: a left-drag
+tears a tab off into a window, reorders the tabs, and puts a
+torn-off shell back on the row. The consent panel keeps its place
+above the terminals while a hold waits. The status line moves to
+the tab row. A flash or an outage shows beside the workspace's
+name. A long one elides at its width, and the whole text reads in
+its tooltip.
 
 The restore button and `Ctrl+Shift+M` bring every control back:
 the top-level strip, the page's top row, and the footer. The same

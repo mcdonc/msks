@@ -7,21 +7,29 @@ The hub (:class:`ShellHub`) owns the :class:`TerminalWidget`
 instances — one per active ssh connection — and each session's
 number and custom title. The shells outlive the detail page
 (#954): the hub belongs to the window's shell, and a page that
-closes (Back to the list) closes nothing — only a tab's own
-close ends its session, through the widget's own teardown
-contract (close before ``deleteLater``).
+closes (Back to the list) closes nothing — only a tab's own close
+ends its session, through the widget's own teardown contract
+(close before ``deleteLater``). The hub's list is the workspace's
+order (#1203): a drag on the strip reorders it, and a shell torn
+off into a window of its own (:mod:`.shellwindow`) keeps its place
+in it.
 
 The strip (:class:`ShellTabs`) is the Shells tab's own tab
-widget (#974): one tab per session, titled with the session's
-number until an in-place rename stands or the program inside
-sets its title (#1163), and the "+" as the
+widget (#974): one tab per session docked in it, titled with the
+session's number until an in-place rename stands or the program
+inside sets its title (#1163), and the "+" as the
 last tab — directly right of the rightmost shell tab — opening
 one more shell (#969, #971). The strip carries the actions the
 shell keys drive (#1163, :mod:`.shellkeys`): closing the current
 shell, stepping to the next or the previous one, and selecting
-the Nth. Hosting is per workspace —
-opening another workspace's page unhooks this one's widgets
-(they keep running hidden) and hooks the new workspace's.
+the Nth. A window torn off the strip (#1203, :mod:`.shellwindow`)
+is a strip of its own in a native frame, hosting the sessions
+seated in that window; the page's strip hosts the rest. The drag
+gestures (#1203, :mod:`.shelldrag`) move a tab along a strip,
+tear it off into a window, and carry it from one strip to
+another. Hosting is per workspace — opening another
+workspace's page unhooks this one's widgets (they keep running
+hidden) and hooks the new workspace's.
 
 The module imports PySide6 at module scope, the same contract
 as the screen modules (:mod:`msks.client.gui.workspace`):
@@ -30,12 +38,15 @@ nothing imports it at CLI parse time.
 
 from functools import partial
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import terminal
 from .consent import ConsentPresenter
 from .consentpanel import ConsentPanel
+from .shelldrag import MARKER_PX, ShellDrag
+from .shellwindow import ShellWindow
 from .termsession import shell_argv
+from .titleedit import TitleEdit
 
 #: A shell tab's minimum text width, characters (#969): a tab
 #: titled with a one-digit session number stays wide enough to
@@ -67,6 +78,11 @@ class ShellSession:
         #: until it sets one, and again once it clears it.
         self.program_title = ""
         self.widget = widget
+        #: The torn-off window holding the shell (#1203), None
+        #: while the shell sits in the page's strip: the hub's
+        #: one word on where the shell shows, and each strip's
+        #: leave to host the shell or let another.
+        self.holder: ShellWindow | None = None
 
     @property
     def label(self) -> str:
@@ -91,6 +107,26 @@ class ShellBar(QtWidgets.QTabBar):
     #: between an unhost and the next host.
     plus_index = -1
 
+    #: Where a dragged shell will land (#1203), the index among
+    #: the shell tabs the strip paints its insertion marker at —
+    #: None when no drag hovers over the bar. The setter repaints:
+    #: during a drag the bar under the pointer gets no hover event
+    #: of its own, and a marker nobody asked to paint shows nothing.
+    _insertion: int | None = None
+
+    @property
+    def insertion(self) -> int | None:
+        """The insertion marker's index among the shell tabs
+        (#1203), or None with no marker standing."""
+        return self._insertion
+
+    @insertion.setter
+    def insertion(self, index: int | None) -> None:
+        if index == self._insertion:
+            return
+        self._insertion = index
+        self.update()
+
     def tabSizeHint(self, index):  # noqa: N802
         """The platform's own hint, floored and ceiled for the
         shell tabs — every tab but the "+" itself."""
@@ -100,6 +136,28 @@ class ShellBar(QtWidgets.QTabBar):
                 min(max(size.width(), self.min_tab_px()), self.max_tab_px())
             )
         return size
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        """The bar's own paint, then the insertion marker (#1203):
+        an accent line where a dragged shell would land — the
+        palette's highlight, the tab marks' own accent (#1012)."""
+        super().paintEvent(event)
+        if self.insertion is None:
+            return
+        x = self.insertion_x()
+        accent = QtGui.QGuiApplication.palette().color(
+            QtGui.QPalette.ColorRole.Highlight
+        )
+        painter = QtGui.QPainter(self)
+        painter.setPen(QtGui.QPen(accent, MARKER_PX))
+        painter.drawLine(x, 0, x, self.height() - 1)
+
+    def insertion_x(self) -> int:
+        """The marker's place (#1203): the left edge of the tab at
+        the insertion index — the "+" once the index is past the
+        last shell, since the "+" sits directly after it."""
+        index = min(self.insertion, max(0, self.plus_index))
+        return self.tabRect(index).left()
 
     def tab_px(self, chars: int) -> int:
         """A tab's width for ``chars`` digits of the bar's font
@@ -141,22 +199,39 @@ class ShellHub(QtCore.QObject):
     #: (#1163): the record took the text, an emptied one
     #: included.
     shell_titled = QtCore.Signal(str, int)
+    #: A shell took a new place in the workspace's order (#1203):
+    #: a drag along the strip ended on it.
+    shell_moved = QtCore.Signal(str, int)
+    #: A shell is leaving its strip for another (#1203), heard
+    #: before the record moves: the strip holding it takes its
+    #: tab off, the widget kept whole for the strip gaining it.
+    shell_undocked = QtCore.Signal(str, int)
+    #: A shell sat down in a window (#1203), heard after the
+    #: record moved — the record's ``holder`` says which window:
+    #: the strip of that window takes the tab.
+    shell_docked = QtCore.Signal(str, int)
 
     def __init__(self, argv_factory=shell_argv) -> None:
         super().__init__()
         self.argv_factory = argv_factory
         self.sessions: dict[str, list[ShellSession]] = {}
         self.counters: dict[str, int] = {}
+        # The drag gestures (#1203): one controller per hub, the
+        # strips' bars registering with it as they build.
+        self.drag = ShellDrag(self)
 
-    def open_shell(self, workspace_id: str) -> ShellSession:
+    def open_shell(self, workspace_id: str, window=None) -> ShellSession:
         """Open one more ssh connection (#954): the terminal
         widget over a fresh child, its number assigned per
         workspace in open order and never reused, announced for
-        a hosting tab strip to add beside the standing ones."""
+        a hosting tab strip to add beside the standing ones. The
+        shell seats in the page's strip, or in the torn-off
+        window ``window`` names (#1203) — a window's own "+"."""
         widget = terminal.TerminalWidget(self.argv_factory(workspace_id))
         no = self.counters.get(workspace_id, 1)
         self.counters[workspace_id] = no + 1
         session = ShellSession(no, widget)
+        session.holder = window
         self.sessions.setdefault(workspace_id, []).append(session)
         widget.title_changed.connect(
             partial(self.program_titled, workspace_id, no)
@@ -177,7 +252,8 @@ class ShellHub(QtCore.QObject):
         self.shell_titled.emit(workspace_id, no)
 
     def shells(self, workspace_id: str) -> list[ShellSession]:
-        """This workspace's sessions in open order (#954)."""
+        """This workspace's sessions in order (#954, #1203): open
+        order until a drag reorders it."""
         return list(self.sessions.get(workspace_id, ()))
 
     def terminals(self) -> list:
@@ -208,6 +284,51 @@ class ShellHub(QtCore.QObject):
         session.title = title.strip()
         self.shell_renamed.emit(workspace_id, no)
 
+    def move(self, workspace_id: str, no: int, index: int) -> None:
+        """A shell takes a new place in the order (#1203) — a
+        drag along a strip's end — at ``index`` among the shells
+        seated in the same window; the others keep their relative
+        places. The strips hear."""
+        session = self.find(workspace_id, no)
+        if session is None:
+            return
+        self.place(workspace_id, session, index)
+        self.shell_moved.emit(workspace_id, no)
+
+    def dock(self, workspace_id: str, no: int, window, index=None) -> None:
+        """Seat one shell in a window (#1203): ``window`` is the
+        torn-off window holding it, or None for the page's strip;
+        ``index`` places it among the shells of that window. The
+        record and the session stay whole — the widget moves, the
+        child keeps running — and the strips hear."""
+        session = self.find(workspace_id, no)
+        if session is None:
+            return
+        self.shell_undocked.emit(workspace_id, no)
+        session.holder = window
+        if index is not None:
+            self.place(workspace_id, session, index)
+        self.shell_docked.emit(workspace_id, no)
+
+    def place(
+        self, workspace_id: str, session: ShellSession, index: int
+    ) -> None:
+        """Put the session at ``index`` among the workspace's
+        shells seated in the same window (#1203): right before the
+        one that stood there, or at the end of the order when none
+        does. The others keep their relative places."""
+        sessions = self.sessions[workspace_id]
+        sessions.remove(session)
+        position = len(sessions)
+        seen = 0
+        for i, other in enumerate(sessions):
+            if other.holder is session.holder:
+                if seen == index:
+                    position = i
+                    break
+                seen += 1
+        sessions.insert(position, session)
+
     def close_shell(self, workspace_id: str, no: int) -> None:
         """End one session (#954): the widget's own close runs
         the teardown contract — the child hung up inside a bound
@@ -232,17 +353,28 @@ class ShellHub(QtCore.QObject):
 
 class ShellTabs(QtWidgets.QTabWidget):
     """The Shells tab's own strip (#954, #974): one tab per
-    shell of the hosted workspace, the "+" last. Hosting is
-    exclusive — ``host`` unhooks the standing shell widgets
-    (they keep running, owned by the hub) and hooks the new
-    workspace's — and the hub's signals keep the strip in step
-    while its workspace shows."""
+    shell of the hosted workspace seated in it, the "+" last. A
+    window torn off the page (#1203, :mod:`.shellwindow`) holds
+    a strip of its own, ``holder`` naming that window: the page's
+    strip hosts the workspace's shells seated in the page, the
+    window's those seated in it, and a shell torn off one strip
+    leaves its tab and keeps its record. Hosting is exclusive —
+    ``host`` unhooks the standing shell widgets (they keep
+    running, owned by the hub) and hooks the new workspace's —
+    and the hub's signals keep the strip in step while its
+    workspace shows. The drag controller (:mod:`.shelldrag`)
+    reads the bar's left-drag; the strip performs what the
+    gestures decide: a tab's move, a tear-off, a shell's return."""
 
     new_shell = QtCore.Signal()
 
-    def __init__(self, hub: ShellHub) -> None:
+    def __init__(self, hub: ShellHub, holder=None) -> None:
         super().__init__()
         self.hub = hub
+        #: The torn-off window this strip fills (#1203), None for
+        #: the page's strip: the strips' one word on whose shells
+        #: they host, beside each session's ``holder``.
+        self.holder = holder
         self.hosted = ""
         # The bar first (#969): the strip's own floor-width hint
         # has to stand before the first tab sizes against it.
@@ -273,14 +405,37 @@ class ShellTabs(QtWidgets.QTabWidget):
         hub.shell_closed.connect(self.on_closed)
         hub.shell_renamed.connect(self.on_renamed)
         hub.shell_titled.connect(self.on_titled)
-        self.editor: QtWidgets.QLineEdit | None = None
+        hub.shell_moved.connect(self.on_moved)
+        hub.shell_undocked.connect(self.on_undocked)
+        hub.shell_docked.connect(self.on_docked)
+        self.editor: TitleEdit | None = None
+        # The drag gestures (#1203) read the bar through the
+        # hub's controller and drive the strip's methods below.
+        hub.drag.watch(self)
 
     # --- hosting ------------------------------------------------------
 
+    def sessions(self) -> list[ShellSession]:
+        """The shells this strip shows (#1203): the hosted
+        workspace's sessions seated in this strip's window — the
+        page, or a torn-off window — in the hub's order."""
+        return [
+            session
+            for session in self.hub.shells(self.hosted)
+            if session.holder is self.holder
+        ]
+
+    def position_of(self, session: ShellSession) -> int:
+        """A docked session's place among the strip's shells
+        (#1203): the hub's order read through the strip."""
+        return self.sessions().index(session)
+
     def host(self, workspace_id: str) -> None:
         """Show one workspace's shells (#954, #974): the strip
-        starts empty, then one tab per session, titled as its
-        record reads, the newest shell current, the "+" last."""
+        starts empty, then one tab per session seated in it,
+        titled as its record reads, the newest shell current, the
+        "+" last. A shell torn off into another window (#1203)
+        shows there, not here."""
         self.unhost()
         self.hosted = workspace_id
         self.addTab(self.plus_page, "+")
@@ -288,7 +443,7 @@ class ShellTabs(QtWidgets.QTabWidget):
             self.indexOf(self.plus_page), "Open a shell tab"
         )
         self.sync_plus_index()
-        for session in self.hub.shells(workspace_id):
+        for session in self.sessions():
             self.add_session(session)
         last = self.count() - 2
         if last >= 0:
@@ -309,12 +464,16 @@ class ShellTabs(QtWidgets.QTabWidget):
         self.sync_plus_index()
         self.tab_widgets.clear()
         self.drop_buttons()
+        self.tabBar().insertion = None
 
     def add_session(self, session: ShellSession) -> None:
-        """One session's tab (#954): titled as its record reads,
-        with its own close button — inserted before the "+" so
-        the strip's last tab stays the strip's own."""
-        index = self.insertTab(self.count() - 1, session.widget, session.label)
+        """One session's tab (#954, #1203): titled as its record
+        reads, with its own close button — at the session's place
+        in the hub's order, before the "+" so the strip's last
+        tab stays the strip's own."""
+        index = self.insertTab(
+            self.position_of(session), session.widget, session.label
+        )
         self.sync_plus_index()
         self.tab_widgets[session.no] = session.widget
         self.title_tab(index, session)
@@ -365,7 +524,7 @@ class ShellTabs(QtWidgets.QTabWidget):
         if workspace_id != self.hosted:
             return
         session = self.hub.find(workspace_id, no)
-        if session is None:
+        if session is None or session.holder is not self.holder:
             return
         self.add_session(session)
         self.setCurrentWidget(session.widget)
@@ -378,6 +537,14 @@ class ShellTabs(QtWidgets.QTabWidget):
         if workspace_id != self.hosted:
             return
         self.close_editor_for(no)
+        self.unhook_tab(no)
+        self.leave_plus()
+
+    def unhook_tab(self, no: int) -> None:
+        """One shell's tab off the strip (#954, #1203) — a close
+        or a tear-off — the widget kept whole for the hub: a
+        removed tab's button hides as the bar's child rather than
+        dying, so the strip drops it itself."""
         self.drop_button(no)
         widget = self.tab_widgets.pop(no, None)
         if widget is None:
@@ -385,8 +552,8 @@ class ShellTabs(QtWidgets.QTabWidget):
         index = self.indexOf(widget)
         if index >= 0:
             self.removeTab(index)
+        widget.setParent(None)
         self.sync_plus_index()
-        self.leave_plus()
 
     def leave_plus(self) -> None:
         """Take current off the blank "+" (#971): a close that
@@ -395,9 +562,8 @@ class ShellTabs(QtWidgets.QTabWidget):
         before it takes the window back, and the + alone when
         nothing stands (the page's next open creates a
         shell)."""
-        if self.currentWidget() is not self.plus_page:
-            return
-        self.setCurrentIndex(max(0, self.currentIndex() - 1))
+        if self.currentWidget() is self.plus_page:
+            self.setCurrentIndex(max(0, self.currentIndex() - 1))
 
     def drop_button(self, no: int) -> None:
         """One close's button down (#954) — the same leak the
@@ -422,6 +588,59 @@ class ShellTabs(QtWidgets.QTabWidget):
             return
         self.retitle(no)
 
+    def on_moved(self, workspace_id: str, no: int) -> None:
+        """A shell took a new place in the order (#1203): its tab
+        moves to the place among the strip's shells, the hub's
+        order read through the strip — the bar showed the move
+        already when the strip's own drag made it, and a move
+        from elsewhere lands here."""
+        session = self.hosted_session(workspace_id, no)
+        if session is None:
+            return
+        current = self.indexOf(session.widget)
+        target = self.position_of(session)
+        if 0 <= current and target != current:
+            self.tabBar().moveTab(current, target)
+            self.setCurrentWidget(session.widget)
+
+    def hosted_session(
+        self, workspace_id: str, no: int
+    ) -> ShellSession | None:
+        """The session by number that this strip shows (#1203): its
+        workspace hosted and the shell seated in this strip's
+        window; None for any other."""
+        session = self.hub.find(workspace_id, no)
+        if workspace_id != self.hosted or session is None:
+            return None
+        if session.holder is not self.holder:
+            return None
+        return session
+
+    def on_undocked(self, workspace_id: str, no: int) -> None:
+        """A shell is leaving its strip for another (#1203), the
+        record still naming this one: its tab comes off — the
+        widget kept whole for the strip gaining it — a close's
+        own unhook."""
+        session = self.hub.find(workspace_id, no)
+        if workspace_id != self.hosted or session is None:
+            return
+        if session.holder is self.holder:
+            self.close_editor_for(no)
+            self.unhook_tab(no)
+            self.leave_plus()
+
+    def on_docked(self, workspace_id: str, no: int) -> None:
+        """A shell sat down in a window (#1203): one seated in
+        this strip's window takes its tab at its place in the
+        order, current and focused — the drop put it there."""
+        session = self.hub.find(workspace_id, no)
+        if workspace_id != self.hosted or session is None:
+            return
+        if session.holder is self.holder:
+            self.add_session(session)
+            self.setCurrentWidget(session.widget)
+            session.widget.setFocus()
+
     def retitle(self, no: int) -> None:
         """One session's tab back to its record (#954, #1163): the
         label the record reads — the rename winning over the
@@ -442,6 +661,63 @@ class ShellTabs(QtWidgets.QTabWidget):
         self.setTabText(index, session.label)
         program = session.program_title if session.title is None else ""
         self.setTabToolTip(index, program)
+
+    # --- the drag gestures' decisions (#1203) ---------------------------
+    # The controller (:mod:`.shelldrag`) reads the pointer; the
+    # strip performs what the gestures decide, on the hub's record
+    # and its own tabs.
+
+    def tear_off(self, no: int, at=None):
+        """A shell leaves the strip for a window of its own
+        (#1203): the window is built over the workspace, its strip
+        hosts the workspace, the hub seats the shell in the window
+        — this strip's tab comes off and the widget unhooks, the
+        record and the session whole, the window's strip takes the
+        tab — and the window opens at the terminal's standing
+        size, placed at ``at`` when the drag names the pointer's
+        place (a desktop that lets a client place its windows
+        honors it; Wayland's places the window itself)."""
+        session = self.hub.find(self.hosted, no)
+        if session is None:
+            return None
+        size = session.widget.size()
+        window = ShellWindow(self.hub, self.hosted)
+        window.fill(ShellTabs(self.hub, holder=window))
+        self.hub.dock(self.hosted, no, window)
+        window.size_to(size)
+        window.show()
+        if at is not None:
+            window.place(at)
+        return window
+
+    def dock(self, no: int, index: int) -> None:
+        """A shell seated in another window comes to this strip
+        (#1203) at ``index`` among the strip's shells: the hub
+        seats it here and places it, and the window it leaves
+        closes on the news when it holds nothing else. A drop of a
+        shell this strip already holds lands as its own reorder."""
+        session = self.hub.find(self.hosted, no)
+        if session is None or session.holder is self.holder:
+            return
+        self.hub.dock(self.hosted, no, self.holder, index)
+
+    def stand_order(self, session: ShellSession) -> None:
+        """The drag's end along the strip (#1203): the order the
+        bar showed becomes the hub's, the dragged shell at the
+        tab's place among the shells of this strip's window. A
+        shell that left meanwhile moves nothing."""
+        if self.hub.find(self.hosted, session.no) is None:
+            return
+        self.hub.move(self.hosted, session.no, self.indexOf(session.widget))
+
+    def restore_tab(self, session: ShellSession, index: int) -> None:
+        """A drag cancelled over its own strip (#1203): the tab the
+        bar moved live goes back to the place the press found it,
+        the hub's order untouched."""
+        current = self.indexOf(session.widget)
+        if current >= 0 and current != index:
+            self.tabBar().moveTab(current, index)
+            self.setCurrentWidget(session.widget)
 
     # --- the strip's own actions (#1163) --------------------------------
     # The shell keys (:mod:`.shellkeys`) drive these, the same
@@ -538,44 +814,13 @@ class ShellTabs(QtWidgets.QTabWidget):
     # --- the in-place rename -------------------------------------------
 
     def eventFilter(self, obj, event) -> bool:
-        """The strip's two filtered gestures (#954): a
-        double-click on a shell tab opens the title editor in
-        place — only a shell tab renames — and the open
-        editor's Escape closes it as a cancel."""
-        if obj is self.editor:
-            if self.editor_override(event):
-                event.accept()
-                return True
-            if self.editor_escape(obj, event):
-                self.cancel_rename()
-                return True
-            return super().eventFilter(obj, event)
+        """The strip's filtered gesture (#954): a double-click on
+        a shell tab opens the title editor in place — only a
+        shell tab renames. The editor's own keys are its own
+        (:class:`.titleedit.TitleEdit`)."""
         if self.tab_double_click(event):
             return True
         return super().eventFilter(obj, event)
-
-    def editor_override(self, event) -> bool:
-        """Whether this event is the question that hands the
-        open editor's Escape to a matching shortcut (#1099):
-        the page stands one on the bare key — its Back — and
-        the dispatch consumes the press before the filter's
-        cancel arm below reads it. The accept yields the
-        shortcut and keeps the press for the cancel, the same
-        claim the terminal's widget makes for its program
-        inside. The override arrives only for a press the
-        shortcut matched, so the bare key names it."""
-        return (
-            event.type() == QtCore.QEvent.Type.ShortcutOverride
-            and event.key() == QtCore.Qt.Key.Key_Escape
-        )
-
-    def editor_escape(self, obj, event) -> bool:
-        """Whether this event is the open editor's Escape."""
-        return (
-            obj is self.editor
-            and event.type() == QtCore.QEvent.Type.KeyPress
-            and event.key() == QtCore.Qt.Key.Key_Escape
-        )
 
     def tab_double_click(self, event) -> bool:
         """Whether this event is a left double-click on a shell
@@ -597,20 +842,20 @@ class ShellTabs(QtWidgets.QTabWidget):
         name, Escape cancels, and a second editor never stacks
         on a first."""
         self.cancel_rename()
+        session = self.session_at(index)
+        if session is None:
+            return
         bar = self.tabBar()
         # The tab's own rect carries a floor already (#969): the
         # bar's hint keeps every shell tab at least three
         # characters wide beside its close button.
         rect = bar.tabRect(index)
-        editor = QtWidgets.QLineEdit(self)
+        editor = TitleEdit(
+            self.hub, self.hosted, session.no, session.label, self
+        )
         corner = bar.mapTo(self, rect.topLeft())
         editor.setGeometry(corner.x(), corner.y(), rect.width(), rect.height())
-        session = self.session_at(index)
-        editor.setProperty("session_no", session.no if session else 0)
-        editor.setText(session.label if session else "")
-        editor.selectAll()
-        editor.returnPressed.connect(self.commit_rename)
-        editor.installEventFilter(self)
+        editor.done.connect(self.cancel_rename)
         editor.show()
         editor.setFocus()
         self.editor = editor
@@ -618,27 +863,16 @@ class ShellTabs(QtWidgets.QTabWidget):
     def close_editor_for(self, no: int) -> None:
         """Take the editor down when its session closes (#954):
         a standing edit names a session that is gone."""
-        if (
-            self.editor is not None
-            and self.editor.property("session_no") == no
-        ):
+        if self.editor is not None and self.editor.no == no:
             self.cancel_rename()
 
     def commit_rename(self) -> None:
-        """Stand the edited name (#954): the hub owns the
-        record; an empty edit cancels, changing nothing."""
-        if self.editor is None:
-            return
-        no = self.editor.property("session_no")
-        text = self.editor.text()
-        self.cancel_rename()
-        # The edit keys on the session's number, not the tab's
-        # position: tabs close and shift under an open editor,
-        # and a positional key would land the name on another
-        # session.
-        session = self.hub.find(self.hosted, no)
-        if session is not None:
-            self.hub.rename(self.hosted, session.no, text)
+        """Stand the edited name (#954): the editor's own commit
+        — the hub owns the record, and an empty edit cancels,
+        changing nothing. The editor's Return runs the same
+        path."""
+        if self.editor is not None:
+            self.editor.commit()
 
     def cancel_rename(self) -> None:
         """Take the editor down (#954) — a cancel's edit changes

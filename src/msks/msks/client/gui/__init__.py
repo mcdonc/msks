@@ -23,7 +23,10 @@ phase 4.5 — #950: pure ctypes over the C ABI, no Qt in it),
 the PTY session behind a terminal tab (:mod:`.termsession`,
 phase 4.5 — #951: a child on a pty, pure stdlib, no Qt in it),
 and the shell tabs that host the terminals inside the detail
-page (:mod:`.shells`, #954: the session hub and the tab strip),
+page (:mod:`.shells`, #954: the session hub and the tab strip —
+#1203 adds the drag gestures over them (:mod:`.shelldrag`), the
+window a tab tears off into (:mod:`.shellwindow`), and the in-place
+title edit the two share (:mod:`.titleedit`)),
 and the terminal widget package (:mod:`.terminal`, phase 4.5
 — #952 and #953: the cell-grid screen over the render state,
 with grid-anchored selection, the clipboard paths, OSC 8 and

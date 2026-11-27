@@ -684,12 +684,27 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         # The quit path closes every shell (#954): the window's
         # children never see a close event of their own, and a
         # session left open would outlive the loop that reads
-        # its master.
+        # its master. The window's own close reaches the shells
+        # the same way (#1203), through the filter below.
         app = QtWidgets.QApplication.instance()
         if app is not None:
             app.aboutToQuit.connect(self.hub.shutdown)
+            app.installEventFilter(self)
         self.addWidget(self.listing)
         self.addWidget(self.detail)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        """The window's close (#1203): every session ends before
+        the window goes — the quit path's own shutdown run early
+        for a window a torn-off shell would keep from being the
+        last. The filter stands on the application: the shell's
+        top-level window is whoever ends up holding it — the main
+        window's strip here, a bare window in the suite — and it
+        is read at the event, not at a parent change the shell may
+        take before its window exists."""
+        if event.type() == QtCore.QEvent.Type.Close and obj is self.window():
+            self.hub.shutdown()
+        return False
 
     @QtCore.Slot(str)
     def open_shell(self, workspace_id: str) -> None:

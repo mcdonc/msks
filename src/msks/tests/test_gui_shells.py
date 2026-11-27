@@ -430,8 +430,9 @@ def test_a_double_click_opens_the_editor_and_return_stands(hub, tabs, qt):
 
 def test_the_editors_escape_cancels(hub, tabs, qt):
     """The open editor's Escape takes it down as a cancel: the
-    standing title keeps. The editor's other events pass
-    through to it — a typed letter must reach the field."""
+    standing title keeps. The editor's other keys are the field's
+    own — a typed letter must reach it (#1203 moved the claim
+    into the editor itself, shared with the torn-off window)."""
     hub.open_shell("ws-a")
     tabs.host("ws-a")
     tabs.begin_rename(0)
@@ -443,13 +444,15 @@ def test_the_editors_escape_cancels(hub, tabs, qt):
         Qt.KeyboardModifier.NoModifier,
         "b",
     )
-    assert tabs.eventFilter(tabs.editor, typed) is False
+    assert qt.app.sendEvent(tabs.editor, typed) is True
+    assert tabs.editor.text() == "nopeb"
+    assert tabs.editor is not None
     escape = qt.QtGui.QKeyEvent(
         qt.QtCore.QEvent.Type.KeyPress,
         Qt.Key.Key_Escape,
         Qt.KeyboardModifier.NoModifier,
     )
-    assert tabs.eventFilter(tabs.editor, escape) is True
+    assert qt.app.sendEvent(tabs.editor, escape) is True
     assert tabs.editor is None
     assert tabs.tabText(0) == "1"
 
@@ -457,10 +460,10 @@ def test_the_editors_escape_cancels(hub, tabs, qt):
 def test_the_editors_override_keeps_the_escape_for_the_cancel(hub, tabs, qt):
     """The override claim before the dispatch (#1099): the
     page's Back shortcut asks the editor first — Qt sends the
-    ShortcutOverride the shortcut matched — and the filter's
-    accept yields the shortcut and keeps the press for the
-    cancel arm. The question alone cancels nothing, and
-    another key's question passes through to the editor."""
+    ShortcutOverride the shortcut matched — and the editor's
+    accept yields the shortcut and keeps the press for the cancel
+    arm. The question alone cancels nothing, and another key's
+    question passes through to the field."""
     hub.open_shell("ws-a")
     tabs.host("ws-a")
     tabs.begin_rename(0)
@@ -470,7 +473,7 @@ def test_the_editors_override_keeps_the_escape_for_the_cancel(hub, tabs, qt):
         Qt.Key.Key_Escape,
         Qt.KeyboardModifier.NoModifier,
     )
-    assert tabs.eventFilter(tabs.editor, override) is True
+    assert qt.app.sendEvent(tabs.editor, override) is True
     assert override.isAccepted()
     assert tabs.editor is not None  # the press cancels, not the question
     other = qt.QtGui.QKeyEvent(
@@ -479,7 +482,20 @@ def test_the_editors_override_keeps_the_escape_for_the_cancel(hub, tabs, qt):
         Qt.KeyboardModifier.NoModifier,
         "a",
     )
-    assert tabs.eventFilter(tabs.editor, other) is False
+    # Another key's question is the line edit's own (#1203): the
+    # same answer a bare QLineEdit gives, the editor standing.
+    twin = qt.QtGui.QKeyEvent(
+        qt.QtCore.QEvent.Type.ShortcutOverride,
+        Qt.Key.Key_A,
+        Qt.KeyboardModifier.NoModifier,
+        "a",
+    )
+    plain = qt.QtWidgets.QLineEdit()
+    assert qt.app.sendEvent(tabs.editor, other) == qt.app.sendEvent(
+        plain, twin
+    )
+    assert other.isAccepted() == twin.isAccepted()
+    assert tabs.editor is not None
     tabs.cancel_rename()
 
 
