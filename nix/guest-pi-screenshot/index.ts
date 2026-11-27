@@ -8,8 +8,8 @@
  * node runs it — the smoke test's probe — and this file imports
  * it). This file adds what only pi can do: a tool that returns the
  * capture as image content in one call, a command that puts the
- * capture in front of the agent, and a picker for the vision
- * model.
+ * capture in front of the agent, a picker for the vision model,
+ * and a spinner while that model describes a capture.
  *
  * Who sees the capture. The vision model the user picked with
  * `/screenshot model`, stored under one custom key in pi's
@@ -31,6 +31,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { BorderedLoader } from "@earendil-works/pi-coding-agent";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -83,6 +84,11 @@ const DESCRIBE_PROMPT =
   "Describe this screenshot of the user's screen in detail: the " +
   "windows, the text, and anything that looks like an error.";
 
+/** The spinner's message while the vision model describes a
+ * capture, and the message of the blocked report beside it
+ * (#1201). */
+const DESCRIBING = "Describing screenshot…";
+
 type Settings = Record<string, unknown>;
 type Content = TextContent | ImageContent;
 type CatalogModel = NonNullable<
@@ -106,6 +112,9 @@ interface ShotResult {
   content: Content[];
   details: ShotDetails;
   isError?: boolean;
+  /** The user cancelled the describe; the command path says so as a
+   * warning, not an error. */
+  cancelled?: true;
   usage?: Usage;
 }
 
@@ -218,6 +227,83 @@ function text(content: string): TextContent {
   return { type: "text", text: content };
 }
 
+/** The describe step's way out through `done()`: the vision
+ * model's answer, the user's cancel, or a rejection carried as a
+ * value, since the component's only exit is `done()`, and thrown
+ * again for the caller's own error text. */
+type Described =
+  { answer: AssistantMessage } | { failure: unknown } | { cancelled: true };
+
+/** One request to the vision model: the capture and the prompt,
+ * answered by its message, or by undefined when the user cancelled
+ * the wait. In the TUI the call runs behind a spinner (#1201):
+ * `ctx.ui.custom()` hosts pi's BorderedLoader, a CancellableLoader
+ * with a border and the cancel hint. Its Escape ends the wait at
+ * once, whatever the provider does with the signal, and in an
+ * agent turn it stops the turn as Escape does elsewhere in pi. The
+ * component's `blocked` option makes terminals that speak OSC 7501
+ * report pi as blocked, with the spinner's message, for as long as
+ * the describe runs. Anywhere else the call runs bare: a custom
+ * component is terminal-only. The run's own signal aborts the call
+ * on both paths. */
+async function describeCapture(
+  ctx: ExtensionContext,
+  model: CatalogModel,
+  content: Content[],
+  signal: AbortSignal | undefined,
+): Promise<AssistantMessage | undefined> {
+  const complete = (abort: AbortSignal | undefined) =>
+    ctx.modelRegistry.complete(
+      model,
+      { messages: [{ role: "user", content, timestamp: Date.now() }] },
+      { signal: abort },
+    );
+  if (ctx.mode !== "tui") {
+    return complete(signal);
+  }
+  const outcome = await ctx.ui.custom<Described>(
+    (tui, theme, _keybindings, done) => {
+      const loader = new BorderedLoader(tui, theme, DESCRIBING);
+      loader.onAbort = () => {
+        // done() first: it puts the editor back, and the abort then
+        // returns any queued messages into it, as the editor's own
+        // Escape does. The abort stops the agent turn, so it runs
+        // only inside one: the run's signal is undefined elsewhere,
+        // and an abort outside a turn would drain the compaction
+        // queue into the editor. A provider still running finishes
+        // unseen: pi drops a done() after the first.
+        done({ cancelled: true });
+        if (signal !== undefined) {
+          ctx.abort();
+        }
+      };
+      const abort =
+        signal === undefined
+          ? loader.signal
+          : AbortSignal.any([signal, loader.signal]);
+      // The call starts in a microtask, after pi has queued the show
+      // of the component: a settle that came first would close the
+      // custom() before the show, and pi would never dispose the
+      // loader.
+      queueMicrotask(() => {
+        complete(abort).then(
+          (answer) => done({ answer }),
+          (failure: unknown) => done({ failure }),
+        );
+      });
+      return loader;
+    },
+    { blocked: { kind: "question", message: DESCRIBING } },
+  );
+  if ("answer" in outcome) {
+    return outcome.answer;
+  }
+  if ("failure" in outcome) {
+    throw outcome.failure;
+  }
+  return undefined;
+}
+
 /** One capture, seen by whoever the choice above picks. The
  * saved full-resolution file is in the text either way, for the
  * crops a downscaled view cannot serve. */
@@ -280,20 +366,13 @@ async function shoot(
     mime: shot.mime,
     viewer: who.ref,
   };
-  let answer: AssistantMessage;
+  let answer: AssistantMessage | undefined;
   try {
-    answer = await ctx.modelRegistry.complete(
+    answer = await describeCapture(
+      ctx,
       who.model,
-      {
-        messages: [
-          {
-            role: "user",
-            content: [text(params.prompt ?? DESCRIBE_PROMPT), image],
-            timestamp: Date.now(),
-          },
-        ],
-      },
-      { signal },
+      [text(params.prompt ?? DESCRIBE_PROMPT), image],
+      signal,
     );
   } catch (error) {
     return {
@@ -307,7 +386,20 @@ async function shoot(
       isError: true,
     };
   }
-  if (answer.stopReason === "error" || answer.stopReason === "aborted") {
+  if (answer === undefined || answer.stopReason === "aborted") {
+    return {
+      content: [
+        text(
+          `the description was cancelled; the capture is saved at ${shot.path}`,
+        ),
+      ],
+      details,
+      isError: true,
+      cancelled: true,
+      usage: answer?.usage,
+    };
+  }
+  if (answer.stopReason === "error") {
     return {
       content: [
         text(
@@ -456,7 +548,7 @@ export default function screenshotExtension(pi: ExtensionAPI): void {
         .map((block) => block.text)
         .join("\n");
       if (result.isError) {
-        ctx.ui.notify(line, "error");
+        ctx.ui.notify(line, result.cancelled ? "warning" : "error");
         return;
       }
       // A follow-up reaches the agent when it is idle (a new

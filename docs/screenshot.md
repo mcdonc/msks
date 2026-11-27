@@ -152,6 +152,14 @@ The optional `prompt` parameter says what to look at. The active model
 sees the capture directly when no vision model is picked, or when the
 picked model is the active one.
 
+While the vision model works, the TUI replaces the editor with a
+bordered spinner that reads `Describing screenshot…`, for the tool and
+for `/screenshot` alike. Escape or `Ctrl+C` cancels the description at
+once, and the result reports the saved capture's path. During an agent
+turn, that key also stops the turn, as it does anywhere else in pi. A
+terminal that supports OSC 7501 program status shows pi as blocked with
+the same message for as long as the description runs.
+
 ### The `/screenshot` command
 
 `/screenshot` captures monitor 0, and `/screenshot <monitor>` captures
