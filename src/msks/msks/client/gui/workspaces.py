@@ -29,6 +29,7 @@ from ..data import RestFailure
 from .arrival import stagger_rows
 from .bridge import Bridge
 from .connectionbar import ConnectionButton
+from .dictatepill import seat_pill
 from .edit import EditDialog
 from .forms import confirm, prompt_text
 from .listcells import (
@@ -59,7 +60,7 @@ from .rows import (
     workspace_rows,
 )
 from .statusflash import StatusFlash
-from .tints import TintedLabel
+from .tintedlabel import TintedLabel
 
 #: The bridge call's key for a listing refresh (#939): the
 #: screen answers only its own key, whatever else shares the
@@ -127,9 +128,13 @@ class WorkspaceList(StatusFlash, QtWidgets.QWidget):
     connection_picked = QtCore.Signal(object)
     create_requested = QtCore.Signal()
 
-    def __init__(self, bridge: Bridge) -> None:
+    def __init__(self, bridge: Bridge, dictation=None) -> None:
         super().__init__()
         self.bridge = bridge
+        #: The dictate controller (#1214): with one, the quick-facts
+        #: row carries the pill at its right end; without (the
+        #: suites' listings) the facts fill the row.
+        self.dictation = dictation
         self.pending = False
         self.refresh_due = False
         # The opening settle's one run: the first rows the
@@ -291,8 +296,14 @@ class WorkspaceList(StatusFlash, QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(grouped(LIST_GROUP, self, self.table))
         layout.addLayout(bar)
-        layout.addWidget(self.detail)
+        layout.addWidget(self.detail_row())
         self.setLayout(layout)
+
+    def detail_row(self) -> QtWidgets.QWidget:
+        """The quick-facts row (#945, #1214): the selected row's
+        facts on the left, and the dictate pill at the right end,
+        in the column the connection picker above it sits in."""
+        return seat_pill(self, self.dictation, self.detail)
 
     def host_presets(self, presets: list) -> None:
         """The picker's menu from the presenter's rows (#1009),

@@ -399,3 +399,51 @@ def test_the_client_links_claim_the_brew_prefix(
     assert "are gone" in sweep_note
     for command in mac.CLIENT_COMMANDS:
         assert not Path(f"{prefix}/bin/{command}").exists()
+
+
+@pytest.mark.skipif(
+    shutil.which("brew") is None,
+    reason="the harness needs the brew prefix",
+)
+def test_the_dictation_shims_claim_the_brew_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The dictation phase against the real brew prefix (#1216):
+    the shims claim their paths executable and
+    sentinel-carrying, the check row reads them back green, and
+    the uninstall sweep removes them. The engines' brew arm is
+    the unit suite's capture (the fake run boundary); the
+    harness pins the probe so the phase lands shims alone. The
+    harness stands down when any file already holds a path — a
+    real deployment's shims are never touched."""
+    patch_phase(monkeypatch, "missing_engines", lambda: [])
+    prefix = mac.brewed_prefix()
+    sweep = {
+        path
+        for name in mac.SHIM_NAMES
+        for path in ([f"{prefix}/bin/{name}"] if prefix else [])
+        + [f"{bin_}/{name}" for bin_ in mac.FALLBACK_BREW_BINS]
+    }
+    held = [p for p in sweep if Path(p).is_symlink()]
+    held += [p for p in sweep if Path(p).exists()]
+    if held:
+        pytest.skip(
+            f"{sorted(set(held))} already hold paths — the "
+            "harness never touches a file it did not place"
+        )
+    sweep_note = ""
+    try:
+        note = mac.install_dictation()
+        for name in mac.SHIM_NAMES:
+            assert f"{prefix}/bin/{name}" in note
+        row = mac.dictation_row()
+        assert "the shims at" in row
+        for name in mac.SHIM_NAMES:
+            path = Path(f"{prefix}/bin/{name}")
+            assert path.exists() and mac.SENTINEL in path.read_text()
+            assert path.stat().st_mode & 0o777 == 0o755
+    finally:
+        sweep_note = mac.remove_dictation_shims()
+    assert "are gone" in sweep_note
+    for name in mac.SHIM_NAMES:
+        assert not Path(f"{prefix}/bin/{name}").exists()

@@ -41,6 +41,7 @@ from ...frames import images_frame
 from ...images import info_lines
 from ..bridge import Bridge
 from ..dialogs import Centered, center_on_parent
+from ..dictatepill import seat_pill
 from ..feedpage import FeedPage
 from ..forms import confirm
 from ..imagerows import (
@@ -52,7 +53,7 @@ from ..imagerows import (
 )
 from ..listtable import ListTable, resized_viewport
 from ..statusflash import StatusFlash
-from ..tints import TintedLabel
+from ..tintedlabel import TintedLabel
 from . import layout
 from .buttons import ButtonRows
 from .cells import (
@@ -149,7 +150,9 @@ class ImagesTab(FeedPage, StatusFlash, ButtonRows, QtWidgets.QWidget):
     groups already on screen stand.
     """
 
-    def __init__(self, bridge: Bridge, manifest_url: str) -> None:
+    def __init__(
+        self, bridge: Bridge, manifest_url: str, dictation=None
+    ) -> None:
         super().__init__()
         self.bridge = bridge
         self.url = manifest_url
@@ -263,7 +266,9 @@ class ImagesTab(FeedPage, StatusFlash, ButtonRows, QtWidgets.QWidget):
             )
         )
         layout.addWidget(self.status)
-        layout.addWidget(self.counts)
+        # The counts line shares its row with the dictate pill
+        # (#1214), pinned right.
+        layout.addWidget(seat_pill(self, dictation, self.counts))
         self.setLayout(layout)
 
     def group(

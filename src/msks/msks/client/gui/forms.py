@@ -13,7 +13,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .dialogs import center_on_parent
 from .listtable import ListTable
-from .tints import TintedLabel
+from .tintedlabel import TintedLabel
 
 
 class ModePicker(QtWidgets.QComboBox):

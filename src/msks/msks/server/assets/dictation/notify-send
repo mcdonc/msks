@@ -1,0 +1,32 @@
+#!/bin/sh
+# Landed by msks-setup-macos-host: the GUI's dictation
+# notification (#1216) calls notify-send; osascript shows a macOS
+# notification instead. Replace it only through a re-run of the
+# tool.
+#
+# The text reaches AppleScript as an argument (`on run argv`), never
+# spliced into the script source: the body is whatever the model
+# heard, and a quote or backslash in it must stay data. Newlines
+# become spaces — a notification is one line.
+summary=""
+body=""
+skip=0
+for arg in "$@"; do
+    case "$arg" in
+        -t) skip=1; continue ;;
+        -*) continue ;;
+    esac
+    if [ "$skip" = 1 ]; then skip=0; continue; fi
+    if [ -z "$summary" ]; then
+        summary="$arg"
+    elif [ -z "$body" ]; then
+        body="$arg"
+    else
+        body="$body $arg"
+    fi
+done
+body=$(printf '%s' "$body" | tr '\n\r' '  ')
+summary=$(printf '%s' "$summary" | tr '\n\r' '  ')
+exec /usr/bin/osascript -e 'on run argv' \
+    -e 'display notification (item 2 of argv) with title (item 1 of argv)' \
+    -e 'end run' "$summary" "$body"

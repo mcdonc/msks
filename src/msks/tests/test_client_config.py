@@ -1230,3 +1230,81 @@ def test_resolve_refuses_an_invalid_port_variable(
         monkeypatch.setenv("MSKSC_SCREENSHOT_PORT", raw)
         with pytest.raises(ValueError, match="MSKSC_SCREENSHOT_PORT"):
             config.resolve(config=path)
+
+
+# --- the dictation keys (#1214) ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("body", "doc"),
+    [
+        (
+            "dictate_model: small\ndictate_device: scarlett\n"
+            "dictate_prompt: msks, devenv\n",
+            {
+                "dictate_model": "small",
+                "dictate_device": "scarlett",
+                "dictate_prompt": "msks, devenv",
+            },
+        ),
+        ("dictate-model: base.en\n", {"dictate_model": "base.en"}),
+    ],
+)
+def test_dictation_keys_read_both_spellings(
+    tmp_path: Path, body: str, doc: dict
+) -> None:
+    assert config.load_config(write_config(tmp_path, body)) == doc
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ("dictate_model: 7\n", "must be a string"),
+        ("dictate_prompt: [a, b]\n", "must be a string"),
+        # The gate's numbers are not keys (#1214): the leaf's own.
+        ("dictate_threshold: -60\n", "unknown config key 'dictate_threshold'"),
+        ("dictate_margin: 14\n", "unknown config key 'dictate_margin'"),
+        ("dictate_silence: 1\n", "unknown config key 'dictate_silence'"),
+    ],
+)
+def test_dictation_keys_refuse_bad_values(
+    tmp_path: Path, body: str, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        config.load_config(write_config(tmp_path, body))
+
+
+def test_dictation_keys_unset_forms_drop_out(tmp_path: Path) -> None:
+    for key in ("dictate_model", "dictate_device"):
+        for body in (f"{key}:\n", f"{key}: ''\n"):
+            assert config.load_config(write_config(tmp_path, body)) == {}
+
+
+def test_a_daemon_entry_refuses_the_dictation_keys(tmp_path: Path) -> None:
+    """The keys are global-only: the microphone belongs to the
+    operator's desktop, not to a daemon connection."""
+    path = write_config(
+        tmp_path,
+        "daemons:\n  lab:\n    url: https://lab:8660\n"
+        "    dictate_model: small\n",
+    )
+    with pytest.raises(ValueError, match="dictate_model"):
+        config.load_config(path)
+
+
+def test_resolve_carries_the_validated_file_keys(
+    tmp_path: Path,
+) -> None:
+    """The resolution hands the GUI the file's validated keys
+    (#1214): the dictation settings resolve from them under their
+    own precedence, with gui.yaml between the environment and the
+    file. The environment wins nothing here — the dictation keys
+    materialize nowhere, the GUI reads them off the doc itself."""
+    conf = config.resolve(
+        config=write_config(
+            tmp_path, "url: https://daemon\ndictate_model: base.en\n"
+        )
+    )
+    assert conf.doc == {"url": "https://daemon", "dictate_model": "base.en"}
+    assert conf.env_layer == {}
+    assert config.resolve(config="none").doc == {}

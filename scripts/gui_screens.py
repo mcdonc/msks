@@ -52,6 +52,7 @@ child's own output.
 """
 
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -111,6 +112,21 @@ SCRUBBED_ENV = (
 #: as UTC around this moment, the daemon's own convention.
 PINNED = datetime(2026, 1, 4, 12, 0, 0).astimezone()
 PINNED_UTC = PINNED.astimezone(UTC)
+
+
+#: The capture's source list (#1214): two PipeWire inputs in the
+#: shape ``pw-dump`` gives, so the device picker shows a pick
+#: beside the default on a host with no PipeWire.
+FIXED_SOURCES = [
+    (
+        "alsa_input.usb-Focusrite_Scarlett_2i2.mic1",
+        "Scarlett 2i2 3rd Gen Input 1 Mic/Inst/Line",
+    ),
+    (
+        "alsa_input.usb-Logitech_EasyCall_Speakerphone-00.mono-fallback",
+        "EasyCall Speakerphone Mono",
+    ),
+]
 
 
 def pinned_fontconfig() -> str:
@@ -515,10 +531,36 @@ def capture() -> None:
     app.setFont(font)
     require_chrome_face(app)
 
+    # --- the dictation (#1214) ---------------------------------------
+    # The controller and the pill host stand before the first
+    # window, the way open_window stands them, so every figure
+    # shows the pill the way the real window does: the list seats
+    # it in its quick-facts row, the other pages float it at the
+    # corner. The cache root is a temporary tree with a model
+    # written into it, so the settings page reads "present".
+    from msks.client.gui import settingspage as settings_mod
+    from msks.client.gui.dictatekeys import DictateSettings
+    from msks.client.gui.dictatepill import PillHost
+    from msks.client.gui.dictation import Dictation
+
+    cache = Path(tempfile.mkdtemp(prefix="gui-screens-dictate-"))
+    model = cache / "whisper" / "ggml-small.bin"
+    model.parent.mkdir(parents=True)
+    model.write_bytes(b"ggml" * (466 << 10))
+    dictation = Dictation(
+        DictateSettings(model="small", device=FIXED_SOURCES[0][0]),
+        cache,
+        transcriber=lambda wav, s: "",
+        tone=lambda hz: None,
+        notifier=lambda text: None,
+        clipboard=lambda text: None,
+    )
+    host = PillHost(dictation, app)
+
     list_bridge = StubBridge()
 
     # --- the workspaces list ---------------------------------------
-    listing = workspaces_mod.WorkspaceList(list_bridge)
+    listing = workspaces_mod.WorkspaceList(list_bridge, dictation)
     window = QtWidgets.QMainWindow()
     window.setWindowTitle("msks")
     window.setCentralWidget(listing)
@@ -796,6 +838,46 @@ def capture() -> None:
     settle(app, rounds=4)
     shot(secrets_window, "gui-secrets.png")
     secrets_window.close()
+
+    # --- the settings tab and the pill in a recording (#1214) -----
+    settings_window = QtWidgets.QMainWindow()
+    settings_window.setWindowTitle("msks")
+    page = settings_mod.SettingsPage(
+        dictation, {}, sources=lambda: FIXED_SOURCES
+    )
+    page.list_devices()
+    page.status.setText("")
+    settings_window.setCentralWidget(page)
+    settings_window.resize(1280, 720)
+    settings_window.show()
+    settle(app, rounds=4)
+    shot(settings_window, "gui-dictation-settings.png")
+    settings_window.close()
+
+    # The pill in a recording over the list window: the red mic,
+    # the timer at twelve seconds, the discard button, in the
+    # quick-facts row under the connection picker — the same list
+    # rows the chapter's first figure shows.
+    pill_bridge = StubBridge()
+    pill_listing = workspaces_mod.WorkspaceList(pill_bridge, dictation)
+    pill_window = QtWidgets.QMainWindow()
+    pill_window.setWindowTitle("msks")
+    pill_window.setCentralWidget(pill_listing)
+    pill_window.resize(1280, 720)
+    pill_window.show()
+    pill_listing.host_presets(preset_rows())
+    pill_bridge.succeeded.emit(workspaces_mod.LIST_KEY, daemon_rows())
+    pill_bridge.succeeded.emit(workspaces_mod.STORAGE_KEY, capacity_report())
+    settle(app)
+    dictation.show("recording")
+    dictation.elapsed = 12.0
+    dictation.tocked()
+    settle(app, rounds=2)
+    shot(pill_window, "gui-dictate.png")
+    host.remove()
+    pill_window.close()
+    dictation.shutdown()
+    shutil.rmtree(cache, ignore_errors=True)
 
     for widget in app.topLevelWidgets():
         widget.close()

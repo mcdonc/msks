@@ -27,6 +27,7 @@ from urllib.error import HTTPError
 import pytest
 from msks.server import hostsetup_macos as mac
 from msks.server.hostsetup import venv as host_venv
+from msks.server.hostsetup_macos import dictation
 
 
 def patch_phase(
@@ -246,6 +247,17 @@ def client_tree(
         "FALLBACK_BREW_BINS",
         (str(tmp_path / "fb1"), str(tmp_path / "fb2")),
     )
+    # The dictation phase's surfaces (#1216): the shims' dir and
+    # the engine probe relocate under tmp_path — a test run
+    # never brews and never reaches the host's brew prefix, and
+    # the shims stand already-made so the check row answers
+    # green.
+    for name in mac.SHIM_NAMES:
+        shim = brew_bin / name
+        shim.write_text(f"#!/bin/sh\n# {mac.SENTINEL}\n")
+        shim.chmod(0o755)
+    patch_phase(monkeypatch, "dictation_bin_dir", lambda: str(brew_bin))
+    patch_phase(monkeypatch, "missing_engines", lambda: [])
     return tmp_path
 
 
@@ -1999,6 +2011,120 @@ def test_a_foreign_thing_at_the_client_link_refuses(
         mac.link_client_mac()
 
 
+# --- phase 8: the dictation prerequisites (#1216) ---------------------
+
+
+def test_the_dictation_phase_brews_the_missing_and_lands_the_shims(
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+    tmp_path: Path,
+) -> None:
+    """#1216: the phase brews the engines the PATH does not
+    answer and lands the three shims at the brew prefix's bin —
+    executable, sentinel-carrying — and the rerun with the
+    engines answering brews nothing and refreshes its own."""
+    brew_bin = tmp_path / "brewbin"
+    brew_bin.mkdir()
+    patch_phase(monkeypatch, "dictation_bin_dir", lambda: str(brew_bin))
+    patch_phase(
+        monkeypatch, "missing_engines", lambda: ["whisper-cli", "ffmpeg"]
+    )
+    note = mac.install_dictation()
+    assert ["brew", "install", "whisper.cpp", "ffmpeg"] in procs.calls
+    assert "the dictation engines answer" in note
+    for name in mac.SHIM_NAMES:
+        path = brew_bin / name
+        assert f"{path} landed" in note
+        assert mac.SENTINEL in path.read_text()
+        assert path.stat().st_mode & 0o777 == 0o755
+        assert path.read_text().startswith("#!/bin/sh")
+    brewed = list(procs.calls)
+    patch_phase(monkeypatch, "missing_engines", lambda: [])
+    again = mac.install_dictation()
+    assert procs.calls == brewed
+    for name in mac.SHIM_NAMES:
+        assert f"{brew_bin / name} refreshed" in again
+
+
+def test_a_foreign_file_at_a_shim_path_refuses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The claim arms (#1216 review): a regular file without
+    the sentinel at a shim path refuses by name — the run never
+    clobbers what it did not land."""
+    brew_bin = tmp_path / "brewbin"
+    brew_bin.mkdir()
+    (brew_bin / "pw-record").write_text("#!/bin/sh\n# the operator's own\n")
+    patch_phase(monkeypatch, "dictation_bin_dir", lambda: str(brew_bin))
+    patch_phase(monkeypatch, "missing_engines", lambda: [])
+    with pytest.raises(mac.MacSetupError, match="not this tool's shim"):
+        mac.install_dictation()
+
+
+def test_the_dictation_row_answers_green_and_refuses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The --check row (#1216): green naming the engines and
+    the shims' dir, a missing engine refuses with the brew
+    remedy, and a missing shim refuses with the re-run one."""
+    brew_bin = tmp_path / "brewbin"
+    brew_bin.mkdir()
+    for name in mac.SHIM_NAMES:
+        path = brew_bin / name
+        path.write_text(f"#!/bin/sh\n# {mac.SENTINEL}\n")
+        path.chmod(0o755)
+    patch_phase(monkeypatch, "dictation_bin_dir", lambda: str(brew_bin))
+    patch_phase(monkeypatch, "missing_engines", lambda: [])
+    row = mac.dictation_row()
+    assert "whisper-cli and ffmpeg on PATH" in row
+    assert str(brew_bin) in row
+    patch_phase(monkeypatch, "missing_engines", lambda: ["whisper-cli"])
+    with pytest.raises(mac.MacSetupError, match="brew the dictation"):
+        mac.dictation_row()
+    patch_phase(monkeypatch, "missing_engines", lambda: [])
+    (brew_bin / "pw-cat").unlink()
+    with pytest.raises(mac.MacSetupError, match="pw-cat shim"):
+        mac.dictation_row()
+
+
+def test_a_brew_that_will_not_answer_refuses_the_shims(
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+) -> None:
+    """A brew whose --prefix answers nothing refuses by name
+    (#1216): the same Homebrew line the client links' own path
+    refusal carries, the tool's Lima requirement behind it."""
+    patch_phase(monkeypatch, "missing_engines", lambda: [])
+    with pytest.raises(mac.MacSetupError, match="brew did not answer"):
+        mac.install_dictation()
+
+
+def test_the_uninstall_removes_only_the_tools_own_shims(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The sweep's mirror (#1216): the sentinel shims go over
+    the brew dir first and the fallback bins behind it, a
+    foreign file at a path stays — the uninstall never removes
+    an operator's own file — and the note names what left."""
+    brew_bin = tmp_path / "brewbin"
+    brew_bin.mkdir()
+    for name in mac.SHIM_NAMES:
+        (brew_bin / name).write_text(f"#!/bin/sh\n# {mac.SENTINEL}\n")
+    foreign = brew_bin / "notify-send"
+    foreign.write_text("#!/bin/sh\n# the operator's own\n")
+    patch_phase(monkeypatch, "dictation_bin_dir", lambda: str(brew_bin))
+    patch_phase(
+        monkeypatch,
+        "FALLBACK_BREW_BINS",
+        (str(tmp_path / "fb1"), str(tmp_path / "fb2")),
+    )
+    note = mac.remove_dictation_shims()
+    assert "are gone" in note
+    for name in ("pw-record", "pw-cat"):
+        assert not (brew_bin / name).exists()
+    assert foreign.exists()
+
+
 def test_the_client_link_without_a_sibling_stands_down(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2154,29 +2280,44 @@ def test_the_uninstall_closing_line_gates_on_the_note() -> None:
     (#734) — and a sweep that found nothing names that in the
     parenthetical instead of claiming a removal that did not
     happen. The shared host install's departure rides its own
-    note's word (#1118)."""
+    note's word (#1118), the dictation shims' on theirs
+    (#1216)."""
     gone = mac.uninstall_closing_line(
         "the client link /opt/brew/msks is gone",
         "/opt/msks already absent",
+        "no dictation shim found",
     )
     assert "and the brew-prefix client links are gone" in gone
     assert "no client link" not in gone
     assert "/opt/msks host install" not in gone
+    assert "dictation shims" not in gone
     plural = mac.uninstall_closing_line(
         "the client links /opt/brew/msks and /opt/brew/msks-term-popup "
         "are gone",
         "/opt/msks already absent",
+        "no dictation shim found",
     )
     assert "and the brew-prefix client links are gone" in plural
-    found_none = mac.uninstall_closing_line("no client link found", "x")
+    found_none = mac.uninstall_closing_line(
+        "no client link found", "x", "no dictation shim found"
+    )
     assert "and its login agent are gone" in found_none
     assert "brew-prefix client links are gone" not in found_none
     assert "(no client link found)" in found_none
     vmm = mac.uninstall_closing_line(
         "the client links /opt/brew/msks are gone",
         "/opt/msks removed (the venv, the provisioned Python, uv)",
+        "no dictation shim found",
     )
     assert "the shared /opt/msks host install with them" in vmm
+    shims = mac.uninstall_closing_line(
+        "the client links /opt/brew/msks are gone",
+        "/opt/msks removed (the venv, the provisioned Python, uv)",
+        "the dictation shims /opt/brew/pw-record, /opt/brew/pw-cat, "
+        "/opt/brew/notify-send are gone",
+    )
+    assert "the dictation shims went with them" in shims
+    assert "brew packages the run installed stay" in shims
 
 
 # --- the host-side venv (#1118) --------------------------------------
@@ -2302,3 +2443,253 @@ def test_the_uninstall_removes_the_host_venv(venv_tree: Path) -> None:
         f"{host_venv.VENV_ROOT} removed (the venv, the provisioned Python, uv)"
     )
     assert not Path(host_venv.VENV_ROOT).exists()
+
+
+# --- the dictation phase's own arms (#1216) ------------------------------
+
+
+def test_the_missing_engines_read_the_real_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``missing_engines`` asks ``shutil.which`` itself, in the
+    formula map's order: a PATH answering both names brews
+    nothing, one missing names one, both missing name two."""
+    seen: list[str] = []
+
+    def which(name: str, *args, **kwargs):
+        seen.append(name)
+        return "/opt/homebrew/bin/ffmpeg" if name == "ffmpeg" else None
+
+    monkeypatch.setattr(dictation.shutil, "which", which)
+    assert dictation.missing_engines() == ["whisper-cli"]
+    assert seen == ["whisper-cli", "ffmpeg"]
+    monkeypatch.setattr(dictation.shutil, "which", lambda *a, **kw: "/bin/x")
+    assert dictation.missing_engines() == []
+
+
+def test_the_bin_dir_refuses_a_silent_brew(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``dictation_bin_dir`` on a brew whose prefix answers
+    nothing (#1216): the Homebrew refusal, by name."""
+    patch_phase(monkeypatch, "brewed_prefix", lambda: "")
+    with pytest.raises(mac.MacSetupError, match="brew did not answer"):
+        mac.dictation_bin_dir()
+    patch_phase(monkeypatch, "brewed_prefix", lambda: "/opt/homebrew")
+    assert mac.dictation_bin_dir() == "/opt/homebrew/bin"
+
+
+def test_an_unreadable_shim_path_reads_as_foreign(tmp_path: Path) -> None:
+    """``is_ours`` (#1216): an unreadable file is never the
+    tool's — the run refuses rather than clobbers blind."""
+    assert dictation.is_ours(tmp_path / "absent") is False
+    present = tmp_path / "pw-record"
+    present.write_text(f"#!/bin/sh\n# {mac.SENTINEL}\n")
+    assert dictation.is_ours(present) is True
+    present.chmod(0o000)
+    if os.getuid() == 0:  # root reads anything
+        pytest.skip("root reads a mode-000 file")
+    assert dictation.is_ours(present) is False
+
+
+def test_the_uninstall_arms_without_brew_and_by_the_count(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The sweep's reports (#1216, #701): no brew is needed — the
+    fallback bins sweep alone — and the note names one shim, or
+    none, or the pair."""
+    fb1 = tmp_path / "fb1"
+    fb1.mkdir()
+    patch_phase(monkeypatch, "FALLBACK_BREW_BINS", (str(fb1),))
+
+    def refuse() -> str:
+        raise mac.MacSetupError("brew did not answer")
+
+    patch_phase(monkeypatch, "dictation_bin_dir", refuse)
+    assert mac.remove_dictation_shims() == "no dictation shim found"
+    (fb1 / "pw-cat").write_text(f"#!/bin/sh\n# {mac.SENTINEL}\n")
+    assert (
+        mac.remove_dictation_shims()
+        == f"the dictation shim {fb1 / 'pw-cat'} is gone"
+    )
+    for name in ("pw-record", "notify-send"):
+        (fb1 / name).write_text(f"#!/bin/sh\n# {mac.SENTINEL}\n")
+    note = mac.remove_dictation_shims()
+    assert note == (
+        f"the dictation shims {fb1 / 'pw-record'}, "
+        f"{fb1 / 'notify-send'} are gone"
+    )
+    assert mac.remove_dictation_shims() == "no dictation shim found"
+
+
+# --- the shims' behavior (#1216) -----------------------------------------
+#: A stand-in for the engine a shim execs: it records its argv, one
+#: per line, to the file named by SHIM_RECORD, draining stdin, and
+#: answers 0.
+RECORDER = """#!/bin/sh
+cat > /dev/null
+for arg in "$@"; do printf '%s\\n' "$arg"; done > "$SHIM_RECORD"
+exit 0
+"""
+
+
+def shim_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *engines: str
+) -> Path:
+    """A private PATH head holding a recording stand-in for each
+    engine name; the shims resolve from the wheel's assets. Returns
+    the record file's path."""
+    record = tmp_path / "record"
+    bin_dir = tmp_path / "shimbin"
+    bin_dir.mkdir()
+    for engine in engines:
+        fake = bin_dir / engine
+        fake.write_text(RECORDER)
+        fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("SHIM_RECORD", str(record))
+    return record
+
+
+def run_shim(
+    name: str, *args: str, stdin: bytes = b""
+) -> subprocess.CompletedProcess:
+    shim = dictation.shim_body(name)
+    script = Path(os.environ["SHIM_RECORD"]).parent / name
+    script.write_text(shim)
+    script.chmod(0o755)
+    # The shims exec their engines by absolute path (/usr/bin/...); the
+    # stand-ins sit at the front of PATH, so the test rewrites that
+    # one path for the run.
+    text = shim.replace("/usr/bin/", "")
+    script.write_text(text)
+    return subprocess.run(
+        ["/bin/sh", str(script), *args],
+        input=stdin,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_the_pw_record_shim_maps_the_clients_command(
+    tmp_path: Path, monkeypatch
+):
+    """The GUI's exact capture command (#1216): the PipeWire flags
+    map onto ffmpeg's — the rate, one channel, raw s16le to stdout,
+    flushed per packet — and `--format s16` and the bare `-` go to
+    stdout as the client reads it."""
+    record = shim_env(tmp_path, monkeypatch, "ffmpeg")
+    monkeypatch.delenv("PW_RECORD_AUDIO_INDEX", raising=False)
+    done = run_shim(
+        "pw-record",
+        "--raw",
+        "--rate",
+        "16000",
+        "--channels",
+        "1",
+        "--format",
+        "s16",
+        "-",
+        stdin=b"",
+    )
+    assert done.returncode == 0, done.stderr
+    argv = record.read_text().splitlines()
+    assert argv[:5] == [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "avfoundation",
+    ]
+    assert "-i" in argv and argv[argv.index("-i") + 1] == ":default"
+    assert argv[argv.index("-ar") + 1] == "16000"
+    assert argv[argv.index("-ac") + 1] == "1"
+    formats = [i for i, a in enumerate(argv) if a == "-f"]
+    assert len(formats) == 2  # avfoundation in, s16le out
+    assert argv[formats[1] + 1] == "s16le"
+    assert argv[argv.index("-flush_packets") + 1] == "1"
+    assert argv[-1] == "-"
+
+
+def test_the_pw_record_shim_honors_the_device_and_the_index(
+    tmp_path: Path, monkeypatch
+):
+    """The Device setting reaches avfoundation as an index when it
+    carries one; a PipeWire node name reads as the desktop's default
+    input; ``PW_RECORD_AUDIO_INDEX`` stands above both."""
+    record = shim_env(tmp_path, monkeypatch, "ffmpeg")
+    monkeypatch.delenv("PW_RECORD_AUDIO_INDEX", raising=False)
+
+    def device_of(*args: str) -> str:
+        record.unlink(missing_ok=True)
+        run_shim("pw-record", "--target", *args, "-")
+        argv = record.read_text().splitlines()
+        return argv[argv.index("-i") + 1]
+
+    assert device_of("2") == ":2"
+    assert device_of("alsa_input.usb-scarlett.mic1") == ":default"
+    assert device_of("") == ":default"
+    monkeypatch.setenv("PW_RECORD_AUDIO_INDEX", "1")
+    assert device_of("2") == ":1"
+
+
+def test_the_notify_send_shim_keeps_the_body_as_data(
+    tmp_path: Path, monkeypatch
+):
+    """The transcript is data (#1216 review): a body carrying quotes,
+    backslashes, newlines, and an AppleScript-looking tail reaches
+    osascript as one argument, verbatim but for the newlines — never
+    spliced into the script source — and the script itself is the
+    fixed three lines."""
+    record = shim_env(tmp_path, monkeypatch, "osascript")
+    body = 'say \\" ) & (do shell script "id") & ("\nline two'
+    done = run_shim("notify-send", "-t", "4000", "dictate", body)
+    assert done.returncode == 0, done.stderr
+    argv = record.read_text().splitlines()
+    script = argv[: argv.index("dictate")]
+    assert script == [
+        "-e",
+        "on run argv",
+        "-e",
+        "display notification (item 2 of argv) with title (item 1 of argv)",
+        "-e",
+        "end run",
+    ]
+    # The recorder folds newlines to its own line breaks; the shim
+    # already turned them to spaces, so the body is one line.
+    assert argv[-2:] == [
+        "dictate",
+        'say \\" ) & (do shell script "id") & (" line two',
+    ]
+    assert "do shell script" not in " ".join(script)
+
+
+def test_the_pw_cat_shim_plays_the_file(tmp_path: Path, monkeypatch):
+    """`pw-cat --playback <wav>` (#1216): afplay takes the file."""
+    record = shim_env(tmp_path, monkeypatch, "afplay")
+    done = run_shim("pw-cat", "--playback", "/tmp/beep-880.wav")
+    assert done.returncode == 0, done.stderr
+    assert record.read_text().splitlines() == ["/tmp/beep-880.wav"]
+
+
+def test_the_uninstall_sweeps_a_shim_from_every_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A prefix migration (#1216 review) leaves the tool's shim at
+    the old brew bin and the new one: the sweep takes both, so the
+    name no longer resolves from either, and the report lists them
+    with commas."""
+    old_bin = tmp_path / "oldbrew"
+    new_bin = tmp_path / "newbrew"
+    for bin_dir in (old_bin, new_bin):
+        bin_dir.mkdir()
+        for name in mac.SHIM_NAMES:
+            (bin_dir / name).write_text(f"#!/bin/sh\n# {mac.SENTINEL}\n")
+    patch_phase(monkeypatch, "dictation_bin_dir", lambda: str(new_bin))
+    patch_phase(monkeypatch, "FALLBACK_BREW_BINS", (str(old_bin),))
+    note = mac.remove_dictation_shims()
+    for bin_dir in (old_bin, new_bin):
+        assert not any((bin_dir / name).exists() for name in mac.SHIM_NAMES)
+    assert note.startswith("the dictation shims ")
+    assert ", " in note and " and " not in note
+    assert note.count(str(old_bin)) == 3 and note.count(str(new_bin)) == 3

@@ -25,8 +25,8 @@ it.
 
 ## The main window
 
-The window opens on three top-level tabs: **Workspaces**,
-**Images**, and **Secrets**.
+The window opens on four top-level tabs: **Workspaces**,
+**Images**, **Secrets**, and **Settings**.
 
 The content appears once it is final. At open and on every tab
 change, the page holds clear until its refresh has landed and the
@@ -284,7 +284,11 @@ page.
 
 The mode shows the Shells tab when another page tab was current.
 The shell tabs, the **+** tab, the rename, the close buttons, and
-their keys work as before. So do the drag gestures: a left-drag
+their keys work as before. The footer row goes with the page's other
+controls, the [dictate pill](#dictation) seated in it with them, and
+the window's own pill floats at the tab row's right end instead, left
+of the restore button. The terminal keeps the window's whole width. So
+do the drag gestures: a left-drag
 tears a tab off into a window, reorders the tabs, and puts a
 torn-off shell back on the row. The consent panel keeps its place
 above the terminals while a hold waits. The status line moves to
@@ -522,6 +526,116 @@ retry flashes. The first answered read after it says
 the outage. The status line shows the action's result, not the
 recovery line.
 
+## Dictation
+
+![The dictate pill in a recording on the workspace list: the red
+mic, the timer, and the discard button in the quick-facts row, under
+the connection picker](screens/gui-dictate.png)
+
+A small pill sits on every page of the main window and on each
+torn-off shell window. It is the same control everywhere, and one
+recording runs behind all of them. On each page it sits at the right
+end of the page's own bottom row: beside the quick facts on the
+workspace list, where the connection picker stands above it, the
+counts on Images and Secrets, the status line on Settings, and the
+footer on a workspace page. The workspace page's terminal-only mode
+hides its footer, and the pill then floats at the tab row's right
+end, left of the restore button. Dialogs carry no pill. Click it to start talking. Click it
+again to finish. Nothing ends a recording on your behalf: a pause
+inside a sentence is not the end of one. A three-minute cap ends a
+clip that nobody stopped.
+
+The transcript goes to the clipboard and to the primary selection.
+You paste it where you want it. A tone plays when the recording
+starts and another when the text is on the clipboard. A desktop
+notification carries the first line of the transcript. When every
+window is minimized, the tones and the notification are the only
+sign that a recording is running.
+
+The pill changes with the recording:
+
+- Idle: a microphone glyph in the window's own text color.
+- Recording: the glyph in red, a timer (`● 0:12`), and a small
+  `x`. A click finishes the recording. The `x` discards the clip.
+- Transcribing: an ellipsis in place of the timer. A click abandons
+  the transcript and starts a new recording. The `x` discards it.
+- Done: `copied` for two seconds. Failed: the reason for four
+  seconds, and the notification carries it too.
+- No model yet: a download glyph. A click opens the **Settings**
+  tab.
+
+The recorder finds speech against the room's noise floor, and keeps
+the half second before the speech starts so the first word survives.
+The level that counts as speech sits 14 dB above the tracked floor
+(the 10th percentile of the last three seconds) and never below -60
+dBFS. The first 0.3 seconds calibrate the floor, so start talking
+after the tone. A speakerphone's floor in a quiet room sits near -33
+dBFS, and a fixed level would take the room itself for speech. A
+clip with no speech in it ends with no transcript and no tone.
+
+Capture runs on the host because a workspace guest has no audio
+device. `pw-record` captures 16 kHz mono, and `whisper-cli` (from
+whisper.cpp) transcribes the clip once it ends. The model loads for
+each clip, which takes about one second with `small`. The model is
+not shipped: the first click opens the **Settings** tab, whose
+**Download** button fetches it into `~/.cache/msks/whisper/`. The
+[CLI chapter](cli.md#the-gui-preferences-file) describes the
+settings, their file, and the precedence.
+
+On a Mac the same calls answer through the shims that
+`msks-setup-macos-host` lands (#1216). `pw-record` captures through
+ffmpeg's avfoundation, `pw-cat` plays through `afplay`, and
+`notify-send` shows the notification through `osascript`. The run
+brews `whisper-cli` and `ffmpeg`. The first recording asks macOS for
+the microphone. The prompt shows the name of the terminal that
+launched the GUI. The capture device is the desktop's default input,
+and the Device setting below selects another one by its avfoundation
+index. `PW_RECORD_AUDIO_INDEX` overrides the setting for one launch.
+
+## The Settings tab
+
+![The Settings tab: the dictation form, the model's state and its
+Download button, the status line](screens/gui-dictation-settings.png)
+
+The fourth tab edits the dictation settings. The form shows the
+settings in effect now, and every field takes a change.
+
+- **Model**: a whisper.cpp ggml model. The picker lists the known
+  names with their sizes, and a path to a `.bin` file types free.
+  A NixOS host can pin a model as a derivation and type its store
+  path. A larger model transcribes more accurately and loads more
+  slowly at each clip: about a second with `small`, two to three
+  with `large-v3-turbo`.
+- **Device**: the microphone `pw-record` captures from. On Linux it
+  is a PipeWire source: the picker lists the sources the desktop
+  serves, **Refresh** reads the list again, and the default input
+  follows the desktop's own choice. A node name or serial typed free
+  selects one the list does not carry. On macOS the picker holds the
+  default input alone, and a number typed free selects the
+  avfoundation input with that index. The default input follows the
+  desktop's choice there too.
+- **Vocabulary prompt**: the words whisper-cli biases its spelling
+  toward, such as `msks, devenv, NixOS, pi`. Leave it empty for
+  plain dictation.
+
+Hover a setting's name or its field for its description. A key that
+an `MSKSC_DICTATE_*` variable pins shows the variable's value in a
+read-only field, with the variable named under the form.
+
+**Apply** saves the fields into `~/.config/msks/gui.yaml` and the
+next recording takes them. A recording ends at the pill's second
+click, whatever the settings. **Apply** and **Revert** stand dark
+while the fields match the saved settings, and light at the first
+change. **Revert** reads the layers again and reseeds the fields. A value that refused anywhere shows its message
+under the form, and the setting reads as its default.
+
+**Speech model** shows where the picked model points and whether
+it is on disk, with its size; the line follows the picker as it
+changes. **Download** fetches a missing model into the cache with a
+progress bar and makes it the configured model, and **Cancel**
+abandons the download. A path setting downloads nothing, and the
+line says so.
+
 ## The zoom keys
 
 Ctrl+Plus, Ctrl+=, and Ctrl+Shift++ (the plus key without a
@@ -588,7 +702,17 @@ colors with the rest of the window.
 The window needs a display. A Linux session provides one through
 `DISPLAY` or `WAYLAND_DISPLAY`, and `QT_QPA_PLATFORM=offscreen`
 also works. A start that finds no display prints one line on
-stderr and exits. A macOS session needs a desktop login. The
+stderr and exits. [Dictation](#dictation) needs four host tools
+the window itself does not: PipeWire's `pw-record` and `pw-cat`
+(capture and the tones), whisper.cpp's `whisper-cli` (the
+transcription), and `notify-send` for the desktop notification.
+The pill shows the missing tool's name when a recording fails
+without one, and the tones and the notification stay off on a host
+without theirs. The packages carry the tools under their own
+names: `pw-record` and `pw-cat` ship with PipeWire, `whisper-cli`
+with whisper.cpp (`whisper-cpp` on NixOS), and `notify-send` with
+libnotify. The transcript reaches the clipboard through Qt, so
+no clipboard helper is needed. A macOS session needs a desktop login. The
 window opens fine over ssh while one stands.
 
 The window plants its own desktop entry and taskbar icon on a

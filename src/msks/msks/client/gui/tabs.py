@@ -21,6 +21,7 @@ while it stands.
 from PySide6 import QtCore, QtWidgets
 
 from .arrival import Settle, stagger_on_change
+from .dictatekeys import SETTINGS_TAB_LABEL
 from .tabstyle import mark_active
 
 #: The first tab's label (#962): the workspace screens' page.
@@ -34,6 +35,14 @@ IMAGES_LABEL = "Images"
 #: placeholder listing and the audit group, full width
 #: (#997), the TUI secrets page's counterpart.
 SECRETS_LABEL = "Secrets"
+
+#: The fourth tab's label (#1214): the settings page — the
+#: dictate pill's settings and the speech model's download. The
+#: word lives in :mod:`msks.client.gui.dictatekeys`, the Qt-free
+#: leaf that resolves those settings, so the window path
+#: (``app.py``, Qt-free at parse time) reads it without this
+#: module.
+SETTINGS_LABEL = SETTINGS_TAB_LABEL
 
 
 class MainTabs(QtWidgets.QTabWidget):

@@ -19,6 +19,27 @@ from .config_keys import (
 )
 
 
+def load_mapping(text: str, path: str, what: str = "config file") -> dict:
+    """The YAML text as a flat mapping (#1214 shares it with the
+    GUI's preferences file): an empty document is an empty
+    mapping, anything but a mapping is refused naming the file,
+    and duplicate keys are refused by the loader
+    (:class:`msks.configio.UniqueKeyLoader`), shared with msksd so
+    every file carries one duplicate-key story."""
+    try:
+        doc = yaml.load(text, Loader=UniqueKeyLoader)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{path}: invalid YAML: {exc}") from None
+    if doc is None:
+        return {}
+    if not isinstance(doc, dict):
+        kind = type(doc).__name__
+        raise ValueError(
+            f"{path}: the {what} must be a mapping of keys, got {kind}"
+        )
+    return doc
+
+
 def parse_config_doc(text: str, path: str) -> dict:
     """Parse config-file text into its validated key walk.
 
@@ -29,18 +50,7 @@ def parse_config_doc(text: str, path: str) -> dict:
     (:class:`msks.configio.UniqueKeyLoader`), shared with msksd so
     the two files carry one duplicate-key story.
     """
-    try:
-        doc = yaml.load(text, Loader=UniqueKeyLoader)
-    except yaml.YAMLError as exc:
-        raise ValueError(f"{path}: invalid YAML: {exc}") from None
-    if doc is None:
-        return {}
-    if not isinstance(doc, dict):
-        kind = type(doc).__name__
-        raise ValueError(
-            f"{path}: the config file must be a mapping of keys, got {kind}"
-        )
-    return validated_doc(doc, path)
+    return validated_doc(load_mapping(text, path), path)
 
 
 def normalized_key(key: str) -> str:
@@ -406,9 +416,10 @@ def port_in_range(port: int, path: str) -> int:
     )
 
 
-#: The typed-value keys' readers (#314's shapes beside #1194's): a
-#: command prefix, ssh option tokens, a capture command, and a port.
-#: Defined after its readers (each is a plain function above) —
+#: The typed-value keys' readers (#314's shapes beside #1194's
+#: and #1214's): a command prefix, ssh option tokens, a capture
+#: command, and a port. Defined after
+#: its readers (each is a plain function above) —
 #: :func:`sectioned_pair` reads it at call time.
 SECTIONED_VALUE_KEYS = {
     "terminal_open_cmd": terminal_value,

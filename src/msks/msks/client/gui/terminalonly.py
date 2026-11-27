@@ -34,7 +34,9 @@ contract: nothing imports it at CLI parse time.
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .tints import TintedLabel
+from .dictatepill import MARGIN as PILL_MARGIN
+from .dictatepill import pill_in
+from .tintedlabel import TintedLabel
 
 #: The toggle's tooltip (#1152): the words its glyph alone
 #: cannot carry — the maximize glyph stands for the terminal
@@ -343,6 +345,9 @@ class TerminalOnly(QtCore.QObject):
         self.restore.clicked.connect(self.leave)
         corner_row = QtWidgets.QHBoxLayout(self.corner)
         corner_row.setContentsMargins(0, 0, 0, 0)
+        #: The corner row's layout (#1152): the mode parks its
+        #: right margin clear of the dictate pill at the enter.
+        self.corner_row = corner_row
         corner_row.addWidget(self.name)
         # The status takes the row's slack and its squeeze alike
         # (#1152): a stretch of one hands it the spare width
@@ -452,7 +457,10 @@ class TerminalOnly(QtCore.QObject):
         page.bar.setCurrentIndex(page.stack.indexOf(page.shells_tab))
         for widget in self.row:
             widget.hide()
-        page.footer.hide()
+        # The footer row (#1214) carries the facts and the seated
+        # dictate pill: both go, and the window's floating pill
+        # takes the tab row's corner for the mode.
+        page.footer_row.hide()
         page.escape.setEnabled(False)
         # The status line's seat moves (#1152): the standing
         # text — a flash mid-span, an outage — comes along, and
@@ -466,6 +474,24 @@ class TerminalOnly(QtCore.QObject):
         self.chrome_hidden.emit(True)
         self.park_restore()
         QtCore.QTimer.singleShot(0, self, self.park_restore)
+
+    def park_corner(self) -> None:
+        """The corner row clear of the dictate pill (#1214): the
+        pill floats at the window's top-right, over the tab row's
+        right end — the corner's own band. The corner's layout
+        takes a right margin of the pill's width and its gap, less
+        the page's own right margin the corner already stands in,
+        so the name, the status seat, and the restore button end
+        left of the pill and the terminal below keeps the window's
+        whole width. No pill stands: no margin."""
+        pill = pill_in(self.page.window())
+        if pill is None or not pill.isVisibleTo(self.page.window()):
+            self.corner_row.setContentsMargins(0, 0, 0, 0)
+            return
+        page_margin = self.page.layout().contentsMargins().right()
+        self.corner_row.setContentsMargins(
+            0, 0, max(0, pill.width() + PILL_MARGIN - page_margin), 0
+        )
 
     def toggle_spot(self) -> int | None:
         """How far the toggle's right edge stood from its window's
@@ -539,6 +565,7 @@ class TerminalOnly(QtCore.QObject):
         # corner's own resize would ask for the check again.
         if target != current:
             page.layout().setContentsMargins(target)
+        self.park_corner()
 
     @QtCore.Slot()
     def leave(self) -> None:
@@ -564,8 +591,9 @@ class TerminalOnly(QtCore.QObject):
         self.margins = None
         self.spot = None
         self.corner.hide()
+        self.corner_row.setContentsMargins(0, 0, 0, 0)
         for widget in self.row:
             widget.show()
-        page.footer.show()
+        page.footer_row.show()
         page.escape.setEnabled(True)
         self.chrome_hidden.emit(False)

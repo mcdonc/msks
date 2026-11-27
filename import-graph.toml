@@ -200,7 +200,9 @@ settings = 2
 agecrypto = 10
 # #874: the config split — the validator leaf imports the unique-
 # key loader beside the config module's own writes.
-configio = 4
+# #1214: the GUI's preferences page writes gui.yaml through the
+# shared atomic replace (guiprefs' statement: module + name).
+configio = 6
 conformance_args = 8
 # #481: the console dropped its identity negotiation — the
 # challenge signer and the login-user resolver went with it.

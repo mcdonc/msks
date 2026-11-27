@@ -81,17 +81,31 @@ the other tools never see:
    that spawned it passes through (#734). A foreign file at a
    path refuses by name; a dangling link re-points (stale by
    definition); ``--uninstall`` removes both.
+8. **The dictation prerequisites (#1216)** — the GUI's dictate
+   pill calls the PipeWire names a stock Mac does not carry
+   (``pw-record``, ``pw-cat``, ``notify-send``) beside
+   ``whisper-cli``. The phase brews the two real engines the Mac
+   can hold (``whisper.cpp`` for ``whisper-cli``, ``ffmpeg`` for
+   capture) and lands three shims at the brew prefix's bin —
+   ``pw-record`` answering the client's raw-capture contract
+   over ffmpeg's avfoundation, ``pw-cat`` over ``afplay``, and
+   ``notify-send`` over ``osascript``. Each shim carries the
+   tool's sentinel: a re-run refreshes its own, a foreign file
+   at a path refuses by name, and the uninstall arm removes only
+   the tool's; the brew packages stay (shared packages, the
+   Linux tools' own rule).
 
 ``--check`` runs the verify pass alone — the macOS doctor row
 set: Lima, the VM, the nested-virtualization marker, virtiofsd
-inside the VM, the listener, the client config, the login agent
-— and mutates nothing: a missing Lima refuses with the
-run-the-tool remedy, never an install.
+inside the VM, the listener, the client config, the login agent,
+the dictation prerequisites — and mutates nothing: a missing
+Lima refuses with the run-the-tool remedy, never an install.
 ``--uninstall`` stops and deletes the VM, its login agent, the
-brew-prefix client links, and the shared ``/opt/msks`` host
-install (Lima and the client config stay, and the summary names
-them). Every phase is idempotent: re-run any time; a rerun
-preserves the token, the CA, and the daemon's state.
+brew-prefix client links, the dictation shims, and the shared
+``/opt/msks`` host install (Lima and the client config stay, and
+the summary names them). Every phase is idempotent: re-run any
+time; a rerun preserves the token, the CA, and the daemon's
+state.
 """
 
 import os as os
@@ -110,6 +124,7 @@ from . import (
     base,
     bootstrap,
     clientconfig,
+    dictation,
     entry,
     hostcheck,
     hostvenv,
@@ -171,6 +186,16 @@ from .clientconfig import (
     identity_examples,
     points_at_this_daemon,
     write_private,
+)
+from .dictation import (
+    DICTATION_FORMULAS,
+    SENTINEL,
+    SHIM_NAMES,
+    dictation_bin_dir,
+    dictation_row,
+    install_dictation,
+    missing_engines,
+    remove_dictation_shims,
 )
 from .entry import (
     main,
@@ -251,6 +276,7 @@ SUBMODULES = (
     agent,
     skew,
     links,
+    dictation,
     entry,
 )
 
@@ -348,6 +374,14 @@ __all__ = [
     "link_one_client",
     "remove_client_link",
     "remove_one_client_link",
+    "DICTATION_FORMULAS",
+    "SENTINEL",
+    "SHIM_NAMES",
+    "dictation_bin_dir",
+    "dictation_row",
+    "install_dictation",
+    "missing_engines",
+    "remove_dictation_shims",
     "main",
     "parse_args",
     "refuse_readonly_shape",

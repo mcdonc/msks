@@ -6,6 +6,7 @@ importing it loads no daemon composition.
 """
 
 import os
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -63,3 +64,30 @@ def write_exclusive(path: str, body: str) -> None:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(body)
+
+
+def write_atomic(path: str, body: str) -> None:
+    """Write *body* to *path* over whatever stands there (the GUI's
+    preferences file, #1214): the parent directory is created 0700
+    when missing, the text lands in a temporary file beside the
+    target — written 0600, the tree's own mode — and is renamed
+    over it once complete. A reader never sees a half-written file,
+    and a crash mid-write leaves the old file whole and the
+    temporary file beside it (``<name>.*.tmp``), swept by hand. The
+    rename replaces a symlink with a regular file: a preferences
+    file a home-manager links into the store becomes mutable here,
+    which is the file's purpose."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, tmp = tempfile.mkstemp(
+        dir=str(target.parent), prefix=f"{target.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(body)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, target)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise

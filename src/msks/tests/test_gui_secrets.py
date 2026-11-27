@@ -886,7 +886,11 @@ def test_the_action_buttons_sit_at_the_bottom(qt, monkeypatch) -> None:
     assert tab.renew_button.text() == "Renew…"
     assert tab.revoke_button.text() == "Revoke…"
     assert bar.itemAt(4).widget() is tab.status
-    assert layout.itemAt(3).widget() is tab.counts
+    # The counts line shares its row with the dictate pill at the
+    # right end (#1214); this tab has no controller, so the line
+    # fills the row.
+    assert layout.itemAt(3).widget().layout().itemAt(0).widget() is tab.counts
+    assert tab.pill is None
     window.close()
 
 

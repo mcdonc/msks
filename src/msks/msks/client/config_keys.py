@@ -7,6 +7,24 @@ and its validator read.
 
 from __future__ import annotations
 
+#: The dictation keys (#1214): the GUI's dictate pill's settings —
+#: the model (a ggml name the cache fetches, or a path to a
+#: ``.bin``), the capture device (a ``pw-record`` target: a node
+#: name or serial), and the vocabulary prompt whisper-cli biases
+#: its spelling with. Global-only, the
+#: rule ``identity_file`` carries: the microphone and the models
+#: belong to the operator's desktop, not to a daemon connection.
+#: The GUI's own preferences file (``gui.yaml``) sits between the
+#: environment and the operator's config for these keys — the
+#: settings page writes that file and never this one — so the
+#: environment still pins a key above both. Each key's variable
+#: is the rule's own, ``MSKSC_`` plus the key uppercased.
+DICTATE_KEYS = (
+    "dictate_model",
+    "dictate_device",
+    "dictate_prompt",
+)
+
 #: The file's scalar global keys, each with the ``MSKSC_*``
 #: variable that overrides it. ``token_file``'s variable carries
 #: the token itself, not a path — the file form points at a file so
@@ -19,7 +37,8 @@ from __future__ import annotations
 #: ``screenshot_command`` and ``screenshot_port`` configure the
 #: client-held screenshot pipe (#1194) and carry the same rule:
 #: the screen the pipe captures belongs to the operator's
-#: desktop, not to a daemon connection.
+#: desktop, not to a daemon connection. The dictation keys
+#: (#1214) join with the same global-only rule.
 GLOBAL_ENV_VARS: dict[str, str] = {
     "url": "MSKSC_URL",
     "socket": "MSKSC_SOCKET",
@@ -34,6 +53,7 @@ GLOBAL_ENV_VARS: dict[str, str] = {
     "screenshot_command": "MSKSC_SCREENSHOT_COMMAND",
     "screenshot_port": "MSKSC_SCREENSHOT_PORT",
 }
+GLOBAL_ENV_VARS.update({key: "MSKSC_" + key.upper() for key in DICTATE_KEYS})
 
 #: The terminal-launch setting's variable (#314): the string form
 #: of the file value, overriding it for one shell.

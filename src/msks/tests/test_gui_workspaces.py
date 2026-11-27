@@ -918,7 +918,16 @@ def test_the_page_carries_the_action_row_and_the_rows_hold_theirs(
     assert row.itemAt(3).widget() is screen.remove_button
     assert row.itemAt(4).widget() is screen.status
     assert row.itemAt(5).widget() is screen.connection
-    assert layout.itemAt(2).widget() is screen.detail
+    # The detail strip's row last (#1214): the facts on the left,
+    # the dictate pill at the right end when a controller stands —
+    # this listing has none, so the facts fill the row.
+    # The row is a widget of its own (``footer_row``) holding the
+    # facts and, with a controller, the pill.
+    assert layout.itemAt(2).widget() is screen.footer_row
+    facts = screen.footer_row.layout()
+    assert facts.itemAt(0).widget() is screen.detail
+    assert facts.count() == 1
+    assert screen.pill is None
     for workspace in ("ws-1", "ws-2", "ws-3"):
         cell = screen.table.cellWidget(
             screen.row_ids()[workspace], qt.cells_mod.ACTION_COLUMN
