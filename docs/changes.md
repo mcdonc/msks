@@ -99,9 +99,9 @@ tagged `vX.Y.Z`.
   so a workspace's pi keeps its transcript in the terminal's
   scrollback and leaves the mouse to the terminal. pi's own
   default is fullscreen mode, which draws the transcript in its
-  own viewport and handles selection itself. Existing homes keep
-  their copy of the file, and accounts seeded from a new image
-  pick up the setting. See
+  own viewport and handles selection itself. A workspace built
+  from an earlier image keeps the old file, and its accounts stay
+  in fullscreen mode until the setting is added by hand. See
   [docs/llm.md](llm.md#integration-with-the-pi-coding-agent).
 
 - **The proxy's model list declares image input (#1197).** The
