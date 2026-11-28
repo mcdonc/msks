@@ -356,14 +356,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../tui/" class="md-nav__link">
+      <a href="../gui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  The TUI
+  The GUI
 
     
   </span>
@@ -382,14 +382,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../gui/" class="md-nav__link">
+      <a href="../tui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  The GUI
+  The TUI
 
     
   </span>
@@ -891,6 +891,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#breaking" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Breaking
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1280,7 +1291,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#breaking" class="md-nav__link">
+  <a href="#breaking_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Breaking
@@ -1347,7 +1358,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#breaking_1" class="md-nav__link">
+  <a href="#breaking_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Breaking
@@ -1686,7 +1697,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#breaking_2" class="md-nav__link">
+  <a href="#breaking_3" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Breaking
@@ -1806,6 +1817,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#breaking" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Breaking
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -2195,7 +2217,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#breaking" class="md-nav__link">
+  <a href="#breaking_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Breaking
@@ -2262,7 +2284,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#breaking_1" class="md-nav__link">
+  <a href="#breaking_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Breaking
@@ -2601,7 +2623,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#breaking_2" class="md-nav__link">
+  <a href="#breaking_3" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Breaking
@@ -2694,6 +2716,17 @@ tagged <code>vX.Y.Z</code>.</p>
   plants, drops the now-unused <code>enableInstallTelemetry</code> key. Workspaces
   built from new guest assets report the new versions, and existing
   workspaces keep their baked toolchain until rebuilt.</li>
+</ul>
+<h3 id="breaking">Breaking<a class="headerlink" href="#breaking" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>A bare <code>msks</code> opens the GUI (#1221).</strong> <code>msks</code> with no subcommand
+  opens the desktop window, the same window <code>msks gui</code> opens. An
+  operator who typed <code>msks</code> for the TUI now runs <code>msks tui</code>
+  (<code>msks tui &lt;workspace&gt;</code> opens that workspace's page). Where no
+  display is reachable (a plain ssh login, a headless host), a bare
+  <code>msks</code> prints one line whose last clause is <code>msks tui opens the
+terminal UI instead</code>, and exits 1. See <a href="../gui/">docs/gui.md</a> and
+  <a href="../tui/">docs/tui.md</a>.</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -4239,7 +4272,7 @@ gui</code>. The nix package keeps the daemon's closure lean, so on
   stop.</p>
 </li>
 </ul>
-<h3 id="breaking">Breaking<a class="headerlink" href="#breaking" title="Permanent link">&para;</a></h3>
+<h3 id="breaking_1">Breaking<a class="headerlink" href="#breaking_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong><code>terminal_title</code> / <code>MSKSC_TERMINAL_TITLE</code> removed (#858).</strong> The
   window title template setting is gone; every terminal window msks
@@ -4342,7 +4375,7 @@ gui</code>. The nix package keeps the daemon's closure lean, so on
   instead of refusing it.</li>
 </ul>
 <h2 id="v082-2026-11-07">[v0.8.2] - 2026-11-07<a class="headerlink" href="#v082-2026-11-07" title="Permanent link">&para;</a></h2>
-<h3 id="breaking_1">Breaking<a class="headerlink" href="#breaking_1" title="Permanent link">&para;</a></h3>
+<h3 id="breaking_2">Breaking<a class="headerlink" href="#breaking_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>The <code>client</code> flake output is gone (#793).</strong> The flake's
   <code>client</code> package and devenv's <code>outputs.client</code> are removed.
@@ -5424,7 +5457,7 @@ no</code>, <code>PermitRootLogin prohibit-password</code>) pinned by a config dr
 <p><strong>Workspace shell (#21).</strong> <code>msks shell &lt;workspace-id&gt;</code> gives an interactive shell inside a running workspace microvm, from any host that can reach the daemon: the client speaks the authenticated <code>/api/v1/workspaces/{id}/console</code> websocket (TLS + token, Ctrl-] detach, raw tty mode), and the daemon proxies it over virtio-vsock — the VM's vsock unix socket after a <code>CONNECT &lt;port&gt;</code> handshake — into a per-connection busybox ash on a pty served by static socat in the guest (root shell today, per #5's guest userland; <code>MSKSC_URL</code>/<code>MSKSC_TOKEN</code>/<code>MSKSC_CAFILE</code> configure the client). The guest assets gained the vsock module, <code>/dev/vsock</code> creation, devpts/ptmx setup, and socat; the daemon retries the console handshake across the guest's post-boot bring-up window.</p>
 </li>
 </ul>
-<h3 id="breaking_2">Breaking<a class="headerlink" href="#breaking_2" title="Permanent link">&para;</a></h3>
+<h3 id="breaking_3">Breaking<a class="headerlink" href="#breaking_3" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Dev state moved under <code>.devenv/state/</code> (#156).</strong> The repo-root
   state dirs — <code>.guest/</code>, <code>.msksd/</code> — now live at

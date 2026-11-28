@@ -16,10 +16,10 @@
       
       
       
-        <link rel="prev" href="../tui/">
+        <link rel="prev" href="../ssh-key/">
       
       
-        <link rel="next" href="../mounts/">
+        <link rel="next" href="../tui/">
       
       
         
@@ -340,32 +340,6 @@
     
   
   Your ssh key
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../tui/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  The TUI
 
     
   </span>
@@ -711,6 +685,32 @@
   
 </nav>
       
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1461,7 +1461,8 @@
 desktop window over the daemon's REST API. It reads the same environment
 variables and config file as the TUI and the CLI. It reads no daemon state
 directly: every page uses the API.</p>
-<p><code>msks gui</code> opens the window.</p>
+<p>A bare <code>msks</code> (no subcommand) opens the window, and <code>msks gui</code> is the same
+command. The TUI has its own command, <code>msks tui</code> (<a href="../tui/">the TUI chapter</a>).</p>
 <h2 id="the-connection-picker">The connection picker<a class="headerlink" href="#the-connection-picker" title="Permanent link">&para;</a></h2>
 <p><img alt="The connection picker's menu: two aliases and the dev daemon, the standing one checked" src="../screens/gui-connection.png" /></p>
 <p>The list's bottom bar carries the connection picker at its
@@ -2087,7 +2088,8 @@ colors with the rest of the window.</p>
 <p>The window needs a display. A Linux session provides one through
 <code>DISPLAY</code> or <code>WAYLAND_DISPLAY</code>, and <code>QT_QPA_PLATFORM=offscreen</code>
 also works. A start that finds no display prints one line on
-stderr and exits. <a href="#dictation">Dictation</a> needs four host tools
+stderr and exits. The line's last clause is <code>msks tui opens the terminal
+UI instead</code>. <a href="#dictation">Dictation</a> needs four host tools
 the window itself does not: PipeWire's <code>pw-record</code> and <code>pw-cat</code>
 (capture and the tones), whisper.cpp's <code>whisper-cli</code> (the
 transcription), and <code>notify-send</code> for the desktop notification.
@@ -2100,14 +2102,15 @@ libnotify. The transcript reaches the clipboard through Qt, so
 no clipboard helper is needed. A macOS session needs a desktop login. The
 window opens fine over ssh while one stands.</p>
 <p>The window plants its own desktop entry and taskbar icon on a
-Linux desktop. Every <code>msks gui</code> launch installs both under the
-XDG data home before the window opens. The taskbar shows the
-msks icon from the first launch after a fresh install, and the
-next launch after an upgrade refreshes the icon renders. When
-the install fails, msks prints one line on stderr and the
-window still opens. <code>msks gui-shortcut</code> does the same work by
-hand and prints the entry's path. On macOS nothing is planted.
-The dock reads the icon the window itself already carries.</p>
+Linux desktop. Every launch of the window (<code>msks gui</code> or a bare
+<code>msks</code>) installs both under the XDG data home before the window
+opens. The taskbar shows the msks icon from the first launch after
+a fresh install, and the next launch after an upgrade refreshes
+the icon renders. When the install fails, msks prints one line on
+stderr and the window still opens. <code>msks gui-shortcut</code> does the
+same work by hand and prints the entry's path. On macOS nothing
+is planted. The dock reads the icon the window itself already
+carries.</p>
 <p>Uninstalling the wheel leaves the entry and the icons in
 place, because they live in the XDG data home, outside the
 wheel's tree. Delete <code>~/.local/share/applications/msks.desktop</code>

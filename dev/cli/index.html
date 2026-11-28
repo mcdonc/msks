@@ -358,14 +358,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../tui/" class="md-nav__link">
+      <a href="../gui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  The TUI
+  The GUI
 
     
   </span>
@@ -384,14 +384,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../gui/" class="md-nav__link">
+      <a href="../tui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  The GUI
+  The TUI
 
     
   </span>
@@ -1765,23 +1765,24 @@
 
 
 <h1 id="the-cli-client">The CLI client<a class="headerlink" href="#the-cli-client" title="Permanent link">&para;</a></h1>
-<p>Along with invoking the TUI, the <code>msks</code> command is a client for the daemon's
+<p>Along with invoking the GUI, the <code>msks</code> command is a client for the daemon's
 <code>/api/v1</code> REST surface.</p>
 <p>Here's an overview of the common command set:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>msks<span class="w">                         </span><span class="c1"># the workspace tree TUI</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>msks<span class="w"> </span>ls<span class="w">                      </span><span class="c1"># what exists, and what state is it in</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>msks<span class="w"> </span>create<span class="w"> </span>ws<span class="w">                </span><span class="c1"># make a workspace</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>msks<span class="w"> </span>clone<span class="w"> </span>ws<span class="w"> </span>fork<span class="w">            </span><span class="c1"># copy a workspace into a new one</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>msks<span class="w"> </span>console<span class="w"> </span>ws<span class="w">               </span><span class="c1"># boot it if needed, then work inside it</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>msks<span class="w"> </span>forward<span class="w"> </span>ws<span class="w"> </span><span class="m">22</span><span class="w">            </span><span class="c1"># bridge a guest TCP port to stdio</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>msks<span class="w"> </span>key<span class="w"> </span>ws<span class="w">                   </span><span class="c1"># fetch the workspace's ssh identity</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>msks<span class="w"> </span>ssh<span class="w"> </span>ws<span class="w">                   </span><span class="c1"># log in over the forward (boots it if needed)</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>msks<span class="w"> </span>rsync<span class="w"> </span>ws<span class="w"> </span>--<span class="w"> </span>-av<span class="w"> </span>./src/<span class="w"> </span>root@:/src/<span class="w">  </span><span class="c1"># copy files over the forward</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>ws<span class="w">           </span><span class="c1"># download its /home volume (backup, seed)</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>msks<span class="w"> </span>start<span class="w"> </span>ws<span class="w">                 </span><span class="c1"># boot it without attaching</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>msks<span class="w"> </span>stop<span class="w"> </span>ws<span class="w">                  </span><span class="c1"># power it off</span>
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>msks<span class="w"> </span>rm<span class="w"> </span>ws<span class="w">                    </span><span class="c1"># delete it (and its data)</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>msks<span class="w"> </span>agent-card<span class="w">               </span><span class="c1"># print the agent reference card (#842)</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>msks<span class="w">                         </span><span class="c1"># the GUI window</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>msks<span class="w"> </span>tui<span class="w">                     </span><span class="c1"># the workspace tree TUI</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>msks<span class="w"> </span>ls<span class="w">                      </span><span class="c1"># what exists, and what state is it in</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>msks<span class="w"> </span>create<span class="w"> </span>ws<span class="w">                </span><span class="c1"># make a workspace</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>msks<span class="w"> </span>clone<span class="w"> </span>ws<span class="w"> </span>fork<span class="w">            </span><span class="c1"># copy a workspace into a new one</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>msks<span class="w"> </span>console<span class="w"> </span>ws<span class="w">               </span><span class="c1"># boot it if needed, then work inside it</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>msks<span class="w"> </span>forward<span class="w"> </span>ws<span class="w"> </span><span class="m">22</span><span class="w">            </span><span class="c1"># bridge a guest TCP port to stdio</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>msks<span class="w"> </span>key<span class="w"> </span>ws<span class="w">                   </span><span class="c1"># fetch the workspace's ssh identity</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>msks<span class="w"> </span>ssh<span class="w"> </span>ws<span class="w">                   </span><span class="c1"># log in over the forward (boots it if needed)</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>msks<span class="w"> </span>rsync<span class="w"> </span>ws<span class="w"> </span>--<span class="w"> </span>-av<span class="w"> </span>./src/<span class="w"> </span>root@:/src/<span class="w">  </span><span class="c1"># copy files over the forward</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>ws<span class="w">           </span><span class="c1"># download its /home volume (backup, seed)</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>msks<span class="w"> </span>start<span class="w"> </span>ws<span class="w">                 </span><span class="c1"># boot it without attaching</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>msks<span class="w"> </span>stop<span class="w"> </span>ws<span class="w">                  </span><span class="c1"># power it off</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>msks<span class="w"> </span>rm<span class="w"> </span>ws<span class="w">                    </span><span class="c1"># delete it (and its data)</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>msks<span class="w"> </span>agent-card<span class="w">               </span><span class="c1"># print the agent reference card (#842)</span>
 </span></code></pre></div>
 <p>The client and the daemon ship in the same Python distribution, but they might
 be run from different installation directories, so daemon and client versions
@@ -3248,14 +3249,14 @@ lands under <code>applications</code>, and the icon renders land under
 <code>Exec</code> line carries the absolute path of the <code>msks</code> command the
 installing shell resolved, so the desktop finds the client even when
 the venv's bin directory is not on the desktop's <code>PATH</code>.</p>
-<p>The <code>msks gui</code> launch plants the same entry and renders before
-the window opens (#1045). The taskbar icon works from the
-first launch after a fresh install, and the next launch after
-an upgrade refreshes the renders. A launch from the desktop
-entry replants the entry's own absolute path. A launch that
-resolves no client keeps the absolute path the entry carries.
-The command stays for a manual plant: it prints the entry's
-path, and it overwrites in place and is safe to re-run.</p>
+<p>Every launch of the window (<code>msks gui</code> or a bare <code>msks</code>) plants
+the same entry and renders before the window opens (#1045). The
+taskbar icon works from the first launch after a fresh install,
+and the next launch after an upgrade refreshes the renders. A
+launch from the desktop entry replants the entry's own absolute
+path. A launch that resolves no client keeps the absolute path the
+entry carries. The command stays for a manual plant: it prints the
+entry's path, and it overwrites in place and is safe to re-run.</p>
 <p>The window itself also sets the icon directly, so on X11 and macOS the
 window carries it without the install. Linux is the only desktop the
 command serves. Elsewhere it prints one line and exits 1.</p>

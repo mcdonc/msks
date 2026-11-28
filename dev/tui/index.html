@@ -16,10 +16,10 @@
       
       
       
-        <link rel="prev" href="../ssh-key/">
+        <link rel="prev" href="../gui/">
       
       
-        <link rel="next" href="../gui/">
+        <link rel="next" href="../mounts/">
       
       
         
@@ -355,6 +355,32 @@
       
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../gui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The GUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
     
   
   
@@ -603,32 +629,6 @@
   
 </nav>
       
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../gui/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  The GUI
-
-    
-  </span>
-  
-  
-
-      </a>
     </li>
   
 
@@ -1297,9 +1297,10 @@
 <p>The TUI uses the same REST API as the CLI commands, with the same environment
 variables, config file, and daemon aliases. It reads no daemon state directly.
 Every page uses the API.</p>
-<p>A bare <code>msks</code> (no arguments at all) launches the TUI. The default page is a
-full-screen workspace tree. <code>msks tui</code> is the same command, and <code>msks tui
-my-workspace</code> opens that workspace's page directly.</p>
+<p><code>msks tui</code> launches the TUI. The default page is a full-screen workspace
+tree, and <code>msks tui my-workspace</code> opens that workspace's page directly. A bare
+<code>msks</code> (no subcommand) opens the GUI window instead. See
+<a href="../gui/">the GUI chapter</a>.</p>
 <h2 id="the-workspace-tree">The workspace tree<a class="headerlink" href="#the-workspace-tree" title="Permanent link">&para;</a></h2>
 <p><img alt="The workspaces list: two rows, the detail strip at the bottom of the box, and the status bar's count, state summary, and daemon URL" src="../screens/workspaces-list.svg" /></p>
 <p>The tree is rooted at the <strong>workspaces list</strong>: one row per workspace,
