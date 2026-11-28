@@ -1007,13 +1007,17 @@ def test_events_on_a_wrapper_past_construction_touch_nothing(
     A wrapper without its Back button answers nothing: no
     focus, no refresh, no decider ask, instead of an
     AttributeError tracing to whatever test is running."""
-    page, window, _bridge = make_page(qt)
+    page, window, bridge = make_page(qt)
     window.close()
+    starts, stops = len(bridge.decider_starts), bridge.decider_stops
     # The two teardown shapes leave a wrapper with no instance
     # attributes — the same state the guards answer.
     del page.back_button
-    page.showEvent(qt.QtGui.QShowEvent())
-    page.hideEvent(qt.QtGui.QHideEvent())
+    assert page.showEvent(qt.QtGui.QShowEvent()) is None
+    assert bridge.calls == []  # no refresh
+    assert len(bridge.decider_starts) == starts  # no decider ask
+    assert page.hideEvent(qt.QtGui.QHideEvent()) is None
+    assert bridge.decider_stops == stops + 1  # the retire alone
 
 
 def test_an_unchanged_answer_keeps_the_mounts_held_row(qt) -> None:

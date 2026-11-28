@@ -5,6 +5,7 @@ against fake websockets."""
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from msks.app import build_app
@@ -117,7 +118,13 @@ async def test_feed_skips_frames_it_cannot_place() -> None:
     hub.feed(holder, b"\x00\x01")  # shorter than an id
     hub.feed(holder, pack_frame(9, b"x"))  # no such connection
     reader, _writer = await hub.open_channel("ws-a", 8080)
+    cid = holder.next_cid - 1
+    hub.feed(holder, pack_frame(cid, b"placed"))
     hub.end_channel(holder, 9)  # never stood: quiet
+    hub.end_channel(holder, cid)
+    # Only the placeable frame reached the reader: the two before it
+    # placed nothing, and ending a channel that never stood raised nothing.
+    assert await reader.read() == b"placed"
 
 
 def test_control_carries_the_port_on_opens_alone() -> None:
@@ -171,30 +178,39 @@ async def test_publish_rows_survives_a_hubless_state_and_a_model() -> None:
     read that fails under the transition is absorbed: the bridge's
     paints are best-effort like every proxy step."""
 
+    sent = []
+
+    async def publish(event, payload, owner=None):
+        sent.append((event, payload))
+
     class Bare:
         class state:
             hub = None
 
     hub = BridgeHub(Bare())
-    await hub.publish_rows("ws-a", UP_EVENT)  # no hub: quiet
+    assert await hub.publish_rows("ws-a", UP_EVENT) is None  # no hub: quiet
 
     class Raising:
         class state:
-            hub = object()
+            hub = SimpleNamespace(publish=publish)
 
             @staticmethod
             async def list_proxies(workspace_id):
                 raise RuntimeError("gone")
 
     hub = BridgeHub(Raising())
-    await hub.publish_rows("ws-a", DOWN_EVENT)  # read refused: quiet
+    await hub.publish_rows(
+        "ws-a", DOWN_EVENT
+    )  # the read's failure is absorbed
+    assert sent == []  # and no row reached the hub
 
 
 async def test_channel_writer_wait_closed_lands() -> None:
     hub = BridgeHub(object())
     hub.register("ws-a", FakeSocket())
-    _reader, writer = await hub.open_channel("ws-a", 8080)
-    await writer.wait_closed()
+    reader, writer = await hub.open_channel("ws-a", 8080)
+    assert await writer.wait_closed() is None
+    assert not reader.at_eof()  # the wait lands; the channel stands
 
 
 async def test_publish_rows_skips_remote_rows(tmp_path: Path) -> None:

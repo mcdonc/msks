@@ -702,7 +702,7 @@ def test_report_close_unmapped_code_is_a_clean_end() -> None:
     cleanly, exit 0, like a normal detach)."""
     closed = _closed(4400, "console user 'x' is not served")
     # Raises nothing: the function returns on an unmapped code.
-    console._report_close(closed)
+    assert console._report_close(closed) is None
 
 
 def test_report_close_4401() -> None:

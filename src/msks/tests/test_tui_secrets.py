@@ -1306,7 +1306,9 @@ def test_an_unmounted_view_closes_nothing() -> None:
     """A view that never mounted owns no link — unmount decides
     nothing."""
     view = SecretAuditScreen(FakeData([]))
-    view.on_unmount()
+    assert view.link is None
+    assert view.on_unmount() is None
+    assert view.link is None  # unmount decided nothing: no link stood to stop
 
 
 async def test_the_audit_link_ignores_decider_traffic() -> None:

@@ -8340,8 +8340,15 @@ async def test_a_none_selection_and_a_declined_confirm_decide_nothing() -> (
         highlighted = None
 
     screen.query_one = lambda selector, expect=None: FakeOptions()
-    screen.on_option_list_option_selected(SimpleNamespace(option=None))
-    await screen.delete_answered(False, catalog_row())
+    assert (
+        screen.selected_entry() is None
+    )  # nothing actionable stands selected
+    assert (
+        screen.on_option_list_option_selected(SimpleNamespace(option=None))
+        is None
+    )
+    # The declined confirm: the return comes before any delete or flash.
+    assert await screen.delete_answered(False, catalog_row()) is None
 
 
 async def test_the_data_seam_deletes_by_hash(monkeypatch) -> None:

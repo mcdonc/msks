@@ -931,10 +931,15 @@ def test_hold_pane_open_ends_on_eof_and_interrupt(
 ) -> None:
     # Both are the operator's close: the hold must never trap a
     # window shut (#1143).
-    monkeypatch.setattr(tp.sys, "stdin", FakeStdin(b""))
-    tp.hold_pane_open("the command exited 1")
-    monkeypatch.setattr(tp.sys, "stdin", FakeStdin(KeyboardInterrupt()))
-    tp.hold_pane_open("the command exited 1")
+    eof, interrupted = FakeStdin(b""), FakeStdin(KeyboardInterrupt())
+    monkeypatch.setattr(tp.sys, "stdin", eof)
+    assert tp.hold_pane_open("the command exited 1") is None
+    monkeypatch.setattr(tp.sys, "stdin", interrupted)
+    assert tp.hold_pane_open("the command exited 1") is None
+    # Each close read one byte and let go: the hold is a courtesy,
+    # never a trap.
+    assert eof.reads == [1]
+    assert interrupted.reads == [1]
 
 
 # --- the tmp-dir diagnostics log (#1143) -----------------------------------

@@ -357,7 +357,9 @@ async def test_scan_publishes_when_row_vanishes(tmp_path: Path) -> None:
         assert await scan_workspace(app, api.state.hub, row) is False
 
 
-async def test_watch_loop_logs_scan_failure(tmp_path: Path) -> None:
+async def test_watch_loop_logs_scan_failure(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     api, app, _stub = api_with_stub(tmp_path)
     async with api.router.lifespan_context(api):
 
@@ -374,6 +376,10 @@ async def test_watch_loop_logs_scan_failure(tmp_path: Path) -> None:
             await task
         except asyncio.CancelledError:
             pass
+        else:
+            raise AssertionError("watch_loop ended before the cancel")
+    assert "watcher scan failed; retrying next interval" in caplog.text
+    assert "scan exploded" in caplog.text
 
 
 async def test_scan_storage_publishes_pressure_changes(
@@ -579,7 +585,10 @@ async def test_watch_loop_sweeps_consent_on_its_deadline(
     assert swept
 
 
-async def test_sweep_consent_logs_deletions(tmp_path: Path) -> None:
+async def test_sweep_consent_logs_deletions(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="msks.server.watcher")
     api, app, _stub = api_with_stub(tmp_path)
 
     async def fake_prune(now=None):
@@ -587,9 +596,13 @@ async def test_sweep_consent_logs_deletions(tmp_path: Path) -> None:
 
     app.state.model.egress_consent.prune = fake_prune
     await watcher_mod.sweep_consent(app)  # logged, not raised
+    assert "consent: pruned 3 row(s) past retention/cap" in caplog.text
 
 
-async def test_sweep_consent_quiet_when_nothing_pruned(tmp_path: Path) -> None:
+async def test_sweep_consent_quiet_when_nothing_pruned(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="msks.server.watcher")
     api, app, _stub = api_with_stub(tmp_path)
 
     async def fake_prune(now=None):
@@ -597,6 +610,7 @@ async def test_sweep_consent_quiet_when_nothing_pruned(tmp_path: Path) -> None:
 
     app.state.model.egress_consent.prune = fake_prune
     await watcher_mod.sweep_consent(app)
+    assert "pruned" not in caplog.text
 
 
 # --- placeholder expiry sweep (#198) --------------------------------------

@@ -110,10 +110,16 @@ async def test_stop_cancels_in_flight_relays() -> None:
         client.sendto, QUERY, forwarder._sock.getsockname()
     )
     await asyncio.sleep(0.1)  # the relay task exists and is waiting
+    relays = list(forwarder._tasks)
+    assert relays  # the relay is in flight, waiting on the upstream
     forwarder.stop()
     serve.cancel()
     client.close()
     await asyncio.sleep(0)  # cancellations observed; no exception surfaced
+    assert forwarder._tasks == set()
+    assert all(
+        task.cancelled() for task in relays
+    )  # the stop took each relay with it
 
 
 async def test_stop_is_idempotent_and_serve_ends_without_a_socket() -> None:

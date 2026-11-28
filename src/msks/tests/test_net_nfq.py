@@ -389,7 +389,7 @@ async def test_hold_error_fails_the_packet_closed(consumer_app) -> None:
     assert pkt.verdict == "drop"
 
 
-async def test_spawn_logs_failed_enforcement(consumer_app) -> None:
+async def test_spawn_logs_failed_enforcement(consumer_app, caplog) -> None:
     app, net = consumer_app
     flow = consumer(app, app.state.net)
 
@@ -398,11 +398,14 @@ async def test_spawn_logs_failed_enforcement(consumer_app) -> None:
 
     flow.spawn(boom())
     await flow_quiesce(flow)  # the error is reaped, not raised
+    assert "nfq enforcement failed: nft gone" in caplog.text
+    assert flow._tasks == set()
 
 
 def test_stop_without_start_is_a_noop() -> None:
     flow = nfq.FlowConsumer("ws", 1, None)
-    flow.stop()
+    assert flow.stop() is None
+    assert flow._nfq is None and flow._loop is None
 
 
 class FakeNfq:
@@ -595,7 +598,9 @@ async def test_stop_before_start_leaves_no_loop(consumer_app) -> None:
     app, _net = consumer_app
     flow = consumer(app, app.state.net)
     flow._nfq = None
-    flow.stop()
+    assert flow.stop() is None
+    assert flow._nfq is None and flow._loop is None
+    assert flow._tasks == set()
 
 
 async def test_session_gate_skips_portless_flows(consumer_app) -> None:
@@ -637,10 +642,13 @@ async def test_stop_without_a_registered_loop(
     app, _net = consumer_app
     flow = consumer(app, app.state.net)
     monkeypatch.setattr(nfq, "NetfilterQueue", FakeNfq)
+    unbound = len(FakeNfq.bound)
     flow.start()
     flow._loop = None  # the registration never landed
     flow.stop()
     FakeFd.close_all()
+    assert len(FakeNfq.bound) == unbound + 1  # the bound queue was unbound
+    assert flow._nfq is None and flow._loop is None
 
 
 async def test_enforcement_failure_denies_and_logs(

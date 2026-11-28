@@ -117,8 +117,8 @@ def test_report_close_names_the_ambiguity() -> None:
 def test_report_close_passes_clean_ends_through() -> None:
     # A guest service that closed the stream (1000/1005) is a clean
     # end: the client exits 0.
-    fwd.report_close(closed_with(1000))
-    fwd.report_close(closed_with(1005))
+    assert fwd.report_close(closed_with(1000)) is None
+    assert fwd.report_close(closed_with(1005)) is None
 
 
 def test_close_code_message_names_what_it_knows() -> None:

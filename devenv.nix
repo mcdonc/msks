@@ -674,6 +674,22 @@ in
       language = "system";
       pass_filenames = false;
     };
+    # Test-assertion gate (#1219): every test under src/msks/tests
+    # carries an assertion signal — its own assert, a helper or
+    # fixture that asserts, a poll that raises on timeout, or a
+    # helper that raises on a failed condition — graded by
+    # scripts/check_test_assertions.py. Whole-tree check like
+    # import-cycles: the resolver needs every module's imports, so
+    # a staged subset cannot be graded alone. `# no-assert: <reason>`
+    # on the def line exempts a test by design; a stale marker fails.
+    test-assertions = {
+      enable = true;
+      name = "test-assertions";
+      entry = "${config.languages.python.package}/bin/python scripts/check_test_assertions.py";
+      files = "^src/msks/tests/.*\\.py$|^scripts/check_test_assertions\\.py$";
+      language = "system";
+      pass_filenames = false;
+    };
     # Shell (#72, klangk settings): format + static analysis + the
     # shebang guard on executable text files.
     shfmt.enable = true;
