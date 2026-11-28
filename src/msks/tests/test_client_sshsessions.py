@@ -120,6 +120,10 @@ def test_write_record_survives_a_refusing_tree(tmp_path: Path) -> None:
     blocker.parent.mkdir(parents=True)
     blocker.write_text("not a directory")
     rec.write_record(blocker / "10.json", "ws", 10, "ab23c", 100.0)
+    assert not (blocker / "10.json").exists()  # the count lost the record
+    assert (
+        blocker.read_text() == "not a directory"
+    )  # and the tree is as it was
 
 
 def test_read_record_answers_none_for_the_unreadable(
@@ -426,3 +430,6 @@ def test_a_swept_record_unlink_stays_quiet(tmp_path: Path) -> None:
     reader reaped its record) exits onto a missing file: the
     unlink wanted the record gone, and it is."""
     rec.remove_record(tmp_path / "nowhere" / "10.json")
+    assert not (
+        tmp_path / "nowhere"
+    ).exists()  # nothing was created on the way

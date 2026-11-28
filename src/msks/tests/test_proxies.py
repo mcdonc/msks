@@ -502,8 +502,11 @@ async def test_publish_skips_a_hubless_app() -> None:
     from types import SimpleNamespace
 
     manager = ProxyManager(SimpleNamespace(state=SimpleNamespace(hub=None)))
-    await manager.publish(
-        {"workspace_id": "ws", "id": 1}, "proxy.listening", None, None
+    assert (
+        await manager.publish(
+            {"workspace_id": "ws", "id": 1}, "proxy.listening", None, None
+        )
+        is None
     )
 
 

@@ -1657,6 +1657,9 @@ async def test_terminate_of_an_external_death_is_tolerated(
     )
     await driver._start_fs_daemons(spec, vm_dir)
     await driver._stop_fs_daemons("ws-e")
+    assert (
+        "ws-e" not in driver._fs_procs
+    )  # the registry let the dead daemon go
 
 
 async def test_untracked_sweep_tolerates_garbage_pidfiles(
@@ -1713,8 +1716,13 @@ async def test_stop_skips_an_already_exited_daemon(tmp_path: Path) -> None:
     # The daemon died on its own between the registry and the
     # teardown (an exited-at-spawn proc is the serve wait's
     # refusal now, not this path).
-    driver._fs_procs["ws-x"][0].returncode = 0
+    proc = driver._fs_procs["ws-x"][0]
+    proc.returncode = 0
     await driver._stop_fs_daemons("ws-x")
+    assert (
+        not proc.terminated
+    )  # the TERM pass found the returncode and skipped it
+    assert "ws-x" not in driver._fs_procs  # and the registry released it
 
 
 async def test_readonly_composes_from_both_sides(tmp_path: Path) -> None:

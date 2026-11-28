@@ -413,7 +413,17 @@ async def test_a_static_gate_never_retracts(gated) -> None:
 
 async def test_naming_memory_lifecycle() -> None:
     forwarder = dns.DnsForwarder(("127.0.0.1", 53))
-    forwarder.remember("a.example", [("10.0.0.1", 0)])
+    assert forwarder.remember("a.example", [("10.0.0.1", 0)]) == []
+    assert forwarder.host_for("10.0.0.1") == "a.example"
+    assert forwarder.ips_for("a.example") == ["10.0.0.1"]
+    # A second live name on the address: shared, and the caller hears of it.
+    assert forwarder.remember("b.example", [("10.0.0.1", 0)]) == ["10.0.0.1"]
+    assert forwarder.shared("10.0.0.1")
+    forwarder.forget("a.example")  # the revoke's side: the pairing drops
+    assert forwarder.ips_for("a.example") == []
+    assert forwarder.host_for("10.0.0.1") == "b.example"
+    forwarder.forget("b.example")
+    assert forwarder.host_for("10.0.0.1") is None
 
 
 def test_coresident_names_keep_their_own_pairings() -> None:

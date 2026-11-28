@@ -165,6 +165,8 @@ async def test_holder_feed_skips_what_it_cannot_place() -> None:
     await holder.feed(b"\x00\x01")  # shorter than an id
     await holder.feed(pack_frame(9, b"x"))  # no such channel
     holder.close(9)  # never stood: quiet
+    assert holder.channels == {}  # nothing stood, so nothing ended
+    assert socket.outgoing == []  # and nothing went back to the daemon
 
 
 class ClosingSocket(FakeSocket):

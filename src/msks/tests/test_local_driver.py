@@ -691,7 +691,10 @@ async def test_shutdown_timeout_when_guest_never_powers_off(
 async def test_shutdown_without_socket_is_noop(env, tmp_path: Path) -> None:
     app, state_dir, _ = env
     (state_dir / "vms" / WID).mkdir(parents=True)
-    await app.state.microvm.shutdown(WID)
+    assert (
+        await app.state.microvm.shutdown(WID) is None
+    )  # already-stopped is success
+    assert WID not in app.state.microvm.driver._procs
 
 
 async def test_shutdown_without_process_ref_terminates_pidfile_pid(
@@ -773,7 +776,10 @@ async def test_kill_unknown_workspace_is_success(env) -> None:
     # Killing an absent VM is success (the absent-VM contract): a
     # never-started workspace must stay deletable.
     app, _, _ = env
-    await app.state.microvm.kill("ghost")
+    assert (
+        await app.state.microvm.kill("ghost") is None
+    )  # the absent-VM contract
+    assert "ghost" not in app.state.microvm.driver._procs
 
 
 async def test_shutdown_stale_socket_is_stopped(env, tmp_path: Path) -> None:
@@ -788,7 +794,10 @@ async def test_shutdown_stale_socket_is_stopped(env, tmp_path: Path) -> None:
     dead = await asyncio.create_subprocess_exec("sleep", "0.1")
     (vm_dir / "ch.pid").write_text(str(dead.pid))
     await dead.wait()
-    await app.state.microvm.shutdown(WID, timeout_s=1)  # must not raise
+    assert (
+        await app.state.microvm.shutdown(WID, timeout_s=1) is None
+    )  # no wedge
+    assert WID not in app.state.microvm.driver._procs
 
 
 async def test_cleanup_removes_dir_and_reaps_running_vmm(
@@ -1064,6 +1073,7 @@ async def test_terminate_without_proc_or_pid(env, tmp_path: Path) -> None:
     await app.state.microvm.driver._terminate(
         WID, asyncio.get_running_loop().time() + 1
     )
+    assert WID not in app.state.microvm.driver._procs  # the plain return
 
 
 async def test_terminate_sigterms_pidfile_pid(env, tmp_path: Path) -> None:

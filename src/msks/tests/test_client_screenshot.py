@@ -1210,9 +1210,10 @@ def test_the_accept_loop_leaves_when_the_stop_flag_stands() -> None:
     touching the listener: the stop path's flag alone ends it."""
     pipe = screenshot.ScreenshotPipe("ws1", "/agent", "/ident", "dev", "/kh")
     pipe.stopping.set()
-    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    pipe.accept_loop(listener)
-    listener.close()
+    listener = SimpleNamespace(
+        accept=lambda: pytest.fail("the stopped loop accepted")
+    )
+    assert pipe.accept_loop(listener) is None
 
 
 def test_retry_after_reports_the_refused_bind_once(

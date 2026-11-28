@@ -38,6 +38,7 @@ from msks.llm import (
     sse_line,
 )
 from msks.llm import proxy as proxy_mod
+from msks.llm import router as router_mod
 from msks.settings import LlmSettings, Settings
 
 from msks import llm as llm_mod
@@ -683,7 +684,9 @@ async def test_listener_bind_failure_unregisters_the_mapping() -> None:
 def test_spawn_aclose_outside_a_loop_is_a_noop() -> None:
     # The sync construction path: no loop to schedule on.
     client = httpx.AsyncClient()
-    spawn_aclose(client)
+    assert spawn_aclose(client) is None
+    assert not router_mod._aclose_tasks  # nothing was scheduled
+    assert not client.is_closed  # the close itself waits for a serving loop
     asyncio.run(client.aclose())
 
 

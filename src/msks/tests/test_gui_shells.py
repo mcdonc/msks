@@ -218,9 +218,13 @@ def test_shells_events_tolerate_partial_teardown(qt, consent_tab):
     tab.hide()
     del tab.consent_panel
     del tab.timer
-    tab.resizeEvent(qt.QtGui.QResizeEvent(tab.size(), tab.size()))
-    tab.showEvent(qt.QtGui.QShowEvent())
-    tab.hideEvent(qt.QtGui.QHideEvent())
+    size = qt.QtGui.QResizeEvent(tab.size(), tab.size())
+    assert tab.resizeEvent(size) is None
+    assert tab.showEvent(qt.QtGui.QShowEvent()) is None
+    assert tab.hideEvent(qt.QtGui.QHideEvent()) is None
+    # The guards answered nothing: no panel or timer was rebuilt.
+    assert not hasattr(tab, "consent_panel")
+    assert not hasattr(tab, "timer")
 
 
 def test_large_queue_leaves_terminal_space(qt, consent_tab):

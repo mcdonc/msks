@@ -788,14 +788,18 @@ def test_a_wrapper_past_construction_hides_nothing(qt) -> None:
     shapes Qt can deliver events to (#959): a wrapper without
     the mode answers nothing, and one with the mode but without
     its chrome leaves a mode that never began."""
-    page, _window, _bridge = make_page(qt)
+    page, _window, bridge = make_page(qt)
     del page.back_button
-    page.hideEvent(qt.QtGui.QHideEvent())
-    page.showEvent(qt.QtGui.QShowEvent())
+    assert page.hideEvent(qt.QtGui.QHideEvent()) is None
+    assert page.showEvent(qt.QtGui.QShowEvent()) is None
+    assert (
+        bridge.calls == []
+    )  # no refresh and no decider ask reached the bridge
     page.close()
     del page.terminal_only
-    page.hideEvent(qt.QtGui.QHideEvent())
-    page.showEvent(qt.QtGui.QShowEvent())
+    assert page.hideEvent(qt.QtGui.QHideEvent()) is None
+    assert page.showEvent(qt.QtGui.QShowEvent()) is None
+    assert not hasattr(page, "terminal_only")  # the mode was not rebuilt
 
 
 def test_a_hidden_page_parks_no_right_edge(qt) -> None:

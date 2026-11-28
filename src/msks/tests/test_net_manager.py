@@ -3,6 +3,7 @@ services — the real DHCP/DNS protocols have their own suites."""
 
 import asyncio
 import json
+import logging
 from ipaddress import IPv4Network
 from pathlib import Path
 
@@ -1187,15 +1188,17 @@ async def test_revoke_flushes_the_per_flow_rsts(gated_app) -> None:
     assert not any("flush set" in line for line in log_lines(nft_log)[before:])
 
 
-async def test_drop_flows_survives_a_missing_tool(gated_app) -> None:
+async def test_drop_flows_survives_a_missing_tool(gated_app, caplog) -> None:
     """A conntrack tool that is absent logs and moves on — the rule
     clear already happened, so the revoke still lands."""
+    caplog.set_level(logging.WARNING, logger="msks.net.manager.consent")
     app, _consumers, _nft_log = gated_app
     await app.state.net.start()
     await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
     app.state.settings.net.conntrack_tool = "/nonexistent/conntrack"
     attachment = app.state.net._attachments["ws-i"]
     await app.state.net.drop_flows("ws-i", attachment.guest_ip, "10.9.9.9")
+    assert "conntrack clear to 10.9.9.9 skipped" in caplog.text
 
 
 async def test_build_failure_stops_the_consumer(
@@ -1218,8 +1221,10 @@ async def test_build_failure_stops_the_consumer(
     assert "ws-i" not in app.state.net._attachments
 
 
-async def test_replay_survives_a_read_failure(gated_app, monkeypatch) -> None:
-    app, _consumers, _nft_log = gated_app
+async def test_replay_survives_a_read_failure(
+    gated_app, monkeypatch, caplog
+) -> None:
+    app, consumers, _nft_log = gated_app
     await app.state.net.start()
 
     async def explode(*_args, **_kw):
@@ -1230,6 +1235,9 @@ async def test_replay_survives_a_read_failure(gated_app, monkeypatch) -> None:
     )
     await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
     # The attach itself succeeded; only the replay skipped.
+    assert "ws-i" in app.state.net._attachments
+    assert len(consumers) == 1
+    assert "consent replay for ws-i failed; verdicts re-prompt" in caplog.text
 
 
 async def test_replay_pins_a_ported_deny(gated_app) -> None:
@@ -2298,7 +2306,8 @@ async def test_stop_bridge_without_a_manager_is_quiet(tmp_path) -> None:
     app = build_app(Settings(net=NetSettings(enabled=False)))
     app.state.bridge = None
     manager = NetManager(app)
-    await manager.stop_bridge("ws-a")
+    assert await manager.stop_bridge("ws-a") is None
+    assert app.state.bridge is None  # idempotent: the state is as it was
 
 
 async def test_stop_bridge_closes_the_holders_websockets(tmp_path) -> None:

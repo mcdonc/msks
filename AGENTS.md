@@ -170,6 +170,36 @@ host, and CI's Linux run keeps the 100% bar. Off Linux, use
 `msks-preflight`, not bare `unit-tests`: a bare run there exits
 nonzero on the coverage total alone, green tests notwithstanding.
 
+## Tests assert an outcome
+
+Every test under `src/msks/tests/` checks an outcome (#1219). A test
+that calls a path and ends passes when nothing raises, and a
+regression in the behavior its name describes leaves it green. Name
+the outcome in the assertion: the log line through `caplog`, the
+returned value, a task's `done()` or `cancelled()`, a file's presence
+or absence, or a fake's recorded calls. A tolerance test ("survives a
+dead hub") asserts the state its docstring promises.
+
+`scripts/check_test_assertions.py` grades the suite at commit time
+and in `msks-preflight`. A test carries a signal when its body holds
+an `assert`, an `assert*` or `fail` call, or a `raises`/`warns`
+context manager, or when a helper it calls holds one. Calls resolve
+through imports, re-exports, and class hierarchies, so a test that
+checks through `assert_tabs_whole(bar)` passes. A resolved helper
+grades by its body, never by its name, and a fixture's own asserts
+check the setup, not the test's outcome. Three weaker signals count
+too: a poll helper that raises on timeout (`wait_for`, `poll`,
+`press_until`, `call_until`, `until`, `asyncio.wait_for`), a helper that
+raises on a failed condition when the test calls it as a statement
+(`subprocess.run(check=True)` counts either way), and an `assert`
+inside a nested `scenario()` the test runs.
+
+A test marked `pytest.mark.skip` is not graded. A test that is
+assertion-free by design marks its `def` line (or the comment line
+above it) with `# no-assert: <reason>`. The marker on a graded test
+that does carry a signal fails the gate as stale; remove it in the
+same change.
+
 ## Pre-flight the commit gates before the first commit attempt
 
 The pre-commit hooks run their gates over the staged tree at commit
@@ -186,7 +216,8 @@ It prints every ruff violation, every deferred import, every
 import cycle (`scripts/check_import_cycles.py`), every import-graph
 gate violation (`scripts/check_import_graph.py` over
 `import-graph.toml` — package DAG, ranks, snapshot counts, fan-in
-ceiling, reachability, facades), every xenon
+ceiling, reachability, facades), every test without an assertion
+signal (`scripts/check_test_assertions.py`), every xenon
 block above rank A, and the jscpd clone report over the full tree.
 When anything under `src/msks/` differs from the fork point on
 `origin/main` (committed or working tree), it then runs the gated

@@ -15,6 +15,8 @@
 #   - every import-graph gate violation scripts/check_import_graph.py
 #     names over import-graph.toml (package DAG, ranks, snapshot
 #     counts, fan-in ceiling, reachability, facades)
+#   - every test without an assertion signal
+#     (scripts/check_test_assertions.py, #1219)
 #   - every xenon offender in the graded set (scripts/xenon-gate.sh)
 #   - the jscpd clone report (scripts/jscpd-gate.sh)
 #   - every module-length offender (scripts/lines-gate.sh: the
@@ -118,6 +120,7 @@ run_section "ruff format" ruff format --check ${pyfiles[@]+"${pyfiles[@]}"}
 run_section "deferred-imports" "$venv_python" scripts/check_deferred_imports.py ${pyfiles[@]+"${pyfiles[@]}"}
 run_section "import-cycles" "$venv_python" scripts/check_import_cycles.py
 run_section "import-graph" "$venv_python" scripts/check_import_graph.py
+run_section "test-assertions" "$venv_python" scripts/check_test_assertions.py
 run_section "xenon" bash scripts/xenon-gate.sh
 run_section "jscpd" bash scripts/jscpd-gate.sh
 run_section "lines" bash scripts/lines-gate.sh

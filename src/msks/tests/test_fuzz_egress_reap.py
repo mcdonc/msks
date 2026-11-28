@@ -259,7 +259,8 @@ def test_term_then_kill_force(monkeypatch):
 
 
 def test_restore_forwarding_file_without_saved(tmp_path):
-    FUZZ.restore_forwarding_file(tmp_path / "missing")
+    assert FUZZ.restore_forwarding_file(tmp_path / "missing") is None
+    assert list(tmp_path.iterdir()) == []  # nothing was written on the way
 
 
 # -- the daemon stop paths --------------------------------------------------

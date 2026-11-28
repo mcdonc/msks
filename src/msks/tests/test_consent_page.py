@@ -2608,7 +2608,7 @@ async def test_close_ws_swallows_a_dead_peer() -> None:
         async def close(self):
             raise OSError("already gone")
 
-    await consent_ui.close_ws(DeadClose())  # no raise
+    assert await consent_ui.close_ws(DeadClose()) is None  # no raise
 
 
 def test_the_default_ws_factory_dials_the_events_url(

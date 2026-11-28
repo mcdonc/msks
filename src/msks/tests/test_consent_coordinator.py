@@ -499,10 +499,13 @@ async def test_cancel_hold_task_reaps_exceptions(engine_app) -> None:
 
     task = asyncio.create_task(broken())
     await app.state.consent.cancel_hold_task(task)
+    assert (
+        task.cancelled()
+    )  # the cancel landed first; the end is retrieved here
 
 
 async def test_publish_without_a_hub_and_with_a_failing_hub(
-    engine_app,
+    engine_app, caplog
 ) -> None:
     app, _frames, _queue = engine_app
     engine = app.state.consent
@@ -514,13 +517,19 @@ async def test_publish_without_a_hub_and_with_a_failing_hub(
     hub = app.state.hub
     app.state.hub = None
     engine.publish("egress.rules", {})  # no hub: a no-op
+    assert engine._publishes == set()  # nothing was scheduled
     app.state.hub = Boom()
     engine.publish("egress.rules", {})  # the failure logs, not raises
-    await asyncio.sleep(0.01)  # let the fire-and-forget task land
+    while engine._publishes:  # the fire-and-forget task lands and is reaped
+        await asyncio.sleep(0)
     app.state.hub = hub
+    assert "consent publish failed: subscriber gone" in caplog.text
+    assert engine._publishes == set()  # the failed task was reaped
 
 
-async def test_broadcast_rules_survives_a_read_error(engine_app) -> None:
+async def test_broadcast_rules_survives_a_read_error(
+    engine_app, caplog
+) -> None:
     app, _frames, _queue = engine_app
     engine = app.state.consent
 
@@ -529,9 +538,13 @@ async def test_broadcast_rules_survives_a_read_error(engine_app) -> None:
 
     engine.frame_for_row = explode
     await engine.broadcast_rules("ws-interactive")
+    assert "consent: rules refresh failed" in caplog.text
+    assert engine._publishes == set()  # a failed read publishes nothing
 
 
-async def test_cancel_hold_task_names_a_real_failure(engine_app) -> None:
+async def test_cancel_hold_task_names_a_real_failure(
+    engine_app, caplog
+) -> None:
     """A timeout task that died of a bug is reaped with the failure
     logged, not silently swallowed."""
     app, _frames, _queue = engine_app
@@ -541,18 +554,26 @@ async def test_cancel_hold_task_names_a_real_failure(engine_app) -> None:
         raise RuntimeError("timeout path bug")
 
     task = asyncio.create_task(broken())
-    await asyncio.sleep(0.01)
+    await asyncio.wait({task})  # the bug lands before the reap
     await app.state.consent.cancel_hold_task(task)
+    assert task.done() and isinstance(task.exception(), RuntimeError)
+    assert "timeout task failed while reaping" in caplog.text
+    assert "timeout path bug" in caplog.text
 
 
 async def test_fail_close_without_a_hold_is_a_no_op(engine_app) -> None:
-    app, _frames, _queue = engine_app
-    await app.state.consent.fail_close("missing", reason="timeout")
+    app, frames, _queue = engine_app
+    engine = app.state.consent
+    await engine.fail_close("missing", reason="timeout")
+    assert engine._holds == {}  # nothing stood, nothing changed
+    assert frames == []  # and no frame went out
 
 
-async def test_start_with_nothing_to_reap_is_quiet(engine_app) -> None:
+async def test_start_with_nothing_to_reap_is_quiet(engine_app, caplog) -> None:
     app, _frames, _queue = engine_app
+    caplog.set_level(logging.INFO, logger="msks.consent.coordinator")
     await app.state.consent.start()  # zero reaped: no log branch
+    assert "orphaned pending" not in caplog.text
 
 
 async def test_stop_skips_other_workspaces_holds(engine_app) -> None:
@@ -627,8 +648,10 @@ async def test_finish_twice_keeps_the_first_verdict(engine_app) -> None:
 
 
 async def test_broadcast_rules_skips_missing_workspaces(engine_app) -> None:
-    app, _frames, _queue = engine_app
+    app, frames, _queue = engine_app
     await app.state.consent.broadcast_rules("missing-ws")
+    assert app.state.consent._publishes == set()  # no row: no frame scheduled
+    assert frames == []
 
 
 async def test_stop_fail_closes_before_reaping(engine_app) -> None:

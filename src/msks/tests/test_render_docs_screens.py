@@ -181,6 +181,7 @@ async def test_the_failure_panel() -> None:
     async with app.run_test(size=(80, 24)) as pilot:
         app.push_screen(FailurePanel("create", "alpha", refusal))
         await pilot.pause()
+        assert screen_name(app) == "FailurePanel"
         await export(app, "failure-panel")
 
 
@@ -360,6 +361,7 @@ async def test_the_mint_form() -> None:
     async with app.run_test(size=(80, 24)) as pilot:
         app.push_screen(MintScreen(SecretsScreen().minted))
         await pilot.pause()
+        assert screen_name(app) == "MintScreen"
         await export(app, "mint-form")
 
 
@@ -374,6 +376,7 @@ async def test_the_sentinel_panel() -> None:
     async with app.run_test(size=(80, 24)) as pilot:
         app.push_screen(SentinelPanel(fresh))
         await pilot.pause()
+        assert screen_name(app) == "SentinelPanel"
         await export(app, "sentinel-panel")
 
 
@@ -517,4 +520,5 @@ async def test_the_unlock_modal() -> None:
     async with app.run_test(size=(80, 24)) as pilot:
         app.push_screen(PassphraseScreen(Path("identity")))
         await pilot.pause()
+        assert screen_name(app) == "PassphraseScreen"
         await export(app, "unlock-modal")

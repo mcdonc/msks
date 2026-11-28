@@ -3498,8 +3498,9 @@ def test_run_and_step_without_a_search_do_nothing(screen, qt):
     """A dead bar's run and step are no-ops."""
     from msks.client.gui.terminal import find
 
-    find.run(screen, "needle")
-    find.step(screen, 1)
+    assert find.run(screen, "needle") is None
+    assert find.step(screen, 1) is None
+    assert not screen.search  # the dead bar stayed dead: no search was built
 
 
 def test_a_plain_key_in_the_bar_reaches_the_edit(screen, qt):
@@ -3899,7 +3900,7 @@ def test_a_clipboard_write_without_a_writer_is_ignored(qt):
     pointer) changes nothing."""
     from msks.client.gui.terminal import callbacks
 
-    callbacks.clipboard_write(0, 0, None)
+    assert callbacks.clipboard_write(0, 0, None) is None
 
 
 # --- the review's pins (#953 follow-ups) ----------------------------------
