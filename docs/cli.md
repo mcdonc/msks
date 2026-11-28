@@ -203,12 +203,12 @@ The environment variables above have a durable home: a YAML file at
 overrides the same key in the file. A fresh devenv shell with its presets
 exported behaves exactly as it does today. A bare `msks` reads two
 files: the host's `/etc/msks/msks.yaml` as the floor, and the user's
-file over it, key by key. Precedence, highest first:
+file over it, key by key. The two read as one file, and the precedence
+is the one-file rule over the merged document, highest first:
 
 ```text
---daemon flag > MSKSC_* environment > the user file's daemon aliases >
-    the user file's global keys > the system file's aliases >
-    the system file's globals > built-in defaults
+--daemon flag > MSKSC_* environment > the active alias's entry >
+    global keys (the user's over the host's) > built-in defaults
 ```
 
 A bare `msks` reads the user file at the default path and, on the
@@ -222,18 +222,23 @@ reads the environment and the built-in defaults only.
 The system file is `/etc/msks/msks.yaml` unless `MSKSC_SYSTEM_CONFIG`
 points elsewhere; an empty value means there is no system file. A
 host can put its daemon's address, CA, and token file there for every
-user. A user's file overrides one key or adds an alias without
-copying the rest. `daemons:` merges by alias: an alias both files
-define merges key by key, and an alias either file defines is kept.
-A user's entry that adds a key to a host alias needs no address of its
-own. Each file is validated on its own, and a refusal gives the file.
+user, with `active_daemon` picking it. A user's file overrides one key
+or adds an alias without copying the rest. `daemons:` merges by alias:
+an alias both files define merges key by key, and an alias either file
+defines is kept. A user's entry that adds a key to a host alias needs
+no address of its own. The active alias's entry beats every global
+key, so a user who wants a daemon other than the host's pick defines
+their own alias and names it in `active_daemon`, or exports
+`MSKSC_URL` for one invocation. Each file is validated on its own, and
+a refusal gives the file.
 
 The GUI's Settings tab writes its three `dictate_*` keys into the
-user's file by merging them in place: every other byte of the file
-stays as you wrote it, and the system file is never written. A
-symlink is written through, so a file home-manager links stays a
-link. Under `--config=none` the tab applies the settings for the
-session and says so.
+user's file by merging them in place: the key's own line is rewritten
+(a comment on that line goes with it) and every other line stays as
+you wrote it, and the system file is never written. A symlink is
+written through, so a file home-manager links stays a link. Under
+`--config=none` the tab applies the settings for the session and says
+so.
 
 Unknown keys and duplicate keys are refused at load, each error
 giving the key and the valid ones, the same fail-fast rules

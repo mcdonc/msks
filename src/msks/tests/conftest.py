@@ -129,6 +129,10 @@ def isolated_client_config(
     do.
     """
     monkeypatch.setenv("MSKSC_CONFIG_DIR", str(client_config_root))
+    # The system file layer (#1224): no floor under any test's user
+    # file unless the test sets one — a host carrying
+    # /etc/msks/msks.yaml (the NixOS module) stays out of the suite.
+    monkeypatch.setenv("MSKSC_SYSTEM_CONFIG", "")
 
 
 @pytest.fixture(scope="session")

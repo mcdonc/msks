@@ -29,9 +29,12 @@ def render_template() -> str:
 # (MSKSC_URL -> url, MSKSC_EXPECTED_IMAGE -> expected_image).
 # Hyphens and underscores spell the same key (terminal-open-cmd
 # and terminal_open_cmd are one key; a file that carries both
-# spellings is refused). Precedence, highest first:
-#   --daemon flag > MSKSC_* environment > this file's daemons
-#   entries > this file's global keys > built-in defaults
+# spellings is refused). On a host with a system file
+# (/etc/msks/msks.yaml) this file layers over it key by key and
+# daemons merge alias by alias; the client resolves the two as one
+# file. Precedence, highest first:
+#   --daemon flag > MSKSC_* environment > the active alias's entry >
+#   global keys > built-in defaults
 #
 # A key set to nothing (key: with no value, or "") is the unset
 # form: the environment (or the default) applies.

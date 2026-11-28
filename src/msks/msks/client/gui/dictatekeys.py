@@ -72,26 +72,25 @@ class DictateSettings:
         return getattr(self, key.removeprefix("dictate_"))
 
 
-def read_value(key: str, value) -> str | None:
+def read_value(value) -> str | None:
     """One layer's value for one key: the stripped string, None for
     the unset form (absent, null, blank). Both layers carry
     strings by construction — the loader refuses anything else in
     the file, and a variable is text."""
     if value is None:
         return None
-    return str(value).strip() or None
+    return value.strip() or None
 
 
 def environment_layer(key: str, environ):
-    """The environment's raw text (#1214): the variable's value,
-    its name the pin's."""
-    return environ.get(GLOBAL_ENV_VARS[key]), GLOBAL_ENV_VARS[key]
+    """The environment's raw text (#1214): the variable's value."""
+    return environ.get(GLOBAL_ENV_VARS[key])
 
 
 def operator_layer(key: str, operator: dict):
     """The merged config document (#1214, #1224): ``msks.yaml``, the
     user's keys over the system's."""
-    return operator.get(key), "msks.yaml"
+    return operator.get(key)
 
 
 def resolve_key(key: str, environ, operator: dict) -> tuple[str | None, bool]:
@@ -99,15 +98,10 @@ def resolve_key(key: str, environ, operator: dict) -> tuple[str | None, bool]:
     layer that carries a value wins; a blank moves on.
     ``(value, pinned)``, the second True only for an environment
     win."""
-    for getter, mapping in (
-        (environment_layer, environ),
-        (operator_layer, operator),
-    ):
-        raw, _source = getter(key, mapping)
-        value = read_value(key, raw)
-        if value is not None:
-            return value, getter is environment_layer
-    return None, False
+    value = read_value(environment_layer(key, environ))
+    if value is not None:
+        return value, True
+    return read_value(operator_layer(key, operator)), False
 
 
 def resolve(environ=None, operator: dict | None = None) -> DictateSettings:

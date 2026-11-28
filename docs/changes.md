@@ -27,9 +27,8 @@ tagged `vX.Y.Z`.
   reads `/etc/msks/msks.yaml` (relocated by `MSKSC_SYSTEM_CONFIG`; an
   empty value means none) as the floor and the user's
   `~/.config/msks/msks.yaml` over it, key by key; `daemons:` merges by
-  alias. `--config <path>` and `--config=none` read no system file.
-  The precedence gains a tier: flag, environment, user file, system
-  file, defaults. See
+  alias, and the two files resolve as one. `--config <path>` and
+  `--config=none` read no system file. See
   [docs/cli.md](cli.md#the-client-config-file).
 
 - **`msks-setup-macos-host` lands the dictation tools (#1216).** The

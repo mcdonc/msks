@@ -56,9 +56,14 @@ The file is located through three ``--config`` modes (msksd's):
   defaults only.
 
 The precedence, highest first: ``--daemon`` flag > ``MSKSC_*``
-environment > the user file's daemon aliases > the user file's
-  global keys > the system file's aliases > the system file's globals
-  > built-in defaults.
+environment > the merged file's daemon aliases > the merged file's
+global keys > built-in defaults. The merged file is one document —
+the user's keys over the system's, alias by alias — and the client
+resolves it exactly as it resolves a single file: the active alias's
+entry (the user's keys over the system's) beats every global, the
+user's global ``url`` included. A user who wants a daemon other than
+the host's ``active_daemon`` sets their own alias and names it, or
+exports ``MSKSC_URL``.
 
 The user's file is also the one file the client writes after the
 first run: :func:`save_keys` merges keys into it in place
@@ -282,34 +287,54 @@ def merge_aliases(floor: dict, over: dict) -> dict:
 def reload_doc(conf: ClientConfig) -> dict:
     """The merged document read again from the files *conf*
     resolved (#1224) — the GUI's re-read after a save, through the
-    same files the launch read."""
-    return load_paths(conf.config_paths)
+    same files the launch read, those still standing: a system file
+    removed under the window stops layering instead of refusing
+    every later save."""
+    return load_paths(standing_paths(conf.config_paths))
+
+
+def standing_paths(paths: list[str]) -> list[str]:
+    """The paths of *paths* that are files now (#1224): the layer's
+    own rule — a file that is not there is no layer."""
+    return [path for path in paths if os.path.isfile(path)]
 
 
 def save_keys(conf: ClientConfig, values: dict) -> None:
     """Merge *values* into the user's file in place (#1224), for
     the GUI's settings page: the file at ``conf.config_path`` —
-    never the system file — read, edited by
-    :func:`msks.configio.set_scalars`, checked through the loader
-    against the files under it (a result the loader refuses is
-    never written), and written through a symlink by
-    :func:`msks.configio.write_atomic`. ``--config=none`` has no
-    file to write and returns; a file that will not read, a result
-    that will not load, and a tree that will not write surface as
-    ``ValueError`` or ``OSError`` with the path in the message."""
+    never the system file under bare ``msks`` — read (the first-run
+    template's text when the file is gone, the launch's own rule for
+    a missing file), edited by :func:`msks.configio.set_scalars`,
+    checked through the loader against the files under it still
+    standing (a result the loader refuses is never written), and
+    written through a symlink by :func:`msks.configio.write_atomic`.
+    ``--config=none`` has no file to write and returns; a file that
+    will not read, a result that will not load, and a tree that will
+    not write surface as ``ValueError`` or ``OSError`` with the path
+    in the message."""
     if conf.config_path == NO_CONFIG:
         return
     path = conf.config_path
     try:
-        text = Path(path).read_text(encoding="utf-8")
+        text = read_or_template(path)
     except OSError as exc:
         raise ValueError(
             f"cannot read config file {path}: {exc.strerror or exc}"
         ) from None
     edited = set_scalars(text, values)
-    floor = floor_aliases(load_paths(conf.config_paths[:-1]))
+    floor = floor_aliases(load_paths(standing_paths(conf.config_paths[:-1])))
     parse_config_doc(edited, path, floor)
     write_atomic(path, edited)
+
+
+def read_or_template(path: str) -> str:
+    """The file's text, or the first-run template's when the file is
+    missing (#1224): the next write lands the template with the keys
+    merged in, the file a fresh install would have."""
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return render_template()
 
 
 def generate_template(path: str) -> None:

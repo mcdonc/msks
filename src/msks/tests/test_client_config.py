@@ -1476,6 +1476,75 @@ def test_config_none_reads_neither_file(tmp_path: Path, monkeypatch) -> None:
     assert conf.doc == {}
 
 
+def test_the_merged_file_resolves_under_the_one_file_rule(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The two files read as one (#1224 review): the active alias's
+    entry beats every global, the user's global ``url`` included,
+    so a host's ``active_daemon`` pick dials the host's daemon.
+    The override paths are the user's own alias and pick, and the
+    environment."""
+    clean_env(monkeypatch)
+    # A host pick with no token file to read: the alias's url, not
+    # the user's global.
+    system_file(
+        tmp_path,
+        "active_daemon: host\ndaemons:\n  host:\n    url: https://host:8660\n",
+        monkeypatch,
+    )
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    user_file = user / "msks.yaml"
+    user_file.write_text("url: https://user-global:8660\n")
+    conf = config.resolve()
+    assert conf.daemon == "host"
+    assert conf.url == "https://host:8660"
+    assert conf.doc["url"] == "https://user-global:8660"  # merged, not dialled
+    # The user's own alias and pick override the host's.
+    user_file.write_text(
+        "active_daemon: mine\ndaemons:\n  mine:\n    url: https://mine:8660\n"
+    )
+    assert config.resolve().url == "https://mine:8660"
+    # The environment outranks the entry for the invocation.
+    monkeypatch.setenv("MSKSC_URL", "https://env:8660")
+    assert config.resolve().url == "https://env:8660"
+
+
+def test_a_system_file_removed_under_the_window_stops_layering(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The launch's file list is re-checked at every re-read and save
+    (#1224 review): a system file removed after launch is no layer,
+    not a refusal on every later save."""
+    clean_env(monkeypatch)
+    system = system_file(tmp_path, SYSTEM, monkeypatch)
+    user_tree(tmp_path, monkeypatch)
+    conf = config.resolve()
+    assert conf.config_paths == [system, conf.config_path]
+    Path(system).unlink()
+    assert config.reload_doc(conf) == {}
+    config.save_keys(conf, {"dictate_model": "small"})
+    assert config.reload_doc(conf) == {"dictate_model": "small"}
+
+
+def test_save_keys_regenerates_a_user_file_removed_under_the_window(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A missing user file is the first-run case again (#1224 review):
+    the save lands the template with the keys merged in, and the
+    template's comments are there to stay."""
+    clean_env(monkeypatch)
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    (user / "msks.yaml").write_text("url: https://u\n")
+    conf = config.resolve()
+    (user / "msks.yaml").unlink()
+    config.save_keys(conf, {"dictate_model": "small"})
+    text = (user / "msks.yaml").read_text()
+    assert text.startswith("# msks client configuration")
+    assert text.endswith("dictate_model: small\n")
+
+
 def test_an_empty_system_variable_means_no_system_file(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -1173,6 +1173,18 @@ def test_set_scalars_bounds_a_block_at_the_files_end() -> None:
     ) == ("a: 1\n\n\n\n")
 
 
+def test_set_scalars_refuses_a_non_string_and_keeps_non_ascii() -> None:
+    """The merge edits string keys only (#1224): a list is refused by
+    name, and a non-ASCII value is written as written, not as
+    escapes — the prompt is where other languages land."""
+    from msks.configio import set_scalars
+
+    with pytest.raises(ValueError, match="'dictate_prompt' must be a string"):
+        set_scalars("url: x\n", {"dictate_prompt": ["msks", "devenv"]})
+    out = set_scalars("", {"dictate_prompt": "msks,añé, 日本語"})
+    assert out == "dictate_prompt: msks,añé, 日本語\n"
+
+
 def test_set_scalars_quotes_what_yaml_needs() -> None:
     """The plain form when the dump keeps one line, whatever quoting
     that needs; a blank and None both delete."""

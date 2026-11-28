@@ -556,6 +556,12 @@ def test_apply_without_a_config_file_applies_for_the_session(qt):
     page.revert()
     assert page.device_value() == "mic-session"
     assert held.settings.device == "mic-session"
+    # Clearing a field clears it for the session too (#1224 review):
+    # a blank deletes the key the way the file path does.
+    page.device.setEditText("")
+    page.apply()
+    assert held.settings.device == ""
+    assert page.status.text() == SESSION_ONLY
 
 
 def test_a_pinned_key_reads_read_only_and_apply_leaves_it(qt, monkeypatch):
@@ -911,9 +917,9 @@ def test_read_value_strips_and_reads_blank_as_unset(qt):
     a blank — both layers carry strings by construction."""
     from msks.client.gui.dictatekeys import read_value
 
-    assert read_value("dictate_model", None) is None
-    assert read_value("dictate_model", "  ") is None
-    assert read_value("dictate_model", " small ") == "small"
+    assert read_value(None) is None
+    assert read_value("  ") is None
+    assert read_value(" small ") == "small"
 
 
 # --- the branches the first pass left dark -------------------------------
@@ -1052,8 +1058,9 @@ def test_download_asks_once_and_the_busy_bar_runs(qt):
 
 def test_apply_flashes_a_layers_read_that_refuses(qt, monkeypatch):
     """Apply's own re-read (#1224): a save that lands whole and a
-    re-read that then refuses flashes the reason under the save's
-    line, and the controller keeps its standing settings."""
+    re-read that then refuses says both things — the file was
+    written, the re-read refused — and the controller keeps its
+    standing settings."""
     from msks.client.gui import settingspage as page_mod
     from msks.client.gui.settingspage import SettingsPage
 
@@ -1066,11 +1073,12 @@ def test_apply_flashes_a_layers_read_that_refuses(qt, monkeypatch):
     monkeypatch.setattr(page_mod, "reload_doc", refuses)
     page.model.setEditText("base.en")
     page.apply()
-    assert (
-        page.status.text()
-        == "cannot save msks.yaml: msks.yaml: invalid YAML: bad"
+    assert page.status.text() == (
+        "saved to msks.yaml, but the re-read refused: "
+        "msks.yaml: invalid YAML: bad"
     )
-    assert held.settings.model == "small"
+    assert held.settings.model == "small"  # the standing settings
+    assert file_doc(qt)["dictate_model"] == "base.en"  # the write landed
 
 
 def test_a_failed_download_leaves_the_pick_for_a_retry(qt):

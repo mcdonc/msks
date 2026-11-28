@@ -113,18 +113,26 @@ def set_scalars(text: str, values: dict) -> str:
     Each key in *values* is found by its normalized spelling (a
     hyphen in the file is the underscore in *values*), so an
     operator's ``dictate-model`` line is rewritten and never gets a
-    ``dictate_model`` twin. A set value replaces the key's line,
-    keeping the file's spelling, or appends at the end of the file
-    when the key is absent; a ``None`` or blank value deletes the
-    key's line. A value is rendered by ``yaml.safe_dump`` on one
-    line, which quotes what needs quoting. The key's block covers
-    its continuation lines — an indented scalar — and stops at the
-    next top-level line or at a blank line that precedes one. The
-    caller validates the result with its own loader before writing
-    (this leaf reads no key vocabulary).
+    ``dictate_model`` twin. A set value replaces the key's line —
+    a trailing comment on that line goes with it — keeping the
+    file's spelling, or appends at the end of the file when the key
+    is absent; a ``None`` or blank value deletes the key's line. A
+    value is a string, rendered by ``yaml.safe_dump`` on one line
+    with its non-ASCII kept as written, which quotes what needs
+    quoting; anything else is refused. The key's block covers its
+    continuation lines — an indented scalar — and stops at the next
+    top-level line or at a blank line that precedes one. The text
+    is written back with ``\n`` line endings. The caller validates
+    the result with its own loader before writing (this leaf reads
+    no key vocabulary).
     """
     lines = text.split("\n")
     for key, value in values.items():
+        if not isinstance(value, (str, type(None))):
+            raise ValueError(
+                f"config key {key!r} must be a string or None to "
+                f"merge, got {type(value).__name__}"
+            )
         lines = set_scalar(lines, key, value)
     return "\n".join(lines)
 
@@ -163,11 +171,13 @@ def render_scalar(value) -> str:
     is dumped under a fixed key, never at the document root: a
     root plain scalar comes back with a ``...`` marker line."""
     under_key = yaml.safe_dump(
-        {"k": value}, default_flow_style=False, width=10**6
+        {"k": value}, default_flow_style=False, width=10**6, allow_unicode=True
     )
     if under_key.count("\n") == 1 and under_key.startswith("k: "):
         return under_key[len("k: ") :].rstrip("\n")
-    return yaml.safe_dump(value, default_style='"', width=10**6).rstrip("\n")
+    return yaml.safe_dump(
+        value, default_style='"', width=10**6, allow_unicode=True
+    ).rstrip("\n")
 
 
 def key_line_key(line: str) -> str:

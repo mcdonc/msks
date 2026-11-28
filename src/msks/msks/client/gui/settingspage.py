@@ -66,10 +66,10 @@ SESSION_ONLY = (
 def session_document(operator: dict, values: dict) -> dict:
     """The document a session-only apply holds (#1224): *values*
     over the standing document the way a save would land them — a
-    blank is the unset form and drops out."""
+    blank is the unset form and deletes the key, so clearing a
+    field clears it for the session too."""
     return {
-        **operator,
-        **{key: value for key, value in values.items() if value},
+        key: value for key, value in {**operator, **values}.items() if value
     }
 
 
@@ -429,17 +429,50 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         with no config at all."""
         return self.conf is not None and self.conf.config_path != NO_CONFIG
 
+    def file_name(self) -> str:
+        """The file Apply writes, by name, for the flashes (#1224):
+        the launch's own file. Called only on the writable path — a
+        session-only save flashes its own fixed line."""
+        return Path(self.conf.config_path).name
+
     def save(self, values: dict) -> None:
-        """Write *values* into the user's ``msks.yaml`` (#1224) and
-        read the merged document again — or, with no file to
-        write, hold them in the document for the session alone. The
-        caller flashes the reason when the file will not read or
-        write."""
+        """Write *values* into the user's file (#1224) — or, with no
+        file to write, hold them in the document for the session
+        alone. The re-read is :meth:`reread`'s, so a write that
+        refuses and a re-read that refuses are two different
+        flashes."""
         if not self.writable():
             self.operator = session_document(self.operator, values)
         else:
             save_keys(self.conf, values)
+
+    def reread(self) -> None:
+        """The merged document read again after a save (#1224); a
+        session-only save holds its document already."""
+        if self.writable():
             self.operator = reload_doc(self.conf)
+
+    def write_and_reread(self, values: dict) -> DictateSettings | None:
+        """Apply's and the download's save (#1224): the write, then
+        the re-read, each flashing its own refusal — a write that
+        refuses leaves the file as it was, a re-read that refuses
+        comes after a write that landed and says so — and answering
+        None; else the settings as the layers resolve them after
+        both."""
+        try:
+            self.save(values)
+        except (OSError, ValueError) as exc:
+            self.flash(f"cannot save {self.file_name()}: {exc}", error=True)
+            return None
+        try:
+            self.reread()
+            return self.effective()
+        except (OSError, ValueError) as exc:
+            self.flash(
+                f"saved to {self.file_name()}, but the re-read refused: {exc}",
+                error=True,
+            )
+            return None
 
     def effective(self) -> DictateSettings:
         """The settings as the layers resolve them right now
@@ -449,23 +482,20 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
 
     @QtCore.Slot()
     def apply(self) -> None:
-        """Save into the user's ``msks.yaml`` (#1214, #1224) — a
-        pinned key is left out, the variable wins it anyway — and
-        hand the freshly resolved settings to the controller. A
-        file the tree cannot read or write flashes the reason; a
-        launch with no file applies for the session and says
-        so."""
-        saved = self.writable()
-        try:
-            self.save(self.file_values())
-            settings = self.effective()
-        except (OSError, ValueError) as exc:
-            self.flash(f"cannot save msks.yaml: {exc}", error=True)
+        """Save into the user's file (#1214, #1224) — a pinned key is
+        left out, the variable wins it anyway — and hand the freshly
+        resolved settings to the controller. A file the tree cannot
+        read or write flashes the reason; a launch with no file
+        applies for the session and says so."""
+        settings = self.write_and_reread(self.file_values())
+        if settings is None:
             return
         self.dictation.reload(settings)
         self.load(settings)
         self.refresh_model()
-        self.flash("saved to msks.yaml" if saved else SESSION_ONLY)
+        self.flash(
+            f"saved to {self.file_name()}" if self.writable() else SESSION_ONLY
+        )
         self.settings_saved.emit(settings)
 
     @QtCore.Slot()
@@ -640,11 +670,8 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
                 "the download stands on disk for when the pin goes"
             )
             return False
-        try:
-            self.save({"dictate_model": model})
-            settings = self.effective()
-        except (OSError, ValueError) as exc:
-            self.flash(f"cannot save msks.yaml: {exc}", error=True)
+        settings = self.write_and_reread({"dictate_model": model})
+        if settings is None:
             return False
         self.dictation.reload(settings)
         # The fields stand as the operator left them (#1216 review):
