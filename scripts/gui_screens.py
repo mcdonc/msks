@@ -840,12 +840,16 @@ def capture() -> None:
     secrets_window.close()
 
     # --- the settings tab and the pill in a recording (#1214) -----
+    # The page without a config (#1224, #1226: the suite's form, no
+    # file to write), opened on its Dictation subtab — the no-model
+    # click's own landing, the Download button's page.
     settings_window = QtWidgets.QMainWindow()
     settings_window.setWindowTitle("msks")
     page = settings_mod.SettingsPage(
-        dictation, {}, sources=lambda: FIXED_SOURCES
+        dictation, None, sources=lambda: FIXED_SOURCES
     )
-    page.list_devices()
+    page.show_dictation()
+    page.dictate.list_devices()
     page.status.setText("")
     settings_window.setCentralWidget(page)
     settings_window.resize(1280, 720)

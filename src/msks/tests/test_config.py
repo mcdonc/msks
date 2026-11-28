@@ -1192,3 +1192,216 @@ def test_set_scalars_quotes_what_yaml_needs() -> None:
 
     out = set_scalars("", {"dictate_prompt": "yes", "dictate_model": "small"})
     assert out == "dictate_prompt: 'yes'\ndictate_model: small\n"
+
+
+# --- the in-place alias merge (#1226) ------------------------------------
+
+
+def test_set_daemon_edits_one_alias_and_leaves_the_rest_byte_for_byte() -> (
+    None
+):
+    """:func:`msks.configio.set_daemon` rewrites one alias's block in
+    place — the comments above it and the next alias stay, the inner
+    comment goes with the block it sat in — and the loader reads the
+    result."""
+    from msks.client.validate import parse_config_doc
+    from msks.configio import set_daemon
+
+    text = (
+        "url: x\n"
+        "\n"
+        "daemons:\n"
+        "  # the lab\n"
+        "  lab:\n"
+        "    url: old\n"
+        "    # inner comment\n"
+        "    token_file: t\n"
+        "  # the farm\n"
+        "  farm:\n"
+        "    url: f\n"
+    )
+    out = set_daemon(text, "lab", {"url": "new", "cafile": "~/ca.pem"})
+    assert out == (
+        "url: x\n"
+        "\n"
+        "daemons:\n"
+        "  # the lab\n"
+        "  lab:\n"
+        "    url: new\n"
+        "    cafile: ~/ca.pem\n"
+        "  # the farm\n"
+        "  farm:\n"
+        "    url: f\n"
+    )
+    assert parse_config_doc(out, "p")["daemons"]["lab"] == {
+        "url": "new",
+        "cafile": "~/ca.pem",
+    }
+
+
+def test_set_daemon_joins_a_block_and_opens_an_empty_one() -> None:
+    """An alias the block lacks joins at the block's end, before the
+    blank line that parts it from the next key; a ``daemons:`` line
+    with an inline value is opened up; a file without the block
+    gains one at its end, after the scalar keys."""
+    from msks.configio import set_daemon, set_scalars
+
+    entry = {"socket": "/run/s.sock"}
+    assert set_daemon(
+        "url: x\n\ndaemons:\n  lab:\n    url: u\n\nactive_daemon: lab\n",
+        "dev",
+        entry,
+    ) == (
+        "url: x\n"
+        "\n"
+        "daemons:\n"
+        "  lab:\n"
+        "    url: u\n"
+        "  dev:\n"
+        "    socket: /run/s.sock\n"
+        "\n"
+        "active_daemon: lab\n"
+    )
+    assert set_daemon("url: x\n\ndaemons: {}\n", "dev", entry) == (
+        "url: x\n\ndaemons:\n  dev:\n    socket: /run/s.sock\n"
+    )
+    assert set_daemon("url: x\n\ndaemons:\n", "dev", entry) == (
+        "url: x\n\ndaemons:\n  dev:\n    socket: /run/s.sock\n"
+    )
+    assert set_daemon(
+        set_scalars("url: x\n", {"active_daemon": "dev"}), "dev", entry
+    ) == (
+        "url: x\nactive_daemon: dev\n"
+        "daemons:\n  dev:\n    socket: /run/s.sock\n"
+    )
+    # A last line without its newline, a block at the file's end.
+    assert set_daemon("daemons:\n  lab:\n    url: u", "dev", entry) == (
+        "daemons:\n  lab:\n    url: u\n  dev:\n    socket: /run/s.sock"
+    )
+
+
+def test_set_daemon_removes_an_alias_and_leaves_the_comments() -> None:
+    """``None`` deletes the alias's block — the comment at its own
+    indent before the next alias stays with the file — and is a
+    no-op when neither the alias nor the block stands."""
+    from msks.configio import set_daemon
+
+    text = (
+        "daemons:\n  # the lab\n  lab:\n    url: u\n"
+        "  # the farm\n  farm:\n    url: f\n"
+    )
+    assert set_daemon(text, "lab", None) == (
+        "daemons:\n  # the lab\n  # the farm\n  farm:\n    url: f\n"
+    )
+    assert set_daemon(text, "gone", None) == text
+    assert set_daemon("url: x\n", "lab", None) == "url: x\n"
+
+
+def test_set_daemon_quotes_names_and_values_and_refuses_non_scalars() -> None:
+    """An alias spelled with a colon gets quoted, a value that needs
+    quoting gets it, an empty entry renders as the empty mapping
+    (the loader's "needs a url or a socket" names it), and a
+    non-string value is refused by name before any edit."""
+    from msks.configio import set_daemon
+
+    out = set_daemon(
+        "", "a: b", {"url": "https://x:1", "expected_image": "yes"}
+    )
+    assert out == (
+        "daemons:\n"
+        "  'a: b':\n"
+        "    url: https://x:1\n"
+        "    expected_image: 'yes'\n"
+    )
+    assert set_daemon("", "blank", {}) == "daemons:\n  blank: {}\n"
+    with pytest.raises(
+        ValueError, match="daemon 'lab' key 'url' must be a string"
+    ):
+        set_daemon("", "lab", {"url": ["https://x"]})
+    with pytest.raises(
+        ValueError, match="key 'url' must be a string, got int"
+    ):
+        set_daemon("", "lab", {"url": 1})
+
+
+def test_set_scalars_writes_an_int_bare() -> None:
+    """A whole number (#1226) lands bare — the port's native form —
+    where the digit string lands quoted; a bool is refused."""
+    from msks.configio import set_scalars
+
+    assert (
+        set_scalars("", {"screenshot_port": 8662}) == "screenshot_port: 8662\n"
+    )
+    assert set_scalars("", {"screenshot_port": "8662"}) == (
+        "screenshot_port: '8662'\n"
+    )
+    with pytest.raises(ValueError, match="must be a string, an int, or None"):
+        set_scalars("", {"screenshot_port": True})
+
+
+def test_set_daemon_reads_a_blank_line_and_a_quoted_alias() -> None:
+    """The block's shapes the operator may write (#1226): a blank line
+    right under ``daemons:`` before the first entry, and an alias
+    spelled with quotes — both read, the quotes stripped, the entry
+    replaced under the spelled name."""
+    from msks.configio import set_daemon
+
+    text = "daemons:\n\n  'a b':\n    url: old\n"
+    assert set_daemon(text, "a b", {"socket": "/s"}) == (
+        "daemons:\n\n  a b:\n    socket: /s\n"
+    )
+    # The last entry gone, the bare key goes with it (a null daemons
+    # is a refusal); the blank line under it stays.
+    assert set_daemon(text, "a b", None) == "\n"
+
+
+def test_set_daemon_drops_the_key_with_its_last_entry_and_refuses_inline() -> (
+    None
+):
+    """The block's end shapes (#1226): removing the last alias drops
+    the ``daemons:`` line so the file loads (the comments under it
+    stay), a line with an empty inline value opens up and loses its
+    comment, a bare line with a comment keeps it, and a line
+    carrying its entries inline is refused."""
+    from msks.client.validate import parse_config_doc
+    from msks.configio import set_daemon
+
+    text = (
+        "url: x\n\ndaemons:\n  # the lab\n  lab:\n    url: u\n"
+        "\ncache_dir: /c\n"
+    )
+    out = set_daemon(text, "lab", None)
+    assert out == "url: x\n\n  # the lab\n\ncache_dir: /c\n"
+    assert parse_config_doc(out, "p") == {"url": "x", "cache_dir": "/c"}
+    assert set_daemon(
+        "daemons: {}  # none yet\n", "dev", {"socket": "/s"}
+    ) == ("daemons:\n  dev:\n    socket: /s\n")
+    assert set_daemon("daemons:  # my daemons\n", "dev", {"socket": "/s"}) == (
+        "daemons:  # my daemons\n  dev:\n    socket: /s\n"
+    )
+    with pytest.raises(ValueError, match="carries its entries inline"):
+        set_daemon(
+            "daemons: {lab: {url: https://x}}\n", "dev", {"socket": "/s"}
+        )
+
+
+def test_set_daemon_leaves_an_untouched_block_alone_on_a_removal() -> None:
+    """A removal the block does not carry (#1226 review) is a no-op:
+    a ``daemons: {}`` line stays the valid empty mapping it was —
+    never opened up bare, which the loader would refuse as null —
+    and an inline block is left alone too (a set over it refuses)."""
+    from msks.client.validate import parse_config_doc
+    from msks.configio import set_daemon
+
+    assert set_daemon("url: x\ndaemons: {}\n", "host", None) == (
+        "url: x\ndaemons: {}\n"
+    )
+    assert parse_config_doc("url: x\ndaemons: {}\n", "p") == {
+        "url": "x",
+        "daemons": {},
+    }
+    inline = "daemons: {lab: {url: https://x}}\n"
+    assert set_daemon(inline, "host", None) == inline
+    assert set_daemon("daemons: {}\n", "dev", {"socket": "/s"}) == (
+        "daemons:\n  dev:\n    socket: /s\n"
+    )

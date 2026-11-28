@@ -513,15 +513,15 @@ def test_the_page_seeds_from_the_effective_settings_and_merges_in_place(
     assert held.settings.model == "base.en"  # the user's file
     assert held.settings.device == "mic-a"
     page = SettingsPage(held, conf)
-    assert page.model.currentText() == "base.en (142 MB)"  # its label
-    assert page.model_value() == "base.en"
-    assert page.device_value() == "mic-a"
+    assert page.dictate.model.currentText() == "base.en (142 MB)"  # its label
+    assert page.dictate.model_value() == "base.en"
+    assert page.dictate.device_value() == "mic-a"
     # Edit, apply: the file carries the three keys, its comment and
     # the other keys as they were, and the controller re-resolves.
-    page.pick_model("small")  # a listed name: its label shows
-    assert page.model.currentText() == "small (466 MB)"
-    page.device.setEditText("mic-c")
-    page.prompt.setText("msks, devenv")
+    page.dictate.pick_model("small")  # a listed name: its label shows
+    assert page.dictate.model.currentText() == "small (466 MB)"
+    page.dictate.device.setEditText("mic-c")
+    page.dictate.prompt.setText("msks, devenv")
     page.apply()
     assert page.status.text() == "saved to msks.yaml"
     assert file_doc(qt) == {
@@ -545,20 +545,20 @@ def test_apply_without_a_config_file_applies_for_the_session(qt):
     conf = client_config.resolve(config="none")
     assert conf.config_path == "none" and conf.config_paths == []
     page = SettingsPage(held, conf)
-    page.device.setEditText("mic-session")
+    page.dictate.device.setEditText("mic-session")
     page.apply()
     assert page.status.text() == SESSION_ONLY
     assert held.settings.device == "mic-session"
     assert not user_file(qt).exists()  # nothing was written
     # Revert reads no file either: the fields reseed from the
     # session's standing settings.
-    page.device.setEditText("mic-other")
+    page.dictate.device.setEditText("mic-other")
     page.revert()
-    assert page.device_value() == "mic-session"
+    assert page.dictate.device_value() == "mic-session"
     assert held.settings.device == "mic-session"
     # Clearing a field clears it for the session too (#1224 review):
     # a blank deletes the key the way the file path does.
-    page.device.setEditText("")
+    page.dictate.device.setEditText("")
     page.apply()
     assert held.settings.device == ""
     assert page.status.text() == SESSION_ONLY
@@ -578,14 +578,22 @@ def test_a_pinned_key_reads_read_only_and_apply_leaves_it(qt, monkeypatch):
     assert held.state == "nomodel"  # the pinned name is not on disk
     assert held.settings.pinned == frozenset({"dictate_model"})
     page = SettingsPage(held, launched(qt))
-    assert page.model.isEnabled() is False
-    assert page.model.toolTip().endswith(
+    assert page.dictate.model.isEnabled() is False
+    assert page.dictate.model.toolTip().endswith(
         "MSKSC_DICTATE_MODEL pins this setting; the page cannot change it."
     )
-    assert page.model.toolTip().startswith("The whisper.cpp speech model")
-    assert page.device.isEnabled() is True
-    assert "MSKSC_DICTATE_MODEL pins this setting" in page.pinned_note.text()
-    page.device.setEditText("mic-z")
+    assert page.dictate.model.toolTip().startswith(
+        "The whisper.cpp speech model"
+    )
+    assert page.dictate.device.isEnabled() is True
+    # The pin's mark stands beside the pinned field alone (#1226).
+    assert page.dictate.marks["dictate_model"].text() == (
+        "set by MSKSC_DICTATE_MODEL"
+    )
+    assert not page.dictate.marks["dictate_model"].isHidden()
+    assert page.dictate.marks["dictate_device"].isHidden()
+    assert page.dictate.note.isHidden()  # no block under the form
+    page.dictate.device.setEditText("mic-z")
     page.apply()
     assert "dictate_model" not in file_doc(qt)
     assert file_doc(qt)["dictate_device"] == "mic-z"
@@ -595,13 +603,21 @@ def test_a_pinned_key_reads_read_only_and_apply_leaves_it(qt, monkeypatch):
     monkeypatch.setenv("MSKSC_DICTATE_DEVICE", "mic-env")
     page.revert()
     assert held.settings.device == "mic-env"
-    assert page.device.isEnabled() is False
+    assert page.dictate.device.isEnabled() is False
     notice = "MSKSC_DICTATE_DEVICE pins this setting"
-    assert page.device.toolTip().endswith(
+    assert page.dictate.device.toolTip().endswith(
         notice + "; the page cannot change it."
     )
-    assert page.labels["dictate_device"].toolTip() == page.device.toolTip()
-    assert notice in page.pinned_note.text()
+    assert (
+        page.dictate.labels["dictate_device"].toolTip()
+        == page.dictate.device.toolTip()
+    )
+    assert page.dictate.marks["dictate_device"].text() == (
+        "set by MSKSC_DICTATE_DEVICE"
+    )
+    assert page.dictate.marks["dictate_device"].toolTip() == (
+        page.dictate.device.toolTip()
+    )
 
 
 def test_the_model_download_shows_progress_and_lands(qt):
@@ -616,8 +632,8 @@ def test_the_model_download_shows_progress_and_lands(qt):
     held.check_model()
     assert held.state == "nomodel"
     page = SettingsPage(held, launched(qt))
-    assert page.download_button.isEnabled()
-    assert "missing" in page.model_state.text()
+    assert page.dictate.download_button.isEnabled()
+    assert "missing" in page.dictate.model_state.text()
     landed: list = []
 
     def fake_download(name, cache_root, progress=None, cancel=None):
@@ -630,14 +646,14 @@ def test_the_model_download_shows_progress_and_lands(qt):
         landed.append(path)
         return path
 
-    page.downloader = fake_download
-    page.download()
-    page.flight.join(5)
+    page.dictate.downloader = fake_download
+    page.dictate.download()
+    page.dictate.flight.join(5)
     spin(qt, 100)
-    assert landed and page.bar.isHidden()
+    assert landed and page.dictate.bar.isHidden()
     assert page.status.text() == "saved ggml-small.bin"
-    assert "present" in page.model_state.text()
-    assert page.download_button.isEnabled() is False
+    assert "present" in page.dictate.model_state.text()
+    assert page.dictate.download_button.isEnabled() is False
     assert held.state == "idle"
     # The download saved the field's values as Apply would: the
     # model on disk is now the configured one (#1216 review).
@@ -647,24 +663,26 @@ def test_the_model_download_shows_progress_and_lands(qt):
     # A failure flashes its reason and the page stands on nomodel.
     model.unlink()
     held.check_model()
-    page.refresh_model()
+    page.dictate.refresh_model()
 
     def broken(name, cache_root, progress=None, cancel=None):
         raise dictate.DictateFailure("download failed: reset")
 
-    page.downloader = broken
-    page.download()
-    page.flight.join(5)
+    page.dictate.downloader = broken
+    page.dictate.download()
+    page.dictate.flight.join(5)
     spin(qt, 100)
     assert page.status.text() == "download failed: reset"
-    assert page.bar.isHidden() and page.cancel_button.isHidden()
+    assert (
+        page.dictate.bar.isHidden() and page.dictate.cancel_button.isHidden()
+    )
     assert held.state == "nomodel"
     # A failed download reads the file not at all: the failure
     # stands alone, the fields and the controller as they were.
     broken_file = user_file(qt)
     broken_file.write_text("dictate_model: [")
-    page.download()
-    page.flight.join(5)
+    page.dictate.download()
+    page.dictate.flight.join(5)
     spin(qt, 100)
     assert page.status.text() == "download failed: reset"
     assert held.state == "nomodel"
@@ -677,17 +695,20 @@ def test_the_model_download_shows_progress_and_lands(qt):
             time.sleep(0.01)
         raise dictate.DictateFailure("download cancelled")
 
-    page.downloader = stalled
-    page.download()
+    page.dictate.downloader = stalled
+    page.dictate.download()
     spin(qt, 50)
     # The page is not shown, so ``isVisible`` reads False for the
     # bar; the widget's own hidden flag is the pin.
-    assert not page.bar.isHidden() and not page.cancel_button.isHidden()
-    page.abandon_download()
-    page.flight.join(5)
+    assert (
+        not page.dictate.bar.isHidden()
+        and not page.dictate.cancel_button.isHidden()
+    )
+    page.dictate.abandon_download()
+    page.dictate.flight.join(5)
     spin(qt, 100)
     assert page.status.text() == "download cancelled"
-    assert page.bar.isHidden()
+    assert page.dictate.bar.isHidden()
 
 
 def test_a_download_thread_that_raises_anything_lands(qt):
@@ -705,14 +726,16 @@ def test_a_download_thread_that_raises_anything_lands(qt):
     def explode(name, cache_root, progress=None, cancel=None):
         raise RuntimeError("socket gone")
 
-    page.downloader = explode
-    page.download()
-    page.flight.join(5)
+    page.dictate.downloader = explode
+    page.dictate.download()
+    page.dictate.flight.join(5)
     spin(qt, 100)
     assert page.status.text() == "RuntimeError: socket gone"
-    assert page.flight is None
-    assert page.bar.isHidden() and page.cancel_button.isHidden()
-    assert page.download_button.isEnabled()
+    assert page.dictate.flight is None
+    assert (
+        page.dictate.bar.isHidden() and page.dictate.cancel_button.isHidden()
+    )
+    assert page.dictate.download_button.isEnabled()
 
 
 def test_apply_and_revert_light_only_while_a_field_differs(qt):
@@ -726,18 +749,18 @@ def test_apply_and_revert_light_only_while_a_field_differs(qt):
     page = SettingsPage(held, launched(qt))
     assert not page.apply_button.isEnabled()
     assert not page.reload_button.isEnabled()
-    page.device.setEditText("mic-a")  # a typed edit
+    page.dictate.device.setEditText("mic-a")  # a typed edit
     assert page.dirty and page.apply_button.isEnabled()
     page.revert()
     assert page.dirty is False and not page.apply_button.isEnabled()
-    page.pick_model("base.en")  # a pick
+    page.dictate.pick_model("base.en")  # a pick
     assert page.apply_button.isEnabled()
-    page.prompt.setText("msks")  # another field
+    page.dictate.prompt.setText("msks")  # another field
     page.apply()
     assert not page.apply_button.isEnabled()
     assert file_doc(qt)["dictate_model"] == "base.en"
     # A save that cannot land leaves the fields unsaved: lit.
-    page.device.setEditText("mic-b")
+    page.dictate.device.setEditText("mic-b")
     (qt.tmp / "config").chmod(0o500)
     try:
         page.apply()
@@ -753,7 +776,7 @@ def test_apply_and_revert_light_only_while_a_field_differs(qt):
     # A revert after the failed save: dark, the file's values back.
     page.revert()
     assert not page.apply_button.isEnabled()
-    assert page.device_value() == ""
+    assert page.dictate.device_value() == ""
 
 
 def test_every_field_carries_its_description_and_the_pin_notice(
@@ -762,34 +785,37 @@ def test_every_field_carries_its_description_and_the_pin_notice(
     """Each field's tooltip (#1214) is the setting's long
     description, its label carries the same, and a key the
     environment pins appends its variable's notice to both."""
-    from msks.client.gui import settingspage as page_mod
     from msks.client.gui.dictatekeys import resolve
     from msks.client.gui.settingspage import SettingsPage
+    from msks.client.gui.settingspage import vocabulary as page_mod
 
     held, _fake = controller(qt)
     page = SettingsPage(held, launched(qt))
-    assert sorted(page.fields) == [
+    assert sorted(page.dictate.fields) == [
         "dictate_device",
         "dictate_model",
         "dictate_prompt",
     ]
-    for key, field in page.fields.items():
+    for key, field in page.dictate.fields.items():
         assert field.toolTip() == page_mod.TIPS[key]
         assert len(page_mod.TIPS[key]) > 80  # a description, not a label
-        assert page.labels[key].toolTip() == page_mod.TIPS[key]
-    assert "PipeWire" in page.device.toolTip()
-    assert "~/.cache/msks/whisper/" in page.model.toolTip()
-    assert page.labels["dictate_device"].text() == "Device"
-    assert page.refresh_sources.toolTip() == page_mod.REFRESH_TIP
+        assert page.dictate.labels[key].toolTip() == page_mod.TIPS[key]
+    assert "PipeWire" in page.dictate.device.toolTip()
+    assert "~/.cache/msks/whisper/" in page.dictate.model.toolTip()
+    assert page.dictate.labels["dictate_device"].text() == "Device"
+    assert page.dictate.refresh_sources.toolTip() == page_mod.REFRESH_TIP
     # A pinned key: the variable's notice follows on both.
     monkeypatch.setenv("MSKSC_DICTATE_DEVICE", "mic-env")
     held.reload(resolve(os.environ, {}))
     page.load(held.settings)
     notice = "MSKSC_DICTATE_DEVICE pins this setting"
-    assert page.device.toolTip().endswith(
+    assert page.dictate.device.toolTip().endswith(
         notice + "; the page cannot change it."
     )
-    assert page.labels["dictate_device"].toolTip() == page.device.toolTip()
+    assert (
+        page.dictate.labels["dictate_device"].toolTip()
+        == page.dictate.device.toolTip()
+    )
 
 
 def test_the_picker_drives_the_model_line_live(qt):
@@ -801,19 +827,22 @@ def test_the_picker_drives_the_model_line_live(qt):
 
     held, _fake = controller(qt)  # small on disk, the setting
     page = SettingsPage(held, launched(qt))
-    assert "present" in page.model_state.text()
-    assert page.download_button.isEnabled() is False
-    page.model.setCurrentIndex(page.model.findData("large-v3-turbo"))
-    assert (
-        "ggml-large-v3-turbo.bin — missing (1.5 GB)" in page.model_state.text()
+    assert "present" in page.dictate.model_state.text()
+    assert page.dictate.download_button.isEnabled() is False
+    page.dictate.model.setCurrentIndex(
+        page.dictate.model.findData("large-v3-turbo")
     )
-    assert page.download_button.isEnabled() is True
+    assert (
+        "ggml-large-v3-turbo.bin — missing (1.5 GB)"
+        in page.dictate.model_state.text()
+    )
+    assert page.dictate.download_button.isEnabled() is True
     # A typed path: nothing to download, the line says where it points.
-    page.model.setEditText("/nix/store/x-ggml-small.bin")
-    assert "a path; nothing to download" in page.model_state.text()
-    assert page.download_button.isEnabled() is False
-    page.model.setEditText("small")
-    assert "present" in page.model_state.text()
+    page.dictate.model.setEditText("/nix/store/x-ggml-small.bin")
+    assert "a path; nothing to download" in page.dictate.model_state.text()
+    assert page.dictate.download_button.isEnabled() is False
+    page.dictate.model.setEditText("small")
+    assert "present" in page.dictate.model_state.text()
     assert held.settings.model == "small"  # nothing saved by a pick
 
 
@@ -828,9 +857,9 @@ def test_a_path_model_downloads_nothing(qt):
     )
     assert held.state == "nomodel"  # the path names nothing on disk
     page = SettingsPage(held, launched(qt))
-    assert page.model_name() is None
-    assert "a path; nothing to download" in page.model_state.text()
-    assert page.download_button.isEnabled() is False
+    assert page.dictate.model_name() is None
+    assert "a path; nothing to download" in page.dictate.model_state.text()
+    assert page.dictate.download_button.isEnabled() is False
 
 
 def test_the_device_list_comes_from_pw_dump(qt):
@@ -846,25 +875,31 @@ def test_the_device_list_comes_from_pw_dump(qt):
         ("alsa_input.usb-scarlett.mic2", "Scarlett Mic2"),
     ]
     page = SettingsPage(held, launched(qt), sources=lambda: list(listed))
-    page.list_devices()
+    page.dictate.list_devices()
     assert page.status.text() == "2 input(s) found"
-    assert [page.device.itemText(i) for i in range(1, 3)] == [
+    assert [page.dictate.device.itemText(i) for i in range(1, 3)] == [
         "Scarlett Mic1  ·  alsa_input.usb-scarlett.mic1",
         "Scarlett Mic2  ·  alsa_input.usb-scarlett.mic2",
     ]
-    assert page.values()["dictate_device"] == "alsa_input.usb-scarlett.mic1"
-    page.device.setCurrentIndex(2)
-    assert page.values()["dictate_device"] == "alsa_input.usb-scarlett.mic2"
-    page.device.setCurrentIndex(0)
-    assert page.values()["dictate_device"] == ""
-    page.device.setEditText("serial-64")
-    assert page.values()["dictate_device"] == "serial-64"
+    assert (
+        page.dictate.values()["dictate_device"]
+        == "alsa_input.usb-scarlett.mic1"
+    )
+    page.dictate.device.setCurrentIndex(2)
+    assert (
+        page.dictate.values()["dictate_device"]
+        == "alsa_input.usb-scarlett.mic2"
+    )
+    page.dictate.device.setCurrentIndex(0)
+    assert page.dictate.values()["dictate_device"] == ""
+    page.dictate.device.setEditText("serial-64")
+    assert page.dictate.values()["dictate_device"] == "serial-64"
 
     def no_tool():
         raise dictate.DictateFailure("pw-dump not found")
 
-    page.sources = no_tool
-    page.list_devices()
+    page.dictate.sources = no_tool
+    page.dictate.list_devices()
     assert page.status.text() == "pw-dump not found"
 
 
@@ -1005,11 +1040,11 @@ def test_apply_and_revert_flash_a_file_that_will_not_read(qt, monkeypatch):
     # A download's landing over a file that will not load: the
     # merge lands its key, the self-check refuses the whole, and
     # the broken file is left as it is.
-    page.downloaded.emit("small", "", "")
+    page.dictate.downloaded.emit("small", "", "")
     assert page.status.text().startswith("cannot save msks.yaml: ")
     assert broken.read_text() == "url: [\n"
     assert held.settings.model == "small"  # the standing settings
-    page.device.setEditText("mic-x")
+    page.dictate.device.setEditText("mic-x")
     page.apply()
     assert page.status.text().startswith("cannot save msks.yaml: ")
     assert held.settings.model == "small"
@@ -1026,14 +1061,14 @@ def test_download_asks_once_and_the_busy_bar_runs(qt):
         qt, {"dictate_model": "/nix/store/x-ggml-small.bin"}
     )
     page = SettingsPage(held, launched(qt))
-    page.download()
-    assert page.flight is None  # a path: nothing to download
-    page.progress(50, 0)
-    assert page.bar.minimum() == 0 and page.bar.maximum() == 0
-    page.progress(50, 100)
-    assert page.bar.value() == 50
-    page.abandon_download()  # no flight: the flag stands unset
-    assert not page.cancel.is_set()
+    page.dictate.download()
+    assert page.dictate.flight is None  # a path: nothing to download
+    page.dictate.progress(50, 0)
+    assert page.dictate.bar.minimum() == 0 and page.dictate.bar.maximum() == 0
+    page.dictate.progress(50, 100)
+    assert page.dictate.bar.value() == 50
+    page.dictate.abandon_download()  # no flight: the flag stands unset
+    assert not page.dictate.cancel.is_set()
     # A second ask while one flies is refused.
     started = threading.Event()
 
@@ -1043,16 +1078,16 @@ def test_download_asks_once_and_the_busy_bar_runs(qt):
             time.sleep(0.01)
         raise dictate.DictateFailure("download cancelled")
 
-    page.downloader = stalled
-    page.pick_model("small")
-    page.refresh_model()
+    page.dictate.downloader = stalled
+    page.dictate.pick_model("small")
+    page.dictate.refresh_model()
     (qt.tmp / "cache" / "msks" / "whisper" / "ggml-small.bin").unlink()
-    page.refresh_model()
-    page.download()
+    page.dictate.refresh_model()
+    page.dictate.download()
     assert started.wait(5)
-    page.download()  # a flight stands: refused
-    page.abandon_download()
-    page.flight.join(5)
+    page.dictate.download()  # a flight stands: refused
+    page.dictate.abandon_download()
+    page.dictate.flight.join(5)
     spin(qt, 50)
 
 
@@ -1071,7 +1106,7 @@ def test_apply_flashes_a_layers_read_that_refuses(qt, monkeypatch):
         raise ValueError("msks.yaml: invalid YAML: bad")
 
     monkeypatch.setattr(page_mod, "reload_doc", refuses)
-    page.model.setEditText("base.en")
+    page.dictate.model.setEditText("base.en")
     page.apply()
     assert page.status.text() == (
         "saved to msks.yaml, but the re-read refused: "
@@ -1091,19 +1126,19 @@ def test_a_failed_download_leaves_the_pick_for_a_retry(qt):
     (qt.tmp / "cache" / "msks" / "whisper" / "ggml-small.bin").unlink()
     held.check_model()
     page = SettingsPage(held, launched(qt))
-    page.pick_model("large-v3-turbo")
+    page.dictate.pick_model("large-v3-turbo")
 
     def broken(name, cache_root, progress=None, cancel=None):
         raise dictate.DictateFailure("download failed: reset")
 
-    page.downloader = broken
-    page.download()
-    page.flight.join(5)
+    page.dictate.downloader = broken
+    page.dictate.download()
+    page.dictate.flight.join(5)
     spin(qt, 100)
     assert page.status.text() == "download failed: reset"
-    assert page.model_value() == "large-v3-turbo"  # the pick stands
-    assert "large-v3-turbo.bin — missing" in page.model_state.text()
-    assert page.download_button.isEnabled()  # a retry is offered
+    assert page.dictate.model_value() == "large-v3-turbo"  # the pick stands
+    assert "large-v3-turbo.bin — missing" in page.dictate.model_state.text()
+    assert page.dictate.download_button.isEnabled()  # a retry is offered
     assert file_doc(qt) == {}
 
 
@@ -1118,8 +1153,8 @@ def test_a_landed_download_saves_the_model_alone(qt):
     (qt.tmp / "cache" / "msks" / "whisper" / "ggml-small.bin").unlink()
     held.check_model()
     page = SettingsPage(held, launched(qt))
-    page.device.setEditText("mic-unapplied")  # never applied
-    page.prompt.setText("typed mid-flight")
+    page.dictate.device.setEditText("mic-unapplied")  # never applied
+    page.dictate.prompt.setText("typed mid-flight")
 
     def fake_download(name, cache_root, progress=None, cancel=None):
         path = cache_root / "whisper" / "ggml-small.bin"
@@ -1127,15 +1162,15 @@ def test_a_landed_download_saves_the_model_alone(qt):
         path.write_bytes(b"ggml")
         return path
 
-    page.downloader = fake_download
-    page.download()
-    page.flight.join(5)
+    page.dictate.downloader = fake_download
+    page.dictate.download()
+    page.dictate.flight.join(5)
     spin(qt, 100)
     assert page.status.text() == "saved ggml-small.bin"
     assert file_doc(qt) == {"dictate_model": "small"}  # the model alone
     assert held.settings.model == "small"
     assert held.settings.device == ""  # the unsaved edit saved nothing
-    assert page.device_value() == "mic-unapplied"  # the field stands
+    assert page.dictate.device_value() == "mic-unapplied"  # the field stands
     assert page.apply_button.isEnabled()  # and still asks for Apply
     page.apply()
     assert file_doc(qt)["dictate_device"] == "mic-unapplied"
@@ -1149,12 +1184,12 @@ def test_a_hand_typed_label_resolves_to_its_model(qt):
 
     held, _fake = controller(qt)
     page = SettingsPage(held, launched(qt))
-    page.model.setEditText("small (466 MB)")
-    assert page.model_value() == "small"
-    page.model.setEditText("small")
-    assert page.model_value() == "small"
-    page.model.setEditText("/nix/store/x.bin")
-    assert page.model_value() == "/nix/store/x.bin"
+    page.dictate.model.setEditText("small (466 MB)")
+    assert page.dictate.model_value() == "small"
+    page.dictate.model.setEditText("small")
+    assert page.dictate.model_value() == "small"
+    page.dictate.model.setEditText("/nix/store/x.bin")
+    assert page.dictate.model_value() == "/nix/store/x.bin"
 
 
 def one_pill(window, *seated) -> bool:
@@ -1270,16 +1305,16 @@ def test_a_landed_download_saves_the_model_that_was_fetched(qt):
     picked: list = []
 
     def fake_download(name, cache_root, progress=None, cancel=None):
-        page.pick_model("large-v3-turbo")  # the operator moves on
+        page.dictate.pick_model("large-v3-turbo")  # the operator moves on
         picked.append(name)
         path = cache_root / "whisper" / f"ggml-{name}.bin"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"ggml")
         return path
 
-    page.downloader = fake_download
-    page.download()
-    page.flight.join(5)
+    page.dictate.downloader = fake_download
+    page.dictate.download()
+    page.dictate.flight.join(5)
     spin(qt, 100)
     assert picked == ["small"]
     assert file_doc(qt) == {"dictate_model": "small"}
@@ -1287,7 +1322,7 @@ def test_a_landed_download_saves_the_model_that_was_fetched(qt):
     assert page.status.text() == "saved ggml-small.bin"
     # The picker keeps the operator's later pick, and it differs
     # from the file: Apply asks.
-    assert page.model_value() == "large-v3-turbo"
+    assert page.dictate.model_value() == "large-v3-turbo"
     assert page.apply_button.isEnabled()
 
 
@@ -1306,13 +1341,13 @@ def test_a_clean_landing_settles_apply(qt):
         path.write_bytes(b"ggml")
         return path
 
-    page.downloader = fake_download
+    page.dictate.downloader = fake_download
     # The pick is the only edit: it lights Apply, and the download of
     # that same model is its save.
-    page.pick_model("large-v3-turbo")
+    page.dictate.pick_model("large-v3-turbo")
     assert page.apply_button.isEnabled()
-    page.download()
-    page.flight.join(5)
+    page.dictate.download()
+    page.dictate.flight.join(5)
     spin(qt, 100)
     assert file_doc(qt) == {"dictate_model": "large-v3-turbo"}
     assert not page.apply_button.isEnabled()
@@ -1334,9 +1369,9 @@ def test_a_landed_download_under_a_pinned_model_keeps_the_pin(qt, monkeypatch):
     (qt.tmp / "cache" / "msks" / "whisper" / "ggml-small.bin").unlink()
     held.check_model()
     page = SettingsPage(held, conf)
-    assert "missing" in page.model_state.text()
-    assert page.download_button.isEnabled() is False  # the pin decides
-    assert page.save_model("large-v3-turbo") is False
+    assert "missing" in page.dictate.model_state.text()
+    assert page.dictate.download_button.isEnabled() is False  # the pin decides
+    assert page.dictate.save_model("large-v3-turbo") is False
     # The file stands as the operator left it: the pin wins at
     # resolve without a write, and the page says so.
     assert file_doc(qt) == {

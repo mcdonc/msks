@@ -204,7 +204,10 @@ agecrypto = 10
 # set_scalars and write_atomic (the latter from the deleted
 # guiprefs' statement, #1214 gone with gui.yaml): module + three
 # names beside the validator's module + one, the count holding.
-configio = 6
+# #1226: the daemons editor's save — config's statement gained
+# set_daemon, the in-place alias merge beside set_scalars (+1);
+# the Settings tab's editor writes through the one save path.
+configio = 7
 conformance_args = 8
 # #481: the console dropped its identity negotiation — the
 # challenge signer and the login-user resolver went with it.

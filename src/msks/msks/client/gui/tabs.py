@@ -22,6 +22,7 @@ from PySide6 import QtCore, QtWidgets
 
 from .arrival import Settle, stagger_on_change
 from .dictatekeys import SETTINGS_TAB_LABEL
+from .focuswalk import first_tab_stop
 from .tabstyle import mark_active
 
 #: The first tab's label (#962): the workspace screens' page.
@@ -119,47 +120,15 @@ class MainTabs(QtWidgets.QTabWidget):
 
     def enter_page(self) -> None:
         """Focus the current page's first tab stop (#962): the
-        focus chain's next focusable widget under the page, the
-        page itself when nothing under it takes the keyboard (a
-        stub, a blank page) — explicit focus stands even where
-        the page's own policy would refuse a Tab."""
+        focus chain's next focusable widget under the page
+        (:func:`msks.client.gui.focuswalk.first_tab_stop`, the walk the
+        settings page's subtab strip shares, #1226), the page itself
+        when nothing under it takes the keyboard (a stub, a blank
+        page) — explicit focus stands even where the page's own
+        policy would refuse a Tab."""
         page = self.currentWidget()
-        target = self.first_tab_stop(page) or page
+        target = first_tab_stop(page) or page
         # OtherFocusReason (#962): explicit focus, which stands
         # even where the page's own policy would refuse a Tab —
         # the arrow is not a tab stop, it is a jump.
         target.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
-
-    def first_tab_stop(self, page: QtWidgets.QWidget):
-        """The page's first tab stop, or None (#962): the focus
-        chain walked from the page — depth-first, the page's own
-        descendants before anything else — until a widget the
-        Tab key would stop on. The walk stops at the page's
-        edge: a stop outside the page (the strip itself, a
-        later tab's content) is not the page's own, and the
-        chain's wrap back to the page answers None."""
-        seen = page.nextInFocusChain()
-        while self.inside_walk(page, seen):
-            if self.is_tab_stop(page, seen):
-                return seen
-            seen = seen.nextInFocusChain()
-        return None
-
-    def inside_walk(self, page, seen) -> bool:
-        """Whether the walk continues at this widget: a real
-        widget, inside the page's subtree and not the page
-        itself — the page is the chain's own wrap point, so the
-        cycle back to it ends the walk (a page the chain can
-        walk forever — a window with nothing focusable under
-        it — hangs nothing)."""
-        return (
-            seen is not None and seen is not page and page.isAncestorOf(seen)
-        )
-
-    def is_tab_stop(self, page, seen) -> bool:
-        """Whether the walk's current widget is the page's own
-        tab stop: inside the subtree, not the page itself, and
-        carrying the Tab key's focus bit."""
-        return seen is not page and (
-            seen.focusPolicy() & QtCore.Qt.FocusPolicy.TabFocus
-        )

@@ -8,6 +8,17 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Every client setting in the GUI's Settings tab (#1226).** The
+  Settings tab edits every key `~/.config/msks/msks.yaml` accepts,
+  under five subtabs: Connection (with a `daemons:` aliases editor:
+  add, rename, and remove), Files, Terminal and ssh, Screenshot, and
+  Dictation. **Apply** writes only the fields you changed into your
+  file and leaves every other line as you wrote it. A cleared field
+  unsets its key, and a value the system file holds applies again.
+  Left and Right move between the subtabs, and a subtab with an
+  unsaved change wears a marker. See
+  [docs/gui.md](gui.md#the-settings-tab).
+
 - **Dictation in the GUI (#1214).** A small pill at the right end of
   every page's bottom row is a toggle: one click starts a recording,
   a second ends it, and the transcript goes to the clipboard and the
