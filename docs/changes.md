@@ -30,6 +30,11 @@ tagged `vX.Y.Z`.
   again. The shims carry the tool's mark, a re-run refreshes them,
   and `--uninstall` removes them. See
   [docs/installation.md](installation.md#macos-on-apple-silicon-hosts).
+- **Guest toolchain pins (#1217).** The Debian, Fedora, and NixOS
+  guests ship pi 1.7.0 (from 1.5.2) and Claude Code 2.1.332 (from
+  2.1.325); herdr stays at 0.9.5. Workspaces built from new guest
+  assets report the new versions; existing workspaces keep their
+  baked toolchain until rebuilt.
 
 ### Fixed
 

@@ -435,7 +435,7 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     assert '"node-v22.23.3-linux-${facts.nodeTar}.tar.gz"' in build
     assert 'nodeTar = "x64"' in build
     assert 'nodeTar = "arm64"' in build
-    assert "pi-coding-agent-1.5.2.tgz" in pins
+    assert "pi-coding-agent-1.7.0.tgz" in pins
     # The install lock (#616): the tarball ships no shrinkwrap, so
     # the offline build's lock is the pi.dev installer's,
     # digest-pinned to the same tag as the tarball.
@@ -450,10 +450,10 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     # the same tag.
     assert '"v0.9.5/LICENSE"' in pins
     assert "$out/usr/local/share/doc/herdr/LICENSE" in build
-    assert '"claude-code-2.1.325.tgz"' in pins
+    assert '"claude-code-2.1.332.tgz"' in pins
     assert 'package = "claude-code-linux-x64"' in pins
     assert 'package = "claude-code-linux-arm64"' in pins
-    assert '"${claudePin.package}-2.1.325.tgz"' in pins
+    assert '"${claudePin.package}-2.1.332.tgz"' in pins
     assert "$out/usr/local/bin/claude" in build
     assert "$out/etc/skel/.pi/agent/extensions/llm-models.ts" in build
     assert "$out/root/.pi/agent/extensions/llm-models.ts" in build

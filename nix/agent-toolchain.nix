@@ -37,22 +37,22 @@ let
   piTarball = pkgs.fetchurl {
     url =
       "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/"
-      + "pi-coding-agent-1.5.2.tgz";
-    hash = "sha256-aRveGGJztFfZ0cQdD9R7V4U7XoXe0a3Rofa3jmbCYfQ=";
+      + "pi-coding-agent-1.7.0.tgz";
+    hash = "sha256-ywMf85t10EJ5fXSAM5h92cDlZzczlxcsC07WYdC/SCQ=";
   };
 
   # The pi pin's lock (#616): upstream stopped shipping a
   # shrinkwrap inside the tarball, but keeps the pi.dev
   # installer's lock root in the monorepo — a package-lock.json
   # that pins the agent's whole runtime closure, digest-pinned to
-  # the v1.5.2 tag; the patch step rebases the lock's root onto
+  # the v1.7.0 tag; the patch step rebases the lock's root onto
   # the agent itself (the installer's root shape is not a build
   # root).
   piInstallLock = pkgs.fetchurl {
     url =
       "https://raw.githubusercontent.com/earendil-works/pi/"
-      + "v1.5.2/packages/coding-agent/install-lock/package-lock.json";
-    hash = "sha256-V+O0deUvYwz5A/c7DSoCxAWHWvYc5KhF9IHcx5j1gAU=";
+      + "v1.7.0/packages/coding-agent/install-lock/package-lock.json";
+    hash = "sha256-taFdIfeAXLuzUWUgKhF3Z1tnWq33/Kc6S68k+BUn3II=";
   };
 
   # The herdr pin (#266): the terminal workspace manager for AI
@@ -98,11 +98,11 @@ let
   claudePins = {
     x86_64 = {
       package = "claude-code-linux-x64";
-      hash = "sha256-6HNdN1IfScMdZcPc2MDIur5tH19ywgZjRrOuiNMqwx0=";
+      hash = "sha256-HIny8eC+6TdCz/jekYH8B8cCzgZR8Ukrs7l0h9OoSvE=";
     };
     aarch64 = {
       package = "claude-code-linux-arm64";
-      hash = "sha256-9QogTt4lU7YqgBusq2bWgS9Mgq3ye1+t9YnschlFnO8=";
+      hash = "sha256-FxoV8RkvQRCU9gamYC0RYX4g1pmEcz3tKnnoXZ9cwjY=";
     };
   };
   claudePin =
@@ -111,13 +111,13 @@ let
   agentClaudeWrapper = pkgs.fetchurl {
     url =
       "https://registry.npmjs.org/@anthropic-ai/claude-code/-/"
-      + "claude-code-2.1.325.tgz";
-    hash = "sha256-6ELe8fVTeO63NvQ/fhcqfrD+dnua5FIqnOcX/VQe4n8=";
+      + "claude-code-2.1.332.tgz";
+    hash = "sha256-jYrIN50U996Gv/nDpofXDD80h/c0582mb1Y9of0XbTY=";
   };
   agentClaudeBinary = pkgs.fetchurl {
     url =
       "https://registry.npmjs.org/@anthropic-ai/${claudePin.package}/-/"
-      + "${claudePin.package}-2.1.325.tgz";
+      + "${claudePin.package}-2.1.332.tgz";
     hash = claudePin.hash;
   };
 
@@ -184,9 +184,9 @@ let
   # reachable.
   piPackage = pkgs.buildNpmPackage {
     pname = "pi-coding-agent";
-    version = "1.5.2";
+    version = "1.7.0";
     src = patchedPiSource;
-    npmDepsHash = "sha256-uDF5B2cSl8ikpCtlxfsFSCnJgD1Y695lGZZ5gsYM62E=";
+    npmDepsHash = "sha256-pCR0JfNE3mjy/joxYyYjTZKlblbr0shsvMUvfYi0i8Y=";
     # The published package ships dist/ prebuilt; there is nothing
     # to compile.
     buildPhase = ''
