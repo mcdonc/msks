@@ -624,18 +624,26 @@ field for its description.
 Each field shows the value the client resolves right now: the
 variable when `MSKSC_*` pins the key, else your file's value, else
 the system file's. A pinned key stands read-only with the variable
-named under the form. A key no file carries shows blank, and the
-default applies.
+named under the form. The token file field under `MSKSC_TOKEN` names
+the variable instead of the token. A key no file carries shows
+blank, and the default applies. The model is the one exception: its
+picker shows the default model.
 
 **Apply** writes the fields you changed into
 `~/.config/msks/msks.yaml` and leaves every other line of the file
-as you wrote it. A field you clear deletes its key, and a value the
-system file holds applies again. A value the loader refuses (a port
-out of range, an alias with no address) shows its message and
-writes nothing. **Apply** and **Revert** stand dark while the fields
-match the saved settings, and light at the first change. **Revert**
-reads the files again and reseeds the fields. Under `--config=none`
-**Apply** applies the settings for the session and says so.
+as you wrote it. A field you did not change stays out of the file,
+so a value the system file holds stays inherited. A field you clear
+deletes its key, and the system file's value applies again. A value
+the loader refuses (a port out of range, an alias with no address)
+shows its message and writes nothing. **Apply** and **Revert** stand
+dark while the fields match the saved settings, and light at the
+first change. **Revert** reads the files again and reseeds the
+fields.
+
+Under `--config=none` the Connection, Files, Terminal and ssh, and
+Screenshot subtabs stand dark with a note. The client read their
+keys at launch and no file holds an edit. The Dictation subtab alone
+applies for the session, and **Apply** says so.
 
 The path fields carry a **Browse…** button beside them, which opens
 the platform's file or directory picker. A path types free as well.
@@ -662,6 +670,13 @@ expected image overrides the global one for the alias. The loader
 checks each entry when **Apply** lands: an alias needs a URL or a
 socket, never both. The rule runs over the entry merged with the
 system file's entry of the same name.
+
+An edit to an alias the system file completes writes the keys you
+changed and the keys your file already carried. A key the system
+file holds and you left alone stays inherited. **Rename…** moves
+the entry to the end of the block. A `daemons:` line written inline
+(`daemons: {lab: {url: ...}}`) is refused with a message: write the
+aliases out under the key to edit them here.
 
 **Active alias** is the alias a bare `msks` addresses. The
 connection picker in the listing's status row stays a pick for the

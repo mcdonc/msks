@@ -1314,11 +1314,14 @@ def test_set_daemon_quotes_names_and_values_and_refuses_non_scalars() -> None:
         "    expected_image: 'yes'\n"
     )
     assert set_daemon("", "blank", {}) == "daemons:\n  blank: {}\n"
-    with pytest.raises(ValueError, match="config key 'url' must be a string"):
+    with pytest.raises(
+        ValueError, match="daemon 'lab' key 'url' must be a string"
+    ):
         set_daemon("", "lab", {"url": ["https://x"]})
-    assert (
-        set_daemon("", "lab", {"url": 1}) == "daemons:\n  lab:\n    url: 1\n"
-    )
+    with pytest.raises(
+        ValueError, match="key 'url' must be a string, got int"
+    ):
+        set_daemon("", "lab", {"url": 1})
 
 
 def test_set_scalars_writes_an_int_bare() -> None:
@@ -1347,4 +1350,36 @@ def test_set_daemon_reads_a_blank_line_and_a_quoted_alias() -> None:
     assert set_daemon(text, "a b", {"socket": "/s"}) == (
         "daemons:\n\n  a b:\n    socket: /s\n"
     )
-    assert set_daemon(text, "a b", None) == "daemons:\n\n"
+    # The last entry gone, the bare key goes with it (a null daemons
+    # is a refusal); the blank line under it stays.
+    assert set_daemon(text, "a b", None) == "\n"
+
+
+def test_set_daemon_drops_the_key_with_its_last_entry_and_refuses_inline() -> (
+    None
+):
+    """The block's end shapes (#1226): removing the last alias drops
+    the ``daemons:`` line so the file loads (the comments under it
+    stay), a line with an empty inline value opens up and loses its
+    comment, a bare line with a comment keeps it, and a line
+    carrying its entries inline is refused."""
+    from msks.client.validate import parse_config_doc
+    from msks.configio import set_daemon
+
+    text = (
+        "url: x\n\ndaemons:\n  # the lab\n  lab:\n    url: u\n"
+        "\ncache_dir: /c\n"
+    )
+    out = set_daemon(text, "lab", None)
+    assert out == "url: x\n\n  # the lab\n\ncache_dir: /c\n"
+    assert parse_config_doc(out, "p") == {"url": "x", "cache_dir": "/c"}
+    assert set_daemon(
+        "daemons: {}  # none yet\n", "dev", {"socket": "/s"}
+    ) == ("daemons:\n  dev:\n    socket: /s\n")
+    assert set_daemon("daemons:  # my daemons\n", "dev", {"socket": "/s"}) == (
+        "daemons:  # my daemons\n  dev:\n    socket: /s\n"
+    )
+    with pytest.raises(ValueError, match="carries its entries inline"):
+        set_daemon(
+            "daemons: {lab: {url: https://x}}\n", "dev", {"socket": "/s"}
+        )

@@ -14,7 +14,7 @@ tagged `vX.Y.Z`.
   alias, and the `daemons:` aliases with add, rename, and remove),
   Files, Terminal and ssh, Screenshot, and Dictation. **Apply**
   writes only the fields you changed into your file and leaves every
-  other line as you wrote it. A cleared field unsets its key, and a
+  other line as you wrote it; a cleared field unsets its key, and a
   value the system file holds applies again. Left and Right move
   between the subtabs, and a subtab with an unsaved change wears a
   marker. See [docs/gui.md](gui.md#the-settings-tab).

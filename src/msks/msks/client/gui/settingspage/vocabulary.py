@@ -233,14 +233,23 @@ def display_value(value) -> str:
     return str(value).strip()
 
 
+#: What a pinned token file's field shows (#1226): ``MSKSC_TOKEN``
+#: carries the token itself, not a path, so the field names the
+#: variable and keeps the secret off the screen.
+TOKEN_PINNED = "(the token, set through MSKSC_TOKEN)"
+
+
 def effective(key: str, environ, doc: dict) -> tuple[str, bool]:
     """One key's value for its field (#1226): ``(value, pinned)``, the
     variable's non-blank text first, then the merged document's value
     in its display form. A key with no variable (``active_daemon``)
-    never pins. The dictation keys resolve through their own record
-    and never come here."""
+    never pins. A pinned ``token_file`` shows
+    :data:`TOKEN_PINNED` — its variable carries the token, not a
+    path, and the field is a label away from a screenshot. The
+    dictation keys resolve through their own record and never come
+    here."""
     var = VARIABLES.get(key)
     env = environ.get(var, "") if var else ""
     if env.strip():
-        return env.strip(), True
+        return (TOKEN_PINNED if key == "token_file" else env.strip()), True
     return display_value((doc or {}).get(key)), False

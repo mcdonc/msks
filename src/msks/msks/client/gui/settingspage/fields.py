@@ -184,8 +184,10 @@ class Panel(QtWidgets.QWidget):
         stands read-only, the variable named under the form. The
         page hands the dictation record to every panel alike; the
         general panels read the document and leave it alone."""
+        self.filling = True
         for key in self.fields:
             self.seed(key, *self.page.effective(key))
+        self.filling = False
         self.refresh_note()
 
     def seed(self, key: str, value: str, pinned: bool) -> None:

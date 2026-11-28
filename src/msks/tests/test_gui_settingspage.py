@@ -463,12 +463,12 @@ def test_the_connection_panel_edits_the_aliases_in_place(qt) -> None:
     # Remove it: the active pick clears, nothing names a gone alias.
     panel.remove_alias()
     assert set(panel.daemons) == {"lab", "farm"}
-    assert panel.removed == {"local"}
     assert panel.active.count() == 3  # none, lab, farm
     assert panel.active.currentData() == ""
     panel.active.setCurrentIndex(panel.active.findData("farm"))
     scalars, daemons = page.file_edits()
     assert scalars == {"active_daemon": "farm"}
+    assert panel.removed == {"dev"}  # the seed's name, the one written
     assert daemons == {
         "lab": {
             "url": "https://lab-2:8660",
@@ -586,59 +586,53 @@ def test_a_port_out_of_range_is_refused(qt) -> None:
     assert page.dirty
 
 
-def test_a_session_only_apply_lands_the_aliases_in_the_document(qt) -> None:
+def test_a_launch_without_a_file_stands_the_file_backed_subtabs_dark(
+    qt,
+) -> None:
     """A launch under ``--config=none`` (#1224, #1226): no file to
-    write, so the alias edits and the active pick apply to the
-    page's document for the session, the panel reseeds from it,
-    and nothing is written."""
+    write, and the file-backed keys were read at launch — so the
+    four file-backed subtabs stand dark under a note, and only the
+    Dictation subtab's Apply applies for the session and says so.
+    Nothing is written."""
     from msks.client import config as client_config
-    from msks.client.gui.settingspage import SESSION_ONLY
+    from msks.client.gui.settingspage import NO_FILE_NOTE, SESSION_ONLY
 
     conf = client_config.resolve(config="none")
     page, _held = page_over(qt, conf)
-    panel = page.connection
-    panel.ask = lambda *args, **kwargs: "lab"
-    panel.add_alias()
-    panel.address.setText("https://lab:8660")
-    panel.active.setCurrentIndex(panel.active.findData("lab"))
+    for panel in (page.connection, page.files, page.shell, page.screenshot):
+        assert panel.isEnabled() is False
+        assert panel.pinned_note.text() == NO_FILE_NOTE
+        assert panel.pinned_note.isHidden() is False
+        assert page.file_edits() == ({}, {})  # nothing to write from them
+    assert page.dictate.isEnabled() and page.dictate.pinned_note.isHidden()
+    page.dictate.device.setEditText("mic-session")
     page.apply()
     assert page.status.text() == SESSION_ONLY
-    assert page.operator["daemons"] == {"lab": {"url": "https://lab:8660"}}
-    assert page.operator["active_daemon"] == "lab"
-    assert panel.daemons == {"lab": {"url": "https://lab:8660"}}
-    assert panel.active.currentData() == "lab"
+    assert _held.settings.device == "mic-session"
     assert not user_file(qt).exists()
-    # Removing it in the session drops it from the document.
-    panel.remove_alias()
-    page.apply()
-    assert "daemons" not in page.operator and panel.active.currentData() == ""
+    # The note survives the reseed the apply ran.
+    assert page.files.pinned_note.text() == NO_FILE_NOTE
+    # A window built with no config at all stands the same way.
+    from msks.client.gui.settingspage import SettingsPage
+
+    bare = SettingsPage(_held, None)
+    assert bare.files.isEnabled() is False
+    assert bare.files.pinned_note.text() == NO_FILE_NOTE
 
 
-def test_session_document_lands_values_and_aliases() -> None:
-    """The session document's merge (#1226): a blank value deletes
-    its key, an alias edit replaces, a ``None`` removes, and an
-    empty ``daemons:`` leaves the document."""
+def test_session_document_lands_the_values_and_drops_blanks() -> None:
+    """The session document's merge (#1224, #1226): a value lands
+    over the standing one, a blank deletes its key, and the standing
+    document is left as it was."""
     from msks.client.gui.settingspage import session_document
 
-    operator = {"url": "x", "cafile": "c", "daemons": {"a": {"url": "u"}}}
-    assert session_document(
-        operator,
-        {"url": "", "token_file": "t"},
-        {"a": None, "b": {"socket": "s"}},
-    ) == {
+    operator = {"url": "x", "cafile": "c"}
+    assert session_document(operator, {"url": "", "token_file": "t"}) == {
         "cafile": "c",
         "token_file": "t",
-        "daemons": {"b": {"socket": "s"}},
     }
-    assert session_document(operator, {}, {"a": None}) == {
-        "url": "x",
-        "cafile": "c",
-    }
-    assert operator == {
-        "url": "x",
-        "cafile": "c",
-        "daemons": {"a": {"url": "u"}},
-    }
+    assert session_document(operator, {}) == operator
+    assert operator == {"url": "x", "cafile": "c"}
 
 
 def test_a_panel_without_aliases_has_no_daemon_edits(qt) -> None:
@@ -796,3 +790,196 @@ def test_the_device_refresh_is_no_edit(qt) -> None:
     page.dictate.prompt.setText("msks")
     page.dictate.list_devices()
     assert page.dirty and page.apply_button.isEnabled()
+
+
+def test_removing_the_last_alias_drops_the_block_and_the_active_pick(
+    qt,
+) -> None:
+    """The last alias removed (#1226): the ``daemons:`` key goes with
+    it — a bare key reads as null and the loader refuses it — the
+    active alias that named it clears in the same save, and Apply
+    lands."""
+    page, _held = page_over(
+        qt,
+        launched(
+            qt,
+            text="daemons:\n  dev:\n    socket: /run/s.sock\n"
+            "active_daemon: dev\n",
+        ),
+    )
+    panel = page.connection
+    assert panel.active.currentData() == "dev"
+    panel.remove_alias()
+    assert page.file_edits() == ({"active_daemon": None}, {"dev": None})
+    page.apply()
+    assert page.status.text() == "saved to msks.yaml"
+    assert file_doc(qt) == {}
+    assert panel.daemons == {} and panel.active.currentData() == ""
+    # The entry form stands dark and blank over the empty list.
+    assert panel.kind.isEnabled() is False and panel.address.text() == ""
+
+
+def test_a_revert_after_a_remove_keeps_the_files_active_pick(qt) -> None:
+    """Remove the active alias, then Revert (#1226 review): the
+    picker's items rebuild from the file and the pick shows the
+    file's own alias again — not the blank the stale items left —
+    so a later Apply does not drop ``active_daemon`` from the
+    file."""
+    page, _held = page_over(
+        qt,
+        launched(
+            qt,
+            text=ALIASES_TEXT.replace(
+                "url: https://127.0.0.1:8660",
+                "url: https://127.0.0.1:8660\nactive_daemon: dev",
+            ),
+        ),
+    )
+    panel = page.connection
+    assert panel.active.currentData() == "dev"
+    panel.select("dev")
+    panel.remove_alias()
+    assert panel.active.currentData() == ""
+    page.revert()
+    assert panel.active.currentData() == "dev"
+    assert panel.daemons == panel.seeded_daemons
+    field(page, "connection", "url").setText("https://other:8660")
+    page.apply()
+    assert file_doc(qt)["active_daemon"] == "dev"
+    assert file_doc(qt)["daemons"]["dev"]["socket"] == (
+        "/run/user/1000/msks/msksd.sock"
+    )
+
+
+def test_the_still_stands_note_names_the_system_file_alone(
+    qt, monkeypatch
+) -> None:
+    """The note after a remove (#1226 review): an alias the operator
+    removed and added back is no removal, an alias the user's own
+    file defines and a refused save left standing is no system
+    alias, and only an alias the system file defines draws the
+    note."""
+    page, _held = page_over(qt, launched(qt, text=ALIASES_TEXT))
+    panel = page.connection
+    panel.select("dev")
+    panel.remove_alias()
+    panel.ask = lambda *args, **kwargs: "dev"
+    panel.add_alias()
+    panel.kind.setCurrentIndex(panel.kind.findData("socket"))
+    panel.address.setText("/run/user/1000/msks/msksd.sock")
+    page.apply()
+    # The alias stands as it was seeded: no edit, no write, no note.
+    assert page.status.text() == "nothing to save: the fields stand as saved"
+    assert panel.removed == set()
+    assert file_doc(qt)["daemons"]["dev"]["socket"] == (
+        "/run/user/1000/msks/msksd.sock"
+    )
+    # A refused save leaves the removal standing under a Revert: the
+    # user's own alias, not the system's.
+    panel.select("lab")
+    panel.address.setText("")
+    panel.remove_alias()
+    panel.ask = lambda *args, **kwargs: "blank"
+    panel.add_alias()  # an entry with no address: the save refuses
+    page.apply()
+    assert "needs a url or a socket" in page.status.text()
+    page.revert()
+    assert page.status.text() != "lab still stands: the system file defines it"
+    # The system file's alias, removed: the note names it.
+    system_file(qt, SYSTEM, monkeypatch)
+    conf = launched(qt)
+    page, _held = page_over(qt, conf)
+    panel = page.connection
+    panel.select("host")
+    panel.remove_alias()
+    page.apply()
+    assert page.status.text() == (
+        "host still stands: the system file defines it"
+    )
+
+
+def test_a_pinned_token_file_shows_the_variable_not_the_token(
+    qt, monkeypatch
+) -> None:
+    """``MSKSC_TOKEN`` carries the token itself (#1226 review): the
+    pinned Token file field names the variable and keeps the secret
+    off the screen; the tooltip still carries the notice."""
+    from msks.client.gui.settingspage.vocabulary import TOKEN_PINNED
+
+    monkeypatch.setenv("MSKSC_TOKEN", "SEKRIT")
+    page, _held = page_over(qt, launched(qt))
+    widget = field(page, "connection", "token_file")
+    assert widget.text() == TOKEN_PINNED
+    assert "SEKRIT" not in widget.text()
+    assert page.effective("token_file") == (TOKEN_PINNED, True)
+    assert widget.isEnabled() is False
+    assert widget.toolTip().endswith(
+        "MSKSC_TOKEN pins this setting; the page cannot change it."
+    )
+    assert (
+        page.connection.pinned_note.text() == "MSKSC_TOKEN pins this setting"
+    )
+    assert TOKEN_PINNED == "(the token, set through MSKSC_TOKEN)"
+
+
+def test_an_edited_system_alias_writes_its_own_changes_alone(
+    qt, monkeypatch
+) -> None:
+    """An alias the system file completes (#1226 review): the editor
+    shows the merged entry, and an edit writes the user's own keys
+    and the changed ones — a value inherited from the system file
+    and left alone stays out, so the system's keeps reaching this
+    user. A new alias writes its whole entry; a cleared inherited
+    key writes nothing and the system's value stands."""
+    system_file(
+        qt,
+        "daemons:\n  lab:\n    url: https://sys-lab:8660\n"
+        "    token_file: /etc/msks/token\n    expected_image: msks/sys-img\n",
+        monkeypatch,
+    )
+    page, _held = page_over(
+        qt,
+        launched(qt, text="daemons:\n  lab:\n    token_file: ~/mine.token\n"),
+    )
+    panel = page.connection
+    assert panel.daemons["lab"] == {
+        "url": "https://sys-lab:8660",
+        "token_file": "~/mine.token",  # the user's own wins
+        "expected_image": "msks/sys-img",
+    }
+    panel.select("lab")
+    panel.address.setText("https://my-lab:8660")
+    panel.image.setText("")  # clearing an inherited key
+    assert panel.daemon_edits() == {
+        "lab": {"token_file": "~/mine.token", "url": "https://my-lab:8660"}
+    }
+    page.apply()
+    assert user_file(qt).read_text() == (
+        "daemons:\n"
+        "  lab:\n"
+        "    url: https://my-lab:8660\n"
+        "    token_file: ~/mine.token\n"
+    )
+    assert page.operator["daemons"]["lab"]["expected_image"] == "msks/sys-img"
+    # A new alias is the user's whole entry.
+    panel.ask = lambda *args, **kwargs: "farm"
+    panel.add_alias()
+    panel.address.setText("https://farm:8660")
+    assert panel.daemon_edits() == {"farm": {"url": "https://farm:8660"}}
+    page.apply()
+    assert file_doc(qt)["daemons"]["farm"] == {"url": "https://farm:8660"}
+
+
+def test_an_apply_over_fields_changed_back_writes_nothing(qt) -> None:
+    """Changed and changed back (#1226): Apply stays lit, and the
+    click says there is nothing to save, writes nothing, and
+    darkens the buttons — no write of an unchanged file."""
+    page, _held = page_over(qt, launched(qt, text="url: https://u\n"))
+    before = user_file(qt).read_text()
+    field(page, "connection", "url").setText("https://other")
+    field(page, "connection", "url").setText("https://u")
+    assert page.apply_button.isEnabled() and page.dirty
+    page.apply()
+    assert page.status.text() == "nothing to save: the fields stand as saved"
+    assert user_file(qt).read_text() == before
+    assert not page.dirty and not page.apply_button.isEnabled()

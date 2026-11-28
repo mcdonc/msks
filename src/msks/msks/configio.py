@@ -265,24 +265,27 @@ def set_daemon(text: str, alias: str, entry: dict | None) -> str:
     ``daemons:`` block at its end, each key on its own line in the
     entry vocabulary's order, rendered by :func:`render_scalar`; the
     block itself is appended at the end of the file when the file
-    carries none, and a ``daemons:`` line with an inline value
-    (``{}``) is opened up for the entry. ``None`` deletes the
-    alias's block, and is a no-op when neither the alias nor the
-    block stands. The caller validates the result with its own
-    loader before writing.
+    carries none, and a ``daemons:`` line with an empty inline value
+    (``{}``, ``~``) is opened up for the entry. A ``daemons:`` line
+    carrying its entries inline (``daemons: {lab: {url: ...}}``) is
+    refused: the edit cannot keep what it does not spell out.
+    ``None`` deletes the alias's block, and with the last entry the
+    ``daemons:`` line goes too; it is a no-op when neither the alias
+    nor the block stands. The caller validates the result with its
+    own loader before writing.
     """
     lines = text.split("\n")
     start = key_line_index(lines, "daemons")
     if start is None:
         return open_block(lines, alias, entry)
-    # A line with an inline value (``daemons: {}``) opens up bare.
-    lines[start] = f"{key_line_key(lines[start])}:"
+    open_line(lines, start)
     end = block_end(lines, start)
     indent = child_indent(lines, start + 1, end)
     at = alias_line(lines, alias, start + 1, end, indent)
     if entry is None:
         if at is not None:
             del lines[at : alias_block_end(lines, at, end, indent)]
+            drop_emptied(lines, start)  # the block shrank: its end moved
     elif at is None:
         lines[end:end] = render_entry(alias, entry, indent)
     else:
@@ -290,6 +293,39 @@ def set_daemon(text: str, alias: str, entry: dict | None) -> str:
             alias, entry, indent
         )
     return "\n".join(lines)
+
+
+def open_line(lines: list[str], start: int) -> None:
+    """The ``daemons:`` line opened up for block entries (#1226): a
+    bare line stays as written, comment and all; one with an empty
+    inline value loses the value (and its comment with it, the way
+    :func:`set_scalar` treats an edited line); one carrying entries
+    inline is refused."""
+    line = lines[start]
+    match = KEY_LINE.match(line)
+    inline = line[match.end() :].split("#", 1)[0].strip() if match else ""
+    if inline in ("", "{}", "~", "null"):
+        if inline:
+            lines[start] = f"{key_line_key(line)}:"
+        return
+    raise ValueError(
+        "the daemons: block carries its entries inline "
+        f"({line.strip()}); write each alias out under daemons: to "
+        "edit them here"
+    )
+
+
+def drop_emptied(lines: list[str], start: int) -> None:
+    """The ``daemons:`` line gone when its last entry went (#1226):
+    a bare key with nothing under it reads as null, which the loader
+    refuses. Comments under it stay where they are."""
+    end = block_end(lines, start)
+    if any(
+        entry.strip() and not entry.lstrip().startswith("#")
+        for entry in lines[start + 1 : end]
+    ):
+        return
+    del lines[start]
 
 
 def open_block(lines: list[str], alias: str, entry: dict | None) -> str:
@@ -307,8 +343,10 @@ def render_entry(alias: str, entry: dict, indent: str) -> list[str]:
     at the block's child indent, each set key under it in the
     entry vocabulary's order, one line each, blanks left out. The
     alias and the values are spelled by ``yaml.safe_dump``, so a
-    name or a value that needs quoting gets it."""
-    refuse_non_scalars(entry)
+    name or a value that needs quoting gets it. An entry's values
+    are strings (the loader refuses a number for an address); an
+    empty entry renders as the empty mapping."""
+    refuse_non_strings(alias, entry)
     spelled = yaml.safe_dump(
         {alias: 0}, default_flow_style=False, allow_unicode=True
     ).rstrip("\n")
@@ -321,13 +359,26 @@ def render_entry(alias: str, entry: dict, indent: str) -> list[str]:
     return lines
 
 
+def refuse_non_strings(alias: str, entry: dict) -> None:
+    """An entry's contract (#1226): every value a string, refused by
+    name before the entry is rendered — an address, a path, or an
+    image reference is text in the file, never a number."""
+    for key, value in entry.items():
+        if not isinstance(value, str):
+            raise ValueError(
+                f"daemon {alias!r} key {key!r} must be a string, got "
+                f"{type(value).__name__}"
+            )
+
+
 def child_indent(lines: list[str], start: int, end: int) -> str:
     """The indent of the ``daemons:`` block's first entry (#1226):
-    the leading whitespace of its first non-blank line, the default
-    when the block is empty."""
+    the leading whitespace of its first non-blank line that is not a
+    comment, the default when the block is empty."""
     for line in lines[start:end]:
-        if line.strip():
-            return line[: len(line) - len(line.lstrip())]
+        stripped = line.lstrip()
+        if stripped and not stripped.startswith("#"):
+            return line[: len(line) - len(stripped)]
     return DAEMON_INDENT
 
 

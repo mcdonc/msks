@@ -332,9 +332,36 @@ def save_keys(
             f"cannot read config file {path}: {exc.strerror or exc}"
         ) from None
     edited = merge_edits(text, values, daemons)
-    floor = floor_aliases(load_paths(standing_paths(conf.config_paths[:-1])))
-    parse_config_doc(edited, path, floor)
+    parse_config_doc(edited, path, floor_daemons(conf))
     write_atomic(path, edited)
+
+
+def floor_daemons(conf: ClientConfig) -> dict:
+    """The ``daemons:`` aliases the files under the user's hold
+    (#1224, #1226): the system file's entries under a bare launch,
+    none under ``--config`` — the floor a save checks an entry
+    against, and the aliases a user file cannot remove. Empty when no
+    floor carries aliases."""
+    return (
+        floor_aliases(load_paths(standing_paths(conf.config_paths[:-1]))) or {}
+    )
+
+
+def own_doc(conf: ClientConfig) -> dict:
+    """The user's own file, validated (#1226): the keys — and the
+    ``daemons:`` entries — the file at ``conf.config_path`` carries
+    alone, each entry's address rule checked against the floor's
+    entry the way the load checked it (a user entry that only
+    completes a system alias is valid, and reads as its own keys).
+    What the settings page may rewrite without touching a value the
+    system file holds. Empty under ``--config=none``, and for a file
+    that is not there (the first-run template reads as no keys)."""
+    if conf.config_path == NO_CONFIG:
+        return {}
+    try:
+        return load_config(conf.config_path, floor_daemons(conf))
+    except OSError, ValueError:
+        return {}  # a file that will not read fails the save itself
 
 
 def merge_edits(text: str, values: dict, daemons: dict | None) -> str:

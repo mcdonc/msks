@@ -5,7 +5,11 @@ subtabs — Connection (the address keys, the active alias, and the
 Terminal and ssh (:mod:`.shell`), Screenshot (:mod:`.screenshot`),
 and Dictation (:mod:`.dictate`, the model download with it). The
 subtabs share one **Apply** / **Revert** pair and one status line;
-a subtab with unsaved edits wears a marker on its tab.
+a subtab with unsaved edits wears a marker on its tab. A launch
+with no file to write (``--config=none``) stands the four
+file-backed subtabs dark under a note: their keys were read at
+launch, and only the dictation settings, which the running window
+re-resolves, apply for the session.
 
 The page shows the *effective* settings and seeds its fields from
 them: a key the environment pins reads as the variable's value and
@@ -41,7 +45,14 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtWidgets
 
-from ...config import NO_CONFIG, ClientConfig, reload_doc, save_keys
+from ...config import (
+    NO_CONFIG,
+    ClientConfig,
+    floor_daemons,
+    own_doc,
+    reload_doc,
+    save_keys,
+)
 from ...dictate import download_model, list_sources
 from ..dictatekeys import DictateSettings, resolve
 from ..dictatepill import seat_pill
@@ -69,42 +80,37 @@ __all__ = [
     "SESSION_ONLY",
     "SettingsPage",
     "session_document",
-    "SUBTAB_LABELS",
 ]
 
 #: What Apply says with no file to write (#1224): a launch under
-#: ``--config=none`` applies the fields for the session alone.
+#: ``--config=none`` applies the dictation fields for the session
+#: alone.
 SESSION_ONLY = (
     "applied for this session (--config=none reads and writes no file)"
 )
 
+#: The note the file-backed subtabs stand under with no file to write
+#: (#1226): their keys are read at launch and no file holds an edit,
+#: so their fields stand dark and only the Dictation subtab — whose
+#: settings the running window re-resolves — applies for the session.
+NO_FILE_NOTE = (
+    "--config=none reads and writes no file: these settings were read "
+    "at launch and stand as they are; the Dictation subtab alone "
+    "applies for this session."
+)
 
-def session_document(
-    operator: dict, values: dict, daemons: dict | None = None
-) -> dict:
+#: What Apply says over fields that stand as saved (#1226): the dirty
+#: flag lit on a change changed back, nothing to write.
+NOTHING_TO_SAVE = "nothing to save: the fields stand as saved"
+
+
+def session_document(operator: dict, values: dict) -> dict:
     """The document a session-only apply holds (#1224, #1226):
     *values* over the standing document the way a save would land
     them — a blank is the unset form and deletes the key, so
-    clearing a field clears it for the session too — and the
-    *daemons* edits landed alias by alias, ``None`` removing one."""
+    clearing a field clears it for the session too."""
     doc = {**operator, **values}
-    if daemons:
-        doc["daemons"] = landed_aliases(operator.get("daemons"), daemons)
     return {key: value for key, value in doc.items() if value}
-
-
-def landed_aliases(standing, edits: dict) -> dict:
-    """The ``daemons:`` mapping after the session's edits (#1226):
-    the standing aliases with each edit landed — ``None`` removes,
-    an entry replaces or adds — in the standing order, new ones
-    last."""
-    aliases = dict(standing or {})
-    for alias, entry in edits.items():
-        if entry is None:
-            aliases.pop(alias, None)
-        else:
-            aliases[alias] = dict(entry)
-    return aliases
 
 
 class SettingsPage(QtWidgets.QWidget, StatusFlash):
@@ -165,6 +171,22 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         for panel in self.panels:
             panel.touched.connect(self.panel_touched)
         self.load(dictation.settings)
+
+    def darken_without_file(self) -> None:
+        """A launch with no file to write (#1226): the file-backed
+        subtabs stand dark under a note — their keys were read at
+        launch and no file holds an edit — and the Dictation subtab
+        alone takes the session's apply. Run after every seed, which
+        rewrites the panels' notes."""
+        if self.writable():
+            return
+        for panel in self.panels:
+            if panel is self.dictate:
+                continue
+            panel.setEnabled(False)
+            panel.pinned_note.setText(NO_FILE_NOTE)
+            panel.pinned_note.setVisible(True)
+            panel.pinned_note.setEnabled(True)
 
     # --- the page -------------------------------------------------------
 
@@ -295,6 +317,7 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         for panel in self.panels:
             panel.load(settings)
         self.settled()
+        self.darken_without_file()
 
     def file_edits(self) -> tuple[dict, dict]:
         """What Apply writes (#1226): the scalar edits from every
@@ -306,6 +329,18 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
             scalars.update(panel.edits())
             daemons.update(panel.daemon_edits())
         return scalars, daemons
+
+    def own(self) -> dict:
+        """The user's own document (#1226): the file Apply writes,
+        validated alone, the keys a save may rewrite without touching
+        a value the system file holds. Empty with no config."""
+        return {} if self.conf is None else own_doc(self.conf)
+
+    def floor(self) -> dict:
+        """The system file's ``daemons:`` aliases (#1226): the ones a
+        save checks an entry against and the user's file cannot
+        remove. Empty with no config and under ``--config``."""
+        return {} if self.conf is None else floor_daemons(self.conf)
 
     def writable(self) -> bool:
         """Whether the launch has a file Apply writes (#1224):
@@ -321,12 +356,13 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
 
     def save(self, values: dict, daemons: dict | None = None) -> None:
         """Write the edits into the user's file (#1224, #1226) — or,
-        with no file to write, hold them in the document for the
-        session alone. The re-read is :meth:`reread`'s, so a write
-        that refuses and a re-read that refuses are two different
-        flashes."""
+        with no file to write, hold the dictation values in the
+        document for the session alone (the file-backed subtabs stand
+        dark then and carry no edit). The re-read is :meth:`reread`'s,
+        so a write that refuses and a re-read that refuses are two
+        different flashes."""
         if not self.writable():
-            self.operator = session_document(self.operator, values, daemons)
+            self.operator = session_document(self.operator, values)
         else:
             save_keys(self.conf, values, daemons)
 
@@ -375,6 +411,12 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         file the tree cannot read or write flashes the reason; a
         launch with no file applies for the session and says so."""
         scalars, daemons = self.file_edits()
+        if not scalars and not daemons:
+            # Changed and changed back (#1226): nothing differs from
+            # the seed, and no write is made.
+            self.flash(NOTHING_TO_SAVE)
+            self.settled()
+            return
         settings = self.write_and_reread(scalars, daemons)
         if settings is None:
             return

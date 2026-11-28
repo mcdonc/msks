@@ -5,19 +5,22 @@ aliases as a list with add, rename, and remove, and the selected
 alias's entry as a form under it. The panel edits the merged
 document's aliases (the user's file over the system's, #1224) and
 Apply writes the entries that changed into the user's file, each
-through :func:`msks.configio.set_daemon` in place. The loader
-checks every entry when the save lands: the one-address rule (a
-``url`` xor a ``socket``, over the entry merged with the system
-file's) and the entry vocabulary, so an entry with no address is
-refused with its message and nothing is written.
+through :func:`msks.configio.set_daemon` in place — and only the
+keys the operator changed or the user's file already carried
+(:func:`own_changes`), so a value the system file holds and the
+operator left alone stays inherited. The loader checks every entry
+when the save lands: the one-address rule (a ``url`` xor a
+``socket``, over the entry merged with the system file's) and the
+entry vocabulary, so an entry with no address is refused with its
+message and nothing is written.
 
 A socket entry authenticates by peer credential, so the token and
 CA fields stand dark while the entry's kind is Socket. An alias
-the system file defines comes back after a remove — the user's
-file cannot delete a layer's entry — and the panel says so. The
-connection picker in the listing's status row stays a pick for the
-session (#1009); the active alias here is the durable pick a bare
-``msks`` reads.
+the system file defines comes back after a remove (the user's
+file cannot delete a layer's entry), and the panel says so — only
+for the system file's aliases. The connection picker in the
+listing's status row stays a pick for the session (#1009); the
+active alias here is the durable pick a bare ``msks`` reads.
 
 This module imports PySide6 at module scope, the screens' own
 contract: nothing imports it at CLI parse time (#927).
@@ -93,13 +96,13 @@ class ConnectionPanel(Panel):
         self.daemons: dict[str, dict] = {}
         #: The aliases as the document held them at the seed (#1226).
         self.seeded_daemons: dict[str, dict] = {}
-        #: The aliases the operator removed since the seed (#1226):
-        #: after a save, one that still stands comes from the system
-        #: file, and the panel says so.
+        #: The aliases the last edits removed (#1226): after a save,
+        #: one that still stands comes from the system file, and the
+        #: panel says so.
         self.removed: set[str] = set()
-        #: True while the entry form fills from a selection (#1226):
-        #: its signals are no edit then.
-        self.filling = False
+        #: The user's own share of each alias (#1226): the keys the
+        #: user's file carries, the rest inherited from the floor.
+        self.own: dict[str, dict] = {}
         self.build_globals()
         self.build_aliases()
         self.load()
@@ -203,30 +206,37 @@ class ConnectionPanel(Panel):
     def load(self, _settings=None) -> None:
         """Seed the rows from the page's standing document (#1226):
         the global keys, the aliases as the document holds them
-        (the user's entries over the system's), and the picker over
-        them; an alias the operator removed that still stands comes
-        from the system file, and the panel says so."""
+        (the user's entries over the system's, and the user's own
+        share kept beside), and the picker over them showing the
+        document's pick. An alias the operator removed that still
+        stands in the system file is the floor's to keep, and the
+        panel says so."""
         super().load()
         self.daemons = aliases_of(self.page.doc)
         self.seeded_daemons = aliases_of(self.page.doc)
-        standing = sorted(self.removed & set(self.daemons))
-        for alias in standing:
+        self.own = aliases_of(self.page.own())
+        floor = set(self.page.floor())
+        for alias in sorted(self.removed & set(self.daemons) & floor):
             self.page.flash(
                 f"{alias} still stands: the system file defines it"
             )
         self.removed = set()
-        self.refresh_aliases()
+        self.refresh_aliases(pick=self.seeded.get("active_daemon", ""))
 
-    def refresh_aliases(self, select: str | None = None) -> None:
+    def refresh_aliases(
+        self, select: str | None = None, pick: str | None = None
+    ) -> None:
         """The list and the picker over the working aliases (#1226):
         the standing selection kept when its alias still stands,
         else the first row; *select* names the row to show when
-        given. The picker's value survives the rebuild, so an alias
-        renamed away from the active pick is re-pointed by the
-        rename itself."""
+        given, and *pick* the active alias the picker shows after
+        the rebuild — the seed passes the document's own pick, since
+        the picker's items are gone before the fill; an operator's
+        add, rename, or remove passes none and the standing pick
+        survives."""
         current = select or self.selected()
         self.fill_list()
-        self.fill_picker(self.value("active_daemon"))
+        self.fill_picker(self.value("active_daemon") if pick is None else pick)
         self.show_row(current)
 
     def fill_list(self) -> None:
@@ -384,15 +394,27 @@ class ConnectionPanel(Panel):
     def daemon_edits(self) -> dict[str, dict | None]:
         """The ``daemons:`` edits Apply writes (#1226): every alias
         whose working entry differs from the seed, and ``None`` for
-        one the operator removed."""
-        edits = {
-            alias: dict(entry)
-            for alias, entry in self.daemons.items()
-            if self.seeded_daemons.get(alias) != entry
-        }
-        for alias in self.seeded_daemons:
-            if alias not in self.daemons:
-                edits[alias] = None
+        one the operator removed. A new alias writes its whole
+        entry; an edited one writes its own changes
+        (:func:`own_changes`), so a value the system file holds and
+        the operator left alone stays inherited."""
+        edits = {}
+        for alias, entry in self.daemons.items():
+            merged = self.seeded_daemons.get(alias)
+            if merged == entry:
+                continue
+            edits[alias] = (
+                dict(entry)
+                if merged is None
+                else own_changes(entry, merged, self.own.get(alias, {}))
+            )
+        removals = set(self.seeded_daemons) - set(self.daemons)
+        for alias in removals:
+            edits[alias] = None
+        # The removals this apply writes (#1226): the seed after the
+        # save names the ones the system file keeps standing, and
+        # only those — an alias removed and added back is none.
+        self.removed = removals
         return edits
 
     def stands_as_file(self) -> bool:
@@ -456,7 +478,6 @@ class ConnectionPanel(Panel):
         if alias is None:
             return
         del self.daemons[alias]
-        self.removed.add(alias)
         if self.value("active_daemon") == alias:
             self.active.setCurrentIndex(0)
         self.refresh_aliases()
@@ -471,3 +492,17 @@ def aliases_of(doc: dict) -> dict[str, dict]:
     if not isinstance(entries, dict):
         return {}
     return {alias: dict(entry) for alias, entry in entries.items()}
+
+
+def own_changes(entry: dict, merged: dict, own: dict) -> dict:
+    """The user file's share of an edited entry (#1226): the keys the
+    operator changed or added against the merged entry, and the keys
+    the user's file already carried. A value inherited from the
+    system file and left alone stays out, so the system's value
+    keeps reaching this user; a key the operator cleared is simply
+    absent, and the floor's value (when it has one) applies again."""
+    return {
+        key: value
+        for key, value in entry.items()
+        if key in own or merged.get(key) != value
+    }
