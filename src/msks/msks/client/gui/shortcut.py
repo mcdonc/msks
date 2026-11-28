@@ -189,8 +189,9 @@ def ensure_installed() -> None:
     """Plant the shortcut at GUI startup (#1045): the wheel
     cannot run a step after pip installs it — pip runs console
     scripts, not install hooks — so the launch performs the
-    install-time plant: every ``msks gui`` on a Linux desktop
-    plants the entry and the renders before the window maps,
+    install-time plant: every window launch (``msks gui`` or a
+    bare ``msks``, #1221) on a Linux desktop plants the entry
+    and the renders before the window maps,
     the moment a compositor first resolves the taskbar icon,
     and an upgrade's next launch refreshes the renders with
     the same idempotent install the command performs. The

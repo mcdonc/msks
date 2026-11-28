@@ -82,11 +82,12 @@ body_reached = False
 invocation_tokens: list[str] = []
 
 #: The invocation's resolved client config (#314), set by the root
-#: callback right after the bootstrap and read by the TUI entry
-#: points: the tree's new-terminal shell action (#341) spawns its
-#: console child with the launcher the resolution carries. None
-#: when no bootstrap ran (a help screen — and then no TUI starts
-#: either).
+#: callback right after the bootstrap and read by the window and
+#: the TUI entry points: the GUI's external-terminal action
+#: (#954) and the tree's new-terminal shell action (#341) spawn
+#: their children with the launcher the resolution carries. None
+#: when no bootstrap ran (a help screen — and then no window and
+#: no TUI starts either).
 invoked_conf: ClientConfig | None = None
 
 
@@ -114,7 +115,8 @@ def one_line_interrupts(fn):
 app = typer.Typer(
     name="msks",
     add_completion=False,
-    help="msks client: workspace microvms over the daemon API",
+    help="msks client: workspace microvms over the daemon API; "
+    "a bare msks opens the GUI, and msks tui opens the terminal UI",
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 

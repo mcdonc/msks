@@ -1,4 +1,5 @@
-"""The GUI entry: what the ``msks gui`` command runs.
+"""The GUI entry: what a bare ``msks`` and the ``msks gui`` command
+run.
 
 The Qt import lives inside :func:`run` — the CLI imports this
 module at load time (``wscommands.py``), so a module-scope
@@ -30,10 +31,15 @@ from .shortcut import DESKTOP_ID, ICON_FILE, ensure_installed, icon_dir
 # design: the nix package is the daemon's closure and strips
 # the binding (#1023), so the line names the pip install for
 # both shapes. One stderr line, the client's error convention.
+# Every refusal ends with the terminal entry (#1221): a bare
+# ``msks`` opens the window now, and the TUI runs on the install
+# the window cannot.
+TUI_POINTER = "; msks tui opens the terminal UI instead"
+
 HINT = (
     "msks: the desktop GUI needs PySide6, a base dependency of "
     "the wheel: pip install --force-reinstall msks (a nix-built "
-    "install: pip install msks)"
+    "install: pip install msks)" + TUI_POINTER
 )
 
 # The binding is installed but will not load (a broken wheel set
@@ -42,7 +48,7 @@ HINT = (
 # missing soname).
 BROKEN = (
     "msks: the PySide6 install does not load; reinstall it with "
-    "pip install --force-reinstall msks"
+    "pip install --force-reinstall msks" + TUI_POINTER
 )
 
 # A Linux session with no display and no platform override: Qt's
@@ -50,13 +56,10 @@ BROKEN = (
 # 134), past anything Python can catch — the pre-flight keeps the
 # client's one-line convention instead. macOS is exempt: a stock
 # session sets none of the three, and cocoa, its default platform,
-# needs none of them. The line names the terminal entry (#1221): a
-# bare ``msks`` opens the window now, and an operator who typed
-# that on a headless host needs the TUI's own command.
+# needs none of them.
 NO_DISPLAY = (
     "msks: the GUI needs a display (set DISPLAY or "
-    "WAYLAND_DISPLAY, or QT_QPA_PLATFORM=offscreen); "
-    "msks tui opens the terminal UI instead"
+    "WAYLAND_DISPLAY, or QT_QPA_PLATFORM=offscreen)" + TUI_POINTER
 )
 
 

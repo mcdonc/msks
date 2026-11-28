@@ -8,7 +8,7 @@ Every page uses the API.
 
 `msks tui` launches the TUI. The default page is a full-screen workspace
 tree, and `msks tui my-workspace` opens that workspace's page directly. A bare
-`msks` (no arguments at all) opens the GUI window instead; see
+`msks` (no subcommand) opens the GUI window instead; see
 [the GUI chapter](gui.md).
 
 ## The workspace tree
