@@ -30,8 +30,8 @@ import os
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from ..config import NO_CONFIG, load_config, resolve, resolve_config_path
 from ..config import apply as apply_config
+from ..config import load_layered, resolve
 
 #: The connection-shaping variables (#1009): the ones a pick
 #: writes and the snapshot keeps — address (the url or the local
@@ -135,16 +135,25 @@ def restore(values: dict[str, str]) -> None:
 
 
 def read_doc(config: str | None) -> dict:
-    """The config file's document (#1009), an empty one for the
-    env-only opt-out. An unusable file at menu-build time reads
-    empty — the window already runs on what bootstrap resolved,
-    and a broken file names itself on the CLI where the
-    operator can fix it."""
+    """The config files' merged document (#1009, #1224): the
+    layered read the ``--config`` mode resolves — the user's file
+    over the system's under a bare launch — and an empty one for
+    the env-only opt-out. An unusable file at menu-build time
+    reads empty — the window already runs on what bootstrap
+    resolved, and a broken file names itself on the CLI where
+    the operator can fix it."""
     try:
-        path = resolve_config_path(config)
-        return {} if path == NO_CONFIG else load_config(path)
+        _paths, doc = load_layered(config)
+        return doc
     except ValueError:
         return {}
+
+
+def config_arg_of(conf) -> str | None:
+    """The launch's ``--config`` argument off its resolved config
+    (#1224): ``ClientConfig.config_arg``; None for a conf that
+    carries none, the bare mode."""
+    return getattr(conf, "config_arg", None)
 
 
 def entry_address(entry: dict) -> str:
@@ -359,15 +368,14 @@ class Connections:
 
     def __init__(self, conf=None, *, config: str | None = None) -> None:
         self.conf = conf
-        # The config file the picker reads (#1009): the caller's
-        # own override first, else the one the invocation's
-        # resolved config names — ``msks --config <file> gui``
-        # lists and resolves the same file it bootstrapped from.
-        self.config = (
-            config
-            if config is not None
-            else (getattr(conf, "config_path", "") or None)
-        )
+        # The config mode the picker reads (#1009, #1224): the
+        # caller's own override first — ``msks --config <file> gui``
+        # lists and resolves the same file it bootstrapped from —
+        # else the launch's own ``--config`` argument: the env-only
+        # opt-out when the launch resolved none, else the bare mode,
+        # which reads the user's file over the system's exactly as
+        # the launch did.
+        self.config = config if config is not None else config_arg_of(conf)
         self.startup = launchless(snapshot(), conf)
         #: The last applied pick (#1009): it drives the marking
         #: of every later menu, the operator's own act outranking

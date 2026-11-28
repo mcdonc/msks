@@ -479,6 +479,41 @@ def test_the_conf_names_the_config_file_the_picker_reads(
     assert os.environ["MSKSC_TOKEN"] == "tok"
 
 
+def test_the_picker_reads_the_layer_over_a_bare_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The launch's mode, not its file (#1224): a window launched
+    bare over a system file lists the aliases of both files and
+    marks the host's pick — the picker re-resolves the way the
+    launch did, through ``config_arg``, not through the user file
+    alone."""
+    from msks.client.config import resolve
+
+    token = tmp_path / "host.tok"
+    token.write_text("hosttok")
+    system = tmp_path / "system.yaml"
+    system.write_text(
+        "active_daemon: host\n"
+        "daemons:\n"
+        "  host:\n"
+        f"    url: https://host:9660\n    token_file: {token}\n"
+    )
+    monkeypatch.setenv("MSKSC_SYSTEM_CONFIG", str(system))
+    monkeypatch.setenv("MSKSC_CONFIG_DIR", str(tmp_path / "user"))
+    (tmp_path / "user").mkdir()
+    (tmp_path / "user" / "msks.yaml").write_text(
+        "daemons:\n  mine:\n    socket: /run/msks/mine.sock\n"
+    )
+    conf = resolve()
+    rows = connection_mod.Connections(conf).presets()
+    assert [(row.name, row.address) for row in rows] == [
+        ("host", "https://host:9660"),
+        ("mine", "/run/msks/mine.sock"),
+    ]
+    assert rows[0].active is True  # the host's pick stands marked
+    assert connection_mod.Connections(conf).config is None  # the bare mode
+
+
 def test_the_launchs_materialized_winners_leave_the_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

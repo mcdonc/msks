@@ -977,23 +977,23 @@ def test_the_socket_group_reads_env_and_file(
     assert load_settings(path).server.socket_group == "msks"
 
 
-# --- the atomic replace (#1214) ------------------------------------------
+# --- the atomic replace (#1214, #1224) -----------------------------------
 
 
 def test_write_atomic_replaces_a_standing_file(tmp_path: Path) -> None:
-    """The GUI's preferences writer: the new text lands whole over
+    """The client's in-place writer: the new text lands whole over
     the old, the tree is created owner-only when missing, the file
     is written 0600 like the rest of the config tree, and no
     temporary file is left behind."""
     from msks.configio import write_atomic
 
-    path = tmp_path / "new" / "gui.yaml"
+    path = tmp_path / "new" / "msks.yaml"
     write_atomic(str(path), "dictate_model: small\n")
     write_atomic(str(path), "dictate_model: base\n")
     assert path.read_text() == "dictate_model: base\n"
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
-    assert [p.name for p in path.parent.iterdir()] == ["gui.yaml"]
+    assert [p.name for p in path.parent.iterdir()] == ["msks.yaml"]
 
 
 def test_write_atomic_leaves_no_debris_on_failure(
@@ -1003,7 +1003,7 @@ def test_write_atomic_leaves_no_debris_on_failure(
     it and leaves the standing file whole."""
     from msks import configio
 
-    path = tmp_path / "gui.yaml"
+    path = tmp_path / "msks.yaml"
     path.write_text("old\n")
 
     class Torn(io.StringIO):
@@ -1014,4 +1014,181 @@ def test_write_atomic_leaves_no_debris_on_failure(
     with pytest.raises(OSError, match="disk full"):
         configio.write_atomic(str(path), "new\n")
     assert path.read_text() == "old\n"
-    assert [p.name for p in tmp_path.iterdir()] == ["gui.yaml"]
+    assert [p.name for p in tmp_path.iterdir()] == ["msks.yaml"]
+
+
+# --- the in-place key edit (#1224) ---------------------------------------
+
+
+def test_write_atomic_writes_through_a_symlink(tmp_path: Path) -> None:
+    """A file home-manager links into a writable tree (#1224): the
+    link stays a link, the link's own file changes, and no
+    temporary file is left in either tree."""
+    from msks.configio import write_atomic
+
+    real = tmp_path / "real" / "msks.yaml"
+    real.parent.mkdir()
+    real.write_text("url: https://old\n")
+    link = tmp_path / "link" / "msks.yaml"
+    link.parent.mkdir()
+    link.symlink_to(real)
+    write_atomic(str(link), "url: https://new\n")
+    assert link.is_symlink()
+    assert os.path.realpath(link) == str(real)
+    assert real.read_text() == "url: https://new\n"
+    assert [p.name for p in real.parent.iterdir()] == ["msks.yaml"]
+    assert [p.name for p in link.parent.iterdir()] == ["msks.yaml"]
+
+
+def test_write_atomic_refuses_a_link_into_a_read_only_tree(
+    tmp_path: Path,
+) -> None:
+    """A link into a tree the user cannot write (the store's
+    shape): the temporary file cannot land beside the target, the
+    error carries the path, and the link and its file stand as
+    they were (#1224)."""
+    from msks.configio import write_atomic
+
+    store = tmp_path / "store"
+    store.mkdir()
+    target = store / "msks.yaml"
+    target.write_text("url: https://store\n")
+    link = tmp_path / "msks.yaml"
+    link.symlink_to(target)
+    store.chmod(0o500)
+    if os.getuid() == 0:  # root writes anything
+        store.chmod(0o700)
+        pytest.skip("root writes into a mode-500 directory")
+    try:
+        with pytest.raises(OSError) as refused:
+            write_atomic(str(link), "url: https://new\n")
+    finally:
+        store.chmod(0o700)
+    assert str(target) in str(refused.value)
+    assert link.is_symlink()
+    assert target.read_text() == "url: https://store\n"
+    assert [p.name for p in store.iterdir()] == ["msks.yaml"]
+
+
+HANDWRITTEN = (
+    "# msks client configuration — generated on first run.\n"
+    "url: https://h:1  # host\n"
+    "\n"
+    "# the aliases\n"
+    "daemons:\n"
+    "  lab:\n"
+    "    url: https://lab:8660\n"
+    "    token_file: /t\n"
+    "\n"
+    "dictate-model: |\n"
+    "  first\n"
+    "\n"
+    "  second\n"
+    "# trailing comment\n"
+    "token_file: /etc/msks/token\n"
+)
+
+
+def test_set_scalars_edits_the_keys_and_leaves_the_rest_byte_for_byte() -> (
+    None
+):
+    """The merge (#1224): a hyphen-spelled key is rewritten in its
+    own spelling, an absent key appends, a block scalar is
+    replaced whole, a deleted key takes its block and leaves the
+    separator blank, and every other byte — comments, the alias
+    block, the order — stands as written. The result loads."""
+    from msks.client.validate import parse_config_doc
+    from msks.configio import set_scalars
+
+    out = set_scalars(
+        HANDWRITTEN,
+        {
+            "dictate_model": "msks: a #b",
+            "dictate_prompt": "one\ntwo\n\nfour",
+            "token_file": None,
+        },
+    )
+    assert out == (
+        "# msks client configuration — generated on first run.\n"
+        "url: https://h:1  # host\n"
+        "\n"
+        "# the aliases\n"
+        "daemons:\n"
+        "  lab:\n"
+        "    url: https://lab:8660\n"
+        "    token_file: /t\n"
+        "\n"
+        "dictate-model: 'msks: a #b'\n"
+        "# trailing comment\n"
+        'dictate_prompt: "one\\ntwo\\n\\nfour"\n'
+    )
+    assert parse_config_doc(out, "msks.yaml") == {
+        "url": "https://h:1",
+        "daemons": {"lab": {"url": "https://lab:8660", "token_file": "/t"}},
+        "dictate_model": "msks: a #b",
+        "dictate_prompt": "one\ntwo\n\nfour",
+    }
+
+
+def test_set_scalars_appends_after_a_last_line_without_a_newline() -> None:
+    from msks.configio import set_scalars
+
+    assert set_scalars("url: x", {"dictate_model": "small"}) == (
+        "url: x\ndictate_model: small\n"
+    )
+    assert (
+        set_scalars("", {"dictate_model": "small"}) == "dictate_model: small\n"
+    )
+    assert set_scalars("# only a comment\n", {"dictate_model": "small"}) == (
+        "# only a comment\ndictate_model: small\n"
+    )
+
+
+def test_set_scalars_deletes_a_key_and_its_block() -> None:
+    from msks.configio import set_scalars
+
+    assert set_scalars(
+        "a: 1\ndictate_model: |\n  x\n\n  y\n\nb: 2\n", {"dictate_model": ""}
+    ) == ("a: 1\n\nb: 2\n")
+    # A key the file does not carry: a delete is a no-op.
+    assert set_scalars("a: 1\n", {"dictate_model": None}) == "a: 1\n"
+    # The last key: its block goes, the trailing newline stays.
+    assert (
+        set_scalars("a: 1\ndictate_model: small\n", {"dictate_model": None})
+        == "a: 1\n"
+    )
+
+
+def test_set_scalars_bounds_a_block_at_the_files_end() -> None:
+    """A block scalar that runs to the last line with no trailing
+    newline is the key's block; a key before trailing blank lines
+    ends at the first of them (#1224)."""
+    from msks.configio import set_scalars
+
+    assert set_scalars("dictate_prompt: |\n  x", {"dictate_prompt": "y"}) == (
+        "dictate_prompt: y"
+    )
+    assert set_scalars(
+        "a: 1\n\ndictate_model: x\n\n\n", {"dictate_model": None}
+    ) == ("a: 1\n\n\n\n")
+
+
+def test_set_scalars_refuses_a_non_string_and_keeps_non_ascii() -> None:
+    """The merge edits string keys only (#1224): a list is refused by
+    name, and a non-ASCII value is written as written, not as
+    escapes — the prompt is where other languages land."""
+    from msks.configio import set_scalars
+
+    with pytest.raises(ValueError, match="'dictate_prompt' must be a string"):
+        set_scalars("url: x\n", {"dictate_prompt": ["msks", "devenv"]})
+    out = set_scalars("", {"dictate_prompt": "msks,añé, 日本語"})
+    assert out == "dictate_prompt: msks,añé, 日本語\n"
+
+
+def test_set_scalars_quotes_what_yaml_needs() -> None:
+    """The plain form when the dump keeps one line, whatever quoting
+    that needs; a blank and None both delete."""
+    from msks.configio import set_scalars
+
+    out = set_scalars("", {"dictate_prompt": "yes", "dictate_model": "small"})
+    assert out == "dictate_prompt: 'yes'\ndictate_model: small\n"

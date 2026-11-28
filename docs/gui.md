@@ -580,7 +580,7 @@ whisper.cpp) transcribes the clip once it ends. The model loads for
 each clip, which takes about one second with `small`. The model is
 not shipped: the first click opens the **Settings** tab, whose
 **Download** button fetches it into `~/.cache/msks/whisper/`. The
-[CLI chapter](cli.md#the-gui-preferences-file) describes the
+[CLI chapter](cli.md#the-client-config-file) describes the
 settings, their file, and the precedence.
 
 On a Mac the same calls answer through the shims that
@@ -623,12 +623,14 @@ Hover a setting's name or its field for its description. A key that
 an `MSKSC_DICTATE_*` variable pins shows the variable's value in a
 read-only field, with the variable named under the form.
 
-**Apply** saves the fields into `~/.config/msks/gui.yaml` and the
-next recording takes them. A recording ends at the pill's second
-click, whatever the settings. **Apply** and **Revert** stand dark
-while the fields match the saved settings, and light at the first
-change. **Revert** reads the layers again and reseeds the fields. A value that refused anywhere shows its message
-under the form, and the setting reads as its default.
+**Apply** merges the fields into `~/.config/msks/msks.yaml`: the
+three keys are written into the file, every other line stays as you
+wrote it, and the next recording takes them. A recording ends at the pill's
+second click, whatever the settings. **Apply** and **Revert** stand
+dark while the fields match the saved settings, and light at the first
+change. **Revert** reads the file again and reseeds the fields. A bad
+value in the file refuses `msks` at start, with the file and the key
+in the message.
 
 **Speech model** shows where the picked model points and whether
 it is on disk, with its size; the line follows the picker as it

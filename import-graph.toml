@@ -200,8 +200,10 @@ settings = 2
 agecrypto = 10
 # #874: the config split — the validator leaf imports the unique-
 # key loader beside the config module's own writes.
-# #1214: the GUI's preferences page writes gui.yaml through the
-# shared atomic replace (guiprefs' statement: module + name).
+# #1224: the in-place key edit — config's statement gained
+# set_scalars and write_atomic (the latter from the deleted
+# guiprefs' statement, #1214 gone with gui.yaml): module + three
+# names beside the validator's module + one, the count holding.
 configio = 6
 conformance_args = 8
 # #481: the console dropped its identity negotiation — the

@@ -14,13 +14,22 @@ tagged `vX.Y.Z`.
   primary selection with a tone at each end and a desktop
   notification. A **Settings** tab edits the model, the microphone,
   and the vocabulary prompt, and downloads the whisper.cpp model with
-  a progress bar. The settings save to `~/.config/msks/gui.yaml`, a
-  file the GUI owns beside the client config, and `MSKSC_DICTATE_*`
-  variables pin any of them. The host needs PipeWire's `pw-record` and
+  a progress bar. The settings save into `~/.config/msks/msks.yaml`:
+  the Settings tab merges the three keys into the file and leaves the
+  rest as written, and `MSKSC_DICTATE_*` variables pin any of them.
+  The host needs PipeWire's `pw-record` and
   `pw-cat` and whisper.cpp's `whisper-cli`; see
   [docs/gui.md](gui.md#dictation).
 
 ### Changed
+
+- **The client config layers a system file (#1224).** A bare `msks`
+  reads `/etc/msks/msks.yaml` as the floor and the user's
+  `~/.config/msks/msks.yaml` over it, key by key. `MSKSC_SYSTEM_CONFIG`
+  relocates the system file, and an empty value means none. `daemons:`
+  merges by alias, and the two files resolve as one. `--config <path>`
+  and `--config=none` read no system file. See
+  [docs/cli.md](cli.md#the-client-config-file).
 
 - **`msks-setup-macos-host` lands the dictation tools (#1216).** The
   tool now brews `whisper.cpp` and `ffmpeg` and writes `pw-record`,

@@ -348,23 +348,22 @@ def terminal_command(conf) -> list[str] | None:
 
 def compose_dictation(conf, app):
     """The dictation's composition (#1214): the controller over
-    the resolved settings — the environment, ``gui.yaml``, and
-    the operator config's validated keys, in that precedence —
-    and the client's cache root, plus the pill host that equips
-    every top-level window the application shows. A preferences
-    file that will not read prints one stderr line, the client's
-    convention, and the window opens on the operator's file and
-    the defaults: the settings page shows the reason when it is
-    asked. The imports land here, on the window path, never at
-    CLI parse time: the Qt-free leaves first, then the two that
-    carry PySide6 at module scope (the screens' own contract).
+    the resolved settings — the environment and the merged config
+    document, in that precedence (#1224) — and the client's cache
+    root, plus the pill host that equips every top-level window
+    the application shows. The config the launch resolved is the
+    one the controller reads: a file that would not load refused
+    the launch on the CLI. The imports land here, on the window
+    path, never at CLI parse time: the Qt-free leaves first, then
+    the two that carry PySide6 at module scope (the screens' own
+    contract).
     """
     # allow-deferred-import — the client's cache root (Qt-free):
     # the speech models and the tones live under it.
     from ..identity import cache_dir
 
     # allow-deferred-import — Qt-free: the dictation keys'
-    # resolution and the preferences file.
+    # resolution.
     from .dictatekeys import resolve
 
     # allow-deferred-import — PySide6 at module scope there.
@@ -374,31 +373,24 @@ def compose_dictation(conf, app):
     # screens' own contract.
     from .dictation import Dictation
 
-    # allow-deferred-import — Qt-free: gui.yaml's reader.
-    from .guiprefs import load_prefs
-
-    try:
-        prefs = load_prefs()
-    except ValueError as exc:
-        print(f"msks: {exc}", file=sys.stderr)
-        prefs = {}
     operator = conf.doc if conf is not None else {}
-    dictation = Dictation(resolve(os.environ, prefs, operator), cache_dir())
+    dictation = Dictation(resolve(os.environ, operator), cache_dir())
     pills = PillHost(dictation, app)
     return dictation, pills
 
 
-def seat_settings(tabs, dictation, operator: dict, tree: dict):
+def seat_settings(tabs, dictation, conf, tree: dict):
     """The settings page under one landing's strip (#1214): the
-    page as the fourth tab over the controller and the operator's
-    file keys, kept under ``tree["settings"]`` for the no-model
-    click's opener to find."""
+    page as the fourth tab over the controller and the launch's
+    resolved config (the merged keys it resolves over, the user
+    file it writes, #1224), kept under ``tree["settings"]`` for
+    the no-model click's opener to find."""
     # allow-deferred-import — the settings page carries the
     # screens' own contract: PySide6 at module scope, loaded only
     # on the window path after the guards.
     from .settingspage import SettingsPage
 
-    page = SettingsPage(dictation, operator)
+    page = SettingsPage(dictation, conf)
     tabs.addTab(page, SETTINGS_TAB_LABEL)
     tree["settings"] = page
 
@@ -518,8 +510,7 @@ class Landing:
         )
         secrets = SecretsTab(bridge, self.dictation)
         tabs.addTab(secrets, SECRETS_LABEL)
-        operator = conf.doc if conf is not None else {}
-        seat_settings(tabs, self.dictation, operator, self.tree)
+        seat_settings(tabs, self.dictation, conf, self.tree)
         self.window.setCentralWidget(tabs)
         wire_tree(
             shell,

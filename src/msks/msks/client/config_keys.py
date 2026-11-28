@@ -14,11 +14,11 @@ from __future__ import annotations
 #: its spelling with. Global-only, the
 #: rule ``identity_file`` carries: the microphone and the models
 #: belong to the operator's desktop, not to a daemon connection.
-#: The GUI's own preferences file (``gui.yaml``) sits between the
-#: environment and the operator's config for these keys — the
-#: settings page writes that file and never this one — so the
-#: environment still pins a key above both. Each key's variable
-#: is the rule's own, ``MSKSC_`` plus the key uppercased.
+#: The GUI's settings page writes these keys into the user's
+#: ``msks.yaml`` in place (#1224), under the system file when
+#: there is one, and the environment still pins a key above the
+#: file. Each key's variable is the rule's own, ``MSKSC_`` plus
+#: the key uppercased.
 DICTATE_KEYS = (
     "dictate_model",
     "dictate_device",

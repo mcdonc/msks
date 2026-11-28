@@ -40,13 +40,35 @@ key: the second is a duplicate, refused with the rule named.
 
 The file is located through three ``--config`` modes (msksd's):
 
-- bare ``msks`` → ``$MSKSC_CONFIG_DIR/msks.yaml`` (default
-  ``~/.config/msks/msks.yaml``); a missing file is generated as a
-  commented template pointing at the docs.
+- bare ``msks`` → two files layered (#1224): the system file
+  ``/etc/msks/msks.yaml`` (relocated by ``MSKSC_SYSTEM_CONFIG``, an
+  empty value meaning none) as the floor, and the user's
+  ``$MSKSC_CONFIG_DIR/msks.yaml`` (default
+  ``~/.config/msks/msks.yaml``) over it, key by key. A missing user
+  file is generated as a commented template pointing at the docs:
+  the template parses to an empty document, which layers as
+  "every key inherited". ``daemons:`` merges by alias, an alias both
+  files define merging key by key.
 - ``msks --config /path/to/msks.yaml`` → exactly that file; a
-  missing file is an error. Explicit paths are never auto-generated.
+  missing file is an error. Explicit paths are never auto-generated
+  and never layered.
 - ``msks --config=none`` → environment variables and built-in
   defaults only.
+
+The precedence, highest first: ``--daemon`` flag > ``MSKSC_*``
+environment > the merged file's daemon aliases > the merged file's
+global keys > built-in defaults. The merged file is one document —
+the user's keys over the system's, alias by alias — and the client
+resolves it exactly as it resolves a single file: the active alias's
+entry (the user's keys over the system's) beats every global, the
+user's global ``url`` included. A user who wants a daemon other than
+the host's ``active_daemon`` sets their own alias and names it, or
+exports ``MSKSC_URL``.
+
+The user's file is also the one file the client writes after the
+first run: :func:`save_keys` merges keys into it in place
+(:func:`msks.configio.set_scalars`), through a symlink and never
+into the system file, for the GUI's settings page (#1224).
 
 ``MSKSC_CONFIG_DIR`` is deliberately not a config key: the file
 cannot relocate the config tree it lives in (klangkd's bootstrap
@@ -73,7 +95,7 @@ import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..configio import write_exclusive
+from ..configio import set_scalars, write_atomic, write_exclusive
 from .config_keys import (
     GLOBAL_ENV_VARS,
     SCREENSHOT_COMMAND_ENV,
@@ -89,6 +111,16 @@ NO_CONFIG = "none"
 
 # The filename inside the config directory.
 CONFIG_FILENAME = "msks.yaml"
+
+#: The system file's relocation variable (#1224): the path of the
+#: host-wide file a bare ``msks`` layers under the user's, an empty
+#: value meaning there is none. Set for the suite and for a sysadmin
+#: who wants the file elsewhere; the default is where the NixOS
+#: module writes it.
+SYSTEM_CONFIG_ENV = "MSKSC_SYSTEM_CONFIG"
+
+#: The system file's default path (#1224).
+SYSTEM_CONFIG_PATH = "/etc/msks/msks.yaml"
 
 #: The terminal-launch setting's variable (#314): the string form
 
@@ -123,6 +155,18 @@ def config_dir() -> str:
 def default_config_path() -> str:
     """The path a bare ``msks`` resolves: ``<config_dir>/msks.yaml``."""
     return os.path.join(config_dir(), CONFIG_FILENAME)
+
+
+def system_config_path() -> str | None:
+    """The system file a bare ``msks`` layers under the user's
+    (#1224): ``MSKSC_SYSTEM_CONFIG`` when it carries a path, the
+    default ``/etc/msks/msks.yaml`` when the variable is unset, and
+    None when the variable is empty — the explicit "no system
+    file", the suite's form."""
+    raw = os.environ.get(SYSTEM_CONFIG_ENV)
+    if raw == "":
+        return None
+    return raw or SYSTEM_CONFIG_PATH
 
 
 def resolve_config_path(config: str | None) -> str:
@@ -167,6 +211,138 @@ def ensure_default_config() -> str:
     return path
 
 
+def layered_paths(config: str | None) -> list[str]:
+    """The files the ``--config`` mode reads, floor first (#1224).
+
+    The bare mode resolves its user path (the template generated
+    on first run) and puts the system file under it when there is
+    one and it stands there; the explicit modes read what they
+    read today, with no system layer."""
+    if config is not None:
+        return explicit_paths(config)
+    user = ensure_default_config()
+    system = system_config_path()
+    if system and os.path.isfile(system):
+        return [system, user]
+    return [user]
+
+
+def explicit_paths(config: str) -> list[str]:
+    """The explicit modes' files (#1224): the one ``--config``
+    path, validated by :func:`resolve_config_path`; none under
+    ``--config=none``."""
+    path = resolve_config_path(config)
+    return [] if path == NO_CONFIG else [path]
+
+
+def load_layered(config: str | None) -> tuple[list[str], dict]:
+    """The files the mode reads and their merged document (#1224):
+    each file validated on its own — a refusal gives its path — with
+    the files under it as its floor, and the later file layered
+    over the earlier."""
+    paths = layered_paths(config)
+    return paths, load_paths(paths)
+
+
+def load_paths(paths: list[str]) -> dict:
+    """The documents of *paths* merged floor to top (#1224): each
+    file is validated against the aliases of the files under it,
+    so an overlay entry completes a floor alias."""
+    merged: dict = {}
+    for path in paths:
+        merged = merge_over(merged, load_config(path, floor_aliases(merged)))
+    return merged
+
+
+def floor_aliases(merged: dict) -> dict | None:
+    """The aliases of the files under the one being read (#1224):
+    the merged document's ``daemons:``, None when there are none
+    (the first file, or no ``daemons:`` under it)."""
+    return merged.get("daemons") or None
+
+
+def merge_over(floor: dict, over: dict) -> dict:
+    """One document over another (#1224): every key the upper
+    document carries replaces the floor's, ``daemons`` alone merging
+    by alias."""
+    merged = dict(floor)
+    for key, value in over.items():
+        if key == "daemons":
+            merged[key] = merge_aliases(floor.get("daemons") or {}, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def merge_aliases(floor: dict, over: dict) -> dict:
+    """The ``daemons:`` mapping merged (#1224): an alias both files
+    define merges key by key, the upper file's keys winning; an
+    alias one file defines alone survives as it is."""
+    merged = {alias: dict(entry) for alias, entry in floor.items()}
+    for alias, entry in over.items():
+        merged[alias] = {**merged.get(alias, {}), **entry}
+    return merged
+
+
+def reload_doc(conf: ClientConfig) -> dict:
+    """The merged document read again from the files *conf*
+    resolved (#1224) — the GUI's re-read after a save, through the
+    same files the launch read, those still standing: a system file
+    removed under the window stops layering instead of refusing
+    every later save."""
+    return load_paths(standing_paths(conf.config_paths))
+
+
+def standing_paths(paths: list[str]) -> list[str]:
+    """The paths of *paths* that are files now (#1224): the layer's
+    own rule — a file that is not there is no layer."""
+    return [path for path in paths if os.path.isfile(path)]
+
+
+def save_keys(conf: ClientConfig, values: dict) -> None:
+    """Merge *values* into the user's file in place (#1224), for
+    the GUI's settings page: the file at ``conf.config_path`` —
+    never the system file under bare ``msks`` — read (the first-run
+    template's text when the file is gone under a bare launch; an
+    explicit path is never generated), edited by
+    :func:`msks.configio.set_scalars`, checked through the loader
+    against the files under it still standing (a result the loader
+    refuses is never written), and written through a symlink by
+    :func:`msks.configio.write_atomic`.
+    ``--config=none`` has no file to write and returns; a file that
+    will not read, a result that will not load, and a tree that will
+    not write surface as ``ValueError`` or ``OSError`` with the path
+    in the message."""
+    if conf.config_path == NO_CONFIG:
+        return
+    path = conf.config_path
+    try:
+        text = read_for_save(path, bare=conf.config_arg is None)
+    except OSError as exc:
+        raise ValueError(
+            f"cannot read config file {path}: {exc.strerror or exc}"
+        ) from None
+    edited = set_scalars(text, values)
+    floor = floor_aliases(load_paths(standing_paths(conf.config_paths[:-1])))
+    parse_config_doc(edited, path, floor)
+    write_atomic(path, edited)
+
+
+def read_for_save(path: str, *, bare: bool) -> str:
+    """The file's text for a save (#1224): the first-run template's
+    when the file is gone under a bare launch — the launch's own rule
+    for a missing file, so the next write lands the template with the
+    keys merged in. An explicit path is never generated: under
+    ``--config <path>`` a missing file is the read error the launch
+    would give."""
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        if bare:
+            return render_template()
+        raise
+
+
 def generate_template(path: str) -> None:
     """Write the first-run ``msks.yaml`` template at *path*.
 
@@ -179,8 +355,10 @@ def generate_template(path: str) -> None:
     write_exclusive(path, render_template())
 
 
-def load_config(path: str) -> dict:
-    """Read and validate the config file at *path* into its keys.
+def load_config(path: str, floor: dict | None = None) -> dict:
+    """Read and validate the config file at *path* into its keys,
+    its ``daemons:`` entries checked against *floor* (the aliases
+    of the file under it, #1224).
 
     An unreadable file is a one-line refusal naming the path —
     the bootstrap contract every other config problem carries.
@@ -191,7 +369,7 @@ def load_config(path: str) -> dict:
         raise ValueError(
             f"cannot read config file {path}: {exc.strerror or exc}"
         ) from None
-    return parse_config_doc(text, path)
+    return parse_config_doc(text, path, floor)
 
 
 @dataclass
@@ -446,16 +624,27 @@ class ClientConfig:
     screenshot_command: list[str] | None = None
     screenshot_port: int | None = None
     env_layer: dict[str, str] = field(default_factory=dict)
-    #: The config file the resolution read (#1009): the path
-    #: itself, or the ``none`` opt-out sentinel — the GUI's
-    # connection picker re-reads the same file its launch
-    # resolved, ``--config`` and all.
+    #: The config file the resolution read (#1009): the user's path
+    #: under bare ``msks`` — the file :func:`save_keys` writes —
+    #: the explicit path under ``--config <path>``, or the ``none``
+    #: opt-out sentinel. The GUI's connection picker re-reads the
+    #: same files its launch resolved through :func:`reload_doc`.
     config_path: str = ""
-    #: The validated file keys (#1214): what the resolution read,
-    #: before the environment and the flag layered over them — for
-    #: the readers whose own precedence has a layer between the
-    #: environment and this file: the GUI's dictation keys, whose
-    #: ``gui.yaml`` stands there. Empty under ``--config=none``.
+    #: Every file the resolution read, floor first (#1224): the
+    #: system file when there is one, then the user's — or the one
+    #: explicit path. Empty under ``--config=none``.
+    config_paths: list[str] = field(default_factory=list)
+    #: The ``--config`` argument the resolution ran under (#1224):
+    #: None for the bare mode, the ``none`` sentinel, or the path.
+    #: A reader that re-resolves the way the launch did — the
+    #: GUI's connection picker — passes it back to
+    #: :func:`load_layered` and :func:`resolve`.
+    config_arg: str | None = None
+    #: The validated file keys, merged (#1214, #1224): what the
+    #: files read before the environment and the flag layered over
+    #: them, the user's keys over the system's — for the readers
+    #: whose own precedence stops at the file: the GUI's dictation
+    #: keys. Empty under ``--config=none``.
     doc: dict = field(default_factory=dict)
 
 
@@ -470,8 +659,8 @@ def resolve(
     that want the readers to see the result pass the outcome to
     :func:`apply`.
     """
-    path = resolve_config_path(config)
-    doc = {} if path == NO_CONFIG else load_config(path)
+    paths, doc = load_layered(config)
+    path = paths[-1] if paths else NO_CONFIG
     selection = select_daemon(daemon, doc, path)
     entry = selection_entry(doc, selection)
     layer: dict[str, str] = {}
@@ -504,6 +693,8 @@ def resolve(
         screenshot_port=resolved_screenshot_port(doc, layer),
         env_layer=layer,
         config_path=path,
+        config_paths=paths,
+        config_arg=config,
         doc=doc,
     )
 

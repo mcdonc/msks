@@ -29,6 +29,10 @@ CLIENT_VARS = (
     "MSKSC_SSH_OPTIONS",
     "MSKSC_SCREENSHOT_COMMAND",
     "MSKSC_SCREENSHOT_PORT",
+    # The empty value is the "no system file" form (#1224): every
+    # test that clears the client variables reads the user file
+    # alone, and the layer tests set the variable themselves.
+    "MSKSC_SYSTEM_CONFIG",
 )
 
 
@@ -833,8 +837,15 @@ def test_pubkey_file_is_global_only(tmp_path, monkeypatch) -> None:
 
 def test_the_template_documents_pubkey_file() -> None:
     """The first-run template shows the key (#495) beside
-    identity_file's example, commented like every other one."""
-    assert "# pubkey_file:" in config.render_template()
+    identity_file's example, commented like every other one, and
+    states the precedence over a host's system file the way
+    docs/cli.md does (#1224)."""
+    template = config.render_template()
+    assert "# pubkey_file:" in template
+    assert (
+        "#   --daemon flag > MSKSC_* environment > the active alias's entry >"
+        in template
+    )
 
 
 def test_bootstrap_maps_config_errors_to_one_line(
@@ -1297,9 +1308,9 @@ def test_resolve_carries_the_validated_file_keys(
 ) -> None:
     """The resolution hands the GUI the file's validated keys
     (#1214): the dictation settings resolve from them under their
-    own precedence, with gui.yaml between the environment and the
-    file. The environment wins nothing here — the dictation keys
-    materialize nowhere, the GUI reads them off the doc itself."""
+    own precedence. The environment wins nothing here — the
+    dictation keys materialize nowhere, the GUI reads them off
+    the doc itself."""
     conf = config.resolve(
         config=write_config(
             tmp_path, "url: https://daemon\ndictate_model: base.en\n"
@@ -1308,3 +1319,454 @@ def test_resolve_carries_the_validated_file_keys(
     assert conf.doc == {"url": "https://daemon", "dictate_model": "base.en"}
     assert conf.env_layer == {}
     assert config.resolve(config="none").doc == {}
+
+
+# --- the system file layer (#1224) ---------------------------------------
+
+SYSTEM = """\
+# the host's file
+url: https://system:8660
+cafile: /etc/msks/hv-1-ca.pem
+daemons:
+  host:
+    url: https://host:8660
+    token_file: /etc/msks/token
+  lab:
+    url: https://lab:8660
+    expected_image: msks/sys-img
+"""
+
+
+def system_file(tmp_path: Path, text: str, monkeypatch) -> str:
+    """The system file under the temporary tree, pointed at by the
+    relocation variable (#1224)."""
+    path = tmp_path / "system" / "msks.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    monkeypatch.setenv("MSKSC_SYSTEM_CONFIG", str(path))
+    return str(path)
+
+
+def user_tree(tmp_path: Path, monkeypatch) -> Path:
+    """The user's config dir under the temporary tree."""
+    user = tmp_path / "user"
+    monkeypatch.setenv("MSKSC_CONFIG_DIR", str(user))
+    return user
+
+
+def test_system_config_path_reads_the_variable(monkeypatch) -> None:
+    monkeypatch.delenv("MSKSC_SYSTEM_CONFIG", raising=False)
+    assert config.system_config_path() == "/etc/msks/msks.yaml"
+    monkeypatch.setenv("MSKSC_SYSTEM_CONFIG", "/elsewhere/msks.yaml")
+    assert config.system_config_path() == "/elsewhere/msks.yaml"
+    monkeypatch.setenv("MSKSC_SYSTEM_CONFIG", "")
+    assert config.system_config_path() is None
+
+
+def test_a_bare_msks_layers_the_system_file_under_the_users(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The layer (#1224): a bare ``msks`` reads the system file as
+    the floor and the user's file over it, key by key — the user's
+    alias pick and image override stand, the system's url, CA,
+    and token file fill in, and the paths record floor first with
+    the user file the one a save writes."""
+    clean_env(monkeypatch)
+    system = system_file(tmp_path, SYSTEM, monkeypatch)
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    user_file = user / "msks.yaml"
+    user_file.write_text(
+        "active_daemon: lab\n"
+        "daemons:\n"
+        "  lab:\n"
+        "    expected_image: msks/my-img\n"
+        "    cafile: ~/lab-ca.pem\n"
+        "dictate_model: small\n"
+    )
+    conf = config.resolve()
+    assert conf.config_paths == [system, str(user_file)]
+    assert conf.config_path == str(user_file)  # the save target
+    assert conf.config_arg is None  # the bare mode
+    assert conf.daemon == "lab"
+    assert conf.url == "https://lab:8660"  # the system's entry
+    assert conf.expected_image == "msks/my-img"  # the user's override
+    assert conf.cafile.endswith("/lab-ca.pem")  # the user's, expanded
+    assert conf.doc["daemons"]["host"] == {
+        "url": "https://host:8660",
+        "token_file": "/etc/msks/token",
+    }  # a system-only alias survives
+    assert conf.doc["dictate_model"] == "small"
+    # The global keys layer too: the system's url stands where the
+    # user's file says nothing.
+    assert conf.doc["url"] == "https://system:8660"
+
+
+def test_daemons_merge_by_alias_key_by_key(
+    tmp_path: Path, monkeypatch
+) -> None:
+    clean_env(monkeypatch)
+    system_file(tmp_path, SYSTEM, monkeypatch)
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    (user / "msks.yaml").write_text(
+        "daemons:\n"
+        "  lab:\n"
+        "    token_file: ~/lab.token\n"
+        "  extra:\n"
+        "    socket: /run/msks/extra.sock\n"
+    )
+    doc = config.resolve().doc
+    assert doc["daemons"] == {
+        "host": {"url": "https://host:8660", "token_file": "/etc/msks/token"},
+        "lab": {
+            "url": "https://lab:8660",  # the system's
+            "expected_image": "msks/sys-img",  # the system's
+            "token_file": "~/lab.token",  # the user's
+        },
+        "extra": {"socket": "/run/msks/extra.sock"},  # the user's alone
+    }
+    assert doc["url"] == "https://system:8660"
+
+
+def test_the_user_file_replaces_a_scalar_the_system_file_carries(
+    tmp_path: Path, monkeypatch
+) -> None:
+    clean_env(monkeypatch)
+    system_file(tmp_path, SYSTEM, monkeypatch)
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    (user / "msks.yaml").write_text("url: https://user:8660\n")
+    conf = config.resolve()
+    assert conf.url == "https://user:8660"
+    assert conf.doc["cafile"] == "/etc/msks/hv-1-ca.pem"  # the system's
+
+
+def test_the_first_run_template_over_a_system_file_inherits_every_key(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The template an empty document: over a system file it layers
+    as "every key inherited" (#1224), never as a shadow."""
+    clean_env(monkeypatch)
+    system = system_file(tmp_path, SYSTEM, monkeypatch)
+    user_tree(tmp_path, monkeypatch)
+    conf = config.resolve()
+    assert conf.config_paths == [system, conf.config_path]
+    assert Path(conf.config_path).read_text().startswith("# msks client")
+    assert conf.url == "https://system:8660"
+    assert set(conf.doc["daemons"]) == {"host", "lab"}
+
+
+def test_an_explicit_config_path_reads_no_system_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    clean_env(monkeypatch)
+    system_file(tmp_path, SYSTEM, monkeypatch)
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    explicit = user / "msks.yaml"
+    explicit.write_text("expected_image: msks/mine\n")
+    conf = config.resolve(config=str(explicit))
+    assert conf.config_paths == [str(explicit)]
+    assert conf.config_arg == str(explicit)
+    assert conf.url == ""  # nothing layered under it
+    assert conf.doc == {"expected_image": "msks/mine"}
+
+
+def test_config_none_reads_neither_file(tmp_path: Path, monkeypatch) -> None:
+    clean_env(monkeypatch)
+    system_file(tmp_path, SYSTEM, monkeypatch)
+    conf = config.resolve(config="none")
+    assert conf.config_paths == []
+    assert conf.config_path == "none"
+    assert conf.config_arg == "none"
+    assert conf.doc == {}
+
+
+def test_the_merged_file_resolves_under_the_one_file_rule(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The two files read as one (#1224 review): the active alias's
+    entry beats every global, the user's global ``url`` included,
+    so a host's ``active_daemon`` pick dials the host's daemon.
+    The override paths are the user's own alias and pick, and the
+    environment."""
+    clean_env(monkeypatch)
+    # A host pick with no token file to read: the alias's url, not
+    # the user's global.
+    system_file(
+        tmp_path,
+        "active_daemon: host\ndaemons:\n  host:\n    url: https://host:8660\n",
+        monkeypatch,
+    )
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    user_file = user / "msks.yaml"
+    user_file.write_text("url: https://user-global:8660\n")
+    conf = config.resolve()
+    assert conf.daemon == "host"
+    assert conf.url == "https://host:8660"
+    assert conf.doc["url"] == "https://user-global:8660"  # merged, not dialled
+    # The user's own alias and pick override the host's.
+    user_file.write_text(
+        "active_daemon: mine\ndaemons:\n  mine:\n    url: https://mine:8660\n"
+    )
+    assert config.resolve().url == "https://mine:8660"
+    # The environment outranks the entry for the invocation.
+    monkeypatch.setenv("MSKSC_URL", "https://env:8660")
+    assert config.resolve().url == "https://env:8660"
+
+
+def test_a_system_file_removed_under_the_window_stops_layering(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The launch's file list is re-checked at every re-read and save
+    (#1224 review): a system file removed after launch is no layer,
+    not a refusal on every later save."""
+    clean_env(monkeypatch)
+    system = system_file(tmp_path, SYSTEM, monkeypatch)
+    user_tree(tmp_path, monkeypatch)
+    conf = config.resolve()
+    assert conf.config_paths == [system, conf.config_path]
+    Path(system).unlink()
+    assert config.reload_doc(conf) == {}
+    config.save_keys(conf, {"dictate_model": "small"})
+    assert config.reload_doc(conf) == {"dictate_model": "small"}
+
+
+def test_save_keys_regenerates_a_user_file_removed_under_the_window(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A missing user file is the first-run case again (#1224 review):
+    the save lands the template with the keys merged in, and the
+    template's comments are there to stay."""
+    clean_env(monkeypatch)
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    (user / "msks.yaml").write_text("url: https://u\n")
+    conf = config.resolve()
+    (user / "msks.yaml").unlink()
+    config.save_keys(conf, {"dictate_model": "small"})
+    text = (user / "msks.yaml").read_text()
+    assert text.startswith("# msks client configuration")
+    assert text.endswith("dictate_model: small\n")
+
+
+def test_save_keys_never_generates_an_explicit_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An explicit ``--config <path>`` that vanished under the window
+    is the launch's read error again (#1224 delta review), never the
+    first-run template: explicit paths are not generated."""
+    clean_env(monkeypatch)
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    user_file = user / "msks.yaml"
+    user_file.write_text("url: https://u\n")
+    conf = config.resolve(config=str(user_file))
+    user_file.unlink()
+    with pytest.raises(ValueError, match="cannot read config file") as refused:
+        config.save_keys(conf, {"dictate_model": "small"})
+    assert str(user_file) in str(refused.value)
+    assert not user_file.exists()
+
+
+def test_an_empty_system_variable_means_no_system_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    clean_env(monkeypatch)
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    (user / "msks.yaml").write_text("url: https://user:8660\n")
+    conf = config.resolve()
+    assert conf.config_paths == [str(user / "msks.yaml")]
+    assert conf.url == "https://user:8660"
+
+
+def test_a_system_file_that_does_not_stand_there_is_no_layer(
+    tmp_path: Path, monkeypatch
+) -> None:
+    clean_env(monkeypatch)
+    monkeypatch.setenv("MSKSC_SYSTEM_CONFIG", str(tmp_path / "absent.yaml"))
+    user_tree(tmp_path, monkeypatch)
+    conf = config.resolve()
+    assert conf.config_paths == [conf.config_path]
+
+
+def test_each_file_refuses_with_its_own_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    clean_env(monkeypatch)
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    (user / "msks.yaml").write_text("url: https://user\n")
+    system = system_file(tmp_path, "url: [\n", monkeypatch)
+    with pytest.raises(ValueError) as broken_system:
+        config.resolve()
+    assert str(system) in str(broken_system.value)
+    system_file(tmp_path, SYSTEM, monkeypatch)
+    (user / "msks.yaml").write_text("daemons: 7\n")
+    with pytest.raises(ValueError) as broken_user:
+        config.resolve()
+    assert str(user / "msks.yaml") in str(broken_user.value)
+
+
+def test_reload_doc_rereads_the_files_conf_resolved(
+    tmp_path: Path, monkeypatch
+) -> None:
+    clean_env(monkeypatch)
+    system_file(tmp_path, "dictate_model: small\n", monkeypatch)
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    (user / "msks.yaml").write_text("dictate_device: mic-a\n")
+    conf = config.resolve()
+    assert conf.doc == {"dictate_model": "small", "dictate_device": "mic-a"}
+    (user / "msks.yaml").write_text("dictate_device: mic-b\n")
+    assert config.reload_doc(conf)["dictate_device"] == "mic-b"
+
+
+# --- the in-place save (#1224) ------------------------------------------
+
+
+def test_save_keys_merges_into_the_user_file_in_place(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """:func:`save_keys` writes the user's file and never the system
+    file: the keys land in place, every other byte of the file —
+    the comment, the alias block, the hyphen spelling — as the
+    operator wrote it."""
+    clean_env(monkeypatch)
+    system = system_file(tmp_path, SYSTEM, monkeypatch)
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    user_file = user / "msks.yaml"
+    user_file.write_text(
+        "# mine\n"
+        "url: https://user:8660\n"
+        "\n"
+        "daemons:\n"
+        "  lab:\n"
+        "    url: https://my-lab:8660\n"
+        "\n"
+        "dictate-device: mic-a\n"
+    )
+    conf = config.resolve()
+    config.save_keys(
+        conf,
+        {"dictate_model": "small", "dictate_device": "mic-b"},
+    )
+    assert user_file.read_text() == (
+        "# mine\n"
+        "url: https://user:8660\n"
+        "\n"
+        "daemons:\n"
+        "  lab:\n"
+        "    url: https://my-lab:8660\n"
+        "\n"
+        "dictate-device: mic-b\n"  # the file's own spelling
+        "dictate_model: small\n"  # appended
+    )
+    assert Path(system).read_text() == SYSTEM  # untouched
+    reloaded = config.reload_doc(conf)
+    assert reloaded["dictate_model"] == "small"
+    assert reloaded["dictate_device"] == "mic-b"
+    assert reloaded["url"] == "https://user:8660"
+
+
+def test_an_overlay_entry_takes_the_floor_aliass_address_one_way(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The one-address rule runs over the merged entry (#1224): a
+    user entry that adds a socket to a floor alias carrying a url
+    is refused with the user file named, and a user entry that
+    carries no address passes when the floor alias has one."""
+    clean_env(monkeypatch)
+    system_file(tmp_path, SYSTEM, monkeypatch)
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    user_file = user / "msks.yaml"
+    user_file.write_text("daemons:\n  lab:\n    token_file: ~/lab.token\n")
+    assert config.resolve().doc["daemons"]["lab"]["url"] == "https://lab:8660"
+    user_file.write_text("daemons:\n  lab:\n    socket: /run/lab.sock\n")
+    with pytest.raises(
+        ValueError, match="carries both a url and a socket"
+    ) as both:
+        config.resolve()
+    assert str(user_file) in str(both.value)
+    # A single file keeps the rule on its own: no address is refused.
+    user_file.write_text("daemons:\n  lab:\n    token_file: ~/lab.token\n")
+    monkeypatch.setenv("MSKSC_SYSTEM_CONFIG", "")
+    with pytest.raises(ValueError, match="needs a url or a socket"):
+        config.resolve()
+
+
+def test_save_keys_drops_a_blank_key(tmp_path: Path, monkeypatch) -> None:
+    clean_env(monkeypatch)
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    (user / "msks.yaml").write_text("dictate_model: small\nurl: https://u\n")
+    conf = config.resolve()
+    config.save_keys(conf, {"dictate_model": None})
+    assert (user / "msks.yaml").read_text() == "url: https://u\n"
+
+
+def test_save_keys_under_config_none_writes_nothing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    clean_env(monkeypatch)
+    user_tree(tmp_path, monkeypatch)
+    conf = config.resolve(config="none")
+    config.save_keys(conf, {"dictate_model": "small"})
+    assert not (tmp_path / "user").exists()
+
+
+def test_save_keys_refuses_a_result_the_loader_refuses(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A file broken outside the keys: the merge lands its key and
+    the self-check refuses the whole — nothing is written, the
+    file stands as it was, and the refusal gives the path."""
+    clean_env(monkeypatch)
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    user_file = user / "msks.yaml"
+    user_file.write_text("url: https://u\n")
+    conf = config.resolve(config=str(user_file))
+    user_file.write_text("url: [\n")  # broke under the window
+    with pytest.raises(ValueError, match="invalid YAML") as refused:
+        config.save_keys(conf, {"dictate_model": "small"})
+    assert str(user_file) in str(refused.value)
+    assert user_file.read_text() == "url: [\n"
+
+
+def test_save_keys_names_an_unreadable_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    clean_env(monkeypatch)
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    user_file = user / "msks.yaml"
+    user_file.write_text("url: https://u\n")
+    user_file.chmod(0o000)
+    if os.getuid() == 0:  # root reads anything
+        pytest.skip("root reads a mode-000 file")
+    conf = config.ClientConfig(
+        url="",
+        socket="",
+        token=None,
+        cafile="",
+        expected_image="",
+        cache_dir=None,
+        state_dir=None,
+        identity_file=None,
+        pubkey_file=None,
+        terminal_open_cmd=None,
+        image_manifest_url="",
+        ssh_options=[],
+        daemon=None,
+        config_path=str(user_file),
+        config_paths=[str(user_file)],
+    )
+    with pytest.raises(ValueError, match="cannot read config file") as refused:
+        config.save_keys(conf, {"dictate_model": "small"})
+    assert str(user_file) in str(refused.value)

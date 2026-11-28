@@ -20,10 +20,9 @@ from .config_keys import (
 
 
 def load_mapping(text: str, path: str, what: str = "config file") -> dict:
-    """The YAML text as a flat mapping (#1214 shares it with the
-    GUI's preferences file): an empty document is an empty
-    mapping, anything but a mapping is refused naming the file,
-    and duplicate keys are refused by the loader
+    """The YAML text as a flat mapping: an empty document is an
+    empty mapping, anything but a mapping is refused with the file
+    in the message, and duplicate keys are refused by the loader
     (:class:`msks.configio.UniqueKeyLoader`), shared with msksd so
     every file carries one duplicate-key story."""
     try:
@@ -40,7 +39,7 @@ def load_mapping(text: str, path: str, what: str = "config file") -> dict:
     return doc
 
 
-def parse_config_doc(text: str, path: str) -> dict:
+def parse_config_doc(text: str, path: str, floor: dict | None = None) -> dict:
     """Parse config-file text into its validated key walk.
 
     Unknown keys are errors naming the key and the valid ones; a
@@ -49,8 +48,15 @@ def parse_config_doc(text: str, path: str) -> dict:
     variable would. Duplicate keys are refused by the loader
     (:class:`msks.configio.UniqueKeyLoader`), shared with msksd so
     the two files carry one duplicate-key story.
+
+    *floor* is the ``daemons:`` mapping of the file layered under
+    this one (#1224), None for a file read alone: the one-address
+    rule runs over an entry merged with the floor's entry of the
+    same alias, so an overlay entry that adds a key to a floor
+    alias needs no address of its own, and one that adds a socket
+    to a floor alias carrying a url is refused as both.
     """
-    return validated_doc(load_mapping(text, path), path)
+    return validated_doc(load_mapping(text, path), path, floor)
 
 
 def normalized_key(key: str) -> str:
@@ -64,8 +70,10 @@ def normalized_key(key: str) -> str:
     return key.replace("-", "_")
 
 
-def validated_doc(doc: dict, path: str) -> dict:
-    """The validated key walk: each key normalized, then checked."""
+def validated_doc(doc: dict, path: str, floor: dict | None = None) -> dict:
+    """The validated key walk: each key normalized, then checked
+    against the floor's aliases where a ``daemons:`` entry needs
+    one (#1224)."""
     out: dict = {}
     seen: set[str] = set()
     for key, value in doc.items():
@@ -80,15 +88,21 @@ def validated_doc(doc: dict, path: str) -> dict:
                 "and underscores spell the same key"
             )
         seen.add(name)
-        out.update(validated_pair(name, key, value, path))
+        out.update(validated_pair(name, key, value, path, floor))
     return out
 
 
-def validated_pair(key: str, spelling: str, value: object, path: str) -> dict:
+def validated_pair(
+    key: str,
+    spelling: str,
+    value: object,
+    path: str,
+    floor: dict | None = None,
+) -> dict:
     """One top-level key's checked {key: value} pair — *key* the
     normalized name, *spelling* the operator's own, echoed by the
     refusal."""
-    pair = sectioned_pair(key, value, path)
+    pair = sectioned_pair(key, value, path, floor)
     if pair is not None:
         return pair
     if key in GLOBAL_ENV_VARS:
@@ -100,14 +114,16 @@ def validated_pair(key: str, spelling: str, value: object, path: str) -> dict:
     )
 
 
-def sectioned_pair(key: str, value: object, path: str) -> dict | None:
+def sectioned_pair(
+    key: str, value: object, path: str, floor: dict | None = None
+) -> dict | None:
     """The structural and typed-value keys' checked pairs — None
     when the key is none of them, handing the scalar globals and
     the refusal back to :func:`validated_pair`. The typed-value
     keys dispatch through :data:`SECTIONED_VALUE_KEYS`, one reader
     per key."""
     if key == "daemons":
-        return {key: daemons_section(value, path)}
+        return {key: daemons_section(value, path, floor)}
     if key == "active_daemon":
         return {key: active_value(value, path)}
     reader = SECTIONED_VALUE_KEYS.get(key)
@@ -158,8 +174,12 @@ def active_value(value: object, path: str) -> str:
     return value
 
 
-def daemons_section(value: object, path: str) -> dict[str, dict]:
-    """The ``daemons:`` mapping: alias name → validated entry."""
+def daemons_section(
+    value: object, path: str, floor: dict | None = None
+) -> dict[str, dict]:
+    """The ``daemons:`` mapping: alias name → validated entry, each
+    entry's address rule run against the floor's entry of the same
+    alias (#1224)."""
     if not isinstance(value, dict):
         kind = type(value).__name__
         raise ValueError(
@@ -167,14 +187,17 @@ def daemons_section(value: object, path: str) -> dict[str, dict]:
             f"settings, got {kind}"
         )
     return {
-        alias: daemon_entry(alias, entry, path)
+        alias: daemon_entry(alias, entry, path, floor)
         for alias, entry in value.items()
     }
 
 
-def daemon_entry(alias: object, entry: object, path: str) -> dict:
+def daemon_entry(
+    alias: object, entry: object, path: str, floor: dict | None = None
+) -> dict:
     """One alias's settings: its keys, with the address rule —
-    exactly one of ``url`` and ``socket`` (#555)."""
+    exactly one of ``url`` and ``socket`` (#555) — over the entry
+    the floor's alias of the same name completes (#1224)."""
     if not isinstance(alias, str) or not alias:
         raise ValueError(
             f"{path}: daemon aliases must be names, got {alias!r}"
@@ -186,7 +209,9 @@ def daemon_entry(alias: object, entry: object, path: str) -> dict:
             f"got {kind}"
         )
     out = entry_keys(alias, entry, path)
-    refuse_addressless_entry(out, alias, path)
+    refuse_addressless_entry(
+        {**(floor or {}).get(alias, {}), **out}, alias, path
+    )
     return out
 
 

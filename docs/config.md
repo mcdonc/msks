@@ -268,14 +268,13 @@ than regenerated, because a reload is not a first run and
 regenerating the template would silently revert every file-set
 value to its default.
 
-## The GUI's preferences file
+## The GUI's dictation settings
 
-`msks gui` reads the dictation settings from a file of its own
-beside the client config, `~/.config/msks/gui.yaml`, and its
-**Settings** tab writes that file. The GUI never edits the
-operator's `msks.yaml`: a NixOS host's generated, read-only config
-stays declarative. For the three `dictate_*` keys the order is
-`MSKSC_DICTATE_*` variables, then `gui.yaml`, then `msks.yaml`, then
-the defaults. The [CLI chapter](cli.md#the-gui-preferences-file)
-documents the file, the keys, and the precedence, and the
+The GUI's dictation keys (`dictate_model`, `dictate_device`,
+`dictate_prompt`) are client config keys. They live in the user's
+`msks.yaml`, over the host's system file when there is one, and the
+GUI's **Settings** tab merges them into the user's file in place. The
+order is `MSKSC_DICTATE_*` variables, then the config files, then the
+defaults. The [CLI chapter](cli.md#the-client-config-file) documents
+the files and the precedence, and the
 [GUI chapter](gui.md#dictation) the feature.

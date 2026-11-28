@@ -3,10 +3,10 @@ window — the main window, a torn-off shell window, a dialog — one
 recording behind them all, the faces each state wears, the
 discard button, the corner it holds, and the terminal-only corner
 parking clear of it; the settings page's form over the keys'
-precedence, the ``gui.yaml`` write, the model download with its
-progress and cancel. Offscreen, over the controller's recorded
-seams, with no capture child: the pill's suite drives the
-controller through its states by hand."""
+precedence, the in-place ``msks.yaml`` write (#1224), the model
+download with its progress and cancel. Offscreen, over the
+controller's recorded seams, with no capture child: the pill's
+suite drives the controller through its states by hand."""
 
 import os
 import sys
@@ -17,15 +17,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
+from msks.client import config as client_config
 from msks.client import dictate
 from msks.client.gui.dictatekeys import DictateSettings, resolve
-from msks.client.gui.guiprefs import (
-    dump_prefs,
-    load_prefs,
-    parse_prefs,
-    prefs_path,
-    save_prefs,
-)
+from msks.client.validate import parse_config_doc
 
 SLEEPER = textwrap.dedent(
     """
@@ -91,6 +87,7 @@ def qt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     os.environ["FONTCONFIG_FILE"] = str(fonts)
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     monkeypatch.setenv("MSKSC_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MSKSC_SYSTEM_CONFIG", "")  # no system file
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     monkeypatch.delenv("MSKSC_CACHE_DIR", raising=False)
     for key in DICTATE_VARS:
@@ -124,14 +121,14 @@ def qt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def controller(qt, operator=None):
     """A real controller over the recorded seams and a present
     model, its settings resolved the way the window resolves them
-    (#1214: the environment, gui.yaml, the operator's file), with
-    no host installed — the pill suite adds pills by hand or
+    (#1214, #1224: the environment and the merged config document),
+    with no host installed — the pill suite adds pills by hand or
     through the host, per test."""
     from msks.client.gui.dictation import Dictation
 
     fake = Fake()
     held = Dictation(
-        resolve(os.environ, load_prefs(), operator or {}),
+        resolve(os.environ, operator or {}),
         qt.tmp / "cache" / "msks",
         command_for=fake.command,
         transcriber=fake.transcribe,
@@ -148,6 +145,36 @@ def spin(qt, ms: int = 50) -> None:
         qt.app.processEvents()
         time.sleep(0.005)
     qt.app.processEvents()
+
+
+def user_file(qt) -> Path:
+    """The user's ``msks.yaml`` under the fixture's config dir
+    (#1224): the file the settings page writes."""
+    return qt.tmp / "config" / "msks.yaml"
+
+
+def file_doc(qt) -> dict:
+    """The user file's validated document, empty while the file is
+    the all-comment template or missing."""
+    path = user_file(qt)
+    if not path.exists():
+        return {}
+    return parse_config_doc(path.read_text(), str(path))
+
+
+def launched(qt, doc=None, *, text: str | None = None):
+    """A resolved config the way a bare ``msks gui`` launch gets one
+    (#1224): *doc* (a dict, or yaml text through *text*) written
+    into the user file first when given, then
+    :func:`msks.client.config.resolve` — the template generated on
+    a missing file, no system file under the fixture."""
+    if text is not None:
+        user_file(qt).parent.mkdir(parents=True, exist_ok=True)
+        user_file(qt).write_text(text)
+    elif doc:
+        user_file(qt).parent.mkdir(parents=True, exist_ok=True)
+        user_file(qt).write_text(yaml.safe_dump(doc))
+    return client_config.resolve()
 
 
 # --- the pill and the host -----------------------------------------------
@@ -467,47 +494,80 @@ def test_the_terminal_only_corner_parks_clear_of_the_pill(qt):
 # --- the settings page ----------------------------------------------------
 
 
-def test_the_page_seeds_from_the_effective_settings_and_saves_gui_yaml(qt):
-    """The form reads the effective settings (#1214) — gui.yaml
-    over the operator's file over the defaults — Apply writes
-    the fields into ``gui.yaml`` and never the operator's file,
-    and the controller takes the new settings."""
+def test_the_page_seeds_from_the_effective_settings_and_merges_in_place(
+    qt,
+):
+    """The form reads the effective settings (#1214, #1224) — the
+    environment over the user's file over the defaults — Apply
+    merges the three keys into the user's ``msks.yaml`` in place
+    (every other byte of the file as the operator wrote it), and
+    the controller takes the new settings."""
     from msks.client.gui.settingspage import SettingsPage
 
     operator = {"dictate_model": "base.en", "dictate_device": "mic-a"}
-    save_prefs({"dictate_device": "mic-b"})
-    held, _fake = controller(qt, operator)
-    assert held.settings.model == "base.en"  # the operator's file
-    assert held.settings.device == "mic-b"  # gui.yaml wins over it
-    page = SettingsPage(held, operator)
+    conf = launched(
+        qt,
+        text="# my config\n" + yaml.safe_dump(operator),
+    )
+    held, _fake = controller(qt, conf.doc)
+    assert held.settings.model == "base.en"  # the user's file
+    assert held.settings.device == "mic-a"
+    page = SettingsPage(held, conf)
     assert page.model.currentText() == "base.en (142 MB)"  # its label
     assert page.model_value() == "base.en"
-    assert page.device_value() == "mic-b"  # gui.yaml's, over the file's
-    # Edit, apply: gui.yaml carries the fields, the operator's
-    # dict stands as it was, the controller re-resolves.
+    assert page.device_value() == "mic-a"
+    # Edit, apply: the file carries the three keys, its comment and
+    # the other keys as they were, and the controller re-resolves.
     page.pick_model("small")  # a listed name: its label shows
     assert page.model.currentText() == "small (466 MB)"
     page.device.setEditText("mic-c")
     page.prompt.setText("msks, devenv")
     page.apply()
-    assert page.status.text() == "saved to gui.yaml"
-    saved = load_prefs()
-    assert saved == {
+    assert page.status.text() == "saved to msks.yaml"
+    assert file_doc(qt) == {
         "dictate_model": "small",
         "dictate_device": "mic-c",
         "dictate_prompt": "msks, devenv",
     }
-    assert operator == {"dictate_model": "base.en", "dictate_device": "mic-a"}
+    assert user_file(qt).read_text().startswith("# my config\n")
     assert held.settings.model == "small"
     assert held.settings.device == "mic-c"
     assert held.settings.prompt == "msks, devenv"
-    assert prefs_path() == qt.tmp / "config" / "gui.yaml"
+    assert conf.config_path == str(user_file(qt))
+
+
+def test_apply_without_a_config_file_applies_for_the_session(qt):
+    """A launch under ``--config=none`` (#1224): no file to write,
+    so Apply applies the fields for the session and says so."""
+    from msks.client.gui.settingspage import SESSION_ONLY, SettingsPage
+
+    held, _fake = controller(qt)
+    conf = client_config.resolve(config="none")
+    assert conf.config_path == "none" and conf.config_paths == []
+    page = SettingsPage(held, conf)
+    page.device.setEditText("mic-session")
+    page.apply()
+    assert page.status.text() == SESSION_ONLY
+    assert held.settings.device == "mic-session"
+    assert not user_file(qt).exists()  # nothing was written
+    # Revert reads no file either: the fields reseed from the
+    # session's standing settings.
+    page.device.setEditText("mic-other")
+    page.revert()
+    assert page.device_value() == "mic-session"
+    assert held.settings.device == "mic-session"
+    # Clearing a field clears it for the session too (#1224 review):
+    # a blank deletes the key the way the file path does.
+    page.device.setEditText("")
+    page.apply()
+    assert held.settings.device == ""
+    assert page.status.text() == SESSION_ONLY
 
 
 def test_a_pinned_key_reads_read_only_and_apply_leaves_it(qt, monkeypatch):
     """A key the environment pins (#1214): its field shows the
     variable's value, stands read-only with the variable named,
-    and Apply leaves it out of gui.yaml — the variable wins it
+    and Apply leaves it out of the file — the variable wins it
     anyway. A blank variable is the unset form, not a pin."""
     from msks.client.gui.settingspage import SettingsPage
 
@@ -517,8 +577,7 @@ def test_a_pinned_key_reads_read_only_and_apply_leaves_it(qt, monkeypatch):
     assert held.settings.model == "large-v3-turbo"
     assert held.state == "nomodel"  # the pinned name is not on disk
     assert held.settings.pinned == frozenset({"dictate_model"})
-    assert held.settings.problems == ()
-    page = SettingsPage(held, {})
+    page = SettingsPage(held, launched(qt))
     assert page.model.isEnabled() is False
     assert page.model.toolTip().endswith(
         "MSKSC_DICTATE_MODEL pins this setting; the page cannot change it."
@@ -528,8 +587,8 @@ def test_a_pinned_key_reads_read_only_and_apply_leaves_it(qt, monkeypatch):
     assert "MSKSC_DICTATE_MODEL pins this setting" in page.pinned_note.text()
     page.device.setEditText("mic-z")
     page.apply()
-    assert "dictate_model" not in load_prefs()
-    assert load_prefs()["dictate_device"] == "mic-z"
+    assert "dictate_model" not in file_doc(qt)
+    assert file_doc(qt)["dictate_device"] == "mic-z"
     assert held.settings.model == "large-v3-turbo"
     # A pinned device: read-only, the variable named on both the
     # field and its label.
@@ -556,7 +615,7 @@ def test_the_model_download_shows_progress_and_lands(qt):
     model.unlink()
     held.check_model()
     assert held.state == "nomodel"
-    page = SettingsPage(held, {})
+    page = SettingsPage(held, launched(qt))
     assert page.download_button.isEnabled()
     assert "missing" in page.model_state.text()
     landed: list = []
@@ -582,7 +641,7 @@ def test_the_model_download_shows_progress_and_lands(qt):
     assert held.state == "idle"
     # The download saved the field's values as Apply would: the
     # model on disk is now the configured one (#1216 review).
-    assert load_prefs()["dictate_model"] == "small"
+    assert file_doc(qt)["dictate_model"] == "small"
     assert held.settings.model == "small"
 
     # A failure flashes its reason and the page stands on nomodel.
@@ -600,16 +659,17 @@ def test_the_model_download_shows_progress_and_lands(qt):
     assert page.status.text() == "download failed: reset"
     assert page.bar.isHidden() and page.cancel_button.isHidden()
     assert held.state == "nomodel"
-    # A failed download reads the layers not at all: the failure
+    # A failed download reads the file not at all: the failure
     # stands alone, the fields and the controller as they were.
-    broken = prefs_path()
-    broken.write_text("dictate_model: [")
+    broken_file = user_file(qt)
+    broken_file.write_text("dictate_model: [")
     page.download()
     page.flight.join(5)
     spin(qt, 100)
     assert page.status.text() == "download failed: reset"
     assert held.state == "nomodel"
-    broken.unlink()
+    assert broken_file.read_text() == "dictate_model: ["
+    broken_file.unlink()
 
     # Cancel: the flag the worker reads; the landing hides the bar.
     def stalled(name, cache_root, progress=None, cancel=None):
@@ -640,7 +700,7 @@ def test_a_download_thread_that_raises_anything_lands(qt):
     held, _fake = controller(qt)
     (qt.tmp / "cache" / "msks" / "whisper" / "ggml-small.bin").unlink()
     held.check_model()
-    page = SettingsPage(held, {})
+    page = SettingsPage(held, launched(qt))
 
     def explode(name, cache_root, progress=None, cancel=None):
         raise RuntimeError("socket gone")
@@ -663,7 +723,7 @@ def test_apply_and_revert_light_only_while_a_field_differs(qt):
     from msks.client.gui.settingspage import SettingsPage
 
     held, _fake = controller(qt)
-    page = SettingsPage(held, {})
+    page = SettingsPage(held, launched(qt))
     assert not page.apply_button.isEnabled()
     assert not page.reload_button.isEnabled()
     page.device.setEditText("mic-a")  # a typed edit
@@ -675,20 +735,25 @@ def test_apply_and_revert_light_only_while_a_field_differs(qt):
     page.prompt.setText("msks")  # another field
     page.apply()
     assert not page.apply_button.isEnabled()
-    assert load_prefs()["dictate_model"] == "base.en"
+    assert file_doc(qt)["dictate_model"] == "base.en"
     # A save that cannot land leaves the fields unsaved: lit.
     page.device.setEditText("mic-b")
-    (qt.tmp / "config" / "gui.yaml").unlink()
     (qt.tmp / "config").chmod(0o500)
     try:
         page.apply()
     finally:
         (qt.tmp / "config").chmod(0o700)
+    assert page.status.text().startswith("cannot save msks.yaml: ")
     assert page.apply_button.isEnabled() and page.dirty
-    # A revert after the pin clears: dark.
-    (qt.tmp / "config").chmod(0o700)
+    # The file stands as the last good save left it.
+    assert file_doc(qt) == {
+        "dictate_model": "base.en",
+        "dictate_prompt": "msks",
+    }
+    # A revert after the failed save: dark, the file's values back.
     page.revert()
     assert not page.apply_button.isEnabled()
+    assert page.device_value() == ""
 
 
 def test_every_field_carries_its_description_and_the_pin_notice(
@@ -702,7 +767,7 @@ def test_every_field_carries_its_description_and_the_pin_notice(
     from msks.client.gui.settingspage import SettingsPage
 
     held, _fake = controller(qt)
-    page = SettingsPage(held, {})
+    page = SettingsPage(held, launched(qt))
     assert sorted(page.fields) == [
         "dictate_device",
         "dictate_model",
@@ -718,7 +783,7 @@ def test_every_field_carries_its_description_and_the_pin_notice(
     assert page.refresh_sources.toolTip() == page_mod.REFRESH_TIP
     # A pinned key: the variable's notice follows on both.
     monkeypatch.setenv("MSKSC_DICTATE_DEVICE", "mic-env")
-    held.reload(resolve(os.environ, load_prefs(), {}))
+    held.reload(resolve(os.environ, {}))
     page.load(held.settings)
     notice = "MSKSC_DICTATE_DEVICE pins this setting"
     assert page.device.toolTip().endswith(
@@ -735,7 +800,7 @@ def test_the_picker_drives_the_model_line_live(qt):
     from msks.client.gui.settingspage import SettingsPage
 
     held, _fake = controller(qt)  # small on disk, the setting
-    page = SettingsPage(held, {})
+    page = SettingsPage(held, launched(qt))
     assert "present" in page.model_state.text()
     assert page.download_button.isEnabled() is False
     page.model.setCurrentIndex(page.model.findData("large-v3-turbo"))
@@ -762,7 +827,7 @@ def test_a_path_model_downloads_nothing(qt):
         qt, {"dictate_model": "/nix/store/x-ggml-small.bin"}
     )
     assert held.state == "nomodel"  # the path names nothing on disk
-    page = SettingsPage(held, {})
+    page = SettingsPage(held, launched(qt))
     assert page.model_name() is None
     assert "a path; nothing to download" in page.model_state.text()
     assert page.download_button.isEnabled() is False
@@ -780,7 +845,7 @@ def test_the_device_list_comes_from_pw_dump(qt):
         ("alsa_input.usb-scarlett.mic1", "Scarlett Mic1"),
         ("alsa_input.usb-scarlett.mic2", "Scarlett Mic2"),
     ]
-    page = SettingsPage(held, {}, sources=lambda: list(listed))
+    page = SettingsPage(held, launched(qt), sources=lambda: list(listed))
     page.list_devices()
     assert page.status.text() == "2 input(s) found"
     assert [page.device.itemText(i) for i in range(1, 3)] == [
@@ -807,100 +872,54 @@ def test_the_device_list_comes_from_pw_dump(qt):
 
 
 def test_the_keys_resolve_under_the_precedence(qt):
-    """``MSKSC_DICTATE_*`` > gui.yaml > the operator's file > the
-    defaults (#1214), each value through the reader, a blank at a
-    layer the unset form, and a refusal recording a problem with
-    the key defaulting."""
+    """``MSKSC_DICTATE_*`` > the merged ``msks.yaml`` document > the
+    defaults (#1214, #1224), each value through the reader and a
+    blank at a layer the unset form. A bad value never reaches the
+    resolver: the loader refuses the file at load, with the path
+    in the refusal."""
     environ = {
         "MSKSC_DICTATE_PROMPT": "  msks  ",
         "MSKSC_DICTATE_DEVICE": "",
     }
-    prefs = {"dictate_device": "mic-prefs", "dictate_prompt": "from prefs"}
-    operator = {"dictate_model": "base.en", "dictate_device": "mic-file"}
-    settings = resolve(environ, prefs, operator)
+    operator = {"dictate_model": "base.en", "dictate_device": "  mic-file  "}
+    settings = resolve(environ, operator)
     assert settings.prompt == "msks"
-    assert settings.device == "mic-prefs"  # the blank variable is unset
+    assert (
+        settings.device == "mic-file"
+    )  # the blank variable is unset, stripped
     assert settings.model == "base.en"
     assert settings.pinned == frozenset({"dictate_prompt"})
-    assert settings.problems == ()
     assert settings.value("dictate_prompt") == "msks"
     assert settings.value("dictate_model") == "base.en"
     # Defaults alone.
-    bare = resolve({}, {}, {})
+    bare = resolve({}, {})
     assert bare == DictateSettings()
     assert bare.model_file(Path("/cache")) == Path(
         "/cache/whisper/ggml-small.bin"
     )
-    # A refusal at the top layer: the problem names the variable.
-    bad = resolve({"MSKSC_DICTATE_PROMPT": 7}, {}, {})
-    assert bad.prompt == ""
-    assert bad.problems == (
-        (
-            "dictate_prompt",
-            "MSKSC_DICTATE_PROMPT: config key 'dictate_prompt' must be "
-            "a string, got int",
+    # A non-string in the file is the loader's refusal, not a
+    # problem the page shows: the client refuses at bootstrap.
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"msks\.yaml: config key 'dictate_prompt' must be a string, "
+            r"got int"
         ),
-    )
-    # A refusal lower down names the file, and the layer under it
-    # does not fill in behind the bad pin.
-    worse = resolve({}, {"dictate_device": ["x"]}, {"dictate_device": "y"})
-    assert worse.device == ""
-    assert worse.problems[0][1].startswith("gui.yaml: config key")
-
-
-def test_the_preferences_file_round_trips(qt):
-    """``gui.yaml`` (#1214): both spellings one key, duplicates
-    and unknown keys refused, the dump in key order with the
-    unset forms dropped, and the atomic write over a standing
-    file."""
-    doc = parse_prefs(
-        "dictate-model: small\ndictate_device: mic-a\n", "gui.yaml"
-    )
-    assert doc == {"dictate_model": "small", "dictate_device": "mic-a"}
-    assert parse_prefs("# nothing\n", "gui.yaml") == {}
-    assert parse_prefs("dictate_device:\n", "gui.yaml") == {}
-    # The gate's numbers are not preferences keys (#1214).
-    for key in ("dictate_silence", "dictate_threshold", "dictate_margin"):
-        with pytest.raises(ValueError, match="unknown preferences key"):
-            parse_prefs(f"{key}: 1.5\n", "gui.yaml")
-    for text, message in (
-        ("dictate_model: a\ndictate-model: b\n", "duplicate"),
-        ("url: https://x\n", "unknown preferences key 'url'"),
-        ("- a\n- b\n", "must be a mapping"),
-        ("dictate_model: [a]\n", "must be a string"),
     ):
-        with pytest.raises(ValueError, match=message):
-            parse_prefs(text, "gui.yaml")
-    assert (
-        dump_prefs(
-            {
-                "dictate_device": "mic-a",
-                "dictate_model": "small",
-                "dictate_prompt": None,
-            }
-        )
-        == "dictate_model: small\ndictate_device: mic-a\n"
-    )
-    assert load_prefs() == {}  # nothing saved yet
-    save_prefs({"dictate_model": "small", "dictate_prompt": "msks"})
-    assert load_prefs() == {"dictate_model": "small", "dictate_prompt": "msks"}
-    save_prefs({"dictate_model": "base.en"})
-    assert load_prefs() == {"dictate_model": "base.en"}  # whole, not merged
-    assert [p.name for p in prefs_path().parent.iterdir()] == ["gui.yaml"]
+        parse_config_doc("dictate_prompt: 7\n", "msks.yaml")
+    # A blank file value is the unset form, and the default stands.
+    blank = resolve({}, {"dictate_device": ""})
+    assert blank.device == ""
 
 
-def test_an_unreadable_preferences_file_names_the_path(qt, monkeypatch):
-    target = prefs_path()
-    target.parent.mkdir(parents=True)
-    target.write_text("dictate_model: [")
-    with pytest.raises(ValueError, match="gui.yaml: invalid YAML"):
-        load_prefs()
-    target.chmod(0o000)
-    if os.getuid() == 0:  # root reads anything
-        target.unlink()
-        pytest.skip("root reads a mode-000 file")
-    with pytest.raises(ValueError, match="cannot read preferences file"):
-        load_prefs()
+def test_read_value_strips_and_reads_blank_as_unset(qt):
+    """The reader (#1224): a stripped string, None for None and for
+    a blank — both layers carry strings by construction."""
+    from msks.client.gui.dictatekeys import read_value
+
+    assert read_value(None) is None
+    assert read_value("  ") is None
+    assert read_value(" small ") == "small"
 
 
 # --- the branches the first pass left dark -------------------------------
@@ -960,44 +979,41 @@ def test_an_anchor_with_no_window_moves_nothing(qt):
 
 
 def test_a_non_string_preferences_key_is_refused(qt):
+    """A key that is not a string is the loader's refusal (#1224
+    moved the keys into ``msks.yaml``, whose loader carries the
+    rule), with the path in the message."""
     with pytest.raises(ValueError, match="keys must be strings"):
-        parse_prefs("1: small\n", "gui.yaml")
+        parse_config_doc("1: small\n", "msks.yaml")
 
 
 def test_apply_and_revert_flash_a_file_that_will_not_read(qt, monkeypatch):
-    """The page's reads of the layers (#1214): a gui.yaml that
-    will not parse flashes the reason on Revert and on a
-    download's landing, and a tree that will not write flashes
-    on Apply — the fields standing as they were."""
-    from msks.client.gui import settingspage as page_mod
+    """The page's reads of the file (#1214, #1224): a user file
+    broken outside the three keys will not parse, and Revert
+    flashes the reason; a save over it cannot produce a file the
+    loader takes, and Apply and a download's landing flash on
+    Apply's line, the broken file left as it is — the fields
+    standing as they were."""
     from msks.client.gui.settingspage import SettingsPage
 
     held, _fake = controller(qt)
-    page = SettingsPage(held, {})
-    broken = prefs_path()
-    broken.parent.mkdir(parents=True, exist_ok=True)
-    broken.write_text("dictate_model: [")
+    page = SettingsPage(held, launched(qt))
+    broken = user_file(qt)
+    broken.write_text("url: [\n")
     page.revert()
-    assert "gui.yaml: invalid YAML" in page.status.text()
-    # A download's landing over a file that will not read: the
-    # model save reads the standing values first and refuses, the
-    # broken file left as it is.
+    assert "invalid YAML" in page.status.text()
+    assert str(broken) in page.status.text()
+    # A download's landing over a file that will not load: the
+    # merge lands its key, the self-check refuses the whole, and
+    # the broken file is left as it is.
     page.downloaded.emit("small", "", "")
-    assert page.status.text().startswith("cannot save gui.yaml: ")
-    assert broken.read_text() == "dictate_model: ["
-    # A tree the atomic write cannot land in: Apply's save fails
-    # before any read, and the page keeps the standing settings.
-    held.settings = DictateSettings(model="small")
-    page.load(held.settings)
-    monkeypatch.setattr(page_mod, "load_prefs", lambda: {})
-
-    def refuse(path: Path) -> None:
-        raise OSError("read-only")
-
-    monkeypatch.setattr(page_mod, "save_prefs", refuse)
+    assert page.status.text().startswith("cannot save msks.yaml: ")
+    assert broken.read_text() == "url: [\n"
+    assert held.settings.model == "small"  # the standing settings
+    page.device.setEditText("mic-x")
     page.apply()
-    assert page.status.text() == "cannot save gui.yaml: read-only"
+    assert page.status.text().startswith("cannot save msks.yaml: ")
     assert held.settings.model == "small"
+    assert page.apply_button.isEnabled()  # the edit stands unsaved
 
 
 def test_download_asks_once_and_the_busy_bar_runs(qt):
@@ -1009,7 +1025,7 @@ def test_download_asks_once_and_the_busy_bar_runs(qt):
     held, _fake = controller(
         qt, {"dictate_model": "/nix/store/x-ggml-small.bin"}
     )
-    page = SettingsPage(held, {})
+    page = SettingsPage(held, launched(qt))
     page.download()
     assert page.flight is None  # a path: nothing to download
     page.progress(50, 0)
@@ -1040,34 +1056,29 @@ def test_download_asks_once_and_the_busy_bar_runs(qt):
     spin(qt, 50)
 
 
-def test_read_value_refuses_a_non_string(qt):
-    from msks.client.gui.dictatekeys import read_value
-
-    with pytest.raises(ValueError, match="must be a string, got list"):
-        read_value("dictate_model", ["small"], "gui.yaml")
-    assert read_value("dictate_model", None, "gui.yaml") is None
-    assert read_value("dictate_model", "  ", "gui.yaml") is None
-
-
 def test_apply_flashes_a_layers_read_that_refuses(qt, monkeypatch):
-    """Apply's own re-read (#1214): a save that lands whole and a
-    layers read that then refuses — the file changed under the
-    page — flashes the reason and the controller keeps its
+    """Apply's own re-read (#1224): a save that lands whole and a
+    re-read that then refuses says both things — the file was
+    written, the re-read refused — and the controller keeps its
     standing settings."""
     from msks.client.gui import settingspage as page_mod
     from msks.client.gui.settingspage import SettingsPage
 
     held, _fake = controller(qt)
-    page = SettingsPage(held, {})
+    page = SettingsPage(held, launched(qt))
 
-    def refuses():
-        raise ValueError("gui.yaml: invalid YAML: bad")
+    def refuses(_conf):
+        raise ValueError("msks.yaml: invalid YAML: bad")
 
-    monkeypatch.setattr(page_mod, "resolve", lambda *a: refuses())
+    monkeypatch.setattr(page_mod, "reload_doc", refuses)
     page.model.setEditText("base.en")
     page.apply()
-    assert page.status.text() == "gui.yaml: invalid YAML: bad"
-    assert held.settings.model == "small"
+    assert page.status.text() == (
+        "saved to msks.yaml, but the re-read refused: "
+        "msks.yaml: invalid YAML: bad"
+    )
+    assert held.settings.model == "small"  # the standing settings
+    assert file_doc(qt)["dictate_model"] == "base.en"  # the write landed
 
 
 def test_a_failed_download_leaves_the_pick_for_a_retry(qt):
@@ -1079,7 +1090,7 @@ def test_a_failed_download_leaves_the_pick_for_a_retry(qt):
     held, _fake = controller(qt)
     (qt.tmp / "cache" / "msks" / "whisper" / "ggml-small.bin").unlink()
     held.check_model()
-    page = SettingsPage(held, {})
+    page = SettingsPage(held, launched(qt))
     page.pick_model("large-v3-turbo")
 
     def broken(name, cache_root, progress=None, cancel=None):
@@ -1093,7 +1104,7 @@ def test_a_failed_download_leaves_the_pick_for_a_retry(qt):
     assert page.model_value() == "large-v3-turbo"  # the pick stands
     assert "large-v3-turbo.bin — missing" in page.model_state.text()
     assert page.download_button.isEnabled()  # a retry is offered
-    assert load_prefs() == {}
+    assert file_doc(qt) == {}
 
 
 def test_a_landed_download_saves_the_model_alone(qt):
@@ -1106,7 +1117,7 @@ def test_a_landed_download_saves_the_model_alone(qt):
     held, _fake = controller(qt)
     (qt.tmp / "cache" / "msks" / "whisper" / "ggml-small.bin").unlink()
     held.check_model()
-    page = SettingsPage(held, {})
+    page = SettingsPage(held, launched(qt))
     page.device.setEditText("mic-unapplied")  # never applied
     page.prompt.setText("typed mid-flight")
 
@@ -1121,13 +1132,13 @@ def test_a_landed_download_saves_the_model_alone(qt):
     page.flight.join(5)
     spin(qt, 100)
     assert page.status.text() == "saved ggml-small.bin"
-    assert load_prefs() == {"dictate_model": "small"}  # the model alone
+    assert file_doc(qt) == {"dictate_model": "small"}  # the model alone
     assert held.settings.model == "small"
     assert held.settings.device == ""  # the unsaved edit saved nothing
     assert page.device_value() == "mic-unapplied"  # the field stands
     assert page.apply_button.isEnabled()  # and still asks for Apply
     page.apply()
-    assert load_prefs()["dictate_device"] == "mic-unapplied"
+    assert file_doc(qt)["dictate_device"] == "mic-unapplied"
     assert not page.apply_button.isEnabled()
 
 
@@ -1137,7 +1148,7 @@ def test_a_hand_typed_label_resolves_to_its_model(qt):
     from msks.client.gui.settingspage import SettingsPage
 
     held, _fake = controller(qt)
-    page = SettingsPage(held, {})
+    page = SettingsPage(held, launched(qt))
     page.model.setEditText("small (466 MB)")
     assert page.model_value() == "small"
     page.model.setEditText("small")
@@ -1255,7 +1266,7 @@ def test_a_landed_download_saves_the_model_that_was_fetched(qt):
     held, _fake = controller(qt)
     (qt.tmp / "cache" / "msks" / "whisper" / "ggml-small.bin").unlink()
     held.check_model()
-    page = SettingsPage(held, {})
+    page = SettingsPage(held, launched(qt))
     picked: list = []
 
     def fake_download(name, cache_root, progress=None, cancel=None):
@@ -1271,7 +1282,7 @@ def test_a_landed_download_saves_the_model_that_was_fetched(qt):
     page.flight.join(5)
     spin(qt, 100)
     assert picked == ["small"]
-    assert load_prefs() == {"dictate_model": "small"}
+    assert file_doc(qt) == {"dictate_model": "small"}
     assert held.settings.model == "small" and held.state == "idle"
     assert page.status.text() == "saved ggml-small.bin"
     # The picker keeps the operator's later pick, and it differs
@@ -1287,7 +1298,7 @@ def test_a_clean_landing_settles_apply(qt):
     from msks.client.gui.settingspage import SettingsPage
 
     held, _fake = controller(qt)
-    page = SettingsPage(held, {})
+    page = SettingsPage(held, launched(qt))
 
     def fake_download(name, cache_root, progress=None, cancel=None):
         path = cache_root / "whisper" / f"ggml-{name}.bin"
@@ -1303,7 +1314,7 @@ def test_a_clean_landing_settles_apply(qt):
     page.download()
     page.flight.join(5)
     spin(qt, 100)
-    assert load_prefs() == {"dictate_model": "large-v3-turbo"}
+    assert file_doc(qt) == {"dictate_model": "large-v3-turbo"}
     assert not page.apply_button.isEnabled()
     assert held.settings.model == "large-v3-turbo"
 
@@ -1316,17 +1327,19 @@ def test_a_landed_download_under_a_pinned_model_keeps_the_pin(qt, monkeypatch):
     from msks.client.gui.settingspage import SettingsPage
 
     monkeypatch.setenv("MSKSC_DICTATE_MODEL", "small")
-    held, _fake = controller(qt)
+    conf = launched(
+        qt, {"dictate_device": "mic-a", "dictate_model": "base.en"}
+    )
+    held, _fake = controller(qt, conf.doc)
     (qt.tmp / "cache" / "msks" / "whisper" / "ggml-small.bin").unlink()
     held.check_model()
-    page = SettingsPage(held, {})
+    page = SettingsPage(held, conf)
     assert "missing" in page.model_state.text()
     assert page.download_button.isEnabled() is False  # the pin decides
-    save_prefs({"dictate_device": "mic-a", "dictate_model": "base.en"})
     assert page.save_model("large-v3-turbo") is False
     # The file stands as the operator left it: the pin wins at
     # resolve without a write, and the page says so.
-    assert load_prefs() == {
+    assert file_doc(qt) == {
         "dictate_device": "mic-a",
         "dictate_model": "base.en",
     }
