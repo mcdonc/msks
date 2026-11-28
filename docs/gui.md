@@ -5,7 +5,8 @@ desktop window over the daemon's REST API. It reads the same environment
 variables and config file as the TUI and the CLI. It reads no daemon state
 directly: every page uses the API.
 
-`msks gui` opens the window.
+A bare `msks` (no arguments at all) opens the window, and `msks gui` is the
+same command. The TUI has its own command, `msks tui` ([the TUI chapter](tui.md)).
 
 ## The connection picker
 
@@ -702,7 +703,8 @@ colors with the rest of the window.
 The window needs a display. A Linux session provides one through
 `DISPLAY` or `WAYLAND_DISPLAY`, and `QT_QPA_PLATFORM=offscreen`
 also works. A start that finds no display prints one line on
-stderr and exits. [Dictation](#dictation) needs four host tools
+stderr and exits. The line names `msks tui`, which opens the TUI in
+the same terminal. [Dictation](#dictation) needs four host tools
 the window itself does not: PipeWire's `pw-record` and `pw-cat`
 (capture and the tones), whisper.cpp's `whisper-cli` (the
 transcription), and `notify-send` for the desktop notification.
@@ -716,7 +718,8 @@ no clipboard helper is needed. A macOS session needs a desktop login. The
 window opens fine over ssh while one stands.
 
 The window plants its own desktop entry and taskbar icon on a
-Linux desktop. Every `msks gui` launch installs both under the
+Linux desktop. Every launch of the window (`msks gui` or a bare
+`msks`) installs both under the
 XDG data home before the window opens. The taskbar shows the
 msks icon from the first launch after a fresh install, and the
 next launch after an upgrade refreshes the icon renders. When

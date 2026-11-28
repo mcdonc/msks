@@ -1,12 +1,13 @@
 # The CLI client
 
-Along with invoking the TUI, the `msks` command is a client for the daemon's
+Along with invoking the GUI, the `msks` command is a client for the daemon's
 `/api/v1` REST surface.
 
 Here's an overview of the common command set:
 
 ```bash
-msks                         # the workspace tree TUI
+msks                         # the GUI window
+msks tui                     # the workspace tree TUI
 msks ls                      # what exists, and what state is it in
 msks create ws                # make a workspace
 msks clone ws fork            # copy a workspace into a new one

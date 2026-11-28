@@ -22,6 +22,13 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **A bare `msks` opens the GUI (#1221).** `msks` with no subcommand
+  opens the desktop window, the same window `msks gui` opens. The TUI
+  has its own command: `msks tui` opens the workspace tree, and `msks
+tui <workspace>` opens that workspace's page. On a host with no
+  display, a bare `msks` prints one line that names `msks tui` and
+  exits 1. The docs list the GUI chapter before the TUI chapter; see
+  [docs/gui.md](gui.md) and [docs/tui.md](tui.md).
 - **`msks-setup-macos-host` lands the dictation tools (#1216).** The
   tool now brews `whisper.cpp` and `ffmpeg` and writes `pw-record`,
   `pw-cat`, and `notify-send` shims at the brew prefix's bin, so the

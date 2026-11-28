@@ -50,10 +50,13 @@ BROKEN = (
 # 134), past anything Python can catch — the pre-flight keeps the
 # client's one-line convention instead. macOS is exempt: a stock
 # session sets none of the three, and cocoa, its default platform,
-# needs none of them.
+# needs none of them. The line names the terminal entry (#1221): a
+# bare ``msks`` opens the window now, and an operator who typed
+# that on a headless host needs the TUI's own command.
 NO_DISPLAY = (
     "msks: the GUI needs a display (set DISPLAY or "
-    "WAYLAND_DISPLAY, or QT_QPA_PLATFORM=offscreen)"
+    "WAYLAND_DISPLAY, or QT_QPA_PLATFORM=offscreen); "
+    "msks tui opens the terminal UI instead"
 )
 
 

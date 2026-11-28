@@ -5170,10 +5170,30 @@ def test_help_exits_through_system_exit_zero(
     assert "one JSON document" in help_flat(capsys.readouterr().out)
 
 
-def test_a_bare_msks_is_the_tree_tui(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        cli.wscommands, "run_main_tui", lambda workspace=None, conf=None: 9
+def lab_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
+    """The client environment over a config file with one alias,
+    ``lab``, active: the resolved config a flagged or an ambient
+    launch reads the daemon's url from."""
+    client_env(monkeypatch)
+    path = tmp_path / "msks.yaml"
+    path.write_text(
+        "daemons:\n  lab:\n    url: https://lab:8660\nactive_daemon: lab\n"
     )
+    return str(path)
+
+
+def test_a_bare_msks_is_the_gui_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare ``msks`` opens the GUI window (#1221). The tree is
+    ``msks tui``'s own command now, and the bare launch never
+    reaches it."""
+
+    def refused(*args, **kwargs) -> int:
+        raise AssertionError("the bare msks reached the TUI")
+
+    monkeypatch.setattr(cli.wscommands, "run_main_tui", refused)
+    monkeypatch.setattr(cli.wscommands, "run_gui", lambda conf=None: 9)
     assert cli.main([]) == 9
 
 
@@ -5183,7 +5203,8 @@ def test_the_tree_carries_the_invocations_resolution(
     """Both TUI entries receive the resolved config (#341): the
     new-terminal shell action reads the terminal launcher from it,
     and the spawned child inherits the config's materialized
-    connection."""
+    connection. The bare ``msks`` is the GUI's entry (#1221), so
+    the ambient read is ``msks tui`` over ``--config``."""
     seen: list = []
 
     def routed(workspace=None, conf=None) -> int:
@@ -5191,17 +5212,37 @@ def test_the_tree_carries_the_invocations_resolution(
         return 0
 
     monkeypatch.setattr(cli.wscommands, "run_main_tui", routed)
-    client_env(monkeypatch)
-    path = tmp_path / "msks.yaml"
-    path.write_text(
-        "daemons:\n  lab:\n    url: https://lab:8660\nactive_daemon: lab\n"
-    )
-    assert (
-        cli.main(["--daemon", "lab", "--config", str(path), "tui", "w"]) == 0
-    )
-    assert cli.main(["--config", str(path)]) == 0
+    config = lab_config(monkeypatch, tmp_path)
+    assert cli.main(["--daemon", "lab", "--config", config, "tui", "w"]) == 0
+    assert cli.main(["--config", config, "tui"]) == 0
     flagged, ambient = seen
     assert flagged.terminal_open_cmd is None
+    assert flagged.url == "https://lab:8660"
+    assert ambient.url == "https://lab:8660"
+
+
+def test_the_window_carries_the_invocations_resolution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The window the bare ``msks`` opens receives the resolved
+    config (#1221, #954): the flagged launch and the ambient one
+    both hand the GUI the config the TUI entries read, and the
+    window path never reaches the tree."""
+    seen: list = []
+
+    def routed(conf=None) -> int:
+        seen.append(conf)
+        return 0
+
+    def refused(*args, **kwargs) -> int:
+        raise AssertionError("the bare msks reached the TUI")
+
+    monkeypatch.setattr(cli.wscommands, "run_gui", routed)
+    monkeypatch.setattr(cli.wscommands, "run_main_tui", refused)
+    config = lab_config(monkeypatch, tmp_path)
+    assert cli.main(["--daemon", "lab", "--config", config]) == 0
+    assert cli.main(["--config", config]) == 0
+    flagged, ambient = seen
     assert flagged.url == "https://lab:8660"
     assert ambient.url == "https://lab:8660"
 
@@ -5252,14 +5293,14 @@ def test_a_help_shaped_option_value_is_not_a_help_exit(
 def test_a_bare_msks_interrupt_is_one_line(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The tree the bare ``msks`` launches answers a Ctrl-C with
+    """The window the bare ``msks`` opens answers a Ctrl-C with
     the same one line every command prints (the callback's edge,
     not typer's silent 130)."""
 
     def interrupted(conf=None) -> int:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli.wscommands, "run_main_tui", interrupted)
+    monkeypatch.setattr(cli.wscommands, "run_gui", interrupted)
     with pytest.raises(SystemExit) as excinfo:
         cli.main([])
     assert excinfo.value.code == 130

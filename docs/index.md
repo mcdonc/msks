@@ -25,11 +25,11 @@ _msks_ runs on:
 4. [**Your ssh key**](ssh-key.md): what to do when the key
    changes: the config edit, the workspaces created with the old
    key, and the secrets.
-5. [**The TUI**](tui.md): the full-screen workspace tree: the
-   workspace, secrets, and image pages, the consent decider, and
-   terminal windows.
-6. [**The GUI**](gui.md): the desktop window: the
+5. [**The GUI**](gui.md): the desktop window: the
    workspaces, secrets, and images pages, the consent decider, and
+   terminal windows.
+6. [**The TUI**](tui.md): the full-screen workspace tree: the
+   workspace, secrets, and image pages, the consent decider, and
    terminal windows.
 7. [**Host share mounts**](mounts.md): the host trees a
    workspace mounts into its guest.

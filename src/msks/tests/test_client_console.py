@@ -158,11 +158,6 @@ def test_require_tty_rejects_pipes(
         require_tty()
 
 
-def test_main_requires_subcommand() -> None:
-    with pytest.raises(SystemExit):
-        cli.main([])
-
-
 def test_main_console_needs_tty(monkeypatch: pytest.MonkeyPatch) -> None:
     class NotATty(io.StringIO):
         def isatty(self) -> bool:

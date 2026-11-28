@@ -95,6 +95,24 @@ def test_the_gui_command_names_a_headless_session(
     assert app.NO_DISPLAY in capsys.readouterr().err
 
 
+def test_a_bare_msks_without_a_display_names_the_tui(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A bare ``msks`` on a headless Linux host (#1221): the one
+    line the window path prints names ``msks tui``, the terminal
+    entry an operator who typed the bare command needs."""
+    client_env(monkeypatch)
+    monkeypatch.setattr(app, "find_spec", lambda name: object())
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(app, "gui_session_present", lambda: False)
+    for var in ("DISPLAY", "WAYLAND_DISPLAY", "QT_QPA_PLATFORM"):
+        monkeypatch.delenv(var, raising=False)
+    assert cli.main([]) == 1
+    err = capsys.readouterr().err
+    assert app.NO_DISPLAY in err
+    assert "msks tui" in err
+
+
 def test_the_display_gate_skips_macos(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

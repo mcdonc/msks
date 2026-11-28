@@ -3303,9 +3303,10 @@ def test_the_tui_subcommand_dispatches(monkeypatch) -> None:
     assert launched == [None, "my-workspace"]
 
 
-def test_a_bare_msks_launches_the_tui(monkeypatch) -> None:
-    """`msks` with no arguments at all is the TUI (#309) — not a
-    usage error."""
+def test_a_bare_msks_leaves_the_tui_to_its_command(monkeypatch) -> None:
+    """`msks` with no arguments at all opens the GUI (#1221), not
+    the TUI and not a usage error: the tree is `msks tui`'s own,
+    and the bare launch never reaches it."""
     launched: list = []
 
     def fake_run(open_ref=None, data=None, conf=None):
@@ -3313,8 +3314,9 @@ def test_a_bare_msks_launches_the_tui(monkeypatch) -> None:
         return 0
 
     monkeypatch.setattr(cli.wscommands, "run_main_tui", fake_run)
-    assert cli.main([]) == 0
-    assert launched == [None]
+    monkeypatch.setattr(cli.wscommands, "run_gui", lambda conf=None: 4)
+    assert cli.main([]) == 4
+    assert launched == []
 
 
 async def test_the_tree_reopens_the_page_it_left(monkeypatch) -> None:
