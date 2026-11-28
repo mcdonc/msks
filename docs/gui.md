@@ -725,8 +725,8 @@ a fresh install, and the next launch after an upgrade refreshes
 the icon renders. When the install fails, msks prints one line on
 stderr and the window still opens. `msks gui-shortcut` does the
 same work by hand and prints the entry's path. On macOS nothing
-is planted.
-The dock reads the icon the window itself already carries.
+is planted. The dock reads the icon the window itself already
+carries.
 
 Uninstalling the wheel leaves the entry and the icons in
 place, because they live in the XDG data home, outside the

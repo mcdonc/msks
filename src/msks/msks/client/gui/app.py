@@ -26,16 +26,16 @@ from .dictatekeys import SETTINGS_TAB_LABEL
 from .rows import WINDOW_TITLE
 from .shortcut import DESKTOP_ID, ICON_FILE, ensure_installed, icon_dir
 
+# The terminal entry every refusal below ends with (#1221): a
+# bare ``msks`` opens the window now, and an operator who typed
+# that where the window cannot open needs the TUI's own command.
+TUI_POINTER = "; msks tui opens the terminal UI instead"
+
 # What a stripped or partial install hears when it asks for
 # the window (#928) — and what a nix-built install hears by
 # design: the nix package is the daemon's closure and strips
 # the binding (#1023), so the line names the pip install for
 # both shapes. One stderr line, the client's error convention.
-# Every refusal ends with the terminal entry (#1221): a bare
-# ``msks`` opens the window now, and the TUI runs on the install
-# the window cannot.
-TUI_POINTER = "; msks tui opens the terminal UI instead"
-
 HINT = (
     "msks: the desktop GUI needs PySide6, a base dependency of "
     "the wheel: pip install --force-reinstall msks (a nix-built "
@@ -45,10 +45,11 @@ HINT = (
 # The binding is installed but will not load (a broken wheel set
 # or missing system libraries): the reinstall that fixes one
 # shape; the caught error's own text names the other (the exact
-# missing soname).
+# missing soname). The print site adds that text in parentheses
+# and the pointer after it, so this line too ends with the entry.
 BROKEN = (
     "msks: the PySide6 install does not load; reinstall it with "
-    "pip install --force-reinstall msks" + TUI_POINTER
+    "pip install --force-reinstall msks"
 )
 
 # A Linux session with no display and no platform override: Qt's
@@ -316,7 +317,7 @@ def run(conf=None) -> int:
         # answered absence).
         from PySide6 import QtWidgets
     except ImportError as exc:
-        print(f"{BROKEN} ({exc})", file=sys.stderr)
+        print(f"{BROKEN} ({exc}){TUI_POINTER}", file=sys.stderr)
         return 1
     # The gate sits between the import and the window: the
     # import needs no display; the constructor does.

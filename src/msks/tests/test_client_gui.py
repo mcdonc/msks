@@ -41,7 +41,12 @@ def test_the_gui_command_hints_without_the_binding(
     client_env(monkeypatch)
     monkeypatch.setattr(app, "find_spec", lambda name: None)
     assert cli.main(["gui"]) == 1
-    assert app.HINT in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert app.HINT in err
+    # The line ends with the terminal entry (#1221): the pointer
+    # is pinned on its own, not only through the constant it is
+    # built into.
+    assert err.rstrip().endswith(app.TUI_POINTER)
 
 
 def test_a_base_install_parses_every_command(
@@ -184,6 +189,9 @@ def test_the_gui_command_names_a_broken_install(
     err = capsys.readouterr().err
     assert app.BROKEN in err
     assert "halted" in err  # the caught error's text named the cause
+    # The error's text comes before the terminal entry (#1221),
+    # and the line still ends with it.
+    assert err.rstrip().endswith(app.TUI_POINTER)
 
 
 def test_the_scale_knobs_read_the_environment(

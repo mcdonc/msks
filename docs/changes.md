@@ -22,13 +22,6 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
-- **A bare `msks` opens the GUI (#1221).** `msks` with no subcommand
-  opens the desktop window, the same window `msks gui` opens. The TUI
-  has its own command: `msks tui` opens the workspace tree, and `msks
-tui <workspace>` opens that workspace's page. A bare `msks` over ssh
-  or on a host with no display prints one line whose last clause is
-  `msks tui opens the terminal UI instead`, and exits 1. See
-  [docs/gui.md](gui.md) and [docs/tui.md](tui.md).
 - **`msks-setup-macos-host` lands the dictation tools (#1216).** The
   tool now brews `whisper.cpp` and `ffmpeg` and writes `pw-record`,
   `pw-cat`, and `notify-send` shims at the brew prefix's bin, so the
@@ -44,6 +37,17 @@ tui <workspace>` opens that workspace's page. A bare `msks` over ssh
   plants, drops the now-unused `enableInstallTelemetry` key. Workspaces
   built from new guest assets report the new versions, and existing
   workspaces keep their baked toolchain until rebuilt.
+
+### Breaking
+
+- **A bare `msks` opens the GUI (#1221).** `msks` with no subcommand
+  opens the desktop window, the same window `msks gui` opens. An
+  operator who typed `msks` for the TUI now runs `msks tui`
+  (`msks tui <workspace>` opens that workspace's page). Where no
+  display is reachable (a plain ssh login, a headless host), a bare
+  `msks` prints one line whose last clause is `msks tui opens the
+terminal UI instead`, and exits 1. See [docs/gui.md](gui.md) and
+  [docs/tui.md](tui.md).
 
 ### Fixed
 
