@@ -1,9 +1,9 @@
 {
-  "@earendil-works/pi-agent-core": "ie5mejS7mGfXt//9As7i3LfxVXdktZvF1JP4EQsUXTp4mU437h23MNGx7wXZ5VYs3YiG/Qnj3e7OZ2HC069OMw==",
-  "@earendil-works/pi-ai": "2tWPSnV3qzfiDIY3aWluBag3vC++Vs+VsXt/UquSU5onPMohPih72FUhIhaqmDdMYubOgB3Byl9uF4Vk40JLvQ==",
-  "@earendil-works/pi-codemode": "HoZQ40a9RgdZ1VgmrX6x8887cNXedaRJT1l+Ie5YRIMK4gY7v0EpsiNqf6dmixrKylZlTgUSyR+vE8xhjfkr+w==",
-  "@earendil-works/pi-mcp": "zU1UgeXDlbixPqGEWD7Ql0brEMIpYr7aEWjoEE5h5enJbM/kQ2jIr7lN8JoR80oUnq1fJSU7SC8kLx2Fx/IZYg==",
-  "@earendil-works/pi-schema": "hJoyCXWUhsSrXY5wJo2Q4kHXUsR51pNhkJHAMkWRwVMLDRtMDPkKNaa+JlVRVqTw1hjdSxcVVaFLSDbKlaTXEQ==",
-  "@earendil-works/pi-telemetry": "m+cumjIqNh1aMISi/9ttcG3ZOwIdriPbz/eMyWmRMJCGa/WcgY1RX4lrb7HvsHhSfI/JUeBESA4nOCr8C3y5ow==",
-  "@earendil-works/pi-tui": "WK8ih+c88GWizaB79y7Pq3PV7ySf5VI1pZ1i/6aBBjDOAiG2EE3ojKjl+pxQqLfyQGnzHYu4VfakOBJgumuoyw=="
+  "@earendil-works/pi-agent-core": "pLs/wTAcrUnKDILPHjnd7RiDZSotAhJ965LwVc8x37TeWF+k+vKPMmAW6Z1T8XMQuICbIYusjkT7K0lmjgQwrg==",
+  "@earendil-works/pi-ai": "iKryMlUYniwWbU7YU0uS7W0+cGd9c6oJ6PzRLOn8j4+1njG4c+BQq1cNawctx/npDqGeOx8ME7Gkgl6K6arPuw==",
+  "@earendil-works/pi-codemode": "fhCoh8TLxhdRTOWSEplwp39Uv+JTsu9pCqtgu9gorO8zcaw92vsbVI/G89yFs92csTo2+yB7EsJq/+725Vj+eA==",
+  "@earendil-works/pi-mcp": "ScsDjuFXjT9eKioD5oyZqofDXtaWCMhCBa+1aDSh7WmRACLsohfGQJtAX1rv5OmEbaerrRPgyD5jgwJFBjTFNw==",
+  "@earendil-works/pi-schema": "skji4McLg9jum3NFWzFa/4QRGEZhMGnSi3QL8b9VljJkc/QopH2/BFuGKI+VcEwYzKGwsd0I8RzvXGnZGfGltQ==",
+  "@earendil-works/pi-telemetry": "QZkngqktohuFZ2TZuJSXDuUntld4sCMW1tkUPaD4moMEX/z1lwcjycXnd9ChO9HNxm/Jfo+UTiC+N2hkAF9b0w==",
+  "@earendil-works/pi-tui": "C6vkUYGTeDdl/cMIbFOabSEPMRy9HuaUV76PS2BhvSmWifO5y8Rz8/LgFWqGIIFS7RMqu0gdeEpdXfH8jIp05g=="
 }

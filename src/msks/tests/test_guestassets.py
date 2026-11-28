@@ -435,7 +435,7 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     assert '"node-v22.23.3-linux-${facts.nodeTar}.tar.gz"' in build
     assert 'nodeTar = "x64"' in build
     assert 'nodeTar = "arm64"' in build
-    assert "pi-coding-agent-1.5.2.tgz" in pins
+    assert "pi-coding-agent-1.7.0.tgz" in pins
     # The install lock (#616): the tarball ships no shrinkwrap, so
     # the offline build's lock is the pi.dev installer's,
     # digest-pinned to the same tag as the tarball.
@@ -450,10 +450,10 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     # the same tag.
     assert '"v0.9.5/LICENSE"' in pins
     assert "$out/usr/local/share/doc/herdr/LICENSE" in build
-    assert '"claude-code-2.1.325.tgz"' in pins
+    assert '"claude-code-2.1.332.tgz"' in pins
     assert 'package = "claude-code-linux-x64"' in pins
     assert 'package = "claude-code-linux-arm64"' in pins
-    assert '"${claudePin.package}-2.1.325.tgz"' in pins
+    assert '"${claudePin.package}-2.1.332.tgz"' in pins
     assert "$out/usr/local/bin/claude" in build
     assert "$out/etc/skel/.pi/agent/extensions/llm-models.ts" in build
     assert "$out/root/.pi/agent/extensions/llm-models.ts" in build
@@ -461,17 +461,18 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     # thinking blocks hidden, for the skeleton and root alike.
     assert "$out/etc/skel/.pi/agent/settings.json" in build
     assert "$out/root/.pi/agent/settings.json" in build
-    settings = (REPO_ROOT / "nix" / "guest-pi-settings.json").read_text()
-    assert '"hideThinkingBlock": true' in settings
-    # No install telemetry beacon from egress-gated guests
-    # (#617 review): the fresh-install path would otherwise fetch
-    # pi.dev on the first interactive start.
-    assert '"enableInstallTelemetry": false' in settings
+    # Parsed, not substring-matched: a key removal that leaves a
+    # trailing comma still satisfies every `in settings` check
+    # while pi, finding no valid file, falls back to its defaults.
+    settings = json.loads(
+        (REPO_ROOT / "nix" / "guest-pi-settings.json").read_text()
+    )
+    assert settings["hideThinkingBlock"] is True
     # Regular mode (#1204): pi's default fullscreen mode draws
     # the transcript in its own viewport and takes the mouse
     # from the terminal. Regular mode keeps the transcript in
     # the scrollback, where the operator's terminal selects it.
-    assert '"tuiMode": "regular"' in settings
+    assert settings["tuiMode"] == "regular"
     # pi links at its published bin (dist/bundle/cli.js), and the
     # package builds the tree bin-less — each image links it
     # itself (the Debian overlay's /usr/local symlink, the NixOS

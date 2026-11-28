@@ -286,7 +286,7 @@ bump, the table in `nix/pi-shrinkwrap-integrity.json`),
 `agentHerdrBinary` and its license pin, and the two
 `agentClaude*` tarballs in `nix/agent-toolchain.nix`. The build
 stays pure derivations: pi's dependency closure is prefetched
-against its shrinkwrap, with the five integrity gaps the
+against its shrinkwrap, with the seven integrity gaps the
 published lock leaves closed by hash, and installed offline.
 A workspace that already booted keeps the toolchain it booted
 with; a rebuilt image serves the new pins to the next workspace.

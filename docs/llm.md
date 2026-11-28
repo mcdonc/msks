@@ -253,12 +253,12 @@ beside `llm-models.ts` depends on the declaration.
 `~/.pi/agent/settings.json` ships in `/etc/skel` and root's home as well. Every
 account the identity seed provisions copies the skeleton, so each login user
 ends up with the file in `~/.pi/agent/`. It starts pi with the model's thinking
-blocks hidden, with install telemetry off, and in regular mode (`tuiMode` set
-to `"regular"`). Regular mode keeps the transcript in the terminal's scrollback
-and leaves the mouse to the terminal. The terminal's own selection, search, and
-scrolling then work over the transcript the terminal keeps. pi's own default is
-fullscreen mode, which draws the transcript in its own viewport and handles the
-mouse itself. The file is copied once, and later edits belong to the user.
+blocks hidden and in regular mode (`tuiMode` set to `"regular"`). Regular mode
+keeps the transcript in the terminal's scrollback and leaves the mouse to the
+terminal. The terminal's own selection, search, and scrolling then work over
+the transcript the terminal keeps. pi's own default is fullscreen mode, which
+draws the transcript in its own viewport and handles the mouse itself. The file
+is copied once, and later edits belong to the user.
 
 Quitting returns to the prompt at once in regular mode. Fullscreen mode writes
 the whole transcript to the terminal on exit, and a GUI shell paints that write
