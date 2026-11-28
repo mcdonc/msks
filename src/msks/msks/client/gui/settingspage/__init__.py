@@ -24,8 +24,9 @@ of the file stays as the operator wrote it, and the system file
 under it is never written. A cleared field unsets its key, so a
 value the system file holds applies again. A result the loader
 refuses flashes its message and writes nothing. A launch under
-``--config=none`` has no file to write: Apply applies the edits
-for the session and says so.
+``--config=none`` has no file to write: the four file-backed subtabs
+stand dark under a note, and the Dictation subtab's Apply applies
+its settings for the session and says so.
 
 The subtab strip follows the spatial-navigation rule the main strip
 carries (#962): Left and Right move between the subtabs, Down
@@ -82,11 +83,12 @@ __all__ = [
     "session_document",
 ]
 
-#: What Apply says with no file to write (#1224): a launch under
-#: ``--config=none`` applies the dictation fields for the session
-#: alone.
+#: What Apply says with no file to write (#1224, #1226): a launch
+#: under ``--config=none`` applies the dictation settings for the
+#: session alone.
 SESSION_ONLY = (
-    "applied for this session (--config=none reads and writes no file)"
+    "the dictation settings are applied for this session "
+    "(--config=none reads and writes no file)"
 )
 
 #: The note the file-backed subtabs stand under with no file to write
@@ -183,7 +185,10 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         for panel in self.panels:
             if panel is self.dictate:
                 continue
-            panel.setEnabled(False)
+            # The group boxes go dark and the note above them stays
+            # black: every field and button sits in a group box.
+            for box in panel.findChildren(QtWidgets.QGroupBox):
+                box.setEnabled(False)
             panel.pinned_note.setText(NO_FILE_NOTE)
             panel.pinned_note.setVisible(True)
             panel.pinned_note.setEnabled(True)

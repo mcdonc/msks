@@ -278,20 +278,23 @@ def set_daemon(text: str, alias: str, entry: dict | None) -> str:
     start = key_line_index(lines, "daemons")
     if start is None:
         return open_block(lines, alias, entry)
-    open_line(lines, start)
     end = block_end(lines, start)
     indent = child_indent(lines, start + 1, end)
     at = alias_line(lines, alias, start + 1, end, indent)
     if entry is None:
-        if at is not None:
-            del lines[at : alias_block_end(lines, at, end, indent)]
-            drop_emptied(lines, start)  # the block shrank: its end moved
-    elif at is None:
-        lines[end:end] = render_entry(alias, entry, indent)
+        if at is None:
+            return text  # nothing of the alias's to remove
+        open_line(lines, start)
+        del lines[at : alias_block_end(lines, at, end, indent)]
+        drop_emptied(lines, start)  # the block shrank: its end moved
     else:
-        lines[at : alias_block_end(lines, at, end, indent)] = render_entry(
-            alias, entry, indent
-        )
+        open_line(lines, start)
+        if at is None:
+            lines[end:end] = render_entry(alias, entry, indent)
+        else:
+            lines[at : alias_block_end(lines, at, end, indent)] = render_entry(
+                alias, entry, indent
+            )
     return "\n".join(lines)
 
 

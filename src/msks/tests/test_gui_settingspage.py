@@ -596,13 +596,16 @@ def test_a_launch_without_a_file_stands_the_file_backed_subtabs_dark(
     Nothing is written."""
     from msks.client import config as client_config
     from msks.client.gui.settingspage import NO_FILE_NOTE, SESSION_ONLY
+    from PySide6 import QtWidgets
 
     conf = client_config.resolve(config="none")
     page, _held = page_over(qt, conf)
     for panel in (page.connection, page.files, page.shell, page.screenshot):
-        assert panel.isEnabled() is False
+        boxes = panel.findChildren(QtWidgets.QGroupBox)
+        assert boxes and all(not box.isEnabled() for box in boxes)
         assert panel.pinned_note.text() == NO_FILE_NOTE
         assert panel.pinned_note.isHidden() is False
+        assert panel.pinned_note.isEnabled()  # the note stays black
         assert page.file_edits() == ({}, {})  # nothing to write from them
     assert page.dictate.isEnabled() and page.dictate.pinned_note.isHidden()
     page.dictate.device.setEditText("mic-session")
@@ -616,7 +619,8 @@ def test_a_launch_without_a_file_stands_the_file_backed_subtabs_dark(
     from msks.client.gui.settingspage import SettingsPage
 
     bare = SettingsPage(_held, None)
-    assert bare.files.isEnabled() is False
+    boxes = bare.files.findChildren(QtWidgets.QGroupBox)
+    assert boxes and all(not box.isEnabled() for box in boxes)
     assert bare.files.pinned_note.text() == NO_FILE_NOTE
 
 
@@ -884,7 +888,8 @@ def test_the_still_stands_note_names_the_system_file_alone(
     page.apply()
     assert "needs a url or a socket" in page.status.text()
     page.revert()
-    assert page.status.text() != "lab still stands: the system file defines it"
+    assert panel.removed == set()  # the Revert dropped the removal
+    assert panel.daemons == panel.seeded_daemons
     # The system file's alias, removed: the note names it.
     system_file(qt, SYSTEM, monkeypatch)
     conf = launched(qt)
@@ -983,3 +988,25 @@ def test_an_apply_over_fields_changed_back_writes_nothing(qt) -> None:
     assert page.status.text() == "nothing to save: the fields stand as saved"
     assert user_file(qt).read_text() == before
     assert not page.dirty and not page.apply_button.isEnabled()
+
+
+def test_a_system_alias_removed_over_an_empty_mapping_draws_the_note(
+    qt, monkeypatch
+) -> None:
+    """A user file carrying ``daemons: {}`` (#1226 review): removing
+    a system alias over it lands — the empty mapping stays as it
+    was, no null ``daemons`` refusal — and the note says the system
+    file keeps the alias."""
+    system_file(qt, SYSTEM, monkeypatch)
+    page, _held = page_over(
+        qt, launched(qt, text="url: https://u\ndaemons: {}\n")
+    )
+    panel = page.connection
+    panel.select("host")
+    panel.remove_alias()
+    page.apply()
+    assert page.status.text() == (
+        "host still stands: the system file defines it"
+    )
+    assert user_file(qt).read_text() == "url: https://u\ndaemons: {}\n"
+    assert set(panel.daemons) == {"host", "lab"}

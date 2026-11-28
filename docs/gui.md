@@ -624,15 +624,15 @@ field for its description.
 Each field shows the value the client resolves right now: the
 variable when `MSKSC_*` pins the key, else your file's value, else
 the system file's. A pinned key stands read-only with the variable
-named under the form. The token file field under `MSKSC_TOKEN` names
-the variable instead of the token. A key no file carries shows
-blank, and the default applies. The model is the one exception: its
-picker shows the default model.
+named under the form. The token file field under `MSKSC_TOKEN`
+shows the variable's name instead of the token. A key no file
+carries shows blank, and the default applies. The model is the one
+exception: its picker shows the default model.
 
 **Apply** writes the fields you changed into
 `~/.config/msks/msks.yaml` and leaves every other line of the file
-as you wrote it. A field you did not change stays out of the file,
-so a value the system file holds stays inherited. A field you clear
+as you wrote it. A field you did not change stays out of the file.
+A value the system file holds stays inherited. A field you clear
 deletes its key, and the system file's value applies again. A value
 the loader refuses (a port out of range, an alias with no address)
 shows its message and writes nothing. **Apply** and **Revert** stand

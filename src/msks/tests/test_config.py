@@ -1383,3 +1383,25 @@ def test_set_daemon_drops_the_key_with_its_last_entry_and_refuses_inline() -> (
         set_daemon(
             "daemons: {lab: {url: https://x}}\n", "dev", {"socket": "/s"}
         )
+
+
+def test_set_daemon_leaves_an_untouched_block_alone_on_a_removal() -> None:
+    """A removal the block does not carry (#1226 review) is a no-op:
+    a ``daemons: {}`` line stays the valid empty mapping it was —
+    never opened up bare, which the loader would refuse as null —
+    and an inline block is left alone too (a set over it refuses)."""
+    from msks.client.validate import parse_config_doc
+    from msks.configio import set_daemon
+
+    assert set_daemon("url: x\ndaemons: {}\n", "host", None) == (
+        "url: x\ndaemons: {}\n"
+    )
+    assert parse_config_doc("url: x\ndaemons: {}\n", "p") == {
+        "url": "x",
+        "daemons": {},
+    }
+    inline = "daemons: {lab: {url: https://x}}\n"
+    assert set_daemon(inline, "host", None) == inline
+    assert set_daemon("daemons: {}\n", "dev", {"socket": "/s"}) == (
+        "daemons:\n  dev:\n    socket: /s\n"
+    )

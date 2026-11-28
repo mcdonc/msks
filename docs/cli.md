@@ -238,13 +238,16 @@ cannot replace or unset a host alias's address. It can only outrank
 the alias with an alias of its own. Each file is validated on its
 own, and a refusal gives the file.
 
-The GUI's Settings tab writes its three `dictate_*` keys into the
-user's file by merging them in place: the key's own line is rewritten
-(a comment on that line goes with it) and every other line stays as
-you wrote it, and the system file is never written. A symlink is
-written through, so a file home-manager links stays a link. Under
-`--config=none` the tab applies the settings for the session and says
-so.
+The GUI's Settings tab writes the keys you changed into the user's
+file by merging them in place: a key's own line is rewritten (a
+comment on that line goes with it), a `daemons:` alias's own block
+is rewritten, and every other line stays as you wrote it. The system
+file is never written. A symlink is written through, so a file
+home-manager links stays a link. Under `--config=none` the tab has
+no file to write: its Connection, Files, Terminal and ssh, and
+Screenshot subtabs stand dark, and the Dictation subtab alone
+applies its settings for the session and says so. The
+[GUI chapter](gui.md#the-settings-tab) describes the subtabs.
 
 Unknown keys and duplicate keys are refused at load, each error
 giving the key and the valid ones, the same fail-fast rules
