@@ -303,11 +303,12 @@ def save_keys(conf: ClientConfig, values: dict) -> None:
     """Merge *values* into the user's file in place (#1224), for
     the GUI's settings page: the file at ``conf.config_path`` —
     never the system file under bare ``msks`` — read (the first-run
-    template's text when the file is gone, the launch's own rule for
-    a missing file), edited by :func:`msks.configio.set_scalars`,
-    checked through the loader against the files under it still
-    standing (a result the loader refuses is never written), and
-    written through a symlink by :func:`msks.configio.write_atomic`.
+    template's text when the file is gone under a bare launch; an
+    explicit path is never generated), edited by
+    :func:`msks.configio.set_scalars`, checked through the loader
+    against the files under it still standing (a result the loader
+    refuses is never written), and written through a symlink by
+    :func:`msks.configio.write_atomic`.
     ``--config=none`` has no file to write and returns; a file that
     will not read, a result that will not load, and a tree that will
     not write surface as ``ValueError`` or ``OSError`` with the path
@@ -316,7 +317,7 @@ def save_keys(conf: ClientConfig, values: dict) -> None:
         return
     path = conf.config_path
     try:
-        text = read_or_template(path)
+        text = read_for_save(path, bare=conf.config_arg is None)
     except OSError as exc:
         raise ValueError(
             f"cannot read config file {path}: {exc.strerror or exc}"
@@ -327,14 +328,19 @@ def save_keys(conf: ClientConfig, values: dict) -> None:
     write_atomic(path, edited)
 
 
-def read_or_template(path: str) -> str:
-    """The file's text, or the first-run template's when the file is
-    missing (#1224): the next write lands the template with the keys
-    merged in, the file a fresh install would have."""
+def read_for_save(path: str, *, bare: bool) -> str:
+    """The file's text for a save (#1224): the first-run template's
+    when the file is gone under a bare launch — the launch's own rule
+    for a missing file, so the next write lands the template with the
+    keys merged in. An explicit path is never generated: under
+    ``--config <path>`` a missing file is the read error the launch
+    would give."""
     try:
         return Path(path).read_text(encoding="utf-8")
     except FileNotFoundError:
-        return render_template()
+        if bare:
+            return render_template()
+        raise
 
 
 def generate_template(path: str) -> None:

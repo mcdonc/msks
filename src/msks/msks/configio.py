@@ -126,15 +126,22 @@ def set_scalars(text: str, values: dict) -> str:
     the result with its own loader before writing (this leaf reads
     no key vocabulary).
     """
+    refuse_non_scalars(values)
     lines = text.split("\n")
+    for key, value in values.items():
+        lines = set_scalar(lines, key, value)
+    return "\n".join(lines)
+
+
+def refuse_non_scalars(values: dict) -> None:
+    """The merge's contract (#1224): every value a string or None,
+    refused by name before any key is edited."""
     for key, value in values.items():
         if not isinstance(value, (str, type(None))):
             raise ValueError(
                 f"config key {key!r} must be a string or None to "
                 f"merge, got {type(value).__name__}"
             )
-        lines = set_scalar(lines, key, value)
-    return "\n".join(lines)
 
 
 def set_scalar(lines: list[str], key: str, value) -> list[str]:

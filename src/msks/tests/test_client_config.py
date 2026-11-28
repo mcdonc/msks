@@ -837,8 +837,15 @@ def test_pubkey_file_is_global_only(tmp_path, monkeypatch) -> None:
 
 def test_the_template_documents_pubkey_file() -> None:
     """The first-run template shows the key (#495) beside
-    identity_file's example, commented like every other one."""
-    assert "# pubkey_file:" in config.render_template()
+    identity_file's example, commented like every other one, and
+    states the precedence over a host's system file the way
+    docs/cli.md does (#1224)."""
+    template = config.render_template()
+    assert "# pubkey_file:" in template
+    assert (
+        "#   --daemon flag > MSKSC_* environment > the active alias's entry >"
+        in template
+    )
 
 
 def test_bootstrap_maps_config_errors_to_one_line(
@@ -1543,6 +1550,25 @@ def test_save_keys_regenerates_a_user_file_removed_under_the_window(
     text = (user / "msks.yaml").read_text()
     assert text.startswith("# msks client configuration")
     assert text.endswith("dictate_model: small\n")
+
+
+def test_save_keys_never_generates_an_explicit_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An explicit ``--config <path>`` that vanished under the window
+    is the launch's read error again (#1224 delta review), never the
+    first-run template: explicit paths are not generated."""
+    clean_env(monkeypatch)
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    user_file = user / "msks.yaml"
+    user_file.write_text("url: https://u\n")
+    conf = config.resolve(config=str(user_file))
+    user_file.unlink()
+    with pytest.raises(ValueError, match="cannot read config file") as refused:
+        config.save_keys(conf, {"dictate_model": "small"})
+    assert str(user_file) in str(refused.value)
+    assert not user_file.exists()
 
 
 def test_an_empty_system_variable_means_no_system_file(

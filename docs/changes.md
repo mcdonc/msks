@@ -24,11 +24,11 @@ tagged `vX.Y.Z`.
 ### Changed
 
 - **The client config layers a system file (#1224).** A bare `msks`
-  reads `/etc/msks/msks.yaml` (relocated by `MSKSC_SYSTEM_CONFIG`; an
-  empty value means none) as the floor and the user's
-  `~/.config/msks/msks.yaml` over it, key by key; `daemons:` merges by
-  alias, and the two files resolve as one. `--config <path>` and
-  `--config=none` read no system file. See
+  reads `/etc/msks/msks.yaml` as the floor and the user's
+  `~/.config/msks/msks.yaml` over it, key by key. `MSKSC_SYSTEM_CONFIG`
+  relocates the system file, and an empty value means none. `daemons:`
+  merges by alias, and the two files resolve as one. `--config <path>`
+  and `--config=none` read no system file. See
   [docs/cli.md](cli.md#the-client-config-file).
 
 - **`msks-setup-macos-host` lands the dictation tools (#1216).** The

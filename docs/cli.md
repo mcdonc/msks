@@ -220,17 +220,22 @@ is an error, and an explicit path is never generated. `--config=none`
 reads the environment and the built-in defaults only.
 
 The system file is `/etc/msks/msks.yaml` unless `MSKSC_SYSTEM_CONFIG`
-points elsewhere; an empty value means there is no system file. A
+points elsewhere. An empty value means there is no system file. A
 host can put its daemon's address, CA, and token file there for every
 user, with `active_daemon` picking it. A user's file overrides one key
 or adds an alias without copying the rest. `daemons:` merges by alias:
 an alias both files define merges key by key, and an alias either file
 defines is kept. A user's entry that adds a key to a host alias needs
-no address of its own. The active alias's entry beats every global
-key, so a user who wants a daemon other than the host's pick defines
-their own alias and names it in `active_daemon`, or exports
-`MSKSC_URL` for one invocation. Each file is validated on its own, and
-a refusal gives the file.
+no address of its own.
+
+The active alias's entry beats every global key. A user who wants a
+daemon other than the host's pick defines an alias of their own and
+sets `active_daemon` to it. For one invocation, `msks --daemon <url>`
+addresses another daemon outright. `MSKSC_URL` alone changes the
+address and keeps the host alias's token file and CA. A user's file
+cannot replace or unset a host alias's address. It can only outrank
+the alias with an alias of its own. Each file is validated on its
+own, and a refusal gives the file.
 
 The GUI's Settings tab writes its three `dictate_*` keys into the
 user's file by merging them in place: the key's own line is rewritten
