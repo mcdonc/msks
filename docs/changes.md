@@ -33,10 +33,10 @@ tagged `vX.Y.Z`.
 - **Guest toolchain pins (#1217).** The Debian, Fedora, and NixOS
   guests ship pi 1.7.0 (from 1.5.2) and Claude Code 2.1.332 (from
   2.1.325), with herdr unchanged at 0.9.5. pi 1.7.0 removes install
-  telemetry upstream, so the image's default settings file drops the
-  now-unused `enableInstallTelemetry` key. Workspaces built from new
-  guest assets report the new versions, and existing workspaces keep
-  their baked toolchain until rebuilt.
+  telemetry upstream. `~/.pi/agent/settings.json`, the default the image
+  plants, drops the now-unused `enableInstallTelemetry` key. Workspaces
+  built from new guest assets report the new versions, and existing
+  workspaces keep their baked toolchain until rebuilt.
 
 ### Fixed
 

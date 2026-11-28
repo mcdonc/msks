@@ -461,13 +461,18 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     # thinking blocks hidden, for the skeleton and root alike.
     assert "$out/etc/skel/.pi/agent/settings.json" in build
     assert "$out/root/.pi/agent/settings.json" in build
-    settings = (REPO_ROOT / "nix" / "guest-pi-settings.json").read_text()
-    assert '"hideThinkingBlock": true' in settings
+    # Parsed, not substring-matched: a key removal that leaves a
+    # trailing comma still satisfies every `in settings` check
+    # while pi, finding no valid file, falls back to its defaults.
+    settings = json.loads(
+        (REPO_ROOT / "nix" / "guest-pi-settings.json").read_text()
+    )
+    assert settings["hideThinkingBlock"] is True
     # Regular mode (#1204): pi's default fullscreen mode draws
     # the transcript in its own viewport and takes the mouse
     # from the terminal. Regular mode keeps the transcript in
     # the scrollback, where the operator's terminal selects it.
-    assert '"tuiMode": "regular"' in settings
+    assert settings["tuiMode"] == "regular"
     # pi links at its published bin (dist/bundle/cli.js), and the
     # package builds the tree bin-less — each image links it
     # itself (the Debian overlay's /usr/local symlink, the NixOS
