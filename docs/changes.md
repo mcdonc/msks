@@ -38,6 +38,17 @@ tagged `vX.Y.Z`.
   built from new guest assets report the new versions, and existing
   workspaces keep their baked toolchain until rebuilt.
 
+### Breaking
+
+- **A bare `msks` opens the GUI (#1221).** `msks` with no subcommand
+  opens the desktop window, the same window `msks gui` opens. An
+  operator who typed `msks` for the TUI now runs `msks tui`
+  (`msks tui <workspace>` opens that workspace's page). Where no
+  display is reachable (a plain ssh login, a headless host), a bare
+  `msks` prints one line whose last clause is `msks tui opens the
+terminal UI instead`, and exits 1. See [docs/gui.md](gui.md) and
+  [docs/tui.md](tui.md).
+
 ### Fixed
 
 - **A stopped holder takes the screenshot pipe's ssh child with

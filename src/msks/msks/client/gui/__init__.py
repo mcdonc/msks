@@ -1,7 +1,7 @@
 """Client-side GUI screens (PySide6; the daemon never imports these).
 
-The package presents its parts: the entry the ``msks gui``
-command runs (:mod:`.app`), the screen actions over the
+The package presents its parts: the entry a bare ``msks``
+and the ``msks gui`` command run (:mod:`.app`), the screen actions over the
 transport (:mod:`.data`, PySide6-free), the workspace list's
 presenter (:mod:`.rows`, phase 3 of #924 — plain row models,
 PySide6-free), and the workspace detail view's presenter

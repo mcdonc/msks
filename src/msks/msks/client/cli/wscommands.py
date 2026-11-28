@@ -111,7 +111,8 @@ def root(
         "environment only (#314)",
     ),
 ) -> int:
-    """A bare ``msks`` is the workspace tree TUI (#309)."""
+    """A bare ``msks`` opens the GUI window (#1221); ``msks tui``
+    is the workspace tree TUI (#309)."""
     # The config bootstrap runs before every command body (#314):
     # the file's and the flag's winners are in the environment by
     # the time any reader looks — except on a help screen, where
@@ -131,8 +132,8 @@ def root(
             notice_daemon_version_skew()
     if ctx.invoked_subcommand is None:
         # The decorator's edge, same as every command: a Ctrl-C in
-        # the tree is one line, not typer's silent 130.
-        return one_line_interrupts(run_main_tui)(conf=cliapp.invoked_conf)
+        # the window is one line, not typer's silent 130.
+        return one_line_interrupts(run_gui)(conf=cliapp.invoked_conf)
     return 0
 
 
@@ -164,8 +165,9 @@ def tui(
         help="open this workspace's page (name or id) instead of the list",
     ),
 ) -> int:
-    """The full-screen workspace tree (#309): the workspaces list,
-    each workspace's page, and the consent decider."""
+    """The full-screen workspace tree TUI (#309): the workspaces
+    list, each workspace's page, and the consent decider. The
+    terminal entry: a bare ``msks`` opens the GUI (#1221)."""
     return run_main_tui(workspace, conf=cliapp.invoked_conf)
 
 
@@ -174,7 +176,7 @@ def tui(
 def gui() -> int:
     """The desktop GUI client (#924): the PySide6 front end over
     the daemon's REST API. Ships in the base install (#1023);
-    the workspace screens arrive with the plan's later phases."""
+    a bare ``msks`` opens the same window (#1221)."""
     return run_gui(conf=cliapp.invoked_conf)
 
 

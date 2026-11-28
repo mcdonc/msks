@@ -1,12 +1,13 @@
 # The CLI client
 
-Along with invoking the TUI, the `msks` command is a client for the daemon's
+Along with invoking the GUI, the `msks` command is a client for the daemon's
 `/api/v1` REST surface.
 
 Here's an overview of the common command set:
 
 ```bash
-msks                         # the workspace tree TUI
+msks                         # the GUI window
+msks tui                     # the workspace tree TUI
 msks ls                      # what exists, and what state is it in
 msks create ws                # make a workspace
 msks clone ws fork            # copy a workspace into a new one
@@ -1585,14 +1586,14 @@ lands under `applications`, and the icon renders land under
 installing shell resolved, so the desktop finds the client even when
 the venv's bin directory is not on the desktop's `PATH`.
 
-The `msks gui` launch plants the same entry and renders before
-the window opens (#1045). The taskbar icon works from the
-first launch after a fresh install, and the next launch after
-an upgrade refreshes the renders. A launch from the desktop
-entry replants the entry's own absolute path. A launch that
-resolves no client keeps the absolute path the entry carries.
-The command stays for a manual plant: it prints the entry's
-path, and it overwrites in place and is safe to re-run.
+Every launch of the window (`msks gui` or a bare `msks`) plants
+the same entry and renders before the window opens (#1045). The
+taskbar icon works from the first launch after a fresh install,
+and the next launch after an upgrade refreshes the renders. A
+launch from the desktop entry replants the entry's own absolute
+path. A launch that resolves no client keeps the absolute path the
+entry carries. The command stays for a manual plant: it prints the
+entry's path, and it overwrites in place and is safe to re-run.
 
 The window itself also sets the icon directly, so on X11 and macOS the
 window carries it without the install. Linux is the only desktop the

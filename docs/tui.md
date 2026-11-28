@@ -6,9 +6,10 @@ The TUI uses the same REST API as the CLI commands, with the same environment
 variables, config file, and daemon aliases. It reads no daemon state directly.
 Every page uses the API.
 
-A bare `msks` (no arguments at all) launches the TUI. The default page is a
-full-screen workspace tree. `msks tui` is the same command, and `msks tui
-my-workspace` opens that workspace's page directly.
+`msks tui` launches the TUI. The default page is a full-screen workspace
+tree, and `msks tui my-workspace` opens that workspace's page directly. A bare
+`msks` (no subcommand) opens the GUI window instead. See
+[the GUI chapter](gui.md).
 
 ## The workspace tree
 

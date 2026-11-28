@@ -158,11 +158,6 @@ def test_require_tty_rejects_pipes(
         require_tty()
 
 
-def test_main_requires_subcommand() -> None:
-    with pytest.raises(SystemExit):
-        cli.main([])
-
-
 def test_main_console_needs_tty(monkeypatch: pytest.MonkeyPatch) -> None:
     class NotATty(io.StringIO):
         def isatty(self) -> bool:
@@ -674,8 +669,15 @@ def test_main_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_module_entry_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The module entry block runs ``main`` and raises its code.
+    The invocation carries a help flag: a bare ``msks`` opens the
+    GUI now (#1221), and on a host with a desktop session (a macOS
+    runner's launchd answers for one, #934) that window path runs
+    for real under the test and leaves its application behind in
+    the worker (#1222). The help screen exercises the entry block
+    offline, on every host."""
 
-    monkeypatch.setattr(sys, "argv", ["msks"])
+    monkeypatch.setattr(sys, "argv", ["msks", "--help"])
     importlib.import_module("msks.client.cli.__main__")
     entry = Path(cli.__file__).with_name("__main__.py")
     source = entry.read_text()
