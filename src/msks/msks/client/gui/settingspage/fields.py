@@ -19,7 +19,7 @@ contract: nothing imports it at CLI parse time (#927).
 
 from __future__ import annotations
 
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from .vocabulary import LABELS, TIPS, display_value, pin_notice
 
@@ -27,8 +27,8 @@ from .vocabulary import LABELS, TIPS, display_value, pin_notice
 BROWSE = "Browse…"
 
 #: The mark beside a pinned field (#1226): the variable's name, in
-#: the palette's mid tone, at the row's end — the notice stands where
-#: the setting does, not in a block under the form.
+#: italic text at the row's end — the notice stands where the
+#: setting does, not in a block under the form.
 MARK = "set by %s"
 
 
@@ -137,11 +137,14 @@ class Panel(QtWidgets.QWidget):
         return widget
 
     def mark(self, key: str) -> QtWidgets.QLabel:
-        """A row's pin mark (#1226): a muted label for the variable
-        that pins the key, hidden while the key is free."""
+        """A row's pin mark (#1226): the variable that pins the key in
+        the palette's own text color, italic — the palette's mid and
+        shadow tones vanish on a dark theme — and hidden while the
+        key is free."""
         label = QtWidgets.QLabel("", self)
-        mid = label.palette().color(QtGui.QPalette.ColorRole.Mid).name()
-        label.setStyleSheet(f"color: {mid};")
+        font = label.font()
+        font.setItalic(True)
+        label.setFont(font)
         label.setVisible(False)
         self.marks[key] = label
         return label
