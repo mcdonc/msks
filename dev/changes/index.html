@@ -2687,7 +2687,20 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Dictation in the GUI (#1214).</strong> A small pill at the right end of
+<li>
+<p><strong>Every client setting in the GUI's Settings tab (#1226).</strong> The
+  Settings tab edits every key <code>~/.config/msks/msks.yaml</code> accepts,
+  under five subtabs: Connection (with a <code>daemons:</code> aliases editor:
+  add, rename, and remove), Files, Terminal and ssh, Screenshot, and
+  Dictation. <strong>Apply</strong> writes only the fields you changed into your
+  file and leaves every other line as you wrote it. A cleared field
+  unsets its key, and a value the system file holds applies again.
+  Left and Right move between the subtabs, and a subtab with an
+  unsaved change wears a marker. See
+  <a href="../gui/#the-settings-tab">docs/gui.md</a>.</p>
+</li>
+<li>
+<p><strong>Dictation in the GUI (#1214).</strong> A small pill at the right end of
   every page's bottom row is a toggle: one click starts a recording,
   a second ends it, and the transcript goes to the clipboard and the
   primary selection with a tone at each end and a desktop
@@ -2698,7 +2711,8 @@ tagged <code>vX.Y.Z</code>.</p>
   rest as written, and <code>MSKSC_DICTATE_*</code> variables pin any of them.
   The host needs PipeWire's <code>pw-record</code> and
   <code>pw-cat</code> and whisper.cpp's <code>whisper-cli</code>; see
-  <a href="../gui/#dictation">docs/gui.md</a>.</li>
+  <a href="../gui/#dictation">docs/gui.md</a>.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>

@@ -607,6 +607,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The Settings tab">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#daemon-aliases" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Daemon aliases
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dictation_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Dictation
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1362,6 +1390,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The Settings tab">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#daemon-aliases" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Daemon aliases
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dictation_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Dictation
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1983,8 +2039,9 @@ clip with no speech in it ends with no transcript and no tone.</p>
 device. <code>pw-record</code> captures 16 kHz mono, and <code>whisper-cli</code> (from
 whisper.cpp) transcribes the clip once it ends. The model loads for
 each clip, which takes about one second with <code>small</code>. The model is
-not shipped: the first click opens the <strong>Settings</strong> tab, whose
-<strong>Download</strong> button fetches it into <code>~/.cache/msks/whisper/</code>. The
+not shipped: the first click opens the <strong>Settings</strong> tab on its
+<strong>Dictation</strong> subtab, whose <strong>Download</strong> button fetches it into
+<code>~/.cache/msks/whisper/</code>. The
 <a href="../cli/#the-client-config-file">CLI chapter</a> describes the
 settings, their file, and the precedence.</p>
 <p>On a Mac the same calls answer through the shims that
@@ -1997,10 +2054,82 @@ launched the GUI. The capture device is the desktop's default input,
 and the Device setting below selects another one by its avfoundation
 index. <code>PW_RECORD_AUDIO_INDEX</code> overrides the setting for one launch.</p>
 <h2 id="the-settings-tab">The Settings tab<a class="headerlink" href="#the-settings-tab" title="Permanent link">&para;</a></h2>
-<p><img alt="The Settings tab: the dictation form, the model's state and its
-Download button, the status line" src="../screens/gui-dictation-settings.png" /></p>
-<p>The fourth tab edits the dictation settings. The form shows the
-settings in effect now, and every field takes a change.</p>
+<p><img alt="The Settings tab on its Dictation subtab: the dictation form, the
+model's state and its Download button, the status
+line" src="../screens/gui-dictation-settings.png" /></p>
+<p>The fourth tab edits every setting the client's <code>msks.yaml</code> accepts.
+A strip of subtabs partitions them, and one <strong>Apply</strong> and <strong>Revert</strong>
+pair serves the whole page:</p>
+<ul>
+<li><strong>Connection</strong>: the URL or the local socket, the token file, the
+  CA file, the expected image, the active alias, and the <code>daemons:</code>
+  aliases.</li>
+<li><strong>Files</strong>: the cache directory, the state directory, the identity
+  file, the public key file, and the image manifest URL.</li>
+<li><strong>Terminal and ssh</strong>: the terminal launcher and the remembered
+  ssh options.</li>
+<li><strong>Screenshot</strong>: the capture command and its port.</li>
+<li><strong>Dictation</strong>: the speech model, the microphone, and the vocabulary
+  prompt, with the model download.</li>
+</ul>
+<p>Left and Right move between the subtabs, Down enters the subtab's
+first field, and Up from the first field returns to the strip. Every
+field shows the value in effect now, and a subtab with an unsaved
+change wears <code>*</code> before its label. Hover a setting's name or its
+field for its description.</p>
+<p>Each field shows the value the client resolves right now: the
+variable when <code>MSKSC_*</code> pins the key, else your file's value, else
+the system file's. A pinned key stands read-only, with <code>set by
+MSKSC_…</code> beside its field. The token file field under <code>MSKSC_TOKEN</code>
+shows the variable's name instead of the token. A key no file
+carries shows blank, and the default applies. The model is the one
+exception: its picker shows the default model.</p>
+<p><strong>Apply</strong> writes the fields you changed into
+<code>~/.config/msks/msks.yaml</code> and leaves every other line of the file
+as you wrote it. A field you did not change stays out of the file.
+A value the system file holds stays inherited. A field you clear
+deletes its key, and the system file's value applies again. A value
+the loader refuses (a port out of range, an alias with no address)
+shows its message and writes nothing. <strong>Apply</strong> and <strong>Revert</strong> stand
+dark while the fields match the saved settings, and light at the
+first change. <strong>Revert</strong> reads the files again and reseeds the
+fields.</p>
+<p>Under <code>--config=none</code> the Connection, Files, Terminal and ssh, and
+Screenshot subtabs stand dark with a note. The client read their
+keys at launch and no file holds an edit. The Dictation subtab alone
+applies for the session, and <strong>Apply</strong> says so.</p>
+<p>The path fields carry a <strong>Browse…</strong> button beside them, which opens
+the platform's file or directory picker. A path types free as well.
+A list-form value (<code>terminal_open_cmd</code>, <code>ssh_options</code>,
+<code>screenshot_command</code>) shows its string form, shell-joined. A field
+you change saves the string form. A list you leave alone stays a
+list in the file.</p>
+<h3 id="daemon-aliases">Daemon aliases<a class="headerlink" href="#daemon-aliases" title="Permanent link">&para;</a></h3>
+<p>The <strong>Daemon aliases</strong> group on <strong>Connection</strong> lists the file's
+aliases with their addresses. <strong>Add…</strong> asks for a name and opens an
+empty entry. <strong>Rename…</strong> asks for the new name and moves the entry,
+and the active alias follows when it named the old one. <strong>Remove</strong>
+deletes the entry on the next <strong>Apply</strong>. An alias the system file
+defines comes back after a remove, and the status line says where
+it comes from: your file cannot delete the system's entry.</p>
+<p>The selected alias's entry sits under the list. Pick <strong>URL</strong> or
+<strong>Socket</strong> for the address and type it beside the picker. A URL
+entry takes a token file and a CA file. A socket entry authenticates
+by peer credential, and its token and CA fields stand dark. The
+expected image overrides the global one for the alias. The loader
+checks each entry when <strong>Apply</strong> lands: an alias needs a URL or a
+socket, never both. The rule runs over the entry merged with the
+system file's entry of the same name.</p>
+<p>An edit to an alias the system file completes writes the keys you
+changed and the keys your file already carried. A key the system
+file holds and you left alone stays inherited. <strong>Rename…</strong> moves
+the entry to the end of the block. A <code>daemons:</code> line written inline
+(<code>daemons: {lab: {url: ...}}</code>) is refused with a message: write the
+aliases out under the key to edit them here.</p>
+<p><strong>Active alias</strong> is the alias a bare <code>msks</code> addresses. The
+connection picker in the listing's status row stays a pick for the
+session.</p>
+<h3 id="dictation_1">Dictation<a class="headerlink" href="#dictation_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Model</strong>: a whisper.cpp ggml model. The picker lists the known
   names with their sizes, and a path to a <code>.bin</code> file types free.
@@ -2020,17 +2149,7 @@ settings in effect now, and every field takes a change.</p>
   toward, such as <code>msks, devenv, NixOS, pi</code>. Leave it empty for
   plain dictation.</li>
 </ul>
-<p>Hover a setting's name or its field for its description. A key that
-an <code>MSKSC_DICTATE_*</code> variable pins shows the variable's value in a
-read-only field, with the variable named under the form.</p>
-<p><strong>Apply</strong> merges the fields into <code>~/.config/msks/msks.yaml</code>: the
-three keys are written into the file, every other line stays as you
-wrote it, and the next recording takes them. A recording ends at the pill's
-second click, whatever the settings. <strong>Apply</strong> and <strong>Revert</strong> stand
-dark while the fields match the saved settings, and light at the first
-change. <strong>Revert</strong> reads the file again and reseeds the fields. A bad
-value in the file refuses <code>msks</code> at start, with the file and the key
-in the message.</p>
+<p>A recording ends at the pill's second click, whatever the settings.</p>
 <p><strong>Speech model</strong> shows where the picked model points and whether
 it is on disk, with its size; the line follows the picker as it
 changes. <strong>Download</strong> fetches a missing model into the cache with a
