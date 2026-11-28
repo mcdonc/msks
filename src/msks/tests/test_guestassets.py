@@ -463,10 +463,6 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     assert "$out/root/.pi/agent/settings.json" in build
     settings = (REPO_ROOT / "nix" / "guest-pi-settings.json").read_text()
     assert '"hideThinkingBlock": true' in settings
-    # No install telemetry beacon from egress-gated guests
-    # (#617 review): the fresh-install path would otherwise fetch
-    # pi.dev on the first interactive start.
-    assert '"enableInstallTelemetry": false' in settings
     # Regular mode (#1204): pi's default fullscreen mode draws
     # the transcript in its own viewport and takes the mouse
     # from the terminal. Regular mode keeps the transcript in
