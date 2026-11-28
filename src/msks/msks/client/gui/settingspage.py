@@ -1,17 +1,18 @@
 """The settings page (#1214): the top-level tab that edits the
 dictate pill's settings — the model, the device, and the prompt —
-saves them into ``gui.yaml`` through
-:mod:`msks.client.gui.guiprefs`, and carries the model download
-with its progress.
+saves them into the client's ``msks.yaml`` by merging the three
+keys into the file in place (:func:`msks.client.config.save_keys`,
+#1224), and carries the model download with its progress.
 
 The page shows the *effective* settings (:mod:`msks.client.gui.dictatekeys`)
-and seeds its fields from them. Apply writes every field into
-``gui.yaml`` and hands the controller the freshly resolved
-settings; the operator's config file is never touched. A key the
+and seeds its fields from them. Apply writes every field into the
+user's ``msks.yaml`` — every other byte of the file stays as the
+operator wrote it, and the system file under it is never written —
+and hands the controller the freshly resolved settings. A key the
 environment pins reads as the variable's value and its field
 stands read-only with the variable named, the way every other
-client key behaves; a value that refused anywhere is shown with
-its message and reads as the default.
+client key behaves. A launch under ``--config=none`` has no file
+to write: Apply applies for the session and says so.
 
 The download fetches a *named* model on a worker thread with the
 progress bar under it; a path setting (a NixOS store path)
@@ -32,6 +33,7 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtWidgets
 
+from ..config import NO_CONFIG, ClientConfig, reload_doc, save_keys
 from ..config_keys import DICTATE_KEYS, GLOBAL_ENV_VARS
 from ..dictate import (
     DEFAULT_MODEL,
@@ -43,7 +45,6 @@ from ..dictate import (
 )
 from .dictatekeys import DictateSettings, resolve
 from .dictatepill import seat_pill
-from .guiprefs import dump_prefs, load_prefs, save_prefs
 from .statusflash import StatusFlash
 from .tintedlabel import TintedLabel
 
@@ -54,6 +55,23 @@ MODEL_LABEL = "Model"
 BAR_WIDTH = 360
 DEVICE_LABEL = "Device"
 DEFAULT_DEVICE = "the default input"
+
+#: What Apply says with no file to write (#1224): a launch under
+#: ``--config=none`` applies the fields for the session alone.
+SESSION_ONLY = (
+    "applied for this session (--config=none reads and writes no file)"
+)
+
+
+def session_document(operator: dict, values: dict) -> dict:
+    """The document a session-only apply holds (#1224): *values*
+    over the standing document the way a save would land them — a
+    blank is the unset form and drops out."""
+    return {
+        **operator,
+        **{key: value for key, value in values.items() if value},
+    }
+
 
 #: The device row's Refresh button (#1214).
 REFRESH_TIP = (
@@ -103,7 +121,7 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
     def __init__(
         self,
         dictation,
-        operator: dict | None = None,
+        conf: ClientConfig | None = None,
         parent=None,
         *,
         sources: Callable[[], list] = list_sources,
@@ -112,7 +130,15 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         super().__init__(parent)
         self.dictation = dictation
         self.cache_root = dictation.cache_root
-        self.operator = {} if operator is None else operator
+        #: The launch's resolved config (#1224): the user file Apply
+        #: writes (``config_path``) and the files a save re-reads
+        #: (``config_paths``); None when the window runs with no
+        #: config at all, the suite's form.
+        self.conf = conf
+        #: The merged document the settings resolve over (#1214,
+        #: #1224): the user's keys over the system's, read again
+        #: after every save.
+        self.operator = {} if conf is None else conf.doc
         self.sources = sources
         self.downloader = downloader
         self.status = TintedLabel("", self)
@@ -327,20 +353,17 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
 
     def notes(self, settings: DictateSettings) -> str:
         """The note beside the form (#1214): the variables that
-        pin a key, then every refusal with its source."""
-        lines = [
+        pin a key."""
+        return "\n".join(
             f"{GLOBAL_ENV_VARS[key]} pins this setting"
             for key in DICTATE_KEYS
             if key in settings.pinned
-        ]
-        lines += [message for _key, message in settings.problems]
-        return "\n".join(lines)
+        )
 
     def load(self, settings: DictateSettings) -> None:
         """Seed the fields from the effective settings (#1214): a
         pinned key's field reads as the variable's value and
-        stands read-only, the variable named beside; a refused
-        value's message stands beside too."""
+        stands read-only, the variable named beside."""
         for key in DICTATE_KEYS:
             self.seed(key, settings)
         note = self.notes(settings)
@@ -400,32 +423,49 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
             if key not in self.dictation.settings.pinned
         }
 
+    def writable(self) -> bool:
+        """Whether the launch has a file Apply writes (#1224):
+        false under ``--config=none`` and when the window runs
+        with no config at all."""
+        return self.conf is not None and self.conf.config_path != NO_CONFIG
+
+    def save(self, values: dict) -> None:
+        """Write *values* into the user's ``msks.yaml`` (#1224) and
+        read the merged document again — or, with no file to
+        write, hold them in the document for the session alone. The
+        caller flashes the reason when the file will not read or
+        write."""
+        if not self.writable():
+            self.operator = session_document(self.operator, values)
+        else:
+            save_keys(self.conf, values)
+            self.operator = reload_doc(self.conf)
+
     def effective(self) -> DictateSettings:
         """The settings as the layers resolve them right now
-        (#1214): the environment, ``gui.yaml``, and the operator's
-        file. A file that will not read is the caller's to show."""
-        return resolve(os.environ, load_prefs(), self.operator)
+        (#1214, #1224): the environment and the merged config
+        document."""
+        return resolve(os.environ, self.operator)
 
     @QtCore.Slot()
     def apply(self) -> None:
-        """Save into ``gui.yaml`` (#1214) — a pinned key is left
-        out, the variable wins it anyway — and hand the freshly
-        resolved settings to the controller. A file the tree
-        cannot write flashes the reason."""
-        values = self.file_values()
+        """Save into the user's ``msks.yaml`` (#1214, #1224) — a
+        pinned key is left out, the variable wins it anyway — and
+        hand the freshly resolved settings to the controller. A
+        file the tree cannot read or write flashes the reason; a
+        launch with no file applies for the session and says
+        so."""
+        saved = self.writable()
         try:
-            save_prefs(values)
+            self.save(self.file_values())
             settings = self.effective()
-        except OSError as exc:
-            self.flash(f"cannot save gui.yaml: {exc}", error=True)
-            return
-        except ValueError as exc:
-            self.flash(str(exc), error=True)
+        except (OSError, ValueError) as exc:
+            self.flash(f"cannot save msks.yaml: {exc}", error=True)
             return
         self.dictation.reload(settings)
         self.load(settings)
         self.refresh_model()
-        self.flash("saved to gui.yaml")
+        self.flash("saved to msks.yaml" if saved else SESSION_ONLY)
         self.settings_saved.emit(settings)
 
     @QtCore.Slot()
@@ -437,6 +477,8 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         settings. A file that will not read flashes the reason
         and the fields reseed from the standing settings."""
         try:
+            if self.writable():
+                self.operator = reload_doc(self.conf)
             settings = self.effective()
         except ValueError as exc:
             self.flash(str(exc), error=True)
@@ -599,12 +641,10 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
             )
             return False
         try:
-            values = dict(load_prefs())
-            values["dictate_model"] = model
-            save_prefs(values)
+            self.save({"dictate_model": model})
             settings = self.effective()
         except (OSError, ValueError) as exc:
-            self.flash(f"cannot save gui.yaml: {exc}", error=True)
+            self.flash(f"cannot save msks.yaml: {exc}", error=True)
             return False
         self.dictation.reload(settings)
         # The fields stand as the operator left them (#1216 review):
@@ -612,13 +652,18 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
         # from the file still asks for Apply; the model pick that
         # started the download is now the file's, so it does not.
         self.refresh_model()
-        # The file's own form of the fields against the file: blanks
-        # drop out of both, as the dump does.
-        if self.dirty and dump_prefs(self.file_values()) == dump_prefs(
-            load_prefs()
-        ):
+        if self.dirty and self.matches_file():
             self.settled()
         return True
+
+    def matches_file(self) -> bool:
+        """Whether the fields stand as the file holds them (#1224):
+        every key Apply would write equals the merged document's
+        value, a blank field matching an absent key."""
+        return all(
+            (self.operator.get(key) or "") == value
+            for key, value in self.file_values().items()
+        )
 
     @QtCore.Slot()
     def abandon_download(self) -> None:

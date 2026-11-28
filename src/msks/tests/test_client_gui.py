@@ -1193,14 +1193,14 @@ def test_open_window_reuses_an_existing_app(
     # settings and the client's cache root, built before the
     # first tree lands; the pill host over it and the app; each
     # landing's settings page over the controller and the
-    # operator's file keys (none here: no config was resolved);
+    # launch's resolved config (none here: no config was resolved);
     # the no-model ask wired once; and the close path shuts the
     # controller and takes the host's filter off the app.
     from msks.client.gui.dictatekeys import DictateSettings
 
     assert len(dictations) == 1
     assert isinstance(dictations[0].settings, DictateSettings)
-    assert settings_pages == [(dictations[0], {}), (dictations[0], {})]
+    assert settings_pages == [(dictations[0], None), (dictations[0], None)]
     # Every page of each landed tree takes the controller and
     # seats the pill in its own bottom row (#1214): the shell (its
     # list and its detail page), the Images tab, the Secrets tab,
@@ -1596,25 +1596,22 @@ def test_open_window_keeps_a_user_style_choice(
     assert styles == ["font 11.25", "font 13.5"]
 
 
-def test_the_dictation_composition_survives_a_bad_preferences_file(
+def test_the_dictation_composition_resolves_the_launch_document(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
 ) -> None:
-    """``compose_dictation`` (#1214): a gui.yaml that will not
-    parse prints one stderr line — the client's convention — and
-    the window opens on the operator's file and the defaults;
-    the pill host's opener shows the settings page when the tree
+    """``compose_dictation`` (#1214, #1224): the controller
+    resolves over the launch's merged config document — the file
+    the launch read, nothing read again at the window — and the
+    pill host's opener shows the settings page when the tree
     holds one and brings the window forward either way."""
     from msks.client.gui import app as gui_app
     from msks.client.gui import dictatepill as pill_mod
     from msks.client.gui import dictation as dictation_mod
-    from msks.client.gui.guiprefs import prefs_path
     from msks.client.gui.tabs import SETTINGS_LABEL
 
     monkeypatch.setenv("MSKSC_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     monkeypatch.delenv("MSKSC_CACHE_DIR", raising=False)
-    prefs_path().parent.mkdir(parents=True)
-    prefs_path().write_text("dictate_model: [")
     built: list = []
 
     class FakeDictation:
@@ -1636,8 +1633,8 @@ def test_the_dictation_composition_survives_a_bad_preferences_file(
     dictation, _pills = gui_app.compose_dictation(
         SimpleNamespace(doc={"dictate_model": "base.en"}), None
     )
-    assert "msks: " in capsys.readouterr().err
-    assert built[0][0].model == "base.en"  # the operator's file stood
+    assert capsys.readouterr().err == ""  # nothing to report
+    assert built[0][0].model == "base.en"  # the launch's document
     assert built[0][0].device == ""  # the default, nothing pinned
     assert built[1] == "host"
 

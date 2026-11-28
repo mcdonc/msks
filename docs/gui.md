@@ -622,12 +622,14 @@ Hover a setting's name or its field for its description. A key that
 an `MSKSC_DICTATE_*` variable pins shows the variable's value in a
 read-only field, with the variable named under the form.
 
-**Apply** saves the fields into `~/.config/msks/gui.yaml` and the
-next recording takes them. A recording ends at the pill's second
-click, whatever the settings. **Apply** and **Revert** stand dark
-while the fields match the saved settings, and light at the first
-change. **Revert** reads the layers again and reseeds the fields. A value that refused anywhere shows its message
-under the form, and the setting reads as its default.
+**Apply** merges the fields into `~/.config/msks/msks.yaml`: the
+three keys land in the file, every other line stays as you wrote it,
+and the next recording takes them. A recording ends at the pill's
+second click, whatever the settings. **Apply** and **Revert** stand
+dark while the fields match the saved settings, and light at the first
+change. **Revert** reads the file again and reseeds the fields. A bad
+value in the file refuses `msks` at start, with the file and the key
+in the message.
 
 **Speech model** shows where the picked model points and whether
 it is on disk, with its size; the line follows the picker as it

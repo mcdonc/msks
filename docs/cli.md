@@ -100,23 +100,23 @@ The client reads environment variables prefixed `MSKSC_` (client) to stay apart
 from the daemon's `MSKSD_*` (server) namespace. Each of the environment
 variables has a config-file equivalent.
 
-| Variable                   | Config file key      | Meaning                                                                                                                                                                                                                                                                                                                                                                      | Default                                                   |
-| -------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `MSKSC_URL`                | `url`                | The remote daemon's base URL, the TCP + TLS + token shape; the client opens a TCP connection only when a URL gives one                                                                                                                                                                                                                                                       | unset (the local socket answers, else the client refuses) |
-| `MSKSC_SOCKET`             | `socket`             | The local listener's socket path: peer-credential authentication, with no token and no TLS                                                                                                                                                                                                                                                                                   | unset (the default socket is looked for)                  |
-| `MSKSC_TOKEN`              | `token_file`         | A daemon bearer token (see tokens below); a socket connection needs none                                                                                                                                                                                                                                                                                                     | — (required for a URL)                                    |
-| `MSKSC_CAFILE`             | `cafile`             | A PEM file to verify the daemon's TLS certificate; a socket connection verifies nothing (the kernel vouches for both ends)                                                                                                                                                                                                                                                   | unverified with warning                                   |
-| `MSKSC_EXPECTED_IMAGE`     | `expected_image`     | An image reference the operator sets; `msks ls` compares it with the image the daemon reports in `/health` and reports drift                                                                                                                                                                                                                                                 | unset (no check)                                          |
-| `MSKSC_CACHE_DIR`          | `cache_dir`          | The directory the per-workspace host-key caches live under; the per-workspace directories are created below it                                                                                                                                                                                                                                                               | `~/.cache/msks`                                           |
-| `MSKSC_STATE_DIR`          | `state_dir`          | The msks state root: every interactive `msks ssh` heartbeats a session record under its `sessions` subtree (see [The TUI](tui.md#open-shells-and-the-session-records))                                                                                                                                                                                                       | `~/.local/state/msks`                                     |
-| `MSKSC_IDENTITY_FILE`      | `identity_file`      | Your own private key file, the ssh identity `msks create` plants into every workspace (msks generates none; [the identity section](first-run.md#the-key-files) owns the whole story); a leading `~` expands                                                                                                                                                                  | unset (`pubkey_file` answers, else `msks create` refuses) |
-| `MSKSC_PUBKEY_FILE`        | `pubkey_file`        | Your key's public half, what a bare `msks create` plants instead of reading `identity_file`. The form for a key you keep encrypted: create reads no private half, ssh sessions sign through your agent when it holds the key, and the secrets unlock still needs `identity_file`; same naming rule, global-only                                                              | unset (`identity_file` answers)                           |
-| `MSKSC_IMAGE_MANIFEST_URL` | `image_manifest_url` | Where the TUI's Import image action (`i` on the workspace list) reads the published channel's manifest (a fork's or self-hoster's channel gives its own); the picker shows each row's ref, description, and size, and the pick POSTs the row's URL to the daemon's import endpoint                                                                                           | this repository's latest release's `images.json`          |
-| `MSKSC_SCREENSHOT_COMMAND` | `screenshot_command` | The capture command the [screenshot pipe](screenshot.md) runs on this client per guest request; its presence enables the pipe, its stdout is the image the guest receives, and its argv is the config's alone (the requested monitor arrives as the `MSKS_SCREENSHOT_MONITOR` variable). String or list form; global-only, the same rule `identity_file` carries             | unset (the pipe stays down)                               |
-| `MSKSC_SCREENSHOT_PORT`    | `screenshot_port`    | The loopback port the guest's sshd binds for the [screenshot pipe](screenshot.md), when a configured client holds one. The holder writes it to `/tmp/msks-screenshot-port` in the guest for the guest's `screenshot` tool                                                                                                                                                    | `8662`                                                    |
-| `MSKSC_DICTATE_MODEL`      | `dictate_model`      | The GUI's dictation model: a whisper.cpp ggml name the Settings tab's **Download** button fetches into the cache, or a path to a `.bin` file (a NixOS store path, for one). Global-only, the rule `identity_file` carries. The [GUI chapter](gui.md#dictation) describes the feature; the [preferences file](#the-gui-preferences-file) sits between this and the config key | `small`                                                   |
-| `MSKSC_DICTATE_DEVICE`     | `dictate_device`     | The microphone the dictation captures from: a PipeWire node name or serial, the `pw-record --target` form. Unset takes the default source. Global-only                                                                                                                                                                                                                       | unset (the default source)                                |
-| `MSKSC_DICTATE_PROMPT`     | `dictate_prompt`     | The vocabulary whisper-cli biases its spelling toward (`msks, devenv, NixOS, pi`). Global-only                                                                                                                                                                                                                                                                               | unset                                                     |
+| Variable                   | Config file key      | Meaning                                                                                                                                                                                                                                                                                                                                                               | Default                                                   |
+| -------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `MSKSC_URL`                | `url`                | The remote daemon's base URL, the TCP + TLS + token shape; the client opens a TCP connection only when a URL gives one                                                                                                                                                                                                                                                | unset (the local socket answers, else the client refuses) |
+| `MSKSC_SOCKET`             | `socket`             | The local listener's socket path: peer-credential authentication, with no token and no TLS                                                                                                                                                                                                                                                                            | unset (the default socket is looked for)                  |
+| `MSKSC_TOKEN`              | `token_file`         | A daemon bearer token (see tokens below); a socket connection needs none                                                                                                                                                                                                                                                                                              | — (required for a URL)                                    |
+| `MSKSC_CAFILE`             | `cafile`             | A PEM file to verify the daemon's TLS certificate; a socket connection verifies nothing (the kernel vouches for both ends)                                                                                                                                                                                                                                            | unverified with warning                                   |
+| `MSKSC_EXPECTED_IMAGE`     | `expected_image`     | An image reference the operator sets; `msks ls` compares it with the image the daemon reports in `/health` and reports drift                                                                                                                                                                                                                                          | unset (no check)                                          |
+| `MSKSC_CACHE_DIR`          | `cache_dir`          | The directory the per-workspace host-key caches live under; the per-workspace directories are created below it                                                                                                                                                                                                                                                        | `~/.cache/msks`                                           |
+| `MSKSC_STATE_DIR`          | `state_dir`          | The msks state root: every interactive `msks ssh` heartbeats a session record under its `sessions` subtree (see [The TUI](tui.md#open-shells-and-the-session-records))                                                                                                                                                                                                | `~/.local/state/msks`                                     |
+| `MSKSC_IDENTITY_FILE`      | `identity_file`      | Your own private key file, the ssh identity `msks create` plants into every workspace (msks generates none; [the identity section](first-run.md#the-key-files) owns the whole story); a leading `~` expands                                                                                                                                                           | unset (`pubkey_file` answers, else `msks create` refuses) |
+| `MSKSC_PUBKEY_FILE`        | `pubkey_file`        | Your key's public half, what a bare `msks create` plants instead of reading `identity_file`. The form for a key you keep encrypted: create reads no private half, ssh sessions sign through your agent when it holds the key, and the secrets unlock still needs `identity_file`; same naming rule, global-only                                                       | unset (`identity_file` answers)                           |
+| `MSKSC_IMAGE_MANIFEST_URL` | `image_manifest_url` | Where the TUI's Import image action (`i` on the workspace list) reads the published channel's manifest (a fork's or self-hoster's channel gives its own); the picker shows each row's ref, description, and size, and the pick POSTs the row's URL to the daemon's import endpoint                                                                                    | this repository's latest release's `images.json`          |
+| `MSKSC_SCREENSHOT_COMMAND` | `screenshot_command` | The capture command the [screenshot pipe](screenshot.md) runs on this client per guest request; its presence enables the pipe, its stdout is the image the guest receives, and its argv is the config's alone (the requested monitor arrives as the `MSKS_SCREENSHOT_MONITOR` variable). String or list form; global-only, the same rule `identity_file` carries      | unset (the pipe stays down)                               |
+| `MSKSC_SCREENSHOT_PORT`    | `screenshot_port`    | The loopback port the guest's sshd binds for the [screenshot pipe](screenshot.md), when a configured client holds one. The holder writes it to `/tmp/msks-screenshot-port` in the guest for the guest's `screenshot` tool                                                                                                                                             | `8662`                                                    |
+| `MSKSC_DICTATE_MODEL`      | `dictate_model`      | The GUI's dictation model: a whisper.cpp ggml name the Settings tab's **Download** button fetches into the cache, or a path to a `.bin` file (a NixOS store path, for one). Global-only, the rule `identity_file` carries. The [GUI chapter](gui.md#dictation) describes the feature; the Settings tab writes the key into [the config file](#the-client-config-file) | `small`                                                   |
+| `MSKSC_DICTATE_DEVICE`     | `dictate_device`     | The microphone the dictation captures from: a PipeWire node name or serial, the `pw-record --target` form. Unset takes the default source. Global-only                                                                                                                                                                                                                | unset (the default source)                                |
+| `MSKSC_DICTATE_PROMPT`     | `dictate_prompt`     | The vocabulary whisper-cli biases its spelling toward (`msks, devenv, NixOS, pi`). Global-only                                                                                                                                                                                                                                                                        | unset                                                     |
 
 `MSKSC_CACHE_DIR` exists because the host-key cache is disposable: a swept
 cache costs one trust-on-first-use re-pin. Pointing it at a per-project,
@@ -201,81 +201,43 @@ The environment variables above have a durable home: a YAML file at
 `~/.config/msks/msks.yaml` (relocated by `MSKSC_CONFIG_DIR`, or
 `XDG_CONFIG_HOME`). The variables keep working beside it, and each one
 overrides the same key in the file. A fresh devenv shell with its presets
-exported behaves exactly as it does today. Precedence, highest first:
+exported behaves exactly as it does today. A bare `msks` reads two
+files: the host's `/etc/msks/msks.yaml` as the floor, and the user's
+file over it, key by key. Precedence, highest first:
 
 ```text
---daemon flag > MSKSC_* environment > the file's daemon aliases >
-    the file's global keys > built-in defaults
+--daemon flag > MSKSC_* environment > the user file's daemon aliases >
+    the user file's global keys > the system file's aliases >
+    the system file's globals > built-in defaults
 ```
 
-A bare `msks` reads the default path and, on the first run,
-generates a commented near-empty template there (the directory
-0700, the file 0600). `--config <path>` reads exactly that file:
-a missing one is an error, and an explicit path is never
-generated. `--config=none` reads the environment and the
-built-in defaults only.
+A bare `msks` reads the user file at the default path and, on the
+first run, generates a commented near-empty template there (the
+directory 0700, the file 0600). The template parses to no keys, so
+over a host file it reads as "every key inherited". `--config <path>`
+reads exactly that file, with no system file under it: a missing one
+is an error, and an explicit path is never generated. `--config=none`
+reads the environment and the built-in defaults only.
 
-Every scalar key is its `MSKSC_*` variable with the prefix stripped and
-lowercased (`MSKSC_URL` → `url`, `MSKSC_EXPECTED_IMAGE` → `expected_image`),
-with the same semantics as the variable. A leading `~` expands, and a key
-set to nothing (`key:` with no value, or `""`) is the unset form. Hyphens
-and underscores spell the same key: `token-file` and `token_file` are one
-key (klangk's file spelled kebab; msks's variables spell snake). A file that
-carries both spellings of one key is refused, the second treated as a
-duplicate.
+The system file is `/etc/msks/msks.yaml` unless `MSKSC_SYSTEM_CONFIG`
+points elsewhere; an empty value means there is no system file. A
+host can put its daemon's address, CA, and token file there for every
+user. A user's file overrides one key or adds an alias without
+copying the rest. `daemons:` merges by alias: an alias both files
+define merges key by key, and an alias either file defines is kept.
+A user's entry that adds a key to a host alias needs no address of its
+own. Each file is validated on its own, and a refusal gives the file.
 
-`token_file` is the one key whose variable carries a different
-shape: the file points at a file holding one daemon token. The
-config tree therefore stays free of inline credentials, and the
-token keeps the permissions of the file that holds it.
-`MSKSC_TOKEN` still carries an inline token when the environment
-is the more convenient place for one. For the invocation, the
-token is read out of its file into the process environment, the
-substrate every reader already speaks, where child processes
-(console shells, the terminal launcher) inherit it. The file
-itself stays the durable, permissioned home. An unreadable or
-empty token file is an error before any network activity, giving
-both places a token can come from.
-
-`identity_file` follows the `token_file` pattern for a different
-secret: it gives your private key file by path, read in place
-and never copied (see the create default below). It is
-global-only, and a `daemons:` entry that carries it is refused,
-because an ssh identity belongs to you, not to one daemon
-connection.
+The GUI's Settings tab writes its three `dictate_*` keys into the
+user's file by merging them in place: every other byte of the file
+stays as you wrote it, and the system file is never written. A
+symlink is written through, so a file home-manager links stays a
+link. Under `--config=none` the tab applies the settings for the
+session and says so.
 
 Unknown keys and duplicate keys are refused at load, each error
 giving the key and the valid ones, the same fail-fast rules
 msksd's config file carries.
-
-### The GUI preferences file
-
-The GUI's dictation settings have a file of their own:
-`~/.config/msks/gui.yaml`, beside `msks.yaml` in the same directory
-(`MSKSC_CONFIG_DIR` relocates both). The **Settings** tab writes this
-file and never `msks.yaml`: on NixOS that file is generated into
-`/etc/msks.yaml`, it is read-only, and it stays declarative. The file
-carries the three `dictate_*` keys and nothing else, with the same
-grammar as `msks.yaml` (hyphens and underscores spell one key, a blank
-value is the unset form). An example:
-
-```yaml
-dictate_model: small
-dictate_device: alsa_input.usb-Focusrite_Scarlett_2i2.mic1
-dictate_prompt: msks, devenv, NixOS, pi
-```
-
-For those three keys the precedence is, highest first:
-
-```text
-MSKSC_DICTATE_* environment > gui.yaml > msks.yaml > the defaults
-```
-
-A variable still pins a key above both files, the way it does for
-every other client setting, and the settings page shows the pin. The
-speech models live under `~/.cache/msks/whisper/` (`MSKSC_CACHE_DIR`
-relocates the root). The [GUI chapter](gui.md#dictation) describes
-the dictation itself.
 
 ### Daemon aliases
 
