@@ -183,12 +183,20 @@ async def test_publish_rows_survives_a_hubless_state_and_a_model() -> None:
     async def publish(event, payload, owner=None):
         sent.append((event, payload))
 
+    reached = []
+
+    async def row_owner(workspace_id):
+        reached.append(workspace_id)
+        return None
+
     class Bare:
         class state:
             hub = None
 
     hub = BridgeHub(Bare())
+    hub.row_owner = row_owner
     assert await hub.publish_rows("ws-a", UP_EVENT) is None  # no hub: quiet
+    assert reached == []  # and nothing past the hub check ran
 
     class Raising:
         class state:

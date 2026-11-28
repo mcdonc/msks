@@ -183,18 +183,22 @@ dead hub") asserts the state its docstring promises.
 `scripts/check_test_assertions.py` grades the suite at commit time
 and in `msks-preflight`. A test carries a signal when its body holds
 an `assert`, an `assert*` or `fail` call, or a `raises`/`warns`
-context manager, or when a helper it calls holds one, or a requested
-fixture does. Calls resolve through imports, re-exports, and class
-hierarchies, so a test asserting through `open_consent()` passes.
-Three weaker signals count too: a poll helper that raises on timeout
-(`wait_for`, `poll`, `press_until`, `call_until`,
-`asyncio.wait_for`), a helper that raises on a failed condition
-(`subprocess.run(check=True)`, `verify_*`), and an `assert` inside a
-nested `scenario()` the test runs.
+context manager, or when a helper it calls holds one. Calls resolve
+through imports, re-exports, and class hierarchies, so a test that
+checks through `assert_tabs_whole(bar)` passes. A resolved helper
+grades by its body, never by its name, and a fixture's own asserts
+check the setup, not the test's outcome. Three weaker signals count
+too: a poll helper that raises on timeout (`wait_for`, `poll`,
+`press_until`, `call_until`, `asyncio.wait_for`), a helper that
+raises on a failed condition when the test calls it as a statement
+(`subprocess.run(check=True)` counts either way), and an `assert`
+inside a nested `scenario()` the test runs.
 
-A test that is assertion-free by design marks its `def` line with
-`# no-assert: <reason>`. The marker on a test that does carry a
-signal fails the gate as stale; remove it in the same change.
+A test marked `pytest.mark.skip` is not graded. A test that is
+assertion-free by design marks its `def` line (or the comment line
+above it) with `# no-assert: <reason>`. The marker on a graded test
+that does carry a signal fails the gate as stale; remove it in the
+same change.
 
 ## Pre-flight the commit gates before the first commit attempt
 

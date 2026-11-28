@@ -1010,11 +1010,12 @@ def test_events_on_a_wrapper_past_construction_touch_nothing(
     page, window, bridge = make_page(qt)
     window.close()
     starts, stops = len(bridge.decider_starts), bridge.decider_stops
+    calls = len(bridge.calls)
     # The two teardown shapes leave a wrapper with no instance
     # attributes — the same state the guards answer.
     del page.back_button
     assert page.showEvent(qt.QtGui.QShowEvent()) is None
-    assert bridge.calls == []  # no refresh
+    assert len(bridge.calls) == calls  # no refresh
     assert len(bridge.decider_starts) == starts  # no decider ask
     assert page.hideEvent(qt.QtGui.QHideEvent()) is None
     assert bridge.decider_stops == stops + 1  # the retire alone

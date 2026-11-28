@@ -520,7 +520,8 @@ async def test_publish_without_a_hub_and_with_a_failing_hub(
     assert engine._publishes == set()  # nothing was scheduled
     app.state.hub = Boom()
     engine.publish("egress.rules", {})  # the failure logs, not raises
-    await asyncio.sleep(0.01)  # let the fire-and-forget task land
+    while engine._publishes:  # the fire-and-forget task lands and is reaped
+        await asyncio.sleep(0)
     app.state.hub = hub
     assert "consent publish failed: subscriber gone" in caplog.text
     assert engine._publishes == set()  # the failed task was reaped
@@ -553,7 +554,7 @@ async def test_cancel_hold_task_names_a_real_failure(
         raise RuntimeError("timeout path bug")
 
     task = asyncio.create_task(broken())
-    await asyncio.sleep(0.01)
+    await asyncio.wait({task})  # the bug lands before the reap
     await app.state.consent.cancel_hold_task(task)
     assert task.done() and isinstance(task.exception(), RuntimeError)
     assert "timeout task failed while reaping" in caplog.text
@@ -570,6 +571,7 @@ async def test_fail_close_without_a_hold_is_a_no_op(engine_app) -> None:
 
 async def test_start_with_nothing_to_reap_is_quiet(engine_app, caplog) -> None:
     app, _frames, _queue = engine_app
+    caplog.set_level(logging.INFO, logger="msks.consent.coordinator")
     await app.state.consent.start()  # zero reaped: no log branch
     assert "orphaned pending" not in caplog.text
 

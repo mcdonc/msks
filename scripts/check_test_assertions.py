@@ -7,20 +7,26 @@ passes when nothing raises cannot land.
 
 A test carries a signal when its body holds an ``assert``, an
 ``assert*`` or ``fail`` call, or a ``raises``/``warns`` context
-manager. It also carries one when a helper it calls holds one, or
-when a requested fixture does: calls resolve through imports
-(including the bare ``from test_consent_page import wait_for`` form
-pytest's ``sys.path`` allows), re-exports, and class hierarchies.
-Three weaker signals count as checks too: a poll helper that raises
-on timeout (``wait_for``, ``poll``, ``press_until``,
-``call_until``, ``asyncio.wait_for``), a helper that raises on a
-failed condition (``subprocess.run(check=True)``, ``verify_*``), and
-an ``assert`` inside a nested ``scenario()`` coroutine the test runs.
-A ``raise`` inside a nested fake is not a check.
+manager. It also carries one when a helper it calls holds one: calls
+resolve through imports (including the bare ``from test_consent_page
+import wait_for`` form pytest's ``sys.path`` allows), re-exports,
+and class hierarchies. A resolved helper grades by its body, never
+by its name. A fixture's own asserts check the setup, not the test's
+outcome, so they do not count.
 
-A test that is assertion-free by design marks its ``def`` line (or
-the comment line above it) with ``# no-assert: <reason>``. A marker
-on a test that does carry a signal fails the gate as stale.
+Three weaker signals count as checks: a poll helper that raises on
+timeout (``wait_for``, ``poll``, ``press_until``, ``call_until``,
+``until``, ``asyncio.wait_for``) waiting on a real condition, a
+helper that raises on a failed condition when the test calls it as
+a statement (a call whose result is bound is a setup, not a check;
+``subprocess.run(check=True)`` counts either way), and an ``assert``
+inside a nested ``scenario()`` coroutine the test runs. A ``raise``
+inside a nested fake is not a check.
+
+A test marked ``pytest.mark.skip`` is not graded. A test that is
+assertion-free by design marks its ``def`` line (or the comment line
+above it or its decorators) with ``# no-assert: <reason>``. A marker
+on a graded test that carries a signal fails the gate as stale.
 
 Runs at commit time (the generated pre-commit hook) and inside
 ``msks-preflight``; exit status 1 names each offender with its
@@ -29,7 +35,7 @@ file:line and the calls its body makes.
 
 import ast
 import sys
-from collections import defaultdict, deque
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -50,8 +56,8 @@ EXPECT_LIKE = (
     "check_",
 )
 STOP_LIKE = {"skip", "xfail", "exit"}
-POLL_LIKE = {"wait_for", "poll", "press_until", "call_until"}
-SKIP_MARKS = {"skip", "skipif", "xfail"}
+POLL_LIKE = {"wait_for", "poll", "press_until", "call_until", "until"}
+GRADED = ("OK", "POLLED", "RAISES")
 MARKER = "no-assert:"
 FUNC_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 NESTED_NODES = (*FUNC_NODES, ast.Lambda)
@@ -71,36 +77,35 @@ def is_mark_holder(expr) -> bool:
     return isinstance(expr, ast.Name) and expr.id == "mark"
 
 
-def mark_name(dec):
+def skip_mark(dec) -> bool:
+    """Whether a decorator is an unconditional ``pytest.mark.skip``.
+    A ``skipif`` runs where its condition allows, so its test is graded."""
     d = dec.func if isinstance(dec, ast.Call) else dec
-    if not isinstance(d, ast.Attribute) or d.attr not in SKIP_MARKS:
-        return None
-    if is_mark_holder(d.value):
-        return d.attr
-    return None
+    if not isinstance(d, ast.Attribute) or d.attr != "skip":
+        return False
+    return is_mark_holder(d.value)
 
 
 def skip_marker(node) -> str | None:
     for dec in node.decorator_list:
-        found = mark_name(dec)
-        if found:
-            return found
+        if skip_mark(dec):
+            return "skip"
     return None
+
+
+def carries_skip(value) -> bool:
+    """Whether a pytestmark value (one mark or a list of them) is a skip."""
+    marks = getattr(value, "elts", [value])
+    return any(skip_mark(m) for m in marks)
 
 
 def targets_name(node: ast.Assign, name: str) -> bool:
     return any(isinstance(t, ast.Name) and t.id == name for t in node.targets)
 
 
-def carries_skip(value) -> bool:
-    """Whether a pytestmark value (one mark or a list of them) is a skip."""
-    marks = getattr(value, "elts", [value])
-    return any(mark_name(m) for m in marks)
-
-
 def module_skip(tree: ast.Module) -> bool:
-    """A module-level ``pytestmark`` carrying a skip mark skips every
-    test in the module."""
+    """A module-level ``pytestmark`` carrying an unconditional skip
+    skips every test in the module."""
     for node in tree.body:
         if not (
             isinstance(node, ast.Assign) and targets_name(node, "pytestmark")
@@ -111,41 +116,17 @@ def module_skip(tree: ast.Module) -> bool:
     return False
 
 
-def usefixtures(node) -> list[str]:
-    names = []
-    for dec in node.decorator_list:
-        if isinstance(dec, ast.Call) and dec_target(dec) == "usefixtures":
-            names += constant_args(dec)
-    return names
-
-
-def constant_args(call) -> list[str]:
-    return [a.value for a in call.args if isinstance(a, ast.Constant)]
-
-
-def var_names(args) -> list[str]:
-    out = []
-    if args.vararg:
-        out.append(args.vararg.arg)
-    if args.kwarg:
-        out.append(args.kwarg.arg)
-    return out
-
-
-def arg_names(node) -> list[str]:
-    args = node.args
-    positional = [*args.posonlyargs, *args.args, *args.kwonlyargs]
-    names = [x.arg for x in positional] + var_names(args)
-    return [n for n in names if n not in ("self", "cls")]
-
-
 def has_marker(lines, node) -> bool:
-    def_line = lines[node.lineno - 1]
-    if MARKER in def_line:
+    """The marker on the def line, or on the comment line above the
+    def or above its first decorator."""
+    if MARKER in lines[node.lineno - 1]:
         return True
-    if node.lineno < 2:
+    first = (
+        node.decorator_list[0].lineno if node.decorator_list else node.lineno
+    )
+    if first < 2:
         return False
-    above = lines[node.lineno - 2].strip()
+    above = lines[first - 2].strip()
     return above.startswith("#") and MARKER in above
 
 
@@ -165,6 +146,15 @@ def is_assert_call(attr) -> bool:
 def is_raises_call_form(attr, call) -> bool:
     """``raises(Exc, func, *args)``: the call form checks, no ``with``."""
     return attr in CTX_CHECKS and len(call.args) > 1
+
+
+def is_stop_call(call, attr) -> bool:
+    """``pytest.skip``/``xfail``/``exit``, or a bare ``skip``/``xfail``
+    imported from pytest."""
+    fnode = call.func
+    if not isinstance(fnode, ast.Attribute):
+        return attr in ("skip", "xfail")
+    return ast.unparse(fnode.value) == "pytest" and attr in STOP_LIKE
 
 
 def is_asyncio_wait_for(call, attr) -> bool:
@@ -192,11 +182,25 @@ def has_check_true(call) -> bool:
     return False
 
 
-def polled_condition(call) -> str:
+def polled_condition(call) -> str | None:
+    """The condition a poll waits on; None for a constant lambda
+    (``wait_for(lambda: True)`` checks nothing)."""
     for a in call.args:
         if isinstance(a, ast.Lambda):
-            return ast.unparse(a.body)
+            return (
+                None
+                if isinstance(a.body, ast.Constant)
+                else ast.unparse(a.body)
+            )
     return ast.unparse(call)[:100]
+
+
+def statement_call(expr) -> ast.Call | None:
+    """The call an expression statement makes, through an await."""
+    value = expr.value
+    if isinstance(value, ast.Await):
+        value = value.value
+    return value if isinstance(value, ast.Call) else None
 
 
 def ancestors(module) -> list[str]:
@@ -211,9 +215,13 @@ def ancestors(module) -> list[str]:
 
 
 def dotted(path: Path, src_root: Path) -> str:
+    """The module name: the shipped package is src/msks/msks (the
+    wheel's ``msks``), and the suite sits beside it as ``msks.tests``."""
     parts = list(path.relative_to(src_root).with_suffix("").parts)
     if parts[-1] == "__init__":
         parts = parts[:-1]
+    if parts[:2] == ["msks", "msks"]:
+        parts = parts[1:]
     return ".".join(parts)
 
 
@@ -234,7 +242,7 @@ class Func:
     own: int = NONE
     strength: int = NONE
     deps: set = field(default_factory=set)
-    fixture_deps: set = field(default_factory=set)
+    statement_deps: set = field(default_factory=set)
     calls: list = field(default_factory=list)
     weak_reasons: set = field(default_factory=set)
     polled: list = field(default_factory=list)
@@ -277,10 +285,10 @@ class Index:
         self.module_defs = {}
         self.module_scope = {}
         self.module_index = set()
-        self.conftest_fixtures = defaultdict(dict)
+        self.packages = set()
+        self.skipped_modules = set()
         self.trees = {}
         self.lines = {}
-        self.skipped_modules = set()
 
     def load(self, src_root: Path) -> None:
         paths = [
@@ -301,8 +309,14 @@ class Index:
         self.module_index.add(module)
         self.trees[module] = tree
         self.lines[module] = source.splitlines()
+        if path.name == "__init__.py":
+            self.packages.add(module)
         if module_skip(tree):
             self.skipped_modules.add(module)
+        self.module_defs[module] = self.module_defs_of(tree, module)
+
+    def module_defs_of(self, tree, module) -> dict:
+        """The module's top-level names: its functions and classes."""
         defs = {}
         for node in tree.body:
             if isinstance(node, FUNC_NODES):
@@ -312,15 +326,13 @@ class Index:
                 )
             elif isinstance(node, ast.ClassDef):
                 defs[node.name] = ("class", self.add_class(module, node))
-        self.module_defs[module] = defs
+        return defs
 
     def add_func(self, module, qualname, node, cls=None) -> str:
         f = Func(module=module, qualname=qualname, node=node, cls=cls)
         f.skip_marker = skip_marker(node)
         f.marked = has_marker(self.lines[module], node)
         self.funcs[f.key] = f
-        if f.is_fixture and module.endswith(".conftest"):
-            self.conftest_fixtures[module[: -len(".conftest")]][f.name] = f.key
         return f.key
 
     def add_class(self, module, node) -> str:
@@ -334,6 +346,9 @@ class Index:
                     module, qualname, sub, cls=ckey
                 )
         return ckey
+
+    def tests(self) -> list:
+        return [f for f in self.funcs.values() if f.is_test]
 
     # --- name resolution ---
 
@@ -487,27 +502,6 @@ class Index:
     def func_key(self, entry):
         return entry[1] if entry and entry[0] == "func" else None
 
-    # --- fixtures ---
-
-    def tests(self) -> list:
-        return [f for f in self.funcs.values() if f.is_test]
-
-    def visible_fixture(self, module, name):
-        local = self.local_fixture(module, name)
-        if local:
-            return local
-        for pkg in [module, *ancestors(module)]:
-            key = self.conftest_fixtures.get(pkg, {}).get(name)
-            if key:
-                return key
-        return None
-
-    def local_fixture(self, module, name):
-        local = self.module_defs.get(module, {}).get(name)
-        if local and local[0] == "func" and self.funcs[local[1]].is_fixture:
-            return local[1]
-        return None
-
 
 def split_attribute(expr):
     parts = [expr.attr]
@@ -519,13 +513,14 @@ def split_attribute(expr):
     return parts, v
 
 
-def from_base(n, module) -> str:
-    base = n.module or ""
-    for _ in range(n.level or 0):
-        base = (
-            f"{ancestors(module)[0]}.{base}" if base else ancestors(module)[0]
-        )
-    return base
+def from_base(n, module, packages) -> str:
+    """The absolute base of a relative import: ``.`` is the package
+    itself inside an ``__init__``, the module's parent elsewhere."""
+    parts = module.split(".")
+    drop = n.level or 0
+    if module in packages and drop:
+        drop -= 1
+    return ".".join(parts[: len(parts) - drop])
 
 
 def build_scope(tree, module, ix: Index) -> dict:
@@ -548,28 +543,41 @@ def import_scope(n, module, ix: Index, scope: dict) -> None:
 
 
 def from_scope(n, module, ix: Index, scope: dict) -> None:
-    base = from_base(n, module)
+    """``from .helpers import x``: the relative base is the package,
+    then the module named after it."""
+    base = n.module or ""
+    if n.level:
+        base = relative_base(n, module, ix.packages)
     for a in n.names:
-        full = f"{base}.{a.name}" if base else a.name
-        entry = ix.resolve_dotted(full, module) or ("unknown", full)
-        scope[a.asname or a.name] = entry
+        scope[a.asname or a.name] = from_name(a, base, module, ix)
+
+
+def relative_base(n, module, packages) -> str:
+    """The package a relative import names, then the module after it."""
+    pkg = from_base(n, module, packages)
+    return f"{pkg}.{n.module}" if n.module else pkg
+
+
+def from_name(a, base, module, ix: Index):
+    full = f"{base}.{a.name}"
+    return ix.resolve_dotted(full, module) or ("unknown", full)
 
 
 class Analyzer:
-    """Fills one function's own signal, its callees, and its fixtures."""
+    """Fills one function's own signal, its callees, and its calls."""
 
     def __init__(self, ix: Index):
         self.ix = ix
+        self.handled = set()
 
     def run(self, f: Func) -> None:
         self.f = f
         self.scope = self.ix.module_scope.get(f.module) or {}
+        self.handled = set()
         if f.module in self.ix.skipped_modules:
             f.skip_marker = f.skip_marker or "module pytestmark"
         body = ast.Module(body=f.node.body, type_ignores=[])
         self.visit(body, False)
-        if f.is_test:
-            self.find_fixtures(f)
 
     def visit(self, node, nested) -> None:
         for child in ast.iter_child_nodes(node):
@@ -589,8 +597,15 @@ class Analyzer:
             self.raise_signal(nested)
         elif isinstance(child, (ast.With, ast.AsyncWith)):
             self.with_signals(child, nested)
-        elif isinstance(child, ast.Call):
-            self.call_signals(child, nested)
+        elif isinstance(child, (ast.Expr, ast.Call)):
+            self.call_signal(child, nested)
+
+    def call_signal(self, child, nested) -> None:
+        """A statement's call stands as a check; a bound call does not."""
+        statement = isinstance(child, ast.Expr)
+        call = statement_call(child) if statement else child
+        if call is not None:
+            self.call_signals(call, nested, statement=statement)
 
     def mark(self, level, nested) -> None:
         f = self.f
@@ -617,26 +632,37 @@ class Analyzer:
             elif name in TIMEOUT_CTX:
                 self.mark(WEAK, nested)
 
-    def call_signals(self, call, nested) -> None:
+    def call_signals(self, call, nested, statement=False) -> None:
+        """A resolved project callee grades by its body (the fixed point
+        reads the dep); the name heuristics cover what stays unresolved."""
+        if id(call) in self.handled:
+            return
+        self.handled.add(id(call))
         name = ast.unparse(call.func)
+        f = self.f
+        callee = self.ix.resolve_callee(call, self.scope, f.module, f.cls)
+        if callee:
+            self.record_callee(call, callee, statement)
+            return
+        if name not in f.calls:
+            f.calls.append(name)
         attr = call_name(call)
         self.strong_call(attr, call, nested)
         self.weak_call(attr, call, name, nested)
-        self.record_callee(call, name)
 
     def strong_call(self, attr, call, nested) -> None:
         if is_assert_call(attr):
             self.mark(DIRECT, nested)
         elif is_raises_call_form(attr, call):
             self.mark(DIRECT, nested)
-        elif attr in STOP_LIKE:
+        elif is_stop_call(call, attr):
             self.f.skip_call = True
 
     def weak_call(self, attr, call, name, nested) -> None:
         f = self.f
         if is_asyncio_wait_for(call, attr):
             self.mark(WEAK, nested)
-            f.polled.append(polled_condition(call))
+            self.note_polled(call)
         elif is_expect_like(attr):
             self.mark(WEAK, nested)
             f.weak_reasons.add(f"expect-like call {name}")
@@ -644,21 +670,18 @@ class Analyzer:
             self.mark(WEAK, nested)
             f.weak_reasons.add(f"check=True: {name}")
 
-    def record_callee(self, call, name) -> None:
-        f = self.f
-        callee = self.ix.resolve_callee(call, self.scope, f.module, f.cls)
-        if callee:
-            f.deps.add(callee)
-            if self.ix.funcs[callee].name in POLL_LIKE:
-                f.polled.append(polled_condition(call))
-        elif name not in f.calls:
-            f.calls.append(name)
+    def note_polled(self, call) -> None:
+        condition = polled_condition(call)
+        if condition is not None:
+            self.f.polled.append(condition)
 
-    def find_fixtures(self, f: Func) -> None:
-        for name in arg_names(f.node) + usefixtures(f.node):
-            key = self.ix.visible_fixture(f.module, name)
-            if key:
-                f.fixture_deps.add(key)
+    def record_callee(self, call, callee, statement) -> None:
+        f = self.f
+        f.deps.add(callee)
+        if statement:
+            f.statement_deps.add(callee)
+        if self.ix.funcs[callee].name in POLL_LIKE:
+            self.note_polled(call)
 
 
 def fixed_point(funcs: dict) -> None:
@@ -674,19 +697,23 @@ def fixed_point(funcs: dict) -> None:
                 changed = True
 
 
+def callee_strength(t: Func, funcs: dict, key) -> int:
+    """A helper that only raises checks the test when the test calls
+    it as a statement; bound, it is a setup that happens to raise."""
+    strength = funcs[key].strength
+    if strength == WEAK and key not in t.statement_deps:
+        return NONE
+    return strength
+
+
 def helper_strength(t: Func, funcs: dict) -> int:
-    called = (funcs[d].strength for d in t.deps if not funcs[d].is_fixture)
-    return max(called, default=NONE)
-
-
-def all_signals_absent(t: Func) -> bool:
-    return t.own == NONE and not t.deps and not t.fixture_deps
+    return max((callee_strength(t, funcs, d) for d in t.deps), default=NONE)
 
 
 def is_skip(t: Func) -> bool:
     if t.skip_marker:
         return True
-    return t.skip_call and all_signals_absent(t)
+    return t.skip_call and t.own == NONE and not t.deps
 
 
 def classify(t: Func, funcs: dict) -> str:
@@ -710,7 +737,7 @@ def unmarked(tests: list, cats: dict) -> list:
 
 
 def stale_markers(tests: list, cats: dict) -> list:
-    return [t for t in tests if t.marked and cats[t.key] != "NONE"]
+    return [t for t in tests if t.marked and cats[t.key] in GRADED]
 
 
 def relpath(module: str) -> str:

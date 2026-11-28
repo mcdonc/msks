@@ -109,7 +109,12 @@ async def test_stop_cancels_in_flight_relays() -> None:
     await asyncio.to_thread(
         client.sendto, QUERY, forwarder._sock.getsockname()
     )
-    await asyncio.sleep(0.1)  # the relay task exists and is waiting
+    # The relay task exists and is waiting: the datagram lands within a
+    # few loop turns, each of which runs the selector.
+    for _ in range(100):
+        if forwarder._tasks:
+            break
+        await asyncio.sleep(0)
     relays = list(forwarder._tasks)
     assert relays  # the relay is in flight, waiting on the upstream
     forwarder.stop()
