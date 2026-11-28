@@ -168,7 +168,6 @@ class DictatePanel(Panel):
         settings = self.dictation.settings if settings is None else settings
         for key in DICTATE_KEYS:
             self.seed(key, str(settings.value(key)), key in settings.pinned)
-        self.refresh_note()
         self.refresh_model()
 
     def pick_model(self, model: str) -> None:

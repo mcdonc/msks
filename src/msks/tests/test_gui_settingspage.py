@@ -277,15 +277,21 @@ def test_a_pinned_key_reads_read_only_on_its_subtab_and_apply_leaves_it(
         assert widget.toolTip().endswith(notice)
         assert widget.toolTip().startswith(TIPS[key])
         assert getattr(page, panel).labels[key].toolTip() == widget.toolTip()
-    assert page.files.pinned_note.text() == "MSKSC_CACHE_DIR pins this setting"
-    assert (
-        page.shell.pinned_note.text() == "MSKSC_SSH_OPTIONS pins this setting"
+    # The pin's mark stands beside the pinned field alone (#1226):
+    # the variable's name at the row's end, nothing under the form.
+    assert page.files.marks["cache_dir"].text() == "set by MSKSC_CACHE_DIR"
+    assert page.shell.marks["ssh_options"].text() == (
+        "set by MSKSC_SSH_OPTIONS"
     )
-    assert page.screenshot.pinned_note.text() == (
-        "MSKSC_SCREENSHOT_PORT pins this setting"
+    assert page.screenshot.marks["screenshot_port"].text() == (
+        "set by MSKSC_SCREENSHOT_PORT"
     )
+    assert page.files.marks["state_dir"].isHidden()
+    assert page.screenshot.marks["screenshot_command"].isHidden()
+    for panel in page.panels:
+        assert panel.note.isHidden()
+    assert page.connection.marks["url"].isHidden()
     assert field(page, "screenshot", "screenshot_command").isEnabled() is True
-    assert page.connection.pinned_note.isHidden()
     field(page, "files", "cache_dir").setText("/typed-anyway")
     field(page, "shell", "terminal_open_cmd").setText("xterm -e")
     page.apply()
@@ -603,25 +609,25 @@ def test_a_launch_without_a_file_stands_the_file_backed_subtabs_dark(
     for panel in (page.connection, page.files, page.shell, page.screenshot):
         boxes = panel.findChildren(QtWidgets.QGroupBox)
         assert boxes and all(not box.isEnabled() for box in boxes)
-        assert panel.pinned_note.text() == NO_FILE_NOTE
-        assert panel.pinned_note.isHidden() is False
-        assert panel.pinned_note.isEnabled()  # the note stays black
+        assert panel.note.text() == NO_FILE_NOTE
+        assert panel.note.isHidden() is False
+        assert panel.note.isEnabled()  # the note stays black
         assert page.file_edits() == ({}, {})  # nothing to write from them
-    assert page.dictate.isEnabled() and page.dictate.pinned_note.isHidden()
+    assert page.dictate.isEnabled() and page.dictate.note.isHidden()
     page.dictate.device.setEditText("mic-session")
     page.apply()
     assert page.status.text() == SESSION_ONLY
     assert _held.settings.device == "mic-session"
     assert not user_file(qt).exists()
     # The note survives the reseed the apply ran.
-    assert page.files.pinned_note.text() == NO_FILE_NOTE
+    assert page.files.note.text() == NO_FILE_NOTE
     # A window built with no config at all stands the same way.
     from msks.client.gui.settingspage import SettingsPage
 
     bare = SettingsPage(_held, None)
     boxes = bare.files.findChildren(QtWidgets.QGroupBox)
     assert boxes and all(not box.isEnabled() for box in boxes)
-    assert bare.files.pinned_note.text() == NO_FILE_NOTE
+    assert bare.files.note.text() == NO_FILE_NOTE
 
 
 def test_session_document_lands_the_values_and_drops_blanks() -> None:
@@ -921,9 +927,7 @@ def test_a_pinned_token_file_shows_the_variable_not_the_token(
     assert widget.toolTip().endswith(
         "MSKSC_TOKEN pins this setting; the page cannot change it."
     )
-    assert (
-        page.connection.pinned_note.text() == "MSKSC_TOKEN pins this setting"
-    )
+    assert page.connection.marks["token_file"].text() == "set by MSKSC_TOKEN"
     assert TOKEN_PINNED == "(the token, set through MSKSC_TOKEN)"
 
 

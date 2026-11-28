@@ -623,8 +623,8 @@ field for its description.
 
 Each field shows the value the client resolves right now: the
 variable when `MSKSC_*` pins the key, else your file's value, else
-the system file's. A pinned key stands read-only with the variable
-named under the form. The token file field under `MSKSC_TOKEN`
+the system file's. A pinned key stands read-only, with `set by
+MSKSC_…` beside its field. The token file field under `MSKSC_TOKEN`
 shows the variable's name instead of the token. A key no file
 carries shows blank, and the default applies. The model is the one
 exception: its picker shows the default model.

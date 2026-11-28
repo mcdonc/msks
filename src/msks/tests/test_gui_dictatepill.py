@@ -586,10 +586,13 @@ def test_a_pinned_key_reads_read_only_and_apply_leaves_it(qt, monkeypatch):
         "The whisper.cpp speech model"
     )
     assert page.dictate.device.isEnabled() is True
-    assert (
-        "MSKSC_DICTATE_MODEL pins this setting"
-        in page.dictate.pinned_note.text()
+    # The pin's mark stands beside the pinned field alone (#1226).
+    assert page.dictate.marks["dictate_model"].text() == (
+        "set by MSKSC_DICTATE_MODEL"
     )
+    assert not page.dictate.marks["dictate_model"].isHidden()
+    assert page.dictate.marks["dictate_device"].isHidden()
+    assert page.dictate.note.isHidden()  # no block under the form
     page.dictate.device.setEditText("mic-z")
     page.apply()
     assert "dictate_model" not in file_doc(qt)
@@ -609,7 +612,12 @@ def test_a_pinned_key_reads_read_only_and_apply_leaves_it(qt, monkeypatch):
         page.dictate.labels["dictate_device"].toolTip()
         == page.dictate.device.toolTip()
     )
-    assert notice in page.dictate.pinned_note.text()
+    assert page.dictate.marks["dictate_device"].text() == (
+        "set by MSKSC_DICTATE_DEVICE"
+    )
+    assert page.dictate.marks["dictate_device"].toolTip() == (
+        page.dictate.device.toolTip()
+    )
 
 
 def test_the_model_download_shows_progress_and_lands(qt):

@@ -48,7 +48,6 @@ MODIFIED = "* "
 
 #: The pin notice's shape (#1214): the variable, then the rule.
 PIN_NOTICE = "%s pins this setting; the page cannot change it."
-PIN_LINE = "%s pins this setting"
 
 #: The device row's Refresh button (#1214).
 REFRESH_TIP = (

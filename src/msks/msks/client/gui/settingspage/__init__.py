@@ -13,7 +13,7 @@ re-resolves, apply for the session.
 
 The page shows the *effective* settings and seeds its fields from
 them: a key the environment pins reads as the variable's value and
-its field stands read-only with the variable named, the way every
+its field stands read-only with the variable marked beside it, the way every
 client key behaves; the other keys read the merged document (the
 user's file over the system's, #1224). Apply writes the edits — the
 fields whose value moved from the seed — into the user's
@@ -176,10 +176,10 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
 
     def darken_without_file(self) -> None:
         """A launch with no file to write (#1226): the file-backed
-        subtabs stand dark under a note — their keys were read at
-        launch and no file holds an edit — and the Dictation subtab
-        alone takes the session's apply. Run after every seed, which
-        rewrites the panels' notes."""
+        subtabs stand dark under a note above them — their keys were
+        read at launch and no file holds an edit — and the Dictation
+        subtab alone takes the session's apply. Run after every seed,
+        which clears the panels' notes."""
         if self.writable():
             return
         for panel in self.panels:
@@ -189,9 +189,8 @@ class SettingsPage(QtWidgets.QWidget, StatusFlash):
             # black: every field and button sits in a group box.
             for box in panel.findChildren(QtWidgets.QGroupBox):
                 box.setEnabled(False)
-            panel.pinned_note.setText(NO_FILE_NOTE)
-            panel.pinned_note.setVisible(True)
-            panel.pinned_note.setEnabled(True)
+            panel.note.setText(NO_FILE_NOTE)
+            panel.note.setVisible(True)
 
     # --- the page -------------------------------------------------------
 

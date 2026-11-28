@@ -19,12 +19,17 @@ contract: nothing imports it at CLI parse time (#927).
 
 from __future__ import annotations
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
-from .vocabulary import LABELS, PIN_LINE, TIPS, display_value, pin_notice
+from .vocabulary import LABELS, TIPS, display_value, pin_notice
 
 #: The Browse button's label (#1226).
 BROWSE = "Browse…"
+
+#: The mark beside a pinned field (#1226): the variable's name, in
+#: the palette's mid tone, at the row's end — the notice stands where
+#: the setting does, not in a block under the form.
+MARK = "set by %s"
 
 
 def pick_file(parent, start: str | None) -> str:  # pragma: no cover
@@ -50,11 +55,13 @@ def pick_directory(parent, start: str | None) -> str:  # pragma: no cover
 
 class Panel(QtWidgets.QWidget):
     """One subtab's form (#1226): a titled group over a
-    :class:`QFormLayout` the subclass fills through :meth:`text`,
-    :meth:`pick`, and :meth:`row`, the pins' note under it, and the
-    seed-and-edit bookkeeping over the page. ``touched`` crosses to
-    the page's dirty flag at every field change. The seams: the two
-    pickers, the suite's fakes."""
+    :class:`QFormLayout` the subclass fills through :meth:`text` and
+    :meth:`row`, the panel's note above the groups (a launch with no
+    file names it there), and the seed-and-edit bookkeeping over the
+    page. A pinned key wears its variable's name beside its field
+    (:data:`MARK`), so the notice stands where the setting does.
+    ``touched`` crosses to the page's dirty flag at every field
+    change. The seams: the two pickers, the suite's fakes."""
 
     touched = QtCore.Signal()
 
@@ -66,6 +73,9 @@ class Panel(QtWidgets.QWidget):
         #: The side widgets beside fields (#1226): a Browse button,
         #: dark under its field's pin.
         self.sides: dict[str, QtWidgets.QWidget] = {}
+        #: The pin marks beside fields (#1226): a pinned key's
+        #: variable, hidden while the key is free.
+        self.marks: dict[str, QtWidgets.QLabel] = {}
         #: The values the seed wrote (#1226): an edit is a field
         #: whose value moved from here.
         self.seeded: dict[str, str] = {}
@@ -74,23 +84,27 @@ class Panel(QtWidgets.QWidget):
         #: edit.
         self.filling = False
         self.body = QtWidgets.QVBoxLayout(self)
-        self.form = self.group(title)
-        self.pinned_note = QtWidgets.QLabel("", self)
-        self.pinned_note.setWordWrap(True)
-        self.body.addWidget(self.pinned_note)
+        # The panel's note stands above the groups (#1226), read
+        # before the fields it is about.
+        self.note = QtWidgets.QLabel("", self)
+        self.note.setWordWrap(True)
+        self.note.setVisible(False)
+        self.body.addWidget(self.note)
         self.body.addStretch(1)
+        self.form = self.group(title)
 
     # --- building -------------------------------------------------------
 
     def group(self, title: str) -> QtWidgets.QFormLayout:
         """A titled group box on the panel (#1226) with an empty form
-        inside, the form handed back for the rows."""
+        inside, the form handed back for the rows; the box joins
+        under the ones before it, above the stretch."""
         box = QtWidgets.QGroupBox(title, self)
         form = QtWidgets.QFormLayout(box)
         form.setFieldGrowthPolicy(
             QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
         )
-        self.body.insertWidget(self.body.count() - 2, box)
+        self.body.insertWidget(self.body.count() - 1, box)
         return form
 
     def label(self, key: str) -> QtWidgets.QLabel:
@@ -108,19 +122,29 @@ class Panel(QtWidgets.QWidget):
         side: QtWidgets.QWidget | None = None,
     ) -> QtWidgets.QWidget:
         """One form row (#1226): the setting's label over *widget*, an
-        optional side widget (a Browse button) after it. The field is
-        registered under *key* and listened to for the dirty flag."""
+        optional side widget (a Browse button) after it, and the
+        pin's mark at the row's end. The field is registered under
+        *key* and listened to for the dirty flag."""
         self.fields[key] = widget
-        if side is None:
-            self.form.addRow(self.label(key), widget)
-        else:
+        line = QtWidgets.QHBoxLayout()
+        line.addWidget(widget, stretch=1)
+        if side is not None:
             self.sides[key] = side
-            line = QtWidgets.QHBoxLayout()
-            line.addWidget(widget)
             line.addWidget(side)
-            self.form.addRow(self.label(key), line)
+        line.addWidget(self.mark(key))
+        self.form.addRow(self.label(key), line)
         self.listen(widget)
         return widget
+
+    def mark(self, key: str) -> QtWidgets.QLabel:
+        """A row's pin mark (#1226): a muted label for the variable
+        that pins the key, hidden while the key is free."""
+        label = QtWidgets.QLabel("", self)
+        mid = label.palette().color(QtGui.QPalette.ColorRole.Mid).name()
+        label.setStyleSheet(f"color: {mid};")
+        label.setVisible(False)
+        self.marks[key] = label
+        return label
 
     def text(
         self, key: str, *, browse: str | None = None
@@ -181,14 +205,13 @@ class Panel(QtWidgets.QWidget):
     def load(self, _settings=None) -> None:
         """Seed every field from the page's standing document and
         pins (#1226): a pinned key reads as the variable's value and
-        stands read-only, the variable named under the form. The
+        stands read-only, the variable marked beside its field. The
         page hands the dictation record to every panel alike; the
         general panels read the document and leave it alone."""
         self.filling = True
         for key in self.fields:
             self.seed(key, *self.page.effective(key))
         self.filling = False
-        self.refresh_note()
 
     def seed(self, key: str, value: str, pinned: bool) -> None:
         """One field's seed (#1214, #1226): the value in the field's
@@ -217,6 +240,10 @@ class Panel(QtWidgets.QWidget):
         field.setEnabled(not pinned)
         if key in self.sides:
             self.sides[key].setEnabled(not pinned)
+        mark = self.marks[key]
+        mark.setText(MARK % self.page.variable_of(key) if pinned else "")
+        mark.setVisible(pinned)
+        mark.setToolTip(self.tip(key, pinned) if pinned else "")
         tip = self.tip(key, pinned)
         field.setToolTip(tip)
         self.labels[key].setToolTip(tip)
@@ -229,17 +256,6 @@ class Panel(QtWidgets.QWidget):
         if pinned:
             return f"{TIPS[key]}\n\n{pin_notice(key)}"
         return TIPS[key]
-
-    def refresh_note(self) -> None:
-        """The note under the form (#1214, #1226): one line per key
-        the environment pins, nothing when none."""
-        lines = [
-            PIN_LINE % self.page.variable_of(key)
-            for key in self.fields
-            if key in self.page.pinned
-        ]
-        self.pinned_note.setText("\n".join(lines))
-        self.pinned_note.setVisible(bool(lines))
 
     def edits(self) -> dict[str, str | None]:
         """What Apply writes from this panel (#1226): the fields whose
