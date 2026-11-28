@@ -63,14 +63,6 @@ FUNC_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 NESTED_NODES = (*FUNC_NODES, ast.Lambda)
 
 
-def dec_target(dec):
-    """The attribute or name a decorator references: 'fixture', 'skip'..."""
-    d = dec.func if isinstance(dec, ast.Call) else dec
-    if isinstance(d, ast.Attribute):
-        return d.attr
-    return getattr(d, "id", None)
-
-
 def is_mark_holder(expr) -> bool:
     if isinstance(expr, ast.Attribute):
         return expr.attr == "mark"
@@ -267,12 +259,6 @@ class Func:
     def is_test(self) -> bool:
         return self.name.startswith("test_") and self.module.startswith(
             f"{TESTS_PKG}."
-        )
-
-    @property
-    def is_fixture(self) -> bool:
-        return any(
-            dec_target(d) == "fixture" for d in self.node.decorator_list
         )
 
 
@@ -691,7 +677,7 @@ def fixed_point(funcs: dict) -> None:
     while changed:
         changed = False
         for f in funcs.values():
-            s = max([f.own, *(funcs[d].strength for d in f.deps)])
+            s = max([f.own, *(callee_strength(f, funcs, d) for d in f.deps)])
             if s > f.strength:
                 f.strength = s
                 changed = True

@@ -951,10 +951,12 @@ def test_an_anchor_with_no_window_moves_nothing(qt):
     window = QtWidgets.QMainWindow()
     pill = DictationPill(held, window)
     pill.setParent(None)
+    raised = []
+    pill.raise_ = lambda: raised.append(True)  # the method, shadowed
     before = pill.pos()
     pill.anchor()  # no window: no move, no raise
     assert pill.pos() == before  # no move
-    assert not pill.isVisible()  # no raise
+    assert raised == []  # no raise
 
 
 def test_a_non_string_preferences_key_is_refused(qt):

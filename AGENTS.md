@@ -189,7 +189,7 @@ checks through `assert_tabs_whole(bar)` passes. A resolved helper
 grades by its body, never by its name, and a fixture's own asserts
 check the setup, not the test's outcome. Three weaker signals count
 too: a poll helper that raises on timeout (`wait_for`, `poll`,
-`press_until`, `call_until`, `asyncio.wait_for`), a helper that
+`press_until`, `call_until`, `until`, `asyncio.wait_for`), a helper that
 raises on a failed condition when the test calls it as a statement
 (`subprocess.run(check=True)` counts either way), and an `assert`
 inside a nested `scenario()` the test runs.
