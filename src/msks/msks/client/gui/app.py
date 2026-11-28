@@ -540,6 +540,12 @@ def show_settings_page(window, tree: dict) -> None:
     page = tree.get("settings")
     if page is not None:
         window.centralWidget().setCurrentWidget(page)
+        # The Dictation subtab (#1226): the page opens on the form
+        # with the Download button, not on the Connection subtab
+        # the strip starts on.
+        show_dictation = getattr(page, "show_dictation", None)
+        if show_dictation is not None:
+            show_dictation()
     window.showNormal()
     window.raise_()
     window.activateWindow()

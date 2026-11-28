@@ -215,10 +215,14 @@ def pick_item(
     return picker.textValue()
 
 
-def prompt_text(parent, title: str, label: str) -> str | None:
+def prompt_text(
+    parent, title: str, label: str, current: str = ""
+) -> str | None:
     """The text prompt asked centered (#1063): one line of
     input over the asking window — a cancelled prompt answers
-    None, a submit the entered text, stripped. The mode is
+    None, a submit the entered text, stripped; *current* (#1226)
+    opens the line with a standing value, the rename's own name.
+    The mode is
     named the way the picker names its combo, not left to the
     constructor's default. The static ``getText`` call leaves
     the placement to the window manager; this build centers
@@ -227,6 +231,7 @@ def prompt_text(parent, title: str, label: str) -> str | None:
     prompt.setWindowTitle(title)
     prompt.setLabelText(label)
     prompt.setInputMode(QtWidgets.QInputDialog.InputMode.TextInput)
+    prompt.setTextValue(current)
     center_on_parent(prompt)
     if prompt.exec() != QtWidgets.QDialog.DialogCode.Accepted:
         return None

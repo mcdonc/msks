@@ -95,7 +95,7 @@ import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..configio import set_scalars, write_atomic, write_exclusive
+from ..configio import set_daemon, set_scalars, write_atomic, write_exclusive
 from .config_keys import (
     GLOBAL_ENV_VARS,
     SCREENSHOT_COMMAND_ENV,
@@ -299,7 +299,9 @@ def standing_paths(paths: list[str]) -> list[str]:
     return [path for path in paths if os.path.isfile(path)]
 
 
-def save_keys(conf: ClientConfig, values: dict) -> None:
+def save_keys(
+    conf: ClientConfig, values: dict, daemons: dict | None = None
+) -> None:
     """Merge *values* into the user's file in place (#1224), for
     the GUI's settings page: the file at ``conf.config_path`` —
     never the system file under bare ``msks`` — read (the first-run
@@ -312,7 +314,14 @@ def save_keys(conf: ClientConfig, values: dict) -> None:
     ``--config=none`` has no file to write and returns; a file that
     will not read, a result that will not load, and a tree that will
     not write surface as ``ValueError`` or ``OSError`` with the path
-    in the message."""
+    in the message.
+
+    *daemons* (#1226) carries the ``daemons:`` entries the edit
+    lands beside the scalar keys, alias by alias through
+    :func:`msks.configio.set_daemon`: an entry dict replaces or adds
+    the alias, ``None`` removes it. The one-address rule and the
+    rest of the entry vocabulary are the loader's to check, over the
+    entry merged with the floor's, exactly as a hand edit is."""
     if conf.config_path == NO_CONFIG:
         return
     path = conf.config_path
@@ -322,10 +331,21 @@ def save_keys(conf: ClientConfig, values: dict) -> None:
         raise ValueError(
             f"cannot read config file {path}: {exc.strerror or exc}"
         ) from None
-    edited = set_scalars(text, values)
+    edited = merge_edits(text, values, daemons)
     floor = floor_aliases(load_paths(standing_paths(conf.config_paths[:-1])))
     parse_config_doc(edited, path, floor)
     write_atomic(path, edited)
+
+
+def merge_edits(text: str, values: dict, daemons: dict | None) -> str:
+    """The file's text with the edits landed (#1224, #1226): the
+    scalar keys through :func:`msks.configio.set_scalars`, then each
+    alias through :func:`msks.configio.set_daemon`, in the order
+    given."""
+    edited = set_scalars(text, values)
+    for alias, entry in (daemons or {}).items():
+        edited = set_daemon(edited, alias, entry)
+    return edited
 
 
 def read_for_save(path: str, *, bare: bool) -> str:

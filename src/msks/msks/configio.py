@@ -134,13 +134,17 @@ def set_scalars(text: str, values: dict) -> str:
 
 
 def refuse_non_scalars(values: dict) -> None:
-    """The merge's contract (#1224): every value a string or None,
-    refused by name before any key is edited."""
+    """The merge's contract (#1224, #1226): every value a string, a
+    whole number, or None, refused by name before any key is edited.
+    A number renders bare — a port written as digits a loader reads
+    back as an int, where the quoted string form reads as text."""
     for key, value in values.items():
-        if not isinstance(value, (str, type(None))):
+        if isinstance(value, bool) or not isinstance(
+            value, (str, int, type(None))
+        ):
             raise ValueError(
-                f"config key {key!r} must be a string or None to "
-                f"merge, got {type(value).__name__}"
+                f"config key {key!r} must be a string, an int, or None "
+                f"to merge, got {type(value).__name__}"
             )
 
 
@@ -240,3 +244,150 @@ def append_block(lines: list[str], block: list[str]) -> list[str]:
     at = len(lines) - 1 if lines and lines[-1] == "" else len(lines)
     lines[at:at] = block
     return lines
+
+
+#: The ``daemons:`` block's child indent (#1226) when the file
+#: carries the key with no entries under it yet: two spaces, the
+#: templates' and the dumps' own.
+DAEMON_INDENT = "  "
+
+
+def set_daemon(text: str, alias: str, entry: dict | None) -> str:
+    """Merge one ``daemons:`` alias entry into a config file's text,
+    in place (#1226): the companion of :func:`set_scalars` for the
+    one structural key. Every byte outside the alias's own block
+    stays as the operator wrote it — the other aliases, their
+    comments, the keys above and below, the spellings.
+
+    A dict *entry* replaces the alias's block (the ``alias:`` line
+    through the line before the next alias, comments at the alias's
+    own indent included in the block they follow) or joins the
+    ``daemons:`` block at its end, each key on its own line in the
+    entry vocabulary's order, rendered by :func:`render_scalar`; the
+    block itself is appended at the end of the file when the file
+    carries none, and a ``daemons:`` line with an inline value
+    (``{}``) is opened up for the entry. ``None`` deletes the
+    alias's block, and is a no-op when neither the alias nor the
+    block stands. The caller validates the result with its own
+    loader before writing.
+    """
+    lines = text.split("\n")
+    start = key_line_index(lines, "daemons")
+    if start is None:
+        return open_block(lines, alias, entry)
+    # A line with an inline value (``daemons: {}``) opens up bare.
+    lines[start] = f"{key_line_key(lines[start])}:"
+    end = block_end(lines, start)
+    indent = child_indent(lines, start + 1, end)
+    at = alias_line(lines, alias, start + 1, end, indent)
+    if entry is None:
+        if at is not None:
+            del lines[at : alias_block_end(lines, at, end, indent)]
+    elif at is None:
+        lines[end:end] = render_entry(alias, entry, indent)
+    else:
+        lines[at : alias_block_end(lines, at, end, indent)] = render_entry(
+            alias, entry, indent
+        )
+    return "\n".join(lines)
+
+
+def open_block(lines: list[str], alias: str, entry: dict | None) -> str:
+    """The file without a ``daemons:`` block (#1226): the text as it
+    stands for a removal, the block opened at the file's end with
+    the entry under it for a set."""
+    if entry is None:
+        return "\n".join(lines)
+    block = ["daemons:", *render_entry(alias, entry, DAEMON_INDENT)]
+    return "\n".join(append_block(lines, block))
+
+
+def render_entry(alias: str, entry: dict, indent: str) -> list[str]:
+    """One alias's entry as block lines (#1226): the ``alias:`` line
+    at the block's child indent, each set key under it in the
+    entry vocabulary's order, one line each, blanks left out. The
+    alias and the values are spelled by ``yaml.safe_dump``, so a
+    name or a value that needs quoting gets it."""
+    refuse_non_scalars(entry)
+    spelled = yaml.safe_dump(
+        {alias: 0}, default_flow_style=False, allow_unicode=True
+    ).rstrip("\n")
+    spelled = spelled[: -len(": 0")]
+    lines = [indent + spelled + (":" if any(entry.values()) else ": {}")]
+    for key in DAEMON_ENTRY_ORDER:
+        if entry.get(key):
+            value = render_scalar(entry[key])
+            lines.append(f"{indent}{DAEMON_INDENT}{key}: {value}")
+    return lines
+
+
+def child_indent(lines: list[str], start: int, end: int) -> str:
+    """The indent of the ``daemons:`` block's first entry (#1226):
+    the leading whitespace of its first non-blank line, the default
+    when the block is empty."""
+    for line in lines[start:end]:
+        if line.strip():
+            return line[: len(line) - len(line.lstrip())]
+    return DAEMON_INDENT
+
+
+def alias_line(
+    lines: list[str], alias: str, start: int, end: int, indent: str
+) -> int | None:
+    """The line of the alias's entry (#1226): a non-blank, non-comment
+    line at the block's child indent whose key, quotes stripped,
+    spells the alias; None when the block carries none."""
+    for index in range(start, end):
+        if is_alias_line(lines[index], indent, alias):
+            return index
+    return None
+
+
+def is_alias_line(line: str, indent: str, alias: str) -> bool:
+    """Whether one line is *alias*'s own entry line (#1226): a
+    non-blank, non-comment line at the block's child indent whose
+    key, quotes stripped, spells the alias."""
+    stripped = line.lstrip()
+    if not stripped or stripped.startswith("#"):
+        return False
+    if line[: len(line) - len(stripped)] != indent:
+        return False
+    match = KEY_LINE.match(stripped)
+    return bool(match) and unquote(match.group(1).strip()) == alias
+
+
+def alias_block_end(lines: list[str], at: int, end: int, indent: str) -> int:
+    """Where the alias's block ends (#1226): the next non-blank line
+    at the alias's indent or shallower, inside the ``daemons:``
+    block — a comment at the alias's indent before the next alias
+    ends the block, so the comment stays with the file."""
+    stop = at + 1
+    while stop < end:
+        line = lines[stop]
+        if line.strip() and len(line) - len(line.lstrip()) <= len(indent):
+            break
+        stop += 1
+    return stop
+
+
+def unquote(spelled: str) -> str:
+    """A YAML key's name (#1226): the quoted forms stripped, the
+    plain form as written."""
+    if len(spelled) >= 2 and spelled[0] == spelled[-1] and spelled[0] in "'\"":
+        return spelled[1:-1]
+    return spelled
+
+
+#: The entry keys' order in a rendered entry (#1226): the address
+#: first, the credentials, the image last — the template's own
+#: order, and :data:`msks.client.config_keys.DAEMON_ENTRY_KEYS`'
+#: (the vocabulary lives in the client; this leaf spells its own
+#: copy so the client's config module keeps importing the leaf,
+#: never the reverse).
+DAEMON_ENTRY_ORDER = (
+    "url",
+    "socket",
+    "token_file",
+    "cafile",
+    "expected_image",
+)

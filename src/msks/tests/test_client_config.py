@@ -1770,3 +1770,68 @@ def test_save_keys_names_an_unreadable_file(
     with pytest.raises(ValueError, match="cannot read config file") as refused:
         config.save_keys(conf, {"dictate_model": "small"})
     assert str(user_file) in str(refused.value)
+
+
+def test_save_keys_lands_daemon_entries_beside_the_scalars(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The aliases' edits (#1226): an entry dict replaces or adds the
+    alias through the in-place block merge, ``None`` removes one,
+    and the loader checks every entry over the floor's — an entry
+    that breaks the one-address rule refuses the whole save and the
+    file stands as it was."""
+    clean_env(monkeypatch)
+    system_file(tmp_path, SYSTEM, monkeypatch)
+    user = user_tree(tmp_path, monkeypatch)
+    user.mkdir()
+    user_file = user / "msks.yaml"
+    user_file.write_text(
+        "# mine\n"
+        "daemons:\n"
+        "  lab:\n"
+        "    token_file: ~/lab.token\n"
+        "  extra:\n"
+        "    socket: /run/extra.sock\n"
+    )
+    conf = config.resolve()
+    config.save_keys(
+        conf,
+        {"active_daemon": "farm"},
+        {
+            "lab": {"url": "https://my-lab:8660", "token_file": "~/lab.token"},
+            "extra": None,
+            "farm": {"socket": "/run/farm.sock"},
+        },
+    )
+    assert user_file.read_text() == (
+        "# mine\n"
+        "daemons:\n"
+        "  lab:\n"
+        "    url: https://my-lab:8660\n"
+        "    token_file: ~/lab.token\n"
+        "  farm:\n"
+        "    socket: /run/farm.sock\n"
+        "active_daemon: farm\n"
+    )
+    assert (
+        Path(system_file(tmp_path, SYSTEM, monkeypatch)).read_text() == SYSTEM
+    )
+    reloaded = config.reload_doc(conf)
+    assert reloaded["daemons"] == {
+        "host": {"url": "https://host:8660", "token_file": "/etc/msks/token"},
+        "lab": {
+            "url": "https://my-lab:8660",
+            "token_file": "~/lab.token",
+            "expected_image": "msks/sys-img",  # the system file's
+        },
+        "farm": {"socket": "/run/farm.sock"},
+    }
+    assert reloaded["active_daemon"] == "farm"
+    # The floor's lab carries a url: a socket on top is refused.
+    user_file.write_text("daemons:\n  lab:\n    token_file: ~/lab.token\n")
+    conf = config.resolve()
+    with pytest.raises(ValueError, match="carries both a url and a socket"):
+        config.save_keys(conf, {}, {"lab": {"socket": "/run/lab.sock"}})
+    assert user_file.read_text() == (
+        "daemons:\n  lab:\n    token_file: ~/lab.token\n"
+    )
