@@ -1985,7 +1985,7 @@ whisper.cpp) transcribes the clip once it ends. The model loads for
 each clip, which takes about one second with <code>small</code>. The model is
 not shipped: the first click opens the <strong>Settings</strong> tab, whose
 <strong>Download</strong> button fetches it into <code>~/.cache/msks/whisper/</code>. The
-<a href="../cli/#the-gui-preferences-file">CLI chapter</a> describes the
+<a href="../cli/#the-client-config-file">CLI chapter</a> describes the
 settings, their file, and the precedence.</p>
 <p>On a Mac the same calls answer through the shims that
 <code>msks-setup-macos-host</code> lands (#1216). <code>pw-record</code> captures through
@@ -2023,12 +2023,14 @@ settings in effect now, and every field takes a change.</p>
 <p>Hover a setting's name or its field for its description. A key that
 an <code>MSKSC_DICTATE_*</code> variable pins shows the variable's value in a
 read-only field, with the variable named under the form.</p>
-<p><strong>Apply</strong> saves the fields into <code>~/.config/msks/gui.yaml</code> and the
-next recording takes them. A recording ends at the pill's second
-click, whatever the settings. <strong>Apply</strong> and <strong>Revert</strong> stand dark
-while the fields match the saved settings, and light at the first
-change. <strong>Revert</strong> reads the layers again and reseeds the fields. A value that refused anywhere shows its message
-under the form, and the setting reads as its default.</p>
+<p><strong>Apply</strong> merges the fields into <code>~/.config/msks/msks.yaml</code>: the
+three keys are written into the file, every other line stays as you
+wrote it, and the next recording takes them. A recording ends at the pill's
+second click, whatever the settings. <strong>Apply</strong> and <strong>Revert</strong> stand
+dark while the fields match the saved settings, and light at the first
+change. <strong>Revert</strong> reads the file again and reseeds the fields. A bad
+value in the file refuses <code>msks</code> at start, with the file and the key
+in the message.</p>
 <p><strong>Speech model</strong> shows where the picked model points and whether
 it is on disk, with its size; the line follows the picker as it
 changes. <strong>Download</strong> fetches a missing model into the cache with a

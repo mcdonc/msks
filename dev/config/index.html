@@ -884,10 +884,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-guis-preferences-file" class="md-nav__link">
+  <a href="#the-guis-dictation-settings" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The GUI's preferences file
+        The GUI's dictation settings
       </span>
     </span>
   </a>
@@ -1228,10 +1228,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-guis-preferences-file" class="md-nav__link">
+  <a href="#the-guis-dictation-settings" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The GUI's preferences file
+        The GUI's dictation settings
       </span>
     </span>
   </a>
@@ -1934,15 +1934,14 @@ default-path file deleted since startup is likewise refused rather
 than regenerated, because a reload is not a first run and
 regenerating the template would silently revert every file-set
 value to its default.</p>
-<h2 id="the-guis-preferences-file">The GUI's preferences file<a class="headerlink" href="#the-guis-preferences-file" title="Permanent link">&para;</a></h2>
-<p><code>msks gui</code> reads the dictation settings from a file of its own
-beside the client config, <code>~/.config/msks/gui.yaml</code>, and its
-<strong>Settings</strong> tab writes that file. The GUI never edits the
-operator's <code>msks.yaml</code>: a NixOS host's generated, read-only config
-stays declarative. For the three <code>dictate_*</code> keys the order is
-<code>MSKSC_DICTATE_*</code> variables, then <code>gui.yaml</code>, then <code>msks.yaml</code>, then
-the defaults. The <a href="../cli/#the-gui-preferences-file">CLI chapter</a>
-documents the file, the keys, and the precedence, and the
+<h2 id="the-guis-dictation-settings">The GUI's dictation settings<a class="headerlink" href="#the-guis-dictation-settings" title="Permanent link">&para;</a></h2>
+<p>The GUI's dictation keys (<code>dictate_model</code>, <code>dictate_device</code>,
+<code>dictate_prompt</code>) are client config keys. They live in the user's
+<code>msks.yaml</code>, over the host's system file when there is one, and the
+GUI's <strong>Settings</strong> tab merges them into the user's file in place. The
+order is <code>MSKSC_DICTATE_*</code> variables, then the config files, then the
+defaults. The <a href="../cli/#the-client-config-file">CLI chapter</a> documents
+the files and the precedence, and the
 <a href="../gui/#dictation">GUI chapter</a> the feature.</p>
 
 

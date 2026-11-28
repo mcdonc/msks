@@ -2693,22 +2693,34 @@ tagged <code>vX.Y.Z</code>.</p>
   primary selection with a tone at each end and a desktop
   notification. A <strong>Settings</strong> tab edits the model, the microphone,
   and the vocabulary prompt, and downloads the whisper.cpp model with
-  a progress bar. The settings save to <code>~/.config/msks/gui.yaml</code>, a
-  file the GUI owns beside the client config, and <code>MSKSC_DICTATE_*</code>
-  variables pin any of them. The host needs PipeWire's <code>pw-record</code> and
+  a progress bar. The settings save into <code>~/.config/msks/msks.yaml</code>:
+  the Settings tab merges the three keys into the file and leaves the
+  rest as written, and <code>MSKSC_DICTATE_*</code> variables pin any of them.
+  The host needs PipeWire's <code>pw-record</code> and
   <code>pw-cat</code> and whisper.cpp's <code>whisper-cli</code>; see
   <a href="../gui/#dictation">docs/gui.md</a>.</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong><code>msks-setup-macos-host</code> lands the dictation tools (#1216).</strong> The
+<li>
+<p><strong>The client config layers a system file (#1224).</strong> A bare <code>msks</code>
+  reads <code>/etc/msks/msks.yaml</code> as the floor and the user's
+  <code>~/.config/msks/msks.yaml</code> over it, key by key. <code>MSKSC_SYSTEM_CONFIG</code>
+  relocates the system file, and an empty value means none. <code>daemons:</code>
+  merges by alias, and the two files resolve as one. <code>--config &lt;path&gt;</code>
+  and <code>--config=none</code> read no system file. See
+  <a href="../cli/#the-client-config-file">docs/cli.md</a>.</p>
+</li>
+<li>
+<p><strong><code>msks-setup-macos-host</code> lands the dictation tools (#1216).</strong> The
   tool now brews <code>whisper.cpp</code> and <code>ffmpeg</code> and writes <code>pw-record</code>,
   <code>pw-cat</code>, and <code>notify-send</code> shims at the brew prefix's bin, so the
   GUI's dictation works on a Mac. <code>--check</code> reports the engines and
   shims, and a Mac without them fails that check until the tool runs
   again. The shims carry the tool's mark, a re-run refreshes them,
   and <code>--uninstall</code> removes them. See
-  <a href="../installation/#macos-on-apple-silicon-hosts">docs/installation.md</a>.</li>
+  <a href="../installation/#macos-on-apple-silicon-hosts">docs/installation.md</a>.</p>
+</li>
 <li><strong>Guest toolchain pins (#1217).</strong> The Debian, Fedora, and NixOS
   guests ship pi 1.7.0 (from 1.5.2) and Claude Code 2.1.332 (from
   2.1.325), with herdr unchanged at 0.9.5. pi 1.7.0 removes install
